@@ -81,4 +81,27 @@ func TestExternalControlProposalOpensConfirmationAndRecordsCancellation(t *testi
 	if stored.Status != control.OperationCanceled {
 		t.Fatalf("stored status = %q, want canceled", stored.Status)
 	}
+	if got.status != "Agent control proposal canceled; no action was run" {
+		t.Fatalf("status = %q, want explicit canceled receipt", got.status)
+	}
+}
+
+func TestExternalControlProposalDoesNotHideAlreadyCanceledState(t *testing.T) {
+	m := Model{}
+	updated, cmd := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{
+		operation: control.Operation{
+			ID:     "lcrop_already_canceled",
+			Status: control.OperationCanceled,
+		},
+	})
+	got := normalizeUpdateModel(updated)
+	if cmd != nil {
+		t.Fatal("already canceled proposal should not open a confirmation command")
+	}
+	if got.helpChatMode || got.helpChatModelActive {
+		t.Fatal("already canceled proposal should not open Chat")
+	}
+	if got.status != "Agent control proposal was already canceled; no confirmation is pending" {
+		t.Fatalf("status = %q, want explicit no-pending receipt", got.status)
+	}
 }

@@ -43,9 +43,10 @@ type aiLatencySample struct {
 }
 
 type pendingModelSettleOp struct {
-	OpID      int64
-	Model     string
-	Reasoning string
+	OpID          int64
+	Model         string
+	ModelProvider string
+	Reasoning     string
 }
 
 func (m *Model) beginAILatencyOp(name, projectPath, detail string) int64 {
@@ -138,9 +139,10 @@ func (m *Model) appendAILatencySample(sample aiLatencySample) {
 	}
 }
 
-func (m *Model) beginModelSettleLatency(projectPath, detail, model, reasoning string) {
+func (m *Model) beginModelSettleLatency(projectPath, detail, model, modelProvider, reasoning string) {
 	projectPath = strings.TrimSpace(projectPath)
 	model = strings.TrimSpace(model)
+	modelProvider = strings.TrimSpace(modelProvider)
 	reasoning = strings.TrimSpace(reasoning)
 	if projectPath == "" || model == "" {
 		return
@@ -157,9 +159,10 @@ func (m *Model) beginModelSettleLatency(projectPath, detail, model, reasoning st
 		return
 	}
 	m.modelSettlePending[projectPath] = pendingModelSettleOp{
-		OpID:      opID,
-		Model:     model,
-		Reasoning: reasoning,
+		OpID:          opID,
+		Model:         model,
+		ModelProvider: modelProvider,
+		Reasoning:     reasoning,
 	}
 }
 
@@ -172,7 +175,7 @@ func (m *Model) completeModelSettleLatency(projectPath string, snapshot codexapp
 	if !ok {
 		return
 	}
-	if !snapshotReflectsModelSelection(snapshot, pending.Model, pending.Reasoning) {
+	if !snapshotReflectsModelSelection(snapshot, pending.Model, pending.ModelProvider, pending.Reasoning) {
 		return
 	}
 	delete(m.modelSettlePending, projectPath)
@@ -192,15 +195,19 @@ func (m *Model) cancelModelSettleLatency(projectPath, result string) {
 	m.completeAILatencyOp(pending.OpID, 0, nil, firstNonEmptyTrimmed(result, "canceled"))
 }
 
-func snapshotReflectsModelSelection(snapshot codexapp.Snapshot, modelName, reasoning string) bool {
+func snapshotReflectsModelSelection(snapshot codexapp.Snapshot, modelName, modelProvider, reasoning string) bool {
 	modelName = strings.TrimSpace(modelName)
+	modelProvider = strings.TrimSpace(modelProvider)
 	reasoning = strings.TrimSpace(reasoning)
 	if modelName == "" {
 		return false
 	}
 	currentModel := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
+	currentModelProvider := firstNonEmptyTrimmed(snapshot.PendingModelProvider, snapshot.ModelProvider)
 	currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
-	return strings.EqualFold(currentModel, modelName) && strings.EqualFold(currentReasoning, reasoning)
+	return strings.EqualFold(currentModel, modelName) &&
+		(modelProvider == "" || strings.EqualFold(currentModelProvider, modelProvider)) &&
+		strings.EqualFold(currentReasoning, reasoning)
 }
 
 func (m *Model) recordUIStallFromSpinnerTick(now time.Time) {

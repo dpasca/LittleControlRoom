@@ -1367,6 +1367,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(externalControlCancellationRecordedMsg); ok {
 		if msg.err != nil {
 			m.appendBackgroundErrorLogEntry("Agent control cancellation audit failed", msg.err, "")
+		} else if msg.operation.Status == control.OperationCanceled {
+			m.status = "Agent control proposal canceled; no action was run"
 		}
 		return m, nil
 	}

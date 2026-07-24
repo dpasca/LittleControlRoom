@@ -1150,14 +1150,19 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLines int) []string {
 	rows := []string{}
 	model := strings.TrimSpace(snapshot.Model)
+	modelProvider := strings.TrimSpace(snapshot.ModelProvider)
 	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)
 	showPendingAsCurrent := codexSnapshotShowsPendingModelAsCurrent(snapshot)
 	if showPendingAsCurrent {
 		model = strings.TrimSpace(snapshot.PendingModel)
+		modelProvider = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModelProvider), modelProvider)
 		reasoning = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), reasoning)
 	}
 	if model != "" {
 		value := model
+		if snapshot.Provider == codexapp.ProviderLCAgent && modelProvider != "" {
+			value += " · " + codexapp.LCAgentProviderDisplayName(modelProvider)
+		}
 		if reasoning != "" {
 			value += " / " + reasoning
 		}
@@ -1168,6 +1173,11 @@ func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLin
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
+		if snapshot.Provider == codexapp.ProviderLCAgent {
+			if nextProvider := strings.TrimSpace(snapshot.PendingModelProvider); nextProvider != "" {
+				next += " · " + codexapp.LCAgentProviderDisplayName(nextProvider)
+			}
+		}
 		if nextReasoning != "" {
 			next += " / " + nextReasoning
 		}

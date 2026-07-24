@@ -1461,9 +1461,6 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
-	if routePreset == "" && !modeladapter.ModelIsKnownForProvider(modelProvider, model) {
-		model = lcagentDefaultModel(modelProvider)
-	}
 	requestedModel := strings.TrimSpace(firstNonEmpty(pendingModel, s.model))
 	if warning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, requestedModel, routePreset, provider, model); warning != "" {
 		s.modelWarning = warning
@@ -3381,7 +3378,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	model := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))
 	modelProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider)
 	visionModel, visionModelProvider := s.resolvedVisionModelLocked(modelProvider, model)
-	pendingModel, pendingReasoning := s.pendingModelSnapshotLocked(modelProvider, model, s.reasoningEffort)
+	pendingModel, pendingModelProvider, pendingReasoning := s.pendingModelSnapshotLocked(modelProvider, model, s.reasoningEffort)
 	return Snapshot{
 		Provider:                    ProviderLCAgent,
 		ProjectPath:                 s.projectPath,
@@ -3427,16 +3424,17 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		QualityPlanPhaseItems:       cloneQualityPlanPhaseSnapshots(s.qualityPlanPhaseItems),
 		ReasoningEffort:             s.reasoningEffort,
 		PendingModel:                pendingModel,
+		PendingModelProvider:        pendingModelProvider,
 		PendingReasoning:            pendingReasoning,
 		TokenUsage:                  exportedTokenUsageSnapshot(tokenUsage),
 	}
 }
 
-func (s *lcagentSession) pendingModelSnapshotLocked(currentProvider, currentModel, currentReasoning string) (string, string) {
+func (s *lcagentSession) pendingModelSnapshotLocked(currentProvider, currentModel, currentReasoning string) (string, string, string) {
 	pendingModel := strings.TrimSpace(s.pendingModel)
 	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
 	if pendingModel == "" && pendingReasoning == "" {
-		return "", ""
+		return "", "", ""
 	}
 	pendingProvider := firstNonEmpty(s.pendingModelProvider, currentProvider, lcagentDefaultProvider)
 	if pendingModel == "" {
@@ -3444,9 +3442,9 @@ func (s *lcagentSession) pendingModelSnapshotLocked(currentProvider, currentMode
 	}
 	pendingModel = modeladapter.NormalizeModelForProvider(pendingProvider, pendingModel)
 	if lcagentSameModelSelection(currentProvider, currentModel, currentReasoning, pendingProvider, pendingModel, pendingReasoning) {
-		return "", ""
+		return "", "", ""
 	}
-	return pendingModel, pendingReasoning
+	return pendingModel, pendingProvider, pendingReasoning
 }
 
 func (s *lcagentSession) resolvedVisionModelLocked(mainProvider, mainModel string) (string, string) {

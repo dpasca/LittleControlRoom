@@ -30,7 +30,8 @@ type externalControlResultRecordedMsg struct {
 }
 
 type externalControlCancellationRecordedMsg struct {
-	err error
+	operation control.Operation
+	err       error
 }
 
 func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
@@ -55,6 +56,14 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		return m, nil
 	}
 	if msg.operation.Status != control.OperationWaitingForConfirmation {
+		switch msg.operation.Status {
+		case control.OperationCanceled:
+			m.status = "Agent control proposal was already canceled; no confirmation is pending"
+		case control.OperationCompleted:
+			m.status = "Agent control proposal already completed"
+		case control.OperationFailed:
+			m.status = "Agent control proposal already failed; no confirmation is pending"
+		}
 		return m, nil
 	}
 	opened, openCmd := m.openHelpChatMode()
@@ -76,7 +85,7 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 	m.helpChatModel = presented
 	m.helpChatModelActive = true
 	m.helpChatMode = true
-	m.status = "Confirm or cancel the embedded agent's control proposal"
+	m.status = "Agent control confirmation opened in Chat: Enter confirms; Esc cancels"
 	return m, openCmd
 }
 
@@ -160,11 +169,14 @@ func (m Model) recordExternalControlCancellationCmd(msg bossui.ControlInvocation
 		parent = context.Background()
 	}
 	return func() tea.Msg {
-		var err error
+		var (
+			operation control.Operation
+			err       error
+		)
 		if svc == nil || svc.Store() == nil {
 			err = errors.New("service store unavailable")
 		} else {
-			_, err = svc.Store().UpdateControlOperationStatus(
+			operation, err = svc.Store().UpdateControlOperationStatus(
 				parent,
 				msg.Invocation.RequestID,
 				control.OperationCanceled,
@@ -172,7 +184,7 @@ func (m Model) recordExternalControlCancellationCmd(msg bossui.ControlInvocation
 				nil,
 			)
 		}
-		return externalControlCancellationRecordedMsg{err: err}
+		return externalControlCancellationRecordedMsg{operation: operation, err: err}
 	}
 }
 

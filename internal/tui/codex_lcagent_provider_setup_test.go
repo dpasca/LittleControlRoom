@@ -96,6 +96,80 @@ func TestLCAgentModelPickerStagesProviderOverrideWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestLCAgentModelPickerKeepsProviderForDuplicateModelIDs(t *testing.T) {
+	projectPath := "/tmp/demo-lcagent-duplicate-model"
+	models := []codexapp.ModelOption{
+		{
+			ID:            "kimi-k3",
+			Model:         "kimi-k3",
+			ModelProvider: "openrouter",
+			DisplayName:   "Kimi K3 through OpenRouter",
+		},
+		{
+			ID:            "kimi-k3",
+			Model:         "kimi-k3",
+			ModelProvider: "moonshot",
+			DisplayName:   "Kimi K3 direct",
+		},
+	}
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:      codexapp.ProviderLCAgent,
+			ProjectPath:   projectPath,
+			ThreadID:      "lca-thread",
+			Started:       true,
+			Status:        "LCAgent ready",
+			Model:         "mimo-v2.5-pro",
+			ModelProvider: "xiaomi",
+		},
+		models: models,
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderLCAgent,
+		ProjectPath: projectPath,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.OpenRouterAPIKey = "sk-or-test"
+	settings.MoonshotAPIKey = "sk-moonshot-test"
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		settingsBaseline:    &settings,
+		width:               100,
+		height:              30,
+	}
+	m.openLoadedCodexModelPicker(models)
+	m.codexModelPicker.Focus = codexModelPickerFocusModels
+	m.setCodexModelPickerModel(models[1], "")
+
+	selected, ok := m.currentCodexModelOption()
+	if !ok || selected.ModelProvider != "moonshot" {
+		t.Fatalf("selected duplicate model = %#v, want Moonshot option", selected)
+	}
+	_, cmd := m.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should stage the selected provider-qualified model")
+	}
+	action, ok := cmd().(codexActionMsg)
+	if !ok {
+		t.Fatal("model picker command did not return codexActionMsg")
+	}
+	if action.err != nil {
+		t.Fatalf("provider staging failed: %v", action.err)
+	}
+	if len(session.modelProviderStages) != 1 || session.modelProviderStages[0].Provider != "moonshot" {
+		t.Fatalf("provider stages = %#v, want one Moonshot stage", session.modelProviderStages)
+	}
+}
+
 func TestLCAgentModelPickerOpensProviderSetupWhenMissingKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	home := t.TempDir()

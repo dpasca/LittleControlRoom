@@ -279,8 +279,8 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 	if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 		var asyncCmd tea.Cmd
 		if msg.awaitSettle {
-			m.beginModelSettleLatency(msg.projectPath, strings.TrimSpace(msg.provider.Label()+" "+msg.model+" "+msg.reasoning), msg.model, msg.reasoning)
-			if snapshot, ok := m.stageEmbeddedModelSelectionInCache(msg.projectPath, msg.provider, msg.model, msg.reasoning); ok {
+			m.beginModelSettleLatency(msg.projectPath, strings.TrimSpace(msg.provider.Label()+" "+msg.model+" "+msg.reasoning), msg.model, msg.modelProvider, msg.reasoning)
+			if snapshot, ok := m.stageEmbeddedModelSelectionInCache(msg.projectPath, msg.provider, msg.model, msg.modelProvider, msg.reasoning); ok {
 				m.completeModelSettleLatency(msg.projectPath, snapshot)
 			}
 			m.markCodexSkipNextLiveRefresh(msg.projectPath)

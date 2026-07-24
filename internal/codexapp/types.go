@@ -559,6 +559,7 @@ type Snapshot struct {
 	ReasoningEffort             string
 	ServiceTier                 string
 	PendingModel                string
+	PendingModelProvider        string
 	PendingReasoning            string
 	MCPUsage                    []MCPUsageSnapshot
 	TokenUsage                  *TokenUsageSnapshot
@@ -952,7 +953,19 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 			}
 		}
 		if strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" {
-			if err := existing.StageModelOverride(req.PendingModel, req.PendingReasoning); err != nil {
+			var err error
+			if req.Provider.Normalized() == ProviderLCAgent && strings.TrimSpace(req.LCAgentProvider) != "" {
+				if staged, ok := existing.(interface {
+					StageModelProviderOverride(string, string, string) error
+				}); ok {
+					err = staged.StageModelProviderOverride(req.LCAgentProvider, req.PendingModel, req.PendingReasoning)
+				} else {
+					err = existing.StageModelOverride(req.PendingModel, req.PendingReasoning)
+				}
+			} else {
+				err = existing.StageModelOverride(req.PendingModel, req.PendingReasoning)
+			}
+			if err != nil {
 				return nil, true, err
 			}
 		}
