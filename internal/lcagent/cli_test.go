@@ -2602,7 +2602,7 @@ func TestRunExecOpenRouterCompactsLargeToolHistoryBeforeNextRequest(t *testing.T
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
-		"--model", "deepseek/test-model",
+		"--model", "deepseek/test-model-32k",
 		"--max-turns", "3",
 		"read the big file",
 	}, &stdout, &stderr)
@@ -2722,7 +2722,7 @@ func TestRunExecOpenRouterCompactionKeepsCurrentPromptAfterResume(t *testing.T) 
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
-		"--model", "deepseek/test-model",
+		"--model", "deepseek/test-model-32k",
 		"--continue-from", threadID,
 		"--max-turns", "3",
 		currentPrompt,
@@ -2822,7 +2822,7 @@ func TestRunExecCompactsOversizedResumeForSelectedModel(t *testing.T) {
 		t.Fatalf("requests = %d, want 1", requests)
 	}
 	text := stdout.String()
-	for _, want := range []string{`"type":"context_compacted"`, `"reason":"continuation_compaction"`, `"threshold_tokens":102400`, `"summary":"continued on smaller context budget"`} {
+	for _, want := range []string{`"type":"context_compacted"`, `"reason":"continuation_compaction"`, `"threshold_tokens":108800`, `"summary":"continued on smaller context budget"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}

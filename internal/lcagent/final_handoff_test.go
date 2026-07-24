@@ -102,17 +102,36 @@ func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
 	}
 
 	sol := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openai", "gpt-5.6")
-	if sol.ModelContextWindowTokens != 1_050_000 || sol.LoopCompactionTokenBudget != 525_000 {
-		t.Fatalf("GPT-5.6 context budget = %+v, want 1.05M window with 525000 token threshold", sol)
+	if sol.ModelContextWindowTokens != 1_050_000 || sol.LoopCompactionTokenBudget != 256_000 {
+		t.Fatalf("GPT-5.6 context budget = %+v, want 1.05M window with practical 256000 token threshold", sol)
 	}
 	luna := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "openai", "gpt-5.6-luna")
-	if luna.ModelContextWindowTokens != 400_000 || luna.LoopCompactionTokenBudget != 292_000 {
-		t.Fatalf("GPT-5.6 Luna context budget = %+v, want 400K window with 292000 token threshold", luna)
+	if luna.ModelContextWindowTokens != 400_000 || luna.LoopCompactionTokenBudget != 256_000 {
+		t.Fatalf("GPT-5.6 Luna context budget = %+v, want 400K window with practical 256000 token threshold", luna)
+	}
+
+	kimi := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "moonshot", "kimi-k3")
+	if kimi.ModelContextWindowTokens != 1_000_000 || kimi.LoopCompactionTokenBudget != 500_000 || kimi.LoopCompactionUtilizationPercent != 50 {
+		t.Fatalf("kimi-k3 context budget = %+v, want 1M window with 50%% / 500000 token threshold", kimi)
+	}
+	if got := ContextCompactionApproxTokenBudgetForModel("balanced", "moonshot", "moonshotai/kimi-k3"); got != 500_000 {
+		t.Fatalf("kimi-k3 approx token budget = %d, want 500000", got)
 	}
 
 	unknown := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openrouter", "custom-model")
-	if unknown.ModelContextWindowTokens != 0 || unknown.LoopCompactionCharThreshold != 600_000 {
-		t.Fatalf("unknown model budget = %+v, want large profile fallback", unknown)
+	if unknown.ModelContextWindowTokens != 250_000 || unknown.LoopCompactionTokenBudget != 212_500 || unknown.LoopCompactionUtilizationPercent != 85 {
+		t.Fatalf("unknown hosted model budget = %+v, want 250k default window with 85%% / 212500 token threshold", unknown)
+	}
+	if got := ContextCompactionApproxTokenBudgetForModel("large", "openrouter", "custom-model"); got != 212_500 {
+		t.Fatalf("unknown hosted model approx token budget = %d, want 212500", got)
+	}
+
+	local := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "ollama", "custom-local-model")
+	if local.ModelContextWindowTokens != 0 || local.LoopCompactionCharThreshold != 600_000 {
+		t.Fatalf("unknown local model budget = %+v, want large profile fallback", local)
+	}
+	if got := ContextCompactionApproxTokenBudgetForModel("large", "mlx", "custom-local-model"); got != 150_000 {
+		t.Fatalf("unknown mlx model approx token budget = %d, want 150000 profile fallback", got)
 	}
 }
 
