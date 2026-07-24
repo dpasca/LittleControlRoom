@@ -18,20 +18,28 @@ type ControlProposal struct {
 }
 
 type ControlInvocationConfirmedMsg struct {
+	Invocation        control.Invocation
+	OperationRecorded bool
+}
+
+type ControlInvocationCanceledMsg struct {
 	Invocation control.Invocation
 }
 
 type ControlInvocationResultMsg struct {
-	Invocation     control.Invocation
-	Status         string
-	Activity       *ViewEngineerActivity
-	Err            error
-	AnnounceInChat bool
+	Invocation        control.Invocation
+	Status            string
+	Activity          *ViewEngineerActivity
+	Err               error
+	AnnounceInChat    bool
+	OperationRecorded bool
 }
 
 type controlProposalError struct {
 	err error
 }
+
+var ErrControlConfirmationPending = errors.New("another control confirmation is already pending")
 
 func (e controlProposalError) Error() string {
 	if e.err == nil {
@@ -771,6 +779,24 @@ func (m Model) ControlConfirmationActive() bool {
 	return m.pendingControl != nil || m.pendingGoal != nil
 }
 
+func (m Model) PresentExternalControlProposal(inv control.Invocation, preview string) (Model, error) {
+	if m.pendingControl != nil || m.pendingGoal != nil {
+		return m, ErrControlConfirmationPending
+	}
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return m, err
+	}
+	m.pendingControl = &ControlProposal{
+		Invocation: copyControlInvocation(normalized),
+		Preview:    strings.TrimSpace(preview),
+	}
+	m.pendingGoal = nil
+	m.status = controlProposalStatus(normalized)
+	m.syncLayout(true)
+	return m, nil
+}
+
 func (m Model) TodoOnlyConfirmationActive() bool {
 	return m.pendingControl != nil && m.pendingControl.Invocation.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer
 }
@@ -792,15 +818,23 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return ControlInvocationConfirmedMsg{Invocation: inv}
 		}
 	case "esc", "ctrl+c":
+		inv := copyControlInvocation(m.pendingControl.Invocation)
 		m.pendingControl = nil
 		m.status = "Control action canceled"
 		m = m.recordOperationalNotice("control_canceled", "notice", "The user canceled a pending control action.")
 		m.appendDeskEvent("control", "cancel", "The pending control action was canceled.")
 		m.syncLayout(false)
+		if control.IsExternalOperationID(inv.RequestID) {
+			return m, func() tea.Msg { return ControlInvocationCanceledMsg{Invocation: inv} }
+		}
 		return m, nil
 	case "q":
 		if m.pendingControl.Invocation.Capability != control.CapabilityTodoCreateWorktreeAndStartEngineer {
 			m.status = controlProposalStatus(m.pendingControl.Invocation)
+			return m, nil
+		}
+		if control.IsExternalOperationID(m.pendingControl.Invocation.RequestID) {
+			m.status = "Use Enter or Esc for an externally proposed tracked-work operation"
 			return m, nil
 		}
 		if !m.embedded {

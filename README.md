@@ -26,6 +26,7 @@ It is also used internally, but this is not a commercial product. It is an opini
 - Reopening Claude Code sessions that are already running in another terminal
 - Keeping common actions close at hand: refresh, pin, snooze, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
 - Optionally letting LCR-embedded Codex, OpenCode, Claude Code, and LCAgent sessions add duplicate-checked, repository-scoped TODOs when work is explicitly deferred
+- Letting embedded Codex, OpenCode, and Claude Code progressively discover typed LCR actions—including project creation—then queue them for explicit TUI confirmation without loading every action schema into the model context. See [Progressive Agent Control Surface](docs/agent_control_surface.md).
 
 ## OpenAI Build Week 2026
 

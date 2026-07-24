@@ -1,8 +1,11 @@
 package control
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 )
@@ -385,51 +388,43 @@ type GitPrepareCommitInput struct {
 }
 
 func Capabilities() []Capability {
-	return []Capability{
-		EngineerSendPromptCapability(),
-		AgentTaskCreateCapability(),
-		AgentTaskContinueCapability(),
-		AgentTaskCloseCapability(),
-		ProjectCreateAndStartEngineerCapability(),
-		ProjectSetCategoryCapability(),
-		ProjectArchiveCapability(),
-		ScratchTaskArchiveCapability(),
-		TodoAddCapability(),
-		TodoCreateWorktreeAndStartEngineerCapability(),
-		TodoCompleteCapability(),
-		SettingsUpdateCapability(),
-		GitPrepareCommitCapability(),
+	out := make([]Capability, 0, len(CapabilityNameValues()))
+	for _, name := range CapabilityNameValues() {
+		if capability, ok := CapabilityByName(name); ok {
+			out = append(out, capability)
+		}
 	}
+	return out
 }
 
 func CapabilityByName(name CapabilityName) (Capability, bool) {
 	switch CapabilityName(strings.TrimSpace(string(name))) {
 	case CapabilityEngineerSendPrompt:
-		return EngineerSendPromptCapability(), true
+		return capabilityWithCatalogMetadata(EngineerSendPromptCapability()), true
 	case CapabilityAgentTaskCreate:
-		return AgentTaskCreateCapability(), true
+		return capabilityWithCatalogMetadata(AgentTaskCreateCapability()), true
 	case CapabilityAgentTaskContinue:
-		return AgentTaskContinueCapability(), true
+		return capabilityWithCatalogMetadata(AgentTaskContinueCapability()), true
 	case CapabilityAgentTaskClose:
-		return AgentTaskCloseCapability(), true
+		return capabilityWithCatalogMetadata(AgentTaskCloseCapability()), true
 	case CapabilityProjectCreateAndStartEngineer:
-		return ProjectCreateAndStartEngineerCapability(), true
+		return capabilityWithCatalogMetadata(ProjectCreateAndStartEngineerCapability()), true
 	case CapabilityProjectSetCategory:
-		return ProjectSetCategoryCapability(), true
+		return capabilityWithCatalogMetadata(ProjectSetCategoryCapability()), true
 	case CapabilityProjectArchive:
-		return ProjectArchiveCapability(), true
+		return capabilityWithCatalogMetadata(ProjectArchiveCapability()), true
 	case CapabilityScratchTaskArchive:
-		return ScratchTaskArchiveCapability(), true
+		return capabilityWithCatalogMetadata(ScratchTaskArchiveCapability()), true
 	case CapabilityTodoAdd:
-		return TodoAddCapability(), true
+		return capabilityWithCatalogMetadata(TodoAddCapability()), true
 	case CapabilityTodoCreateWorktreeAndStartEngineer:
-		return TodoCreateWorktreeAndStartEngineerCapability(), true
+		return capabilityWithCatalogMetadata(TodoCreateWorktreeAndStartEngineerCapability()), true
 	case CapabilityTodoComplete:
-		return TodoCompleteCapability(), true
+		return capabilityWithCatalogMetadata(TodoCompleteCapability()), true
 	case CapabilitySettingsUpdate:
-		return SettingsUpdateCapability(), true
+		return capabilityWithCatalogMetadata(SettingsUpdateCapability()), true
 	case CapabilityGitPrepareCommit:
-		return GitPrepareCommitCapability(), true
+		return capabilityWithCatalogMetadata(GitPrepareCommitCapability()), true
 	default:
 		return Capability{}, false
 	}
@@ -1070,12 +1065,28 @@ func settingsFieldUsesBoolValue(field SettingsField) bool {
 	}
 }
 
+func decodeInvocationArgs(data json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
 func validateEngineerSendPromptInvocation(inv Invocation) (Invocation, error) {
 	if len(inv.Args) == 0 {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityEngineerSendPrompt)
 	}
 	var input EngineerSendPromptInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityEngineerSendPrompt, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1103,7 +1114,7 @@ func validateAgentTaskCreateInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityAgentTaskCreate)
 	}
 	var input AgentTaskCreateInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityAgentTaskCreate, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1131,7 +1142,7 @@ func validateAgentTaskContinueInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityAgentTaskContinue)
 	}
 	var input AgentTaskContinueInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityAgentTaskContinue, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1159,7 +1170,7 @@ func validateAgentTaskCloseInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityAgentTaskClose)
 	}
 	var input AgentTaskCloseInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityAgentTaskClose, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1187,7 +1198,7 @@ func validateScratchTaskArchiveInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityScratchTaskArchive)
 	}
 	var input ScratchTaskArchiveInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityScratchTaskArchive, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1215,7 +1226,7 @@ func validateProjectCreateAndStartEngineerInvocation(inv Invocation) (Invocation
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityProjectCreateAndStartEngineer)
 	}
 	var input ProjectCreateAndStartEngineerInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityProjectCreateAndStartEngineer, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1243,7 +1254,7 @@ func validateProjectSetCategoryInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityProjectSetCategory)
 	}
 	var input ProjectSetCategoryInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityProjectSetCategory, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1271,7 +1282,7 @@ func validateProjectArchiveInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityProjectArchive)
 	}
 	var input ProjectArchiveInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityProjectArchive, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1299,7 +1310,7 @@ func validateTodoAddInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityTodoAdd)
 	}
 	var input TodoAddInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityTodoAdd, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1327,7 +1338,7 @@ func validateTodoCreateWorktreeAndStartEngineerInvocation(inv Invocation) (Invoc
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityTodoCreateWorktreeAndStartEngineer)
 	}
 	var input TodoCreateWorktreeAndStartEngineerInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityTodoCreateWorktreeAndStartEngineer, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1355,7 +1366,7 @@ func validateTodoCompleteInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityTodoComplete)
 	}
 	var input TodoCompleteInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityTodoComplete, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1383,7 +1394,7 @@ func validateSettingsUpdateInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilitySettingsUpdate)
 	}
 	var input SettingsUpdateInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilitySettingsUpdate, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)
@@ -1411,7 +1422,7 @@ func validateGitPrepareCommitInvocation(inv Invocation) (Invocation, error) {
 		return Invocation{}, fmt.Errorf("%s args are required", CapabilityGitPrepareCommit)
 	}
 	var input GitPrepareCommitInput
-	if err := json.Unmarshal(inv.Args, &input); err != nil {
+	if err := decodeInvocationArgs(inv.Args, &input); err != nil {
 		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityGitPrepareCommit, err)
 	}
 	input.RequestID = strings.TrimSpace(input.RequestID)

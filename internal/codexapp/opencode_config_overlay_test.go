@@ -74,6 +74,11 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") || !strings.Contains(runtimeText, "request_browser_attention") {
 		t.Fatalf("overlay runtime skill text missing runtime MCP guidance: %s", runtimeText)
 	}
+	for _, want := range []string{"list_control_capabilities", "describe_control_capability", "propose_control_operation", "get_control_operation"} {
+		if !strings.Contains(runtimeText, want) {
+			t.Fatalf("overlay runtime skill text missing progressive control guidance for %s: %s", want, runtimeText)
+		}
+	}
 	if strings.Contains(runtimeText, "original runtime skill") {
 		t.Fatalf("overlay runtime skill should not mirror original runtime skill: %s", runtimeText)
 	}

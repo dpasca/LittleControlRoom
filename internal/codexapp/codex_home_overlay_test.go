@@ -143,6 +143,11 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") || !strings.Contains(runtimeText, "request_browser_attention") {
 		t.Fatalf("overlay runtime skill = %q, want runtime MCP guidance", runtimeText)
 	}
+	for _, want := range []string{"list_control_capabilities", "describe_control_capability", "propose_control_operation", "get_control_operation"} {
+		if !strings.Contains(runtimeText, want) {
+			t.Fatalf("overlay runtime skill = %q, want progressive control guidance for %s", runtimeText, want)
+		}
+	}
 	if strings.Contains(runtimeText, "original runtime skill") {
 		t.Fatalf("overlay runtime skill should not mirror original contents: %q", runtimeText)
 	}

@@ -71,7 +71,7 @@ exit 2
 
 const shadowRuntimeSkillMarkdownBase = `---
 name: "runtime"
-description: "Use Little Control Room runtime MCP tools for local dev servers, watchers, project-local port checks, and repository-scoped LCR TODO capture. Do not launch duplicate long-running server processes from the shell."
+description: "Use Little Control Room MCP tools for local runtimes and TODOs, or to discover and propose confirmable LCR project, work, agent-task, Git, and app controls."
 ---
 
 # Embedded Runtime Skill
@@ -85,6 +85,18 @@ Use its runtime tools for local app/server/watch processes:
 - Set ` + "`create_new`" + ` true only when the user needs another concurrent copy of the same command/cwd.
 - Set ` + "`replace_existing`" + ` true only when a fresh managed instance is needed.
 - Call ` + "`stop_process`" + ` only when the user asks to stop a managed runtime or when cleaning up a temporary process you started.
+
+## Progressive LCR control discovery
+
+For an LCR action beyond the direct runtime and repository-scoped TODO tools:
+
+1. Call ` + "`list_control_capabilities`" + `, optionally with one exact domain.
+2. Select one capability and call ` + "`describe_control_capability`" + ` to load its exact schema and confirmation policy.
+3. Call ` + "`propose_control_operation`" + ` with arguments matching that schema. Supply a stable ` + "`request_id`" + ` for exact retries.
+4. A successful proposal does not mean the action ran. It is waiting for explicit operator confirmation in Little Control Room. Stop the turn, tell the user what needs confirmation, and do not poll.
+5. On a later user turn, call ` + "`get_control_operation`" + ` with the returned operation id to read the confirmed result.
+
+Never claim that a proposed action completed until ` + "`get_control_operation`" + ` reports a terminal result. Do not bypass this confirmation path with shell commands or direct database edits.
 `
 
 const shadowRuntimeBrowserAttentionMarkdown = `

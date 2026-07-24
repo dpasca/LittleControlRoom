@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/buildinfo"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
+	"lcroom/internal/control"
 	"lcroom/internal/events"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
@@ -1332,7 +1333,44 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
+		if control.IsExternalOperationID(msg.Invocation.RequestID) && !msg.OperationRecorded {
+			return m, m.recordExternalControlConfirmationCmd(msg)
+		}
 		return m.executeBossControlInvocation(msg)
+	}
+	if msg, ok := msg.(bossui.ControlInvocationCanceledMsg); ok {
+		if control.IsExternalOperationID(msg.Invocation.RequestID) {
+			return m, m.recordExternalControlCancellationCmd(msg)
+		}
+		return m, nil
+	}
+	if msg, ok := msg.(bossui.ControlInvocationResultMsg); ok &&
+		control.IsExternalOperationID(msg.Invocation.RequestID) &&
+		!msg.OperationRecorded {
+		return m, m.recordExternalControlResultCmd(msg)
+	}
+	if msg, ok := msg.(externalControlConfirmationRecordedMsg); ok {
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Agent control confirmation failed", msg.err, "")
+			m.status = "Agent control confirmation failed: " + msg.err.Error()
+			return m, nil
+		}
+		return m, func() tea.Msg { return msg.confirmed }
+	}
+	if msg, ok := msg.(externalControlResultRecordedMsg); ok {
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Agent control result audit failed", msg.err, "")
+		}
+		return m, func() tea.Msg { return msg.result }
+	}
+	if msg, ok := msg.(externalControlCancellationRecordedMsg); ok {
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Agent control cancellation audit failed", msg.err, "")
+		}
+		return m, nil
+	}
+	if msg, ok := msg.(externalControlProposalLoadedMsg); ok {
+		return m.applyExternalControlProposalLoaded(msg)
 	}
 	if msg, ok := msg.(bossTrackedTodoLoadedMsg); ok {
 		return m.applyBossTrackedTodoLoaded(msg)
@@ -2787,6 +2825,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.helpChatModel.RefreshCmd())
 		}
 		switch msg.Type {
+		case events.ControlProposed:
+			operationID := strings.TrimSpace(msg.Payload["operation_id"])
+			if operationID == "" {
+				m.appendBackgroundErrorLogEntry("Agent control proposal failed", errors.New("operation id missing"), msg.ProjectPath)
+				return m, batchCmds(cmds...)
+			}
+			cmds = append(cmds, m.loadExternalControlProposalCmd(operationID))
+			return m, batchCmds(cmds...)
 		case events.ClassificationUpdated:
 			if msg.Payload["status"] == "completed" {
 				m.markAssessmentFlash(msg.ProjectPath, msg.At)

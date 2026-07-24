@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/control"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/store"
 	"lcroom/internal/todocapture"
 )
 
@@ -46,8 +49,87 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	if !strings.Contains(string(responses[1].Result), `"start_process"`) ||
 		!strings.Contains(string(responses[1].Result), `"list_processes"`) ||
 		!strings.Contains(string(responses[1].Result), `"stop_process"`) ||
-		!strings.Contains(string(responses[1].Result), `"request_browser_attention"`) {
+		!strings.Contains(string(responses[1].Result), `"request_browser_attention"`) ||
+		!strings.Contains(string(responses[1].Result), `"list_control_capabilities"`) ||
+		!strings.Contains(string(responses[1].Result), `"describe_control_capability"`) ||
+		!strings.Contains(string(responses[1].Result), `"propose_control_operation"`) ||
+		!strings.Contains(string(responses[1].Result), `"get_control_operation"`) {
 		t.Fatalf("tools/list result = %s, want runtime process tools", responses[1].Result)
+	}
+	if strings.Contains(string(responses[1].Result), string(control.CapabilityProjectCreateAndStartEngineer)) {
+		t.Fatalf("tools/list eagerly exposes capability names instead of deferring them: %s", responses[1].Result)
+	}
+}
+
+func TestRuntimeMCPProgressiveControlProposal(t *testing.T) {
+	projectPath := t.TempDir()
+	st, err := store.Open(filepath.Join(t.TempDir(), "control.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server, err := New(Options{
+		ProjectPath:  projectPath,
+		Provider:     "codex",
+		SessionKey:   "session-1",
+		ControlScope: control.AuthorityScopePortfolio,
+		Store:        st,
+		Manager:      projectrun.NewManager(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.manager.CloseAll()
+
+	list := callRuntimeToolForMap(t, server, "list_control_capabilities", `{"domain":"project"}`)
+	if !strings.Contains(mustJSON(t, list), string(control.CapabilityProjectCreateAndStartEngineer)) {
+		t.Fatalf("project capabilities = %#v, want repository creation", list)
+	}
+	describe := callRuntimeToolForMap(t, server, "describe_control_capability", `{"name":"project.create_and_start_engineer"}`)
+	if !strings.Contains(mustJSON(t, describe), `"input_schema"`) {
+		t.Fatalf("capability description = %#v, want exact schema", describe)
+	}
+	parent := t.TempDir()
+	proposalArgs := fmt.Sprintf(`{
+		"capability":"project.create_and_start_engineer",
+		"request_id":"create-demo",
+		"arguments":{
+			"parent_path":%q,
+			"project_name":"demo",
+			"todo_text":"Create the initial project",
+			"prompt":"Create the initial project",
+			"provider":"auto",
+			"reveal":false
+		}
+	}`, parent)
+	proposed := callRuntimeToolForMap(t, server, "propose_control_operation", proposalArgs)
+	operationMap, ok := proposed["operation"].(map[string]any)
+	if !ok {
+		t.Fatalf("proposal = %#v, want operation", proposed)
+	}
+	operationID, _ := operationMap["id"].(string)
+	if !control.IsExternalOperationID(operationID) {
+		t.Fatalf("operation id = %q", operationID)
+	}
+	stored, err := st.GetControlOperation(context.Background(), operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Capability != control.CapabilityProjectCreateAndStartEngineer || stored.Status != control.OperationProposed {
+		t.Fatalf("stored operation = %#v", stored)
+	}
+	replayed := callRuntimeToolForMap(t, server, "propose_control_operation", proposalArgs)
+	replayedMap, _ := replayed["operation"].(map[string]any)
+	if replayedMap["id"] != operationID || replayed["idempotent_replay"] != true {
+		t.Fatalf("idempotent replay = %#v, want operation %q", replayed, operationID)
+	}
+	var conflicting proposeControlOperationArgs
+	if err := json.Unmarshal([]byte(proposalArgs), &conflicting); err != nil {
+		t.Fatal(err)
+	}
+	conflicting.Arguments = json.RawMessage(strings.Replace(string(conflicting.Arguments), "Create the initial project", "Create a different project", 1))
+	if report, isErr := server.proposeControlOperation(context.Background(), conflicting); !isErr || !strings.Contains(fmt.Sprint(report["error"]), "already bound") {
+		t.Fatalf("conflicting idempotency retry = %#v, error=%t", report, isErr)
 	}
 }
 
@@ -333,8 +415,11 @@ func TestRuntimeMCPTodoToolsFollowCaptureModeAndHideScope(t *testing.T) {
 			if got := strings.Contains(tools, `"list_project_todos"`); got != tc.wantTools {
 				t.Fatalf("TODO tool visibility = %v, want %v: %s", got, tc.wantTools, tools)
 			}
-			if got := strings.Contains(initialize, `"instructions"`); got != tc.wantTools {
-				t.Fatalf("initialize instructions visibility = %v, want %v: %s", got, tc.wantTools, initialize)
+			if !strings.Contains(initialize, `"instructions"`) || !strings.Contains(initialize, "list_control_capabilities") {
+				t.Fatalf("initialize result is missing progressive control instructions: %s", initialize)
+			}
+			if got := strings.Contains(initialize, "list_project_todos"); got != tc.wantTools {
+				t.Fatalf("TODO instructions visibility = %v, want %v: %s", got, tc.wantTools, initialize)
 			}
 			if strings.Contains(tools, `"project_path"`) {
 				t.Fatalf("TODO schemas expose model-controlled project_path: %s", tools)
@@ -488,6 +573,35 @@ func decodeToolJSON(t *testing.T, raw json.RawMessage) map[string]any {
 		t.Fatalf("unmarshal tool text: %v\n%s", err, result.Content[0].Text)
 	}
 	return payload
+}
+
+func callRuntimeToolForMap(t *testing.T, server *Server, name, arguments string) map[string]any {
+	t.Helper()
+	params := fmt.Sprintf(`{"name":%q,"arguments":%s}`, name, arguments)
+	result, err := server.handleToolCall(context.Background(), json.RawMessage(params))
+	if err != nil {
+		t.Fatalf("%s call failed: %v", name, err)
+	}
+	if len(result.Content) != 1 {
+		t.Fatalf("%s content = %#v", name, result.Content)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode %s result: %v\n%s", name, err, result.Content[0].Text)
+	}
+	if result.IsError {
+		t.Fatalf("%s returned error: %#v", name, payload)
+	}
+	return payload
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 type testRPCResponse struct {

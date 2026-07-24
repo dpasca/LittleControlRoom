@@ -47,6 +47,100 @@ func CapabilityNameStrings(includeEmpty bool) []string {
 	return stringValues(includeEmpty, CapabilityNameValues()...)
 }
 
+type CapabilityDomain string
+
+const (
+	CapabilityDomainEngineer CapabilityDomain = "engineer"
+	CapabilityDomainTask     CapabilityDomain = "agent_task"
+	CapabilityDomainProject  CapabilityDomain = "project"
+	CapabilityDomainTodo     CapabilityDomain = "todo"
+	CapabilityDomainSettings CapabilityDomain = "settings"
+	CapabilityDomainGit      CapabilityDomain = "git"
+)
+
+func CapabilityDomainValues() []CapabilityDomain {
+	return []CapabilityDomain{
+		CapabilityDomainEngineer,
+		CapabilityDomainTask,
+		CapabilityDomainProject,
+		CapabilityDomainTodo,
+		CapabilityDomainSettings,
+		CapabilityDomainGit,
+	}
+}
+
+func CapabilityDomainStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, CapabilityDomainValues()...)
+}
+
+func NormalizeCapabilityDomain(value string) CapabilityDomain {
+	switch CapabilityDomain(strings.ToLower(strings.TrimSpace(value))) {
+	case CapabilityDomainEngineer:
+		return CapabilityDomainEngineer
+	case CapabilityDomainTask:
+		return CapabilityDomainTask
+	case CapabilityDomainProject:
+		return CapabilityDomainProject
+	case CapabilityDomainTodo:
+		return CapabilityDomainTodo
+	case CapabilityDomainSettings:
+		return CapabilityDomainSettings
+	case CapabilityDomainGit:
+		return CapabilityDomainGit
+	default:
+		return ""
+	}
+}
+
+type AuthorityScope string
+
+const (
+	AuthorityScopeProject   AuthorityScope = "project"
+	AuthorityScopePortfolio AuthorityScope = "portfolio"
+	AuthorityScopeHost      AuthorityScope = "host"
+)
+
+func AuthorityScopeValues() []AuthorityScope {
+	return []AuthorityScope{
+		AuthorityScopeProject,
+		AuthorityScopePortfolio,
+		AuthorityScopeHost,
+	}
+}
+
+func AuthorityScopeStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, AuthorityScopeValues()...)
+}
+
+func NormalizeAuthorityScope(value string) AuthorityScope {
+	switch AuthorityScope(strings.ToLower(strings.TrimSpace(value))) {
+	case AuthorityScopeProject:
+		return AuthorityScopeProject
+	case AuthorityScopePortfolio:
+		return AuthorityScopePortfolio
+	case AuthorityScopeHost:
+		return AuthorityScopeHost
+	default:
+		return ""
+	}
+}
+
+func AuthorityAllows(available, required AuthorityScope) bool {
+	rank := func(scope AuthorityScope) int {
+		switch NormalizeAuthorityScope(string(scope)) {
+		case AuthorityScopeProject:
+			return 1
+		case AuthorityScopePortfolio:
+			return 2
+		case AuthorityScopeHost:
+			return 3
+		default:
+			return 0
+		}
+	}
+	return rank(available) >= rank(required) && rank(required) > 0
+}
+
 type Provider string
 
 const (
@@ -208,12 +302,15 @@ type ProviderCapability struct {
 
 type Capability struct {
 	Name         CapabilityName       `json:"name"`
+	Domain       CapabilityDomain     `json:"domain"`
+	Scope        AuthorityScope       `json:"scope"`
 	Description  string               `json:"description"`
 	InputSchema  map[string]any       `json:"input_schema,omitempty"`
 	OutputSchema map[string]any       `json:"output_schema,omitempty"`
 	Risk         RiskLevel            `json:"risk"`
 	Confirmation ConfirmationPolicy   `json:"confirmation"`
 	RequiresHost bool                 `json:"requires_host"`
+	Async        bool                 `json:"async"`
 	HostEffects  []string             `json:"host_effects,omitempty"`
 	Providers    []ProviderCapability `json:"providers,omitempty"`
 }
@@ -314,17 +411,23 @@ func stringValues[T ~string](includeEmpty bool, values ...T) []string {
 }
 
 type Operation struct {
-	ID             string          `json:"id"`
-	Capability     CapabilityName  `json:"capability"`
-	Status         OperationStatus `json:"status"`
-	Invocation     Invocation      `json:"invocation"`
-	Resources      []ResourceRef   `json:"resources,omitempty"`
-	RequestedBy    string          `json:"requested_by,omitempty"`
-	Confirmed      bool            `json:"confirmed"`
-	ConfirmationBy string          `json:"confirmation_by,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
-	StartedAt      time.Time       `json:"started_at,omitempty"`
-	CompletedAt    time.Time       `json:"completed_at,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	Error          string          `json:"error,omitempty"`
+	ID              string          `json:"id"`
+	ClientRequestID string          `json:"client_request_id,omitempty"`
+	Capability      CapabilityName  `json:"capability"`
+	Status          OperationStatus `json:"status"`
+	Invocation      Invocation      `json:"invocation"`
+	Resources       []ResourceRef   `json:"resources,omitempty"`
+	Source          string          `json:"source,omitempty"`
+	Provider        string          `json:"provider,omitempty"`
+	SessionKey      string          `json:"session_key,omitempty"`
+	ProjectPath     string          `json:"project_path,omitempty"`
+	RequestedBy     string          `json:"requested_by,omitempty"`
+	Confirmed       bool            `json:"confirmed"`
+	ConfirmationBy  string          `json:"confirmation_by,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	StartedAt       time.Time       `json:"started_at,omitempty"`
+	CompletedAt     time.Time       `json:"completed_at,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	Error           string          `json:"error,omitempty"`
 }

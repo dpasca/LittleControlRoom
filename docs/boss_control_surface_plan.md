@@ -1,6 +1,6 @@
 # Boss Control Surface Plan
 
-> Historical design note: the standalone Boss Chat UI has been retired. Its control capabilities now live in the centered Chat overlay; the sidebar, bottom log, and Flow UI described here are not current product surfaces.
+> Historical design note: the standalone Boss Chat UI has been retired. Its control capabilities now live in the centered Chat overlay; the sidebar, bottom log, and Flow UI described here are not current product surfaces. The transport direction proposed here is now implemented by the [Progressive Agent Control Surface](agent_control_surface.md).
 
 This document defines the first planning pass for a generalized control surface that Boss Chat can use to act on Little Control Room without becoming tightly coupled to every TUI feature.
 

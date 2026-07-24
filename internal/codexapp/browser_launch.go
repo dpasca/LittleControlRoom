@@ -54,13 +54,16 @@ func ensureManagedPlaywrightSessionKey(req *LaunchRequest) {
 }
 
 func ensureTodoCaptureSessionKey(req *LaunchRequest) {
-	if req == nil || !req.TodoCaptureMode.Enabled() || strings.TrimSpace(req.TodoCaptureSessionKey) != "" {
+	if req == nil || strings.TrimSpace(req.TodoCaptureSessionKey) != "" {
 		return
 	}
 	if resumeID := strings.TrimSpace(req.ResumeID); resumeID != "" && !req.ForceNew {
 		req.TodoCaptureSessionKey = resumeID
 		return
 	}
+	// The key also isolates progressive control operations and their idempotency
+	// records, so every runtime MCP session needs one even when TODO capture is
+	// disabled.
 	req.TodoCaptureSessionKey = browserctl.NewManagedSessionKey()
 }
 
@@ -175,6 +178,7 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 		"runtime-mcp",
 		"--provider", string(provider),
 		"--project-path", projectPath,
+		"--control-scope", "portfolio",
 	}
 	if dataDir := strings.TrimSpace(req.AppDataDir); dataDir != "" {
 		args = append(args, "--data-dir", dataDir)

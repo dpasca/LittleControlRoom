@@ -1065,6 +1065,7 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	go svc.StartSessionClassifier(runCtx)
 	go svc.StartTodoWorktreeSuggester(runCtx)
 	go svc.StartTodoCaptureRelay(runCtx)
+	go svc.StartControlOperationRelay(runCtx)
 	go svc.StartCommitTodoChecker(runCtx)
 	svc.StartBackgroundDiscovery(runCtx)
 

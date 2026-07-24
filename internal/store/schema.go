@@ -316,6 +316,30 @@ func (s *Store) initSchema(ctx context.Context) error {
 			UNIQUE(run_id, position)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_boss_goal_trace_entries_run_position ON boss_goal_trace_entries(run_id, position);`,
+		`CREATE TABLE IF NOT EXISTS control_operations (
+			id TEXT PRIMARY KEY,
+			client_request_id TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT '',
+			session_key TEXT NOT NULL DEFAULT '',
+			project_path TEXT NOT NULL DEFAULT '',
+			capability TEXT NOT NULL,
+			args_json TEXT NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL,
+			requested_by TEXT NOT NULL DEFAULT '',
+			confirmed INTEGER NOT NULL DEFAULT 0,
+			confirmation_by TEXT NOT NULL DEFAULT '',
+			result_json TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_control_operations_status_created ON control_operations(status, created_at, id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_control_operations_client_request
+			ON control_operations(source, session_key, client_request_id)
+			WHERE client_request_id <> '';`,
 		`CREATE TABLE IF NOT EXISTS agent_task_resources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id TEXT NOT NULL,

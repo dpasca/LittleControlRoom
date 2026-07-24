@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/control"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
@@ -38,10 +39,12 @@ type Options struct {
 	BrowserSessionKey string
 	DBPath            string
 	TodoCaptureMode   todocapture.CaptureMode
+	ControlScope      control.AuthorityScope
 	Input             io.Reader
 	Output            io.Writer
 	Manager           *projectrun.Manager
 	TodoHandler       todocapture.Handler
+	Store             *store.Store
 }
 
 type Server struct {
@@ -56,7 +59,9 @@ type Server struct {
 	ownManager        bool
 	todoMode          todocapture.CaptureMode
 	todoHandler       todocapture.Handler
-	todoStore         *store.Store
+	controlScope      control.AuthorityScope
+	stateStore        *store.Store
+	ownStore          bool
 	protocolVersion   string
 }
 
@@ -89,18 +94,26 @@ func New(opts Options) (*Server, error) {
 	}
 	todoMode := todocapture.NormalizeCaptureMode(opts.TodoCaptureMode)
 	todoHandler := opts.TodoHandler
-	var todoStore *store.Store
+	stateStore := opts.Store
+	ownStore := false
+	dbPath := strings.TrimSpace(opts.DBPath)
+	if stateStore == nil && dbPath != "" {
+		var err error
+		stateStore, err = store.Open(dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("open runtime MCP store: %w", err)
+		}
+		ownStore = true
+	}
 	if todoMode.Enabled() && todoHandler == nil {
-		dbPath := strings.TrimSpace(opts.DBPath)
-		if dbPath == "" {
+		if stateStore == nil {
 			return nil, errors.New("DB path is required when project TODO capture is enabled")
 		}
-		var err error
-		todoStore, err = store.Open(dbPath)
-		if err != nil {
-			return nil, fmt.Errorf("open TODO capture store: %w", err)
-		}
-		todoHandler = todocapture.NewExternalService(todoStore, todoMode)
+		todoHandler = todocapture.NewExternalService(stateStore, todoMode)
+	}
+	controlScope := control.NormalizeAuthorityScope(string(opts.ControlScope))
+	if controlScope == "" {
+		controlScope = control.AuthorityScopeProject
 	}
 	return &Server{
 		projectPath:       projectPath,
@@ -114,7 +127,9 @@ func New(opts Options) (*Server, error) {
 		ownManager:        ownManager,
 		todoMode:          todoMode,
 		todoHandler:       todoHandler,
-		todoStore:         todoStore,
+		controlScope:      controlScope,
+		stateStore:        stateStore,
+		ownStore:          ownStore,
 		protocolVersion:   defaultProtocolVersion,
 	}, nil
 }
@@ -126,8 +141,8 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.ownManager {
 		defer func() { _ = s.manager.CloseAll() }()
 	}
-	if s.todoStore != nil {
-		defer s.todoStore.Close()
+	if s.ownStore && s.stateStore != nil {
+		defer s.stateStore.Close()
 	}
 
 	decoder := json.NewDecoder(s.input)
@@ -170,9 +185,11 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 				"version": "0.1.0",
 			},
 		}
+		instructions := "Little Control Room exposes project runtime tools plus a progressively discoverable control catalog. Use list_control_capabilities, then describe_control_capability before propose_control_operation. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
 		if s.todoMode.Enabled() {
-			result["instructions"] = todocapture.AgentInstructions(s.todoMode)
+			instructions += "\n\n" + todocapture.AgentInstructions(s.todoMode)
 		}
+		result["instructions"] = instructions
 		return rpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -212,6 +229,34 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		args = json.RawMessage(`{}`)
 	}
 	switch name {
+	case "list_control_capabilities":
+		var req listControlCapabilitiesArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode list_control_capabilities args: %w", err)
+		}
+		report, isErr := s.listControlCapabilities(req)
+		return s.jsonToolResult(report, isErr)
+	case "describe_control_capability":
+		var req describeControlCapabilityArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode describe_control_capability args: %w", err)
+		}
+		report, isErr := s.describeControlCapability(req)
+		return s.jsonToolResult(report, isErr)
+	case "propose_control_operation":
+		var req proposeControlOperationArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode propose_control_operation args: %w", err)
+		}
+		report, isErr := s.proposeControlOperation(ctx, req)
+		return s.jsonToolResult(report, isErr)
+	case "get_control_operation":
+		var req getControlOperationArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode get_control_operation args: %w", err)
+		}
+		report, isErr := s.getControlOperation(ctx, req)
+		return s.jsonToolResult(report, isErr)
 	case "list_processes":
 		var req listProcessesArgs
 		if err := json.Unmarshal(args, &req); err != nil {
@@ -279,6 +324,224 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		return s.jsonToolResult(response.Add, false)
 	default:
 		return toolCallResult{}, fmt.Errorf("unknown runtime tool: %s", name)
+	}
+}
+
+func (s *Server) listControlCapabilities(req listControlCapabilitiesArgs) (map[string]any, bool) {
+	domain := control.NormalizeCapabilityDomain(req.Domain)
+	if strings.TrimSpace(req.Domain) != "" && domain == "" {
+		return map[string]any{
+			"success": false,
+			"error":   "unsupported control capability domain",
+			"domains": control.DomainSummaries(),
+		}, true
+	}
+	return map[string]any{
+		"success":               true,
+		"authority_scope":       s.controlScope,
+		"proposals_available":   s.stateStore != nil,
+		"domains":               control.DomainSummaries(),
+		"capabilities":          control.CapabilitySummaries(domain, s.controlScope),
+		"next_step":             "Call describe_control_capability with one exact capability name before proposing it.",
+		"confirmation_contract": "Every available control capability is proposed first and executed only after explicit operator confirmation in Little Control Room.",
+	}, false
+}
+
+func (s *Server) describeControlCapability(req describeControlCapabilityArgs) (map[string]any, bool) {
+	name := control.CapabilityName(strings.TrimSpace(req.Name))
+	capability, ok := control.CapabilityByName(name)
+	if !ok {
+		return map[string]any{
+			"success": false,
+			"error":   "unknown control capability",
+		}, true
+	}
+	if !control.AuthorityAllows(s.controlScope, capability.Scope) {
+		return map[string]any{
+			"success":         false,
+			"error":           "control capability is outside this embedded session's authority",
+			"capability":      capability.Name,
+			"required_scope":  capability.Scope,
+			"available_scope": s.controlScope,
+		}, true
+	}
+	return map[string]any{
+		"success":    true,
+		"capability": capability,
+		"proposal": map[string]any{
+			"tool": "propose_control_operation",
+			"arguments": map[string]any{
+				"capability": capability.Name,
+				"arguments":  "Use an object matching capability.input_schema.",
+				"request_id": "Optional stable idempotency key for an exact retry.",
+			},
+		},
+	}, false
+}
+
+func (s *Server) proposeControlOperation(ctx context.Context, req proposeControlOperationArgs) (map[string]any, bool) {
+	if s.stateStore == nil {
+		return map[string]any{
+			"success": false,
+			"error":   "control proposals are unavailable because this MCP server has no LCR state store",
+		}, true
+	}
+	capability, ok := control.CapabilityByName(control.CapabilityName(strings.TrimSpace(req.Capability)))
+	if !ok {
+		return map[string]any{
+			"success": false,
+			"error":   "unknown control capability; call list_control_capabilities first",
+		}, true
+	}
+	if !control.AuthorityAllows(s.controlScope, capability.Scope) {
+		return map[string]any{
+			"success":         false,
+			"error":           "control capability is outside this embedded session's authority",
+			"capability":      capability.Name,
+			"required_scope":  capability.Scope,
+			"available_scope": s.controlScope,
+		}, true
+	}
+	if strings.TrimSpace(req.RequestID) != "" {
+		existing, found, err := s.stateStore.FindControlOperationByClientRequest(
+			ctx,
+			serverName,
+			s.sessionKey,
+			req.RequestID,
+		)
+		if err != nil {
+			return map[string]any{"success": false, "error": err.Error()}, true
+		}
+		if found {
+			retryInvocation, validationErr := controlProposalInvocation(existing.ID, capability.Name, req.Arguments)
+			if validationErr != nil {
+				return map[string]any{
+					"success": false,
+					"error":   validationErr.Error(),
+					"hint":    "Call describe_control_capability and match its input_schema exactly.",
+				}, true
+			}
+			if existing.Capability != retryInvocation.Capability || !bytes.Equal(existing.Invocation.Args, retryInvocation.Args) {
+				return map[string]any{
+					"success": false,
+					"error":   "request_id is already bound to a different control proposal in this embedded session",
+				}, true
+			}
+			return controlOperationReport(existing, true), false
+		}
+	}
+	operationID, err := control.NewOperationID()
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}, true
+	}
+	invocation, err := controlProposalInvocation(operationID, capability.Name, req.Arguments)
+	if err != nil {
+		return map[string]any{
+			"success": false,
+			"error":   err.Error(),
+			"hint":    "Call describe_control_capability and match its input_schema exactly.",
+		}, true
+	}
+	operation, err := s.stateStore.CreateControlOperation(ctx, control.Operation{
+		ID:              operationID,
+		ClientRequestID: strings.TrimSpace(req.RequestID),
+		Capability:      capability.Name,
+		Status:          control.OperationProposed,
+		Invocation:      invocation,
+		Source:          serverName,
+		Provider:        s.provider,
+		SessionKey:      s.sessionKey,
+		ProjectPath:     s.projectPath,
+		RequestedBy:     firstNonEmpty(s.provider, "embedded_agent"),
+	})
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}, true
+	}
+	return controlOperationReport(operation, false), false
+}
+
+func controlProposalInvocation(operationID string, capability control.CapabilityName, arguments json.RawMessage) (control.Invocation, error) {
+	if len(strings.TrimSpace(string(arguments))) == 0 {
+		arguments = json.RawMessage(`{}`)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(arguments, &payload); err != nil {
+		return control.Invocation{}, errors.New("arguments must be a JSON object matching the described input schema")
+	}
+	if payload == nil {
+		payload = map[string]json.RawMessage{}
+	}
+	requestID, err := json.Marshal(operationID)
+	if err != nil {
+		return control.Invocation{}, err
+	}
+	payload["request_id"] = requestID
+	normalizedArguments, err := json.Marshal(payload)
+	if err != nil {
+		return control.Invocation{}, err
+	}
+	invocation, err := control.ValidateInvocation(control.Invocation{
+		RequestID:  operationID,
+		Capability: capability,
+		Args:       normalizedArguments,
+	})
+	if err != nil {
+		return control.Invocation{}, err
+	}
+	return invocation, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *Server) getControlOperation(ctx context.Context, req getControlOperationArgs) (map[string]any, bool) {
+	if s.stateStore == nil {
+		return map[string]any{
+			"success": false,
+			"error":   "control operations are unavailable because this MCP server has no LCR state store",
+		}, true
+	}
+	operation, err := s.stateStore.GetControlOperation(ctx, req.OperationID)
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}, true
+	}
+	if operation.Source != serverName || operation.SessionKey != s.sessionKey {
+		return map[string]any{
+			"success": false,
+			"error":   "control operation belongs to a different embedded session",
+		}, true
+	}
+	return controlOperationReport(operation, false), false
+}
+
+func controlOperationReport(operation control.Operation, idempotentReplay bool) map[string]any {
+	message := "The proposal was queued for Little Control Room. Stop this turn and ask the user to confirm it in LCR. On a later user turn, call get_control_operation."
+	switch operation.Status {
+	case control.OperationWaitingForConfirmation:
+		message = "The proposal is waiting for explicit operator confirmation in Little Control Room. Stop this turn and wait for a new user message."
+	case control.OperationRunning:
+		message = "The operator confirmed the proposal and Little Control Room is executing it."
+	case control.OperationCompleted:
+		message = "Little Control Room completed the confirmed operation."
+	case control.OperationFailed:
+		message = "Little Control Room could not complete the operation."
+	case control.OperationCanceled:
+		message = "The operator canceled the proposal."
+	}
+	return map[string]any{
+		"success":                true,
+		"operation":              operation,
+		"idempotent_replay":      idempotentReplay,
+		"message":                message,
+		"requires_new_user_turn": operation.Status == control.OperationProposed || operation.Status == control.OperationWaitingForConfirmation,
+		"operator_confirmation":  operation.Status == control.OperationWaitingForConfirmation,
+		"terminal":               operation.Status.Terminal(),
 	}
 }
 
@@ -590,8 +853,9 @@ func observedListenerSummary(projectPath string, instance procinspect.ProjectIns
 }
 
 func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpTool {
-	tools := []mcpTool{
-		{
+	tools := controlCatalogTools(structuredTools)
+	tools = append(tools,
+		mcpTool{
 			Name:        "list_processes",
 			Description: "List Little Control Room managed runtime processes for this project and observed project-local TCP listeners. Call this before starting a local server/watch process when ports may already be active.",
 			InputSchema: map[string]any{
@@ -602,7 +866,7 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 				},
 			},
 		},
-		{
+		mcpTool{
 			Name:        "start_process",
 			Description: "Start a long-running project runtime through Little Control Room. By default this reuses an existing matching command/cwd process instead of launching a duplicate. Set create_new=true only for an intentional parallel copy; set replace_existing=true only when a fresh instance is needed.",
 			InputSchema: map[string]any{
@@ -618,7 +882,7 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 				"required": []string{"command"},
 			},
 		},
-		{
+		mcpTool{
 			Name:        "stop_process",
 			Description: "Stop a Little Control Room managed runtime process for this project. Use process_id from list_processes when more than one managed process is known.",
 			InputSchema: map[string]any{
@@ -629,7 +893,7 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 				},
 			},
 		},
-		{
+		mcpTool{
 			Name:        "request_browser_attention",
 			Description: "Notify Little Control Room that the already-open managed Playwright page for this same embedded session needs human interaction, such as login, MFA, consent, or CAPTCHA. Call this only after navigating to the exact page with Playwright. Provide a short user-facing instruction. On success, stop the current turn and do not call Playwright again until the user sends a new message. Do not open a separate browser context.",
 			InputSchema: map[string]any{
@@ -645,7 +909,7 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 				"required": []string{"message"},
 			},
 		},
-	}
+	)
 	if !todoMode.Enabled() {
 		return tools
 	}
@@ -707,6 +971,117 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 		}
 	}
 	return append(tools, listTool, addTool)
+}
+
+func controlCatalogTools(structuredTools bool) []mcpTool {
+	tools := []mcpTool{
+		{
+			Name:        "list_control_capabilities",
+			Description: "List the Little Control Room control domains and compact capability summaries available to this embedded session. Optionally filter by one exact domain. This intentionally omits detailed input schemas; call describe_control_capability for one selected capability.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"domain": map[string]any{
+						"type":        "string",
+						"enum":        control.CapabilityDomainStrings(false),
+						"description": "Optional exact domain filter. Omit to receive every compact summary allowed by this session's authority.",
+					},
+				},
+			},
+		},
+		{
+			Name:        "describe_control_capability",
+			Description: "Load the exact input/output schemas, risk, scope, confirmation policy, and host effects for one Little Control Room capability. Call this after list_control_capabilities and before propose_control_operation.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Exact capability name returned by list_control_capabilities.",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "propose_control_operation",
+			Description: "Propose one previously described Little Control Room capability. This never directly executes the action: LCR validates the exact arguments, records an idempotent operation, and asks the operator for confirmation in the TUI. After a successful proposal, stop the turn and wait for a new user message.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"capability": map[string]any{
+						"type":        "string",
+						"description": "Exact capability name previously loaded with describe_control_capability.",
+					},
+					"arguments": map[string]any{
+						"type":        "object",
+						"description": "Arguments matching the selected capability's exact input_schema. LCR supplies the internal operation request_id.",
+					},
+					"request_id": map[string]any{
+						"type":        "string",
+						"minLength":   1,
+						"description": "Optional caller-stable idempotency key. Reusing it in this embedded session returns the original operation.",
+					},
+				},
+				"required": []string{"capability", "arguments"},
+			},
+		},
+		{
+			Name:        "get_control_operation",
+			Description: "Read the current state and result of a control operation proposed by this same embedded session. Call on a later user turn after the operator had an opportunity to confirm or cancel it.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"operation_id": map[string]any{
+						"type":        "string",
+						"minLength":   1,
+						"description": "Operation id returned by propose_control_operation.",
+					},
+				},
+				"required": []string{"operation_id"},
+			},
+		},
+	}
+	if !structuredTools {
+		return tools
+	}
+	for i := range tools {
+		tools[i].OutputSchema = genericObjectOutputSchema()
+		tools[i].Annotations = &mcpToolAnnotations{
+			Title:           controlToolTitle(tools[i].Name),
+			ReadOnlyHint:    tools[i].Name != "propose_control_operation",
+			DestructiveHint: false,
+			IdempotentHint:  tools[i].Name != "propose_control_operation",
+			OpenWorldHint:   false,
+		}
+	}
+	return tools
+}
+
+func controlToolTitle(name string) string {
+	switch name {
+	case "list_control_capabilities":
+		return "List LCR control capabilities"
+	case "describe_control_capability":
+		return "Describe LCR control capability"
+	case "propose_control_operation":
+		return "Propose LCR control operation"
+	case "get_control_operation":
+		return "Get LCR control operation"
+	default:
+		return name
+	}
+}
+
+func genericObjectOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+	}
 }
 
 func todoListOutputSchema() map[string]any {
@@ -955,6 +1330,24 @@ type toolCallParams struct {
 type listProcessesArgs struct {
 	IncludeObserved    bool `json:"include_observed"`
 	IncludeObservedSet bool
+}
+
+type listControlCapabilitiesArgs struct {
+	Domain string `json:"domain"`
+}
+
+type describeControlCapabilityArgs struct {
+	Name string `json:"name"`
+}
+
+type proposeControlOperationArgs struct {
+	Capability string          `json:"capability"`
+	Arguments  json.RawMessage `json:"arguments"`
+	RequestID  string          `json:"request_id"`
+}
+
+type getControlOperationArgs struct {
+	OperationID string `json:"operation_id"`
 }
 
 type addProjectTodoArgs struct {
