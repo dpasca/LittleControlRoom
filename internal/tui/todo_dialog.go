@@ -77,12 +77,13 @@ type todoDeleteConfirmState struct {
 }
 
 type todoLaunchDraftState struct {
-	projectPath    string
-	todoID         int64
-	provider       codexapp.Provider
-	openModelFirst bool
-	autoSubmit     bool
-	attachments    []codexapp.Attachment
+	sourceProjectPath string
+	projectPath       string
+	todoID            int64
+	provider          codexapp.Provider
+	openModelFirst    bool
+	autoSubmit        bool
+	attachments       []codexapp.Attachment
 }
 
 func normalizeTodoLaunchDraftProjectPath(projectPath string) string {
@@ -165,6 +166,11 @@ type todoModelPickerReturnState struct {
 	dialog             todoDialogState
 	copyDialog         todoCopyDialogState
 	prevVisibleProject string
+}
+
+type todoModelPickerLaunchState struct {
+	sourceProjectPath string
+	projectPath       string
 }
 
 type todoWorktreeEditorState struct {
@@ -626,7 +632,9 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
 		return nil
 	}
 	provider := codexapp.ProviderCodex
-	if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
+	if override, ok := m.embeddedLaunchProviderOverride(m.todoDialog.ProjectPath); ok {
+		provider = override
+	} else if project, ok := m.selectedProject(); ok && project.Path == m.todoDialog.ProjectPath {
 		provider = m.preferredEmbeddedProviderForProject(project)
 	}
 	m.todoCopyDialog = &todoCopyDialogState{
@@ -1346,18 +1354,19 @@ func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64,
 			}
 		}
 		return todoWorktreeLaunchMsg{
-			launchID:       launchID,
-			projectPath:    result.WorktreePath,
-			todoID:         todoID,
-			todoText:       todoText,
-			attachments:    attachments,
-			status:         todoWorktreePreparedStatus(len(result.PreparedPaths)),
-			prepProfile:    result.PrepProfile,
-			preparedPaths:  append([]string(nil), result.PreparedPaths...),
-			provider:       provider,
-			openModelFirst: openModelFirst,
-			perfOpID:       perfOpID,
-			perfDuration:   time.Since(startedAt),
+			launchID:          launchID,
+			sourceProjectPath: projectPath,
+			projectPath:       result.WorktreePath,
+			todoID:            todoID,
+			todoText:          todoText,
+			attachments:       attachments,
+			status:            todoWorktreePreparedStatus(len(result.PreparedPaths)),
+			prepProfile:       result.PrepProfile,
+			preparedPaths:     append([]string(nil), result.PreparedPaths...),
+			provider:          provider,
+			openModelFirst:    openModelFirst,
+			perfOpID:          perfOpID,
+			perfDuration:      time.Since(startedAt),
 		}
 	}
 }
@@ -1647,6 +1656,10 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 	} else {
 		provider = provider.Normalized()
 	}
+	sourceProjectPath := projectPath
+	if m.todoDialog != nil && strings.TrimSpace(m.todoDialog.ProjectPath) != "" {
+		sourceProjectPath = strings.TrimSpace(m.todoDialog.ProjectPath)
+	}
 	codexAttachments := codexAttachmentsFromTodo(attachments)
 	if len(codexAttachments) > 0 && !providerSupportsTodoAttachments(provider) {
 		m.status = todoAttachmentUnsupportedStatus(provider)
@@ -1711,8 +1724,16 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		return m, nil
 	}
 	m.rememberEmbeddedProvider(provider)
+	m.clearEmbeddedLaunchProviderOverride(sourceProjectPath)
 	m.restoreCodexDraft(project.Path, codexDraftFromTodo(todoText, attachments))
-	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst, attachments: codexAttachments})
+	m.storeTodoLaunchDraft(todoLaunchDraftState{
+		sourceProjectPath: sourceProjectPath,
+		projectPath:       project.Path,
+		todoID:            todoID,
+		provider:          provider,
+		openModelFirst:    openModelFirst,
+		attachments:       codexAttachments,
+	})
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoExistingWorktree = nil
@@ -1782,6 +1803,7 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	}
 	selectedPath := m.currentSelectedProjectPath()
 	launchID, launchCtx := m.beginTodoPendingLaunch(projectPath, projectName, item.ID, item.Text, provider)
+	m.clearEmbeddedLaunchProviderOverride(projectPath)
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoWorktreeEditor = nil

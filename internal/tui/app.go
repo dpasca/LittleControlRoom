@@ -112,6 +112,7 @@ type Model struct {
 	todoExistingWorktree      *todoExistingWorktreeDialogState
 	todoPendingLaunchDialog   *todoPendingLaunchDialogState
 	todoModelPickerReturn     *todoModelPickerReturnState
+	todoModelPickerLaunch     *todoModelPickerLaunchState
 	worktreeMergeConfirm      *worktreeMergeConfirmState
 	worktreePostMerge         *worktreePostMergeState
 	worktreeRemoveConfirm     *worktreeRemoveConfirmState
@@ -521,19 +522,20 @@ type projectRemoveActionMsg struct {
 }
 
 type todoWorktreeLaunchMsg struct {
-	launchID       int64
-	perfOpID       int64
-	perfDuration   time.Duration
-	projectPath    string
-	todoID         int64
-	todoText       string
-	attachments    []model.TodoAttachment
-	status         string
-	prepProfile    string
-	preparedPaths  []string
-	provider       codexapp.Provider
-	openModelFirst bool
-	err            error
+	launchID          int64
+	perfOpID          int64
+	perfDuration      time.Duration
+	sourceProjectPath string
+	projectPath       string
+	todoID            int64
+	todoText          string
+	attachments       []model.TodoAttachment
+	status            string
+	prepProfile       string
+	preparedPaths     []string
+	provider          codexapp.Provider
+	openModelFirst    bool
+	err               error
 }
 
 type worktreeActionMsg struct {
@@ -2520,12 +2522,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearCodexDraft(msg.projectPath)
 		}
 		m.storeTodoLaunchDraft(todoLaunchDraftState{
-			projectPath:    msg.projectPath,
-			todoID:         msg.todoID,
-			provider:       provider,
-			openModelFirst: msg.openModelFirst,
-			autoSubmit:     !msg.openModelFirst,
-			attachments:    codexAttachments,
+			sourceProjectPath: firstNonEmptyTrimmed(msg.sourceProjectPath, msg.projectPath),
+			projectPath:       msg.projectPath,
+			todoID:            msg.todoID,
+			provider:          provider,
+			openModelFirst:    msg.openModelFirst,
+			autoSubmit:        !msg.openModelFirst,
+			attachments:       codexAttachments,
 		})
 		req := codexapp.LaunchRequest{
 			Provider:                   provider,

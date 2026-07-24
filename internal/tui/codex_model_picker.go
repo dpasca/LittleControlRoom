@@ -444,7 +444,21 @@ func (m *Model) closeCodexModelPicker(status string) {
 
 func (m *Model) closeCodexModelPickerAndReturnToTodo(status string) {
 	m.closeCodexModelPicker(status)
+	m.defaultTodoProviderAfterCanceledModelPicker()
 	m.returnToTodoFromModelPicker()
+}
+
+func (m *Model) defaultTodoProviderAfterCanceledModelPicker() {
+	launch := m.todoModelPickerLaunch
+	m.todoModelPickerLaunch = nil
+	if launch == nil {
+		return
+	}
+	projectPath := firstNonEmptyTrimmed(launch.sourceProjectPath, launch.projectPath)
+	if projectPath == "" {
+		return
+	}
+	m.setEmbeddedLaunchProviderOverride(projectPath, codexapp.ProviderCodex)
 }
 
 func (m *Model) syncCodexModelPickerSelection() {
@@ -1017,6 +1031,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	if provider == codexapp.ProviderLCAgent && modelProvider != "" && !m.lcagentModelProviderReady(modelProvider) {
 		return m.openCodexLCAgentProviderSetup(modelOption, effort)
 	}
+	m.todoModelPickerLaunch = nil
 	perfOpID := m.beginAILatencyOp("Model apply", projectPath, strings.TrimSpace(provider.Label()+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
 	m.status = "Staging " + modelName + "..."

@@ -708,6 +708,135 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	}
 }
 
+func TestTodoDialogCanceledLCAgentModelPickerDefaultsNextLaunchToCodex(t *testing.T) {
+	item := model.TodoItem{
+		ID:          11,
+		ProjectPath: "/tmp/demo",
+		Text:        "Check model picker cancellation",
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "lca-model-canceled",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos:   []model.TodoItem{item},
+		},
+		selected: 0,
+		todoDialog: &todoDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+		},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath:    "/tmp/demo",
+			ProjectName:    "demo",
+			TodoID:         item.ID,
+			TodoText:       item.Text,
+			RunMode:        todoCopyModeHere,
+			Provider:       codexapp.ProviderLCAgent,
+			OpenModelFirst: true,
+		},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.activateTodoCopyDialogSelection()
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("starting the LCAgent TODO should return an open command")
+	}
+	opened, ok := cmd().(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("open command returned an unexpected message")
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.codexModelPicker == nil {
+		t.Fatalf("LCAgent TODO launch should open the model picker")
+	}
+
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if got.codexModelPicker != nil {
+		t.Fatalf("Escape should close the model picker")
+	}
+
+	got.todoDialog = &todoDialogState{
+		ProjectPath: "/tmp/demo",
+		ProjectName: "demo",
+	}
+	got.openTodoCopyDialog(item)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("TODO launcher should reopen")
+	}
+	if got.todoCopyDialog.Provider != codexapp.ProviderCodex {
+		t.Fatalf("provider after canceled LCAgent model picker = %q, want Codex", got.todoCopyDialog.Provider)
+	}
+}
+
+func TestTodoDialogCanceledWorktreeModelPickerDefaultsSourceLaunchToCodex(t *testing.T) {
+	item := model.TodoItem{
+		ID:          12,
+		ProjectPath: "/tmp/root",
+		Text:        "Check worktree model picker cancellation",
+	}
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/root",
+			Name:                "root",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "lcagent_jsonl",
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/root"},
+			Todos:   []model.TodoItem{item},
+		},
+		selected: 0,
+		todoDialog: &todoDialogState{
+			ProjectPath: "/tmp/root",
+			ProjectName: "root",
+		},
+		codexModelPicker: &codexModelPickerState{
+			Provider: codexapp.ProviderLCAgent,
+			Loading:  true,
+		},
+		todoModelPickerLaunch: &todoModelPickerLaunchState{
+			sourceProjectPath: "/tmp/root",
+			projectPath:       "/tmp/root--model-pick",
+		},
+	}
+
+	updated, _ := m.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	got.openTodoCopyDialog(item)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("TODO launcher should reopen")
+	}
+	if got.todoCopyDialog.Provider != codexapp.ProviderCodex {
+		t.Fatalf("source provider after canceled worktree model picker = %q, want Codex", got.todoCopyDialog.Provider)
+	}
+}
+
 func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediately(t *testing.T) {
 	now := time.Date(2026, time.April, 2, 17, 30, 0, 0, time.UTC)
 	session := &fakeCodexSession{

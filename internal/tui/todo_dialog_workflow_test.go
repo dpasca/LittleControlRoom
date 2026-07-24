@@ -791,6 +791,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if launchMsg.projectPath != expectedPath {
 		t.Fatalf("worktree launch path = %q, want %q", launchMsg.projectPath, expectedPath)
 	}
+	if launchMsg.sourceProjectPath != root {
+		t.Fatalf("worktree launch source path = %q, want %q", launchMsg.sourceProjectPath, root)
+	}
 
 	updated, cmd = got.Update(launchMsg)
 	got = updated.(Model)
@@ -812,6 +815,9 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	}
 	if !draft.autoSubmit {
 		t.Fatalf("todoLaunchDraftFor(%q) = %#v, want auto-submit enabled for background launch", expectedPath, draft)
+	}
+	if draft.sourceProjectPath != root {
+		t.Fatalf("TODO launch draft source path = %q, want %q", draft.sourceProjectPath, root)
 	}
 	if cmd == nil {
 		t.Fatalf("handling todoWorktreeLaunchMsg should return an open command")

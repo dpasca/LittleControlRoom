@@ -215,6 +215,10 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 				}
 				return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
 			}
+			m.todoModelPickerLaunch = &todoModelPickerLaunchState{
+				sourceProjectPath: firstNonEmptyTrimmed(draft.sourceProjectPath, draft.projectPath),
+				projectPath:       msg.projectPath,
+			}
 			m.openCodexModelPickerLoading()
 			m.status = "Pick a model, then send the TODO draft."
 			return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, m.openCodexModelPickerCmd())
@@ -356,6 +360,7 @@ func (m Model) applyCodexModelListMsg(msg codexModelListMsg) (tea.Model, tea.Cmd
 	if msg.err != nil {
 		m.codexModelPicker = nil
 		m.reportError("Embedded model picker failed", msg.err, msg.projectPath)
+		m.defaultTodoProviderAfterCanceledModelPicker()
 		m.returnToTodoFromModelPicker()
 		return m, nil
 	}
