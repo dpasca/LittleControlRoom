@@ -280,7 +280,14 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		"--effort", "high",
 		"--mcp-config", config,
 		"--append-system-prompt", prompt,
-		"--allowedTools", claudeRuntimeMCPListTODOsTool + "," + claudeRuntimeMCPAddTODOTool,
+		"--allowedTools", strings.Join([]string{
+			claudeRuntimeMCPListControlsTool,
+			claudeRuntimeMCPDescribeControlTool,
+			claudeRuntimeMCPProposeControlTool,
+			claudeRuntimeMCPGetControlTool,
+			claudeRuntimeMCPListTODOsTool,
+			claudeRuntimeMCPAddTODOTool,
+		}, ","),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
@@ -303,7 +310,16 @@ func TestClaudeTurnArgsOmitRuntimeMCPFlagsWithoutConfig(t *testing.T) {
 func TestClaudeTurnArgsKeepRuntimeMCPWithoutTODOPreapproval(t *testing.T) {
 	const config = `{"mcpServers":{"lcr_runtime":{"type":"stdio","command":"/tmp/lcroom"}}}`
 	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", config, "")
-	want := append(claudeTurnArgs("", "", "", "acceptEdits"), "--mcp-config", config)
+	want := append(
+		claudeTurnArgs("", "", "", "acceptEdits"),
+		"--mcp-config", config,
+		"--allowedTools", strings.Join([]string{
+			claudeRuntimeMCPListControlsTool,
+			claudeRuntimeMCPDescribeControlTool,
+			claudeRuntimeMCPProposeControlTool,
+			claudeRuntimeMCPGetControlTool,
+		}, ","),
+	)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
 	}

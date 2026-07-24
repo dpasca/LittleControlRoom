@@ -56,12 +56,20 @@ func claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, ru
 	}
 	args = append(args, "--mcp-config", runtimeMCPConfig)
 	runtimeMCPPrompt = strings.TrimSpace(runtimeMCPPrompt)
-	if runtimeMCPPrompt == "" {
-		return args
+	if runtimeMCPPrompt != "" {
+		args = append(args, "--append-system-prompt", runtimeMCPPrompt)
 	}
-	args = append(args, "--append-system-prompt", runtimeMCPPrompt)
+	allowedTools := []string{
+		claudeRuntimeMCPListControlsTool,
+		claudeRuntimeMCPDescribeControlTool,
+		claudeRuntimeMCPProposeControlTool,
+		claudeRuntimeMCPGetControlTool,
+	}
+	if runtimeMCPPrompt != "" {
+		allowedTools = append(allowedTools, claudeRuntimeMCPListTODOsTool, claudeRuntimeMCPAddTODOTool)
+	}
 	return append(args,
 		"--allowedTools",
-		claudeRuntimeMCPListTODOsTool+","+claudeRuntimeMCPAddTODOTool,
+		strings.Join(allowedTools, ","),
 	)
 }

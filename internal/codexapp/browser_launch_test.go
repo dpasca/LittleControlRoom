@@ -222,6 +222,7 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 		`"runtime-mcp"`,
 		`"--provider","codex"`,
 		`"--project-path","/tmp/demo"`,
+		`"--control-scope","portfolio"`,
 		`"--data-dir","/tmp/lcr-data"`,
 		`"--db-path","/tmp/lcr-data/custom.sqlite"`,
 		`"--todo-capture-mode","explicit_only"`,
@@ -236,9 +237,8 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 
 func TestEnsureTodoCaptureSessionKeyDoesNotReuseResumeIDForFreshThread(t *testing.T) {
 	req := LaunchRequest{
-		ResumeID:        "previous-thread",
-		ForceNew:        true,
-		TodoCaptureMode: todocapture.ModeExplicit,
+		ResumeID: "previous-thread",
+		ForceNew: true,
 	}
 	ensureTodoCaptureSessionKey(&req)
 	if strings.TrimSpace(req.TodoCaptureSessionKey) == "" {
@@ -251,8 +251,7 @@ func TestEnsureTodoCaptureSessionKeyDoesNotReuseResumeIDForFreshThread(t *testin
 
 func TestEnsureTodoCaptureSessionKeyUsesResumeIDForReconnect(t *testing.T) {
 	req := LaunchRequest{
-		ResumeID:        "existing-thread",
-		TodoCaptureMode: todocapture.ModeExplicit,
+		ResumeID: "existing-thread",
 	}
 	ensureTodoCaptureSessionKey(&req)
 	if req.TodoCaptureSessionKey != req.ResumeID {

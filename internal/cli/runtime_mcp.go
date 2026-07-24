@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"lcroom/internal/control"
 	"lcroom/internal/runtimemcp"
 	"lcroom/internal/todocapture"
 )
@@ -21,6 +22,7 @@ type runtimeMCPOptions struct {
 	browserSessionKey string
 	dbPath            string
 	todoCaptureMode   todocapture.CaptureMode
+	controlScope      control.AuthorityScope
 }
 
 func runRuntimeMCP(args []string) int {
@@ -39,6 +41,7 @@ func runRuntimeMCP(args []string) int {
 		BrowserSessionKey: opts.browserSessionKey,
 		DBPath:            opts.dbPath,
 		TodoCaptureMode:   opts.todoCaptureMode,
+		ControlScope:      opts.controlScope,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime-mcp error: %v\n", err)
 		return 1
@@ -55,12 +58,17 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 	browserSessionKey := fs.String("browser-session-key", "", "managed browser session key")
 	dbPath := fs.String("db-path", "", "LCR SQLite database path for project TODO capture")
 	todoCaptureMode := fs.String("todo-capture-mode", string(todocapture.ModeOff), "project TODO capture mode")
+	controlScope := fs.String("control-scope", string(control.AuthorityScopeProject), "control authority scope: project, portfolio, or host")
 	if err := fs.Parse(args); err != nil {
 		return runtimeMCPOptions{}, err
 	}
 	parsedMode, err := todocapture.ParseCaptureMode(*todoCaptureMode)
 	if err != nil {
 		return runtimeMCPOptions{}, fmt.Errorf("--todo-capture-mode: %w", err)
+	}
+	parsedControlScope := control.NormalizeAuthorityScope(*controlScope)
+	if parsedControlScope == "" {
+		return runtimeMCPOptions{}, fmt.Errorf("--control-scope must be project, portfolio, or host")
 	}
 	opts := runtimeMCPOptions{
 		projectPath:       strings.TrimSpace(*projectPath),
@@ -70,6 +78,7 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 		browserSessionKey: strings.TrimSpace(*browserSessionKey),
 		dbPath:            strings.TrimSpace(*dbPath),
 		todoCaptureMode:   parsedMode,
+		controlScope:      parsedControlScope,
 	}
 	if opts.projectPath == "" {
 		return runtimeMCPOptions{}, fmt.Errorf("--project-path is required")

@@ -13,6 +13,7 @@ const (
 	ScanCompleted         Type = "scan_completed"
 	ScanFailed            Type = "scan_failed"
 	ActionApplied         Type = "action_applied"
+	ControlProposed       Type = "control_proposed"
 	ClassificationUpdated Type = "classification_updated"
 	EventsDropped         Type = "events_dropped"
 )
