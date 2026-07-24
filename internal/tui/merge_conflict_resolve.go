@@ -367,7 +367,7 @@ func (m *Model) failMergeConflictResolverRefresh(projectPath string, err error) 
 }
 
 // clearResolvedMergeConflictResolver retires the successful resolver receipt
-// once a later repository mutation makes that historical outcome stale.
+// once later work makes that historical outcome stale.
 func (m *Model) clearResolvedMergeConflictResolver(projectPath string) {
 	projectPath = normalizeProjectPath(projectPath)
 	state, ok := m.mergeConflictResolvers[projectPath]
@@ -399,12 +399,21 @@ func (m *Model) reconcileMergeConflictResolverProject(project model.ProjectSumma
 			m.mergeConflictResolvers[projectPath] = state
 		}
 	case mergeConflictResolverResolved:
-		if project.RepoConflict {
+		if project.RepoConflict || resolvedMergeConflictResolverSuperseded(state, project) {
 			// A later conflict is a new incident; do not attribute it to the
-			// already-finished resolver.
+			// already-finished resolver. Likewise, newer session activity has
+			// superseded the successful resolver receipt and should drive the
+			// row, top status, and detail again.
 			delete(m.mergeConflictResolvers, projectPath)
 		}
 	}
+}
+
+func resolvedMergeConflictResolverSuperseded(state mergeConflictResolverState, project model.ProjectSummary) bool {
+	if state.UpdatedAt.IsZero() || project.LatestSessionLastEventAt.IsZero() {
+		return false
+	}
+	return project.LatestSessionLastEventAt.After(state.UpdatedAt)
 }
 
 func (m *Model) reconcileMergeConflictResolverProjects() {

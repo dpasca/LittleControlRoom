@@ -1122,6 +1122,36 @@ func TestBackgroundResolverReconcilesGitConflictOutcome(t *testing.T) {
 	}
 }
 
+func TestBackgroundResolverResolvedReceiptRetiresAfterNewerSessionActivity(t *testing.T) {
+	projectPath := "/tmp/resolve-superseded"
+	resolvedAt := time.Date(2026, 7, 24, 18, 20, 0, 0, time.UTC)
+	m := Model{
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			projectPath: {
+				OwnerProjectPath: projectPath,
+				Phase:            mergeConflictResolverResolved,
+				UpdatedAt:        resolvedAt,
+			},
+		},
+	}
+
+	m.reconcileMergeConflictResolverProject(model.ProjectSummary{
+		Path:                     projectPath,
+		LatestSessionLastEventAt: resolvedAt,
+	})
+	if state, ok := m.mergeConflictResolverForProject(projectPath); !ok || state.Phase != mergeConflictResolverResolved {
+		t.Fatalf("resolver receipt = (%#v, %v), want preserved without newer session activity", state, ok)
+	}
+
+	m.reconcileMergeConflictResolverProject(model.ProjectSummary{
+		Path:                     projectPath,
+		LatestSessionLastEventAt: resolvedAt.Add(time.Second),
+	})
+	if stale, ok := m.mergeConflictResolverForProject(projectPath); ok {
+		t.Fatalf("newer session activity retained stale completed resolver state: %#v", stale)
+	}
+}
+
 func TestClearResolvedMergeConflictResolverPreservesNonSuccessPhases(t *testing.T) {
 	projectPath := "/tmp/resolve-clear"
 	for _, phase := range []mergeConflictResolverPhase{
