@@ -99,7 +99,8 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
-# /resolve uses this provider independently of normal last-used agent defaults.
+# /resolve preselects this provider independently of ordinary launch defaults.
+# Confirming another provider remembers it for next time.
 # Values: codex (default), opencode, claude_code, or lcagent.
 conflict_resolver_provider = "codex"
 # Embedded engineer TODO capture: off, explicit_only (default), or
@@ -134,7 +135,9 @@ Policy downgrades and `off` are enforced against already-running calls through t
 
 ### Conflict resolver provider
 
-`conflict_resolver_provider` selects the embedded provider used by `/resolve`: `codex`, `opencode`, `claude_code`, or `lcagent`. It defaults to `codex` and is intentionally independent of the selected project's recent sessions and the provider last used for ordinary tasks. This prevents an unrelated launch choice from silently changing which agent performs conflict repair.
+`/resolve` always opens a provider chooser before starting repair. `conflict_resolver_provider` controls which option is highlighted initially: `codex`, `opencode`, `claude_code`, or `lcagent`. It defaults to `codex`. Pressing Enter launches the highlighted provider and remembers that choice here for the next `/resolve`; canceling leaves the default unchanged.
+
+The resolver default is intentionally independent of the selected project's recent sessions and the provider last used for ordinary tasks. Starting a resolver also does not change the ordinary-task default. The chooser shows known setup or availability problems before launch. If the confirmed provider cannot start, repair fails visibly without silently falling back to another provider, and the Git conflicts remain untouched.
 
 Embedded Codex keeps the filesystem reach and approval behavior selected by
 `codex_launch_preset`; the default remains `yolo`. Little Control Room adds a
@@ -539,5 +542,5 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail. When output is available, **Copy output** places that selected process's plain-text output on the clipboard, while **Add TODO** opens a prefilled, editable failure report under the repository-scoped project; press `Ctrl+S` there to save it.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
-- `conflict_resolver_provider` controls which embedded provider `/resolve` launches. The default is `codex`.
+- `conflict_resolver_provider` controls which provider the `/resolve` chooser preselects. The default is `codex`, and confirming another choice remembers it.
 - CLI flags override config file values.

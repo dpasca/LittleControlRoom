@@ -34,9 +34,9 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
-# Provider used only by /resolve conflict repair. This does not follow the
-# provider last used for another task. Values: codex, opencode, claude_code,
-# or lcagent.
+# Provider preselected by the /resolve chooser. Confirming another provider
+# remembers it here for next time; ordinary task launches do not change it.
+# Values: codex, opencode, claude_code, or lcagent.
 conflict_resolver_provider = "codex"
 
 # Let LCR-embedded engineers add repository-scoped TODOs after listing and

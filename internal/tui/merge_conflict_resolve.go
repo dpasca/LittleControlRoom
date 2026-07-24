@@ -13,13 +13,26 @@ import (
 	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type mergeConflictResolveTargetMsg struct {
 	project    model.ProjectSummary
+	provider   codexapp.Provider
 	target     service.GitlinkConflictResolveTarget
 	hasGitlink bool
 	err        error
+}
+
+type mergeConflictResolverProviderDialogState struct {
+	Project  model.ProjectSummary
+	Provider codexapp.Provider
+}
+
+type mergeConflictResolverProviderSavedMsg struct {
+	settings config.EditableSettings
+	path     string
+	err      error
 }
 
 type mergeConflictResolverOpenedMsg struct {
@@ -437,15 +450,109 @@ func (m Model) resolveMergeConflictsForSelection() (tea.Model, tea.Cmd) {
 		m.status = "No merge conflict detected for the selected project"
 		return m, nil
 	}
-	if m.svc != nil {
-		m.status = "Preparing merge conflict resolver..."
-		return m, m.resolveMergeConflictTargetCmd(project)
-	}
 
-	return m.launchMergeConflictResolver(project)
+	m.mergeConflictResolverProviderDialog = &mergeConflictResolverProviderDialogState{
+		Project:  project,
+		Provider: m.configuredConflictResolverProvider(),
+	}
+	m.err = nil
+	m.status = "Choose the conflict resolver agent. Enter launches; Esc cancels."
+	return m, nil
 }
 
-func (m Model) resolveMergeConflictTargetCmd(project model.ProjectSummary) tea.Cmd {
+func (m Model) updateMergeConflictResolverProviderDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	dialog := m.mergeConflictResolverProviderDialog
+	if dialog == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.mergeConflictResolverProviderDialog = nil
+		m.status = "Conflict resolution canceled"
+		return m, nil
+	case "down", "j":
+		m.cycleMergeConflictResolverProvider(1)
+		return m, nil
+	case "up", "k":
+		m.cycleMergeConflictResolverProvider(-1)
+		return m, nil
+	case "enter":
+		project := dialog.Project
+		provider := normalizedConflictResolverProvider(dialog.Provider)
+		m.mergeConflictResolverProviderDialog = nil
+		saveCmd := m.rememberConflictResolverProviderCmd(provider)
+		if m.svc != nil {
+			m.status = "Preparing " + provider.Label() + " conflict resolver..."
+			return m, batchCmds(saveCmd, m.resolveMergeConflictTargetCmd(project, provider))
+		}
+		launched, launchCmd := m.launchMergeConflictResolverWithProvider(project, provider)
+		return launched, batchCmds(saveCmd, launchCmd)
+	}
+	return m, nil
+}
+
+func (m *Model) cycleMergeConflictResolverProvider(delta int) {
+	dialog := m.mergeConflictResolverProviderDialog
+	if dialog == nil || delta == 0 {
+		return
+	}
+	options := embeddedLaunchProviderOptions()
+	index := 0
+	current := normalizedConflictResolverProvider(dialog.Provider)
+	for i, provider := range options {
+		if provider == current {
+			index = i
+			break
+		}
+	}
+	index += delta
+	if index < 0 {
+		index = len(options) - 1
+	}
+	if index >= len(options) {
+		index = 0
+	}
+	dialog.Provider = options[index]
+}
+
+func normalizedConflictResolverProvider(provider codexapp.Provider) codexapp.Provider {
+	provider = provider.Normalized()
+	switch provider {
+	case codexapp.ProviderCodex, codexapp.ProviderOpenCode, codexapp.ProviderClaudeCode, codexapp.ProviderLCAgent:
+		return provider
+	default:
+		return codexapp.ProviderCodex
+	}
+}
+
+func (m *Model) rememberConflictResolverProviderCmd(provider codexapp.Provider) tea.Cmd {
+	provider = normalizedConflictResolverProvider(provider)
+	settings := m.currentSettingsBaseline()
+	selected := config.NormalizeConflictResolverProvider(config.ConflictResolverProvider(provider))
+	if settings.ConflictResolverProvider == selected {
+		return nil
+	}
+	settings.ConflictResolverProvider = selected
+	settings = cloneEditableSettings(settings)
+	saved := cloneEditableSettings(settings)
+	m.settingsBaseline = &saved
+	path := m.currentWritableConfigPath()
+	return func() tea.Msg {
+		err := config.SaveEditableSettings(path, settings)
+		return mergeConflictResolverProviderSavedMsg{settings: settings, path: path, err: err}
+	}
+}
+
+func (m Model) applyMergeConflictResolverProviderSavedMsg(msg mergeConflictResolverProviderSavedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.reportError("Conflict resolver choice updated for this run, but config save failed", msg.err, "")
+		return m, nil
+	}
+	m.settingsConfigPath = strings.TrimSpace(msg.path)
+	return m, nil
+}
+
+func (m Model) resolveMergeConflictTargetCmd(project model.ProjectSummary, provider codexapp.Provider) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiGitActionTimeout)
 		defer cancel()
@@ -453,6 +560,7 @@ func (m Model) resolveMergeConflictTargetCmd(project model.ProjectSummary) tea.C
 		err = timeoutActionError(err, tuiGitActionTimeout, "finding gitlink conflict resolver target")
 		return mergeConflictResolveTargetMsg{
 			project:    project,
+			provider:   normalizedConflictResolverProvider(provider),
 			target:     target,
 			hasGitlink: ok,
 			err:        err,
@@ -467,18 +575,26 @@ func (m Model) applyMergeConflictResolveTargetMsg(msg mergeConflictResolveTarget
 		return m, nil
 	}
 	if msg.hasGitlink {
-		return m.launchGitlinkConflictResolver(msg.project, msg.target)
+		return m.launchGitlinkConflictResolverWithProvider(msg.project, msg.target, msg.provider)
 	}
-	return m.launchMergeConflictResolver(msg.project)
+	return m.launchMergeConflictResolverWithProvider(msg.project, msg.provider)
 }
 
 func (m Model) launchMergeConflictResolver(project model.ProjectSummary) (tea.Model, tea.Cmd) {
-	provider := m.configuredConflictResolverProvider()
+	return m.launchMergeConflictResolverWithProvider(project, m.configuredConflictResolverProvider())
+}
+
+func (m Model) launchMergeConflictResolverWithProvider(project model.ProjectSummary, provider codexapp.Provider) (tea.Model, tea.Cmd) {
+	provider = normalizedConflictResolverProvider(provider)
 	return m.launchParallelMergeConflictResolver(project, provider, mergeConflictResolvePrompt(project))
 }
 
 func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target service.GitlinkConflictResolveTarget) (tea.Model, tea.Cmd) {
-	provider := m.configuredConflictResolverProvider()
+	return m.launchGitlinkConflictResolverWithProvider(parent, target, m.configuredConflictResolverProvider())
+}
+
+func (m Model) launchGitlinkConflictResolverWithProvider(parent model.ProjectSummary, target service.GitlinkConflictResolveTarget, provider codexapp.Provider) (tea.Model, tea.Cmd) {
+	provider = normalizedConflictResolverProvider(provider)
 	project := model.ProjectSummary{
 		Path:          target.WorktreePath,
 		Name:          gitlinkConflictResolveProjectName(target),
@@ -496,7 +612,46 @@ func (m Model) configuredConflictResolverProvider() codexapp.Provider {
 	if provider == "" {
 		return codexapp.ProviderCodex
 	}
-	return provider
+	return normalizedConflictResolverProvider(provider)
+}
+
+func (m Model) renderMergeConflictResolverProviderOverlay(body string, bodyW, bodyH int) string {
+	panelW := min(bodyW, min(max(64, bodyW-8), 96))
+	panelInnerW := max(24, panelW-4)
+	panel := renderDialogPanel(panelW, panelInnerW, m.renderMergeConflictResolverProviderContent(panelInnerW))
+	left := max(0, (bodyW-panelW)/2)
+	top := max(0, (bodyH-lipgloss.Height(panel))/3)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderMergeConflictResolverProviderContent(width int) string {
+	dialog := m.mergeConflictResolverProviderDialog
+	if dialog == nil {
+		return ""
+	}
+	provider := normalizedConflictResolverProvider(dialog.Provider)
+	settings := m.currentSettingsBaseline()
+	lines := []string{
+		renderDialogHeader("Resolve conflicts", dialog.Project.Name, dialog.Project.RepoBranch, width),
+		commandPaletteHintStyle.Render("Choose which agent should repair this conflict in a separate background session."),
+		commandPaletteHintStyle.Render("Enter remembers the choice as the default for the next /resolve."),
+		"",
+		detailSectionStyle.Render("Agent"),
+	}
+	for _, option := range embeddedLaunchProviderOptions() {
+		label := m.todoCopyProviderButtonLabel(dialog.Project.Path, option, settings)
+		lines = append(lines, fitStyledWidth(renderDialogButton(label, provider == option), width))
+	}
+	lines = append(lines, detailField("Model", detailValueStyle.Render(m.embeddedModelLabelForProject(dialog.Project.Path, provider))))
+	if statusLine := m.todoCopyProviderStatusLine(provider, settings); statusLine != "" {
+		lines = append(lines, detailField("Agent status", statusLine))
+	}
+	lines = append(lines, "", renderHelpPanelActionRow(
+		renderDialogAction("Enter", "launch", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("↑↓/j/k", "agent", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+	))
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) launchParallelMergeConflictResolver(project model.ProjectSummary, provider codexapp.Provider, prompt string) (tea.Model, tea.Cmd) {
@@ -548,7 +703,6 @@ func (m Model) launchParallelMergeConflictResolverWithOptions(ownerProjectPath s
 	req = m.enrichEmbeddedLaunchRequest(req)
 	manager := m.codexManager
 	m.err = nil
-	m.rememberEmbeddedProvider(provider)
 	m.markMergeConflictResolverStarting(ownerProjectPath, project.Path, provider)
 	if state, ok := m.mergeConflictResolverForProject(ownerProjectPath); ok && state.Phase == mergeConflictResolverRunning {
 		m.status = state.commandStatus(m.currentTime())

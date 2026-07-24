@@ -209,6 +209,17 @@ func (m Model) View() string {
 			}
 			return m.renderNewTaskOverlay(body, width, height)
 		}
+		if m.mergeConflictResolverProviderDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderMergeConflictResolverProviderOverlay(body, width, height)
+		}
 		if m.scratchTaskAction != nil {
 			width := m.width
 			if width <= 0 {
@@ -279,6 +290,8 @@ func (m Model) View() string {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.newTaskDialog != nil {
 		body = m.renderNewTaskOverlay(body, layout.width, layout.height)
+	} else if m.mergeConflictResolverProviderDialog != nil {
+		body = m.renderMergeConflictResolverProviderOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
 		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
 	} else if m.bossSetupPrompt != nil {

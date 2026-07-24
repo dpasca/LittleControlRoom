@@ -152,6 +152,9 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}
+	if m.mergeConflictResolverProviderDialog != nil {
+		return m.renderModalFooter(width, "Resolve: ↑↓/j/k choose agent, Enter launch, Esc cancel", supplementSegments...)
+	}
 	if m.projectFilterDialog != nil {
 		label := "Project filter: type to narrow, Enter keep, Esc close"
 		return m.renderModalFooter(width, label, supplementSegments...)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -17,6 +18,7 @@ import (
 	"lcroom/internal/procinspect"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -515,11 +517,35 @@ func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("dispatchCommand(/resolve) cmd = nil, want background resolver launch")
+	if cmd != nil {
+		t.Fatal("dispatchCommand(/resolve) should wait for provider confirmation")
+	}
+	if got.mergeConflictResolverProviderDialog == nil {
+		t.Fatal("dispatchCommand(/resolve) did not open the provider chooser")
+	}
+	if got.mergeConflictResolverProviderDialog.Provider != codexapp.ProviderCodex {
+		t.Fatalf("initial resolver provider = %q, want Codex", got.mergeConflictResolverProviderDialog.Provider)
+	}
+	chooser := ansi.Strip(got.renderMergeConflictResolverProviderContent(88))
+	for _, want := range []string{"Resolve conflicts", "Codex", "OpenCode", "Claude Code", "LCAgent", "remembers the choice"} {
+		if !strings.Contains(chooser, want) {
+			t.Fatalf("resolver chooser missing %q:\n%s", want, chooser)
+		}
+	}
+	if footer := ansi.Strip(got.renderFooter(160)); !strings.Contains(footer, "Enter launch") || !strings.Contains(footer, "Esc cancel") {
+		t.Fatalf("resolver chooser footer missing controls: %q", footer)
 	}
 	if got.codexPendingOpen != nil {
 		t.Fatalf("codexPendingOpen = %#v, want no foreground session transition", got.codexPendingOpen)
+	}
+
+	confirmed, cmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = confirmed.(Model)
+	if cmd == nil {
+		t.Fatal("confirming the resolver provider should launch a background resolver")
+	}
+	if got.mergeConflictResolverProviderDialog != nil {
+		t.Fatal("resolver provider chooser remained open after confirmation")
 	}
 
 	msgs := collectCmdMsgs(cmd)
@@ -638,13 +664,27 @@ func TestResolveUsesConfiguredProviderInsteadOfProjectSessionHistory(t *testing.
 			settings := config.EditableSettingsFromAppConfig(config.Default())
 			settings.ConflictResolverProvider = tc.configured
 			m := Model{
-				codexManager:     manager,
-				settingsBaseline: &settings,
+				codexManager:         manager,
+				settingsBaseline:     &settings,
+				lastEmbeddedProvider: codexapp.ProviderOpenCode,
+				projects:             []model.ProjectSummary{project},
+				selected:             0,
 			}
 
-			_, cmd := m.launchMergeConflictResolver(project)
+			openedModel, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+			if cmd != nil {
+				t.Fatal("/resolve should not launch before the provider is confirmed")
+			}
+			chooser := openedModel.(Model)
+			if chooser.mergeConflictResolverProviderDialog == nil {
+				t.Fatal("/resolve provider chooser is not open")
+			}
+			if chooser.mergeConflictResolverProviderDialog.Provider != tc.want {
+				t.Fatalf("chooser provider = %q, want configured %q; project history was OpenCode", chooser.mergeConflictResolverProviderDialog.Provider, tc.want)
+			}
+			launched, cmd := chooser.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			if cmd == nil {
-				t.Fatal("launchMergeConflictResolver() cmd = nil")
+				t.Fatal("confirming resolver provider returned no launch command")
 			}
 			msg := cmd()
 			opened, ok := msg.(mergeConflictResolverOpenedMsg)
@@ -657,7 +697,139 @@ func TestResolveUsesConfiguredProviderInsteadOfProjectSessionHistory(t *testing.
 			if request.Provider != tc.want {
 				t.Fatalf("resolver provider = %q, want %q; project history was OpenCode", request.Provider, tc.want)
 			}
+			if got := launched.(Model).lastEmbeddedProvider; got != codexapp.ProviderOpenCode {
+				t.Fatalf("ordinary launch default = %q, want unchanged OpenCode", got)
+			}
 		})
+	}
+}
+
+func TestResolveChooserRemembersConfirmedProviderWithoutChangingOrdinaryDefault(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:          "/tmp/resolve-remember",
+		Name:          "resolve-remember",
+		PresentOnDisk: true,
+		RepoConflict:  true,
+	}
+	var request codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		request = req
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider,
+				ThreadID: "remembered-resolver",
+				Started:  true,
+				Busy:     true,
+			},
+		}, nil
+	})
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.ConflictResolverProvider = config.ConflictResolverProviderCodex
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	m := Model{
+		codexManager:         manager,
+		settingsBaseline:     &settings,
+		settingsConfigPath:   configPath,
+		lastEmbeddedProvider: codexapp.ProviderClaudeCode,
+		projects:             []model.ProjectSummary{project},
+		selected:             0,
+	}
+
+	opened, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	chooser := opened.(Model)
+	cycled, _ := chooser.Update(tea.KeyMsg{Type: tea.KeyDown})
+	chooser = cycled.(Model)
+	if got := chooser.mergeConflictResolverProviderDialog.Provider; got != codexapp.ProviderOpenCode {
+		t.Fatalf("cycled provider = %q, want OpenCode", got)
+	}
+
+	confirmed, cmd := chooser.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := confirmed.(Model)
+	if got.currentSettingsBaseline().ConflictResolverProvider != config.ConflictResolverProviderOpenCode {
+		t.Fatalf("in-memory resolver default = %q, want opencode", got.currentSettingsBaseline().ConflictResolverProvider)
+	}
+	if got.lastEmbeddedProvider != codexapp.ProviderClaudeCode {
+		t.Fatalf("ordinary launch default = %q, want unchanged Claude Code", got.lastEmbeddedProvider)
+	}
+
+	var saved bool
+	var launched bool
+	for _, msg := range collectCmdMsgs(cmd) {
+		switch candidate := msg.(type) {
+		case mergeConflictResolverProviderSavedMsg:
+			saved = true
+			if candidate.err != nil {
+				t.Fatalf("save resolver provider: %v", candidate.err)
+			}
+			if candidate.settings.ConflictResolverProvider != config.ConflictResolverProviderOpenCode {
+				t.Fatalf("saved resolver provider = %q, want opencode", candidate.settings.ConflictResolverProvider)
+			}
+		case mergeConflictResolverOpenedMsg:
+			launched = true
+			if candidate.err != nil {
+				t.Fatalf("launch resolver: %v", candidate.err)
+			}
+		}
+	}
+	if !saved || !launched {
+		t.Fatalf("confirmation messages saved=%t launched=%t", saved, launched)
+	}
+	if request.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("resolver launch provider = %q, want OpenCode", request.Provider)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if !strings.Contains(string(raw), `conflict_resolver_provider = "opencode"`) {
+		t.Fatalf("saved config missing remembered resolver provider:\n%s", raw)
+	}
+}
+
+func TestResolveChooserDoesNotFallBackWhenConfirmedProviderIsUnavailable(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:          "/tmp/resolve-unavailable",
+		Name:          "resolve-unavailable",
+		PresentOnDisk: true,
+		RepoConflict:  true,
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return nil, errors.New("Codex is unavailable")
+	})
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.ConflictResolverProvider = config.ConflictResolverProviderCodex
+	m := Model{
+		codexManager:     manager,
+		settingsBaseline: &settings,
+		projects:         []model.ProjectSummary{project},
+		selected:         0,
+	}
+
+	opened, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	confirmed, cmd := opened.(Model).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := confirmed.(Model)
+	msg, ok := cmd().(mergeConflictResolverOpenedMsg)
+	if !ok {
+		t.Fatalf("resolver result = %#v, want mergeConflictResolverOpenedMsg", msg)
+	}
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "Codex is unavailable") {
+		t.Fatalf("resolver error = %v, want unavailable error", msg.err)
+	}
+	if len(requests) != 1 || requests[0].Provider != codexapp.ProviderCodex {
+		t.Fatalf("launch requests = %#v, want one Codex attempt and no fallback", requests)
+	}
+
+	applied, _ := got.applyMergeConflictResolverOpenedMsg(msg)
+	failed := applied.(Model)
+	if !failed.projects[0].RepoConflict {
+		t.Fatal("failed resolver cleared the project's conflict marker")
+	}
+	state, exists := failed.mergeConflictResolverForProject(project.Path)
+	if !exists || state.Phase != mergeConflictResolverFailed || state.Provider != codexapp.ProviderCodex {
+		t.Fatalf("resolver failure state = (%#v, %t), want failed Codex state", state, exists)
 	}
 }
 
@@ -693,7 +865,8 @@ func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree
 	}
 
 	updated, cmd := m.Update(mergeConflictResolveTargetMsg{
-		project: m.projects[0],
+		project:  m.projects[0],
+		provider: codexapp.ProviderClaudeCode,
 		target: service.GitlinkConflictResolveTarget{
 			ParentRepoPath: parentPath,
 			ParentBranch:   "master",
@@ -740,6 +913,9 @@ func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree
 	}
 	if requests[0].ProjectPath != worktreePath {
 		t.Fatalf("request project path = %q, want submodule worktree %q", requests[0].ProjectPath, worktreePath)
+	}
+	if requests[0].Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("request provider = %q, want carried chooser selection Claude Code", requests[0].Provider)
 	}
 	if !requests[0].ForceNew {
 		t.Fatalf("request ForceNew = false, want true")
@@ -796,6 +972,14 @@ func TestDispatchResolveReusesAlreadyRunningBackgroundResolver(t *testing.T) {
 
 	firstUpdated, firstCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
 	first := firstUpdated.(Model)
+	if firstCmd != nil {
+		t.Fatal("first /resolve should wait for provider confirmation")
+	}
+	if first.mergeConflictResolverProviderDialog == nil {
+		t.Fatal("first /resolve did not open provider chooser")
+	}
+	confirmed, firstCmd := first.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	first = confirmed.(Model)
 	firstMsgs := collectCmdMsgs(firstCmd)
 	if len(requests) != 1 {
 		t.Fatalf("first /resolve launch requests = %d, want 1", len(requests))

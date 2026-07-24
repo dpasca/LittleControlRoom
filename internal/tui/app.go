@@ -140,6 +140,7 @@ type Model struct {
 	newProjectDialog                    *newProjectDialogState
 	cloneProjectDialog                  *cloneProjectDialogState
 	newTaskDialog                       *newTaskDialogState
+	mergeConflictResolverProviderDialog *mergeConflictResolverProviderDialogState
 	runCommandDialog                    *runCommandDialogState
 	runCommandRequestSeq                int64
 	skillsDialog                        *skillsDialogState
@@ -1581,6 +1582,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.newTaskDialog != nil {
 			return m.updateNewTaskDialogMode(msg)
 		}
+		if m.mergeConflictResolverProviderDialog != nil {
+			return m.updateMergeConflictResolverProviderDialogMode(msg)
+		}
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
@@ -1680,6 +1684,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNormalMode(msg)
 	case mergeConflictResolveTargetMsg:
 		return m.applyMergeConflictResolveTargetMsg(msg)
+	case mergeConflictResolverProviderSavedMsg:
+		return m.applyMergeConflictResolverProviderSavedMsg(msg)
 	case repositoryIntegrityActionMsg:
 		return m.applyRepositoryIntegrityActionMsg(msg)
 	case mergeConflictResolverOpenedMsg:
