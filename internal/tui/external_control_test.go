@@ -16,7 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestExternalControlProposalOpensConfirmationAndRecordsCancellation(t *testing.T) {
+func TestExternalControlProposalOpensTUIConfirmationAndRecordsCancellation(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "control.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +25,8 @@ func TestExternalControlProposalOpensConfirmationAndRecordsCancellation(t *testi
 	svc := service.New(config.Default(), st, events.NewBus(), nil)
 	ctx := context.Background()
 	m := New(ctx, svc)
+	m.width = 120
+	m.height = 40
 	operationID := "lcrop_tui_cancel"
 	args, err := json.Marshal(control.TodoAddInput{
 		RequestID:   operationID,
@@ -57,8 +59,16 @@ func TestExternalControlProposalOpensConfirmationAndRecordsCancellation(t *testi
 	}
 	updated, _ := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{operation: waiting})
 	got := normalizeUpdateModel(updated)
-	if !got.helpChatMode || !got.helpChatModelActive || !got.helpChatModel.ControlConfirmationActive() {
-		t.Fatalf("external proposal did not open Chat confirmation: mode=%t active=%t confirmation=%t", got.helpChatMode, got.helpChatModelActive, got.helpChatModel.ControlConfirmationActive())
+	if got.helpChatMode || got.helpChatModelActive {
+		t.Fatalf("external proposal opened Help Chat: mode=%t active=%t", got.helpChatMode, got.helpChatModelActive)
+	}
+	if got.externalControlConfirmation == nil {
+		t.Fatal("external proposal did not open the TUI-owned confirmation")
+	}
+	rendered := got.View()
+	if !strings.Contains(rendered, "Confirm Control Action") ||
+		!strings.Contains(rendered, "Confirm the external proposal path") {
+		t.Fatalf("rendered frame does not show TUI confirmation: %q", rendered)
 	}
 
 	updated, cancelCmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -84,7 +94,7 @@ func TestExternalControlProposalOpensConfirmationAndRecordsCancellation(t *testi
 	}
 }
 
-func TestExternalControlProposalHidesVisibleEmbeddedSessionBeforeConfirmation(t *testing.T) {
+func TestExternalControlProposalOverlaysVisibleEmbeddedSession(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "control.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -131,18 +141,51 @@ func TestExternalControlProposalHidesVisibleEmbeddedSessionBeforeConfirmation(t 
 
 	updated, _ := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{operation: waiting})
 	got := normalizeUpdateModel(updated)
-	if got.codexVisible() {
-		t.Fatalf("external confirmation left embedded session visible: %q", got.codexVisibleProject)
+	if !got.codexVisible() || got.codexVisibleProject != projectPath {
+		t.Fatalf("external confirmation displaced embedded session: visible=%t project=%q", got.codexVisible(), got.codexVisibleProject)
 	}
-	if got.codexHiddenProject != projectPath {
-		t.Fatalf("hidden embedded project = %q, want %q", got.codexHiddenProject, projectPath)
+	if got.codexHiddenProject != "" {
+		t.Fatalf("external confirmation hid embedded project: %q", got.codexHiddenProject)
 	}
-	if !got.helpChatMode || !got.helpChatModel.ControlConfirmationActive() {
-		t.Fatalf("external proposal did not replace embedded pane with confirmation: mode=%t confirmation=%t", got.helpChatMode, got.helpChatModel.ControlConfirmationActive())
+	if got.helpChatMode || got.helpChatModelActive {
+		t.Fatalf("external proposal opened Help Chat over embedded session: mode=%t active=%t", got.helpChatMode, got.helpChatModelActive)
+	}
+	if got.externalControlConfirmation == nil {
+		t.Fatal("external proposal did not create TUI-owned confirmation")
 	}
 	rendered := got.View()
 	if !strings.Contains(rendered, "Confirm Control Action") ||
 		!strings.Contains(rendered, "Confirm above the embedded session") {
 		t.Fatalf("rendered frame does not show external confirmation: %q", rendered)
+	}
+}
+
+func TestCommitPreviewOverlaysAndReceivesInputWhileEmbeddedSessionVisible(t *testing.T) {
+	projectPath := t.TempDir()
+	m := New(context.Background(), newControlTestService(t))
+	m.codexVisibleProject = projectPath
+	m.width = 120
+	m.height = 40
+	m.commitPreview = &service.CommitPreview{
+		ProjectPath: projectPath,
+		ProjectName: "embedded-project",
+		Message:     "Keep preview over Codex",
+		Intent:      service.GitActionFinish,
+		CanPush:     true,
+	}
+
+	rendered := m.View()
+	if !strings.Contains(rendered, "Commit Preview") ||
+		!strings.Contains(rendered, "Keep preview over Codex") {
+		t.Fatalf("embedded frame does not show commit preview: %q", rendered)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := normalizeUpdateModel(updated)
+	if got.commitPreview != nil {
+		t.Fatal("Esc was routed to Codex instead of closing the commit preview")
+	}
+	if !got.codexVisible() || got.codexVisibleProject != projectPath {
+		t.Fatalf("closing commit preview displaced embedded session: visible=%t project=%q", got.codexVisible(), got.codexVisibleProject)
 	}
 }

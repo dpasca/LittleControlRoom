@@ -73,59 +73,30 @@ func (m Model) View() string {
 	defer done()
 	if m.codexVisible() {
 		body := m.renderCodexView()
+		width := m.width
+		if width <= 0 {
+			width = 120
+		}
+		height := m.height
+		if height <= 0 {
+			height = 30
+		}
+		if m.externalControlConfirmation != nil {
+			return m.renderExternalControlConfirmationOverlay(body, width, height)
+		}
 		if m.actionNoticeDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderActionNoticeDialogOverlay(body, width, height)
 		}
 		if m.attentionDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderAttentionDialogOverlay(body, width, height)
 		}
 		if m.skillsDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderSkillsDialogOverlay(body, width, height)
 		}
 		if m.codexArtifactPicker != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderCodexArtifactPickerOverlay(body, width, height)
 		}
 		if m.codexModelPickerVisible() {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			body = m.renderCodexModelPickerOverlay(body, width, height)
 			if m.codexLCAgentProviderSetup != nil {
 				body = m.renderCodexLCAgentProviderSetupOverlay(body, width, height)
@@ -133,124 +104,42 @@ func (m Model) View() string {
 			return body
 		}
 		if m.settingsLCAgentModelPicker != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderSettingsLCAgentModelPickerOverlay(body, width, height)
 		}
 		if m.codexPickerVisible {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderCodexPickerOverlay(body, width, height)
 		}
 		if m.codexInputCopyDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderCodexInputCopyDialogOverlay(body, width, height)
 		}
 		if m.embeddedSidebarDetail != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderEmbeddedSidebarDetailOverlay(body, width, height)
 		}
 		if m.cloneProjectDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderCloneProjectOverlay(body, width, height)
 		}
 		if m.newProjectDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderNewProjectOverlay(body, width, height)
 		}
 		if m.newTaskDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderNewTaskOverlay(body, width, height)
 		}
 		if m.mergeConflictResolverProviderDialog != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderMergeConflictResolverProviderOverlay(body, width, height)
 		}
 		if m.scratchTaskAction != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderScratchTaskActionOverlay(body, width, height)
 		}
 		if m.agentTaskAction != nil {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderAgentTaskActionOverlay(body, width, height)
 		}
+		if m.gitStatusDialog != nil {
+			return m.renderGitStatusDialogOverlay(body, width, height)
+		}
+		if m.commitPreview != nil {
+			return m.renderCommitPreviewOverlay(body, width, height)
+		}
 		if m.browserAttentionDialogCanTakeFocus() {
-			width := m.width
-			if width <= 0 {
-				width = 120
-			}
-			height := m.height
-			if height <= 0 {
-				height = 30
-			}
 			return m.renderBrowserAttentionOverlay(body, width, height)
 		}
 		return body
@@ -259,7 +148,11 @@ func (m Model) View() string {
 	layout := m.bodyLayout()
 	header := m.renderTopStatusLine(layout.width)
 	if m.diffView != nil {
-		return strings.Join([]string{header, m.renderDiffView(layout.width, layout.height), m.renderFooter(layout.width)}, "\n")
+		body := m.renderDiffView(layout.width, layout.height)
+		if m.externalControlConfirmation != nil {
+			body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
+		}
+		return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
 	}
 	listHeight := max(1, layout.listPaneHeight-2)
 	bottomHeight := max(1, layout.bottomPaneHeight-2)
@@ -440,6 +333,9 @@ func (m Model) View() string {
 	}
 	if m.actionNoticeDialog != nil {
 		body = m.renderActionNoticeDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.externalControlConfirmation != nil {
+		body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
 	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")

@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/control"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type externalControlProposalLoadedMsg struct {
@@ -31,6 +32,11 @@ type externalControlResultRecordedMsg struct {
 
 type externalControlCancellationRecordedMsg struct {
 	err error
+}
+
+type externalControlConfirmationState struct {
+	operation control.Operation
+	preview   string
 }
 
 func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
@@ -57,33 +63,72 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 	if msg.operation.Status != control.OperationWaitingForConfirmation {
 		return m, nil
 	}
-	// External proposals can arrive while an embedded engineer pane is visible.
-	// Prepare the shared host surface before opening Chat so the confirmation is
-	// not rendered behind Codex/OpenCode/Claude while keyboard input is already
-	// being routed to the hidden Chat dialog.
-	prepared, prepareCmd := m.prepareHelpChatHostSurface()
-	m = prepared
-	opened, openCmd := m.openHelpChatMode()
-	m = normalizeUpdateModel(opened)
+	if m.externalControlConfirmation != nil {
+		m.status = "Agent control proposal queued behind the current confirmation"
+		return m, m.retryExternalControlProposalCmd(msg.operation)
+	}
+	invocation, err := control.ValidateInvocation(msg.operation.Invocation)
+	if err != nil {
+		m.status = "Agent control proposal could not be presented: " + err.Error()
+		return m, m.failExternalControlOperationCmd(msg.operation.ID, err)
+	}
+	msg.operation.Invocation = invocation
 	preview := fmt.Sprintf(
 		"%s proposed `%s` through Little Control Room's agent control surface.",
 		firstNonEmptyTrimmed(msg.operation.Provider, "An embedded agent"),
 		msg.operation.Capability,
 	)
-	presented, err := m.helpChatModel.PresentExternalControlProposal(msg.operation.Invocation, preview)
-	if errors.Is(err, bossui.ErrControlConfirmationPending) {
-		m.status = "Agent control proposal queued behind the current confirmation"
-		return m, batchCmds(prepareCmd, openCmd, m.retryExternalControlProposalCmd(msg.operation))
+	m.externalControlConfirmation = &externalControlConfirmationState{
+		operation: msg.operation,
+		preview:   preview,
 	}
-	if err != nil {
-		m.status = "Agent control proposal could not be presented: " + err.Error()
-		return m, batchCmds(prepareCmd, openCmd, m.failExternalControlOperationCmd(msg.operation.ID, err))
-	}
-	m.helpChatModel = presented
-	m.helpChatModelActive = true
-	m.helpChatMode = true
 	m.status = "Confirm or cancel the embedded agent's control proposal"
-	return m, batchCmds(prepareCmd, openCmd)
+	return m, nil
+}
+
+func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.externalControlConfirmation == nil {
+		return m, nil
+	}
+	invocation := m.externalControlConfirmation.operation.Invocation
+	switch msg.String() {
+	case "enter":
+		m.externalControlConfirmation = nil
+		m.status = bossui.ControlProposalSubmittingStatus(invocation)
+		return m, func() tea.Msg {
+			return bossui.ControlInvocationConfirmedMsg{Invocation: invocation}
+		}
+	case "esc", "ctrl+c":
+		m.externalControlConfirmation = nil
+		m.status = "Control action canceled"
+		return m, func() tea.Msg {
+			return bossui.ControlInvocationCanceledMsg{Invocation: invocation}
+		}
+	case "q":
+		if invocation.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+			m.status = "Use Enter or Esc for an externally proposed tracked-work operation"
+		}
+	}
+	return m, nil
+}
+
+func (m Model) renderExternalControlConfirmationOverlay(body string, bodyW, bodyH int) string {
+	if m.externalControlConfirmation == nil {
+		return body
+	}
+	confirmation := m.externalControlConfirmation
+	panel, err := bossui.RenderControlConfirmationDialog(
+		confirmation.operation.Invocation,
+		confirmation.preview,
+		bodyW,
+		bodyH,
+	)
+	if err != nil {
+		return body
+	}
+	left := max(0, (bodyW-lipgloss.Width(panel))/2)
+	top := max(0, min((bodyH-lipgloss.Height(panel))/3, bodyH-lipgloss.Height(panel)))
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
 func (m Model) retryExternalControlProposalCmd(operation control.Operation) tea.Cmd {
