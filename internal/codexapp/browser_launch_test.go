@@ -199,15 +199,16 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 	manager := projectrun.NewManager()
 	defer func() { _ = manager.CloseAll() }()
 	req := LaunchRequest{
-		Provider:              ProviderCodex,
-		ProjectPath:           "/tmp/demo",
-		AppDataDir:            "/tmp/lcr-data",
-		AppDBPath:             "/tmp/lcr-data/custom.sqlite",
-		CLIExecutablePath:     "/tmp/lcroom-test-bin",
-		ResumeID:              "session-demo",
-		TodoCaptureMode:       todocapture.ModeExplicit,
-		TodoCaptureSessionKey: "capture-session",
-		RuntimeManager:        manager,
+		Provider:                 ProviderCodex,
+		ProjectPath:              "/tmp/demo",
+		AppDataDir:               "/tmp/lcr-data",
+		AppDBPath:                "/tmp/lcr-data/custom.sqlite",
+		CLIExecutablePath:        "/tmp/lcroom-test-bin",
+		ResumeID:                 "session-demo",
+		ManagedBrowserSessionKey: "browser-session",
+		TodoCaptureMode:          todocapture.ModeExplicit,
+		TodoCaptureSessionKey:    "capture-session",
+		RuntimeManager:           manager,
 	}
 
 	got := codexRuntimeMCPConfigOverrides(req)
@@ -224,6 +225,7 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 		`"--data-dir","/tmp/lcr-data"`,
 		`"--db-path","/tmp/lcr-data/custom.sqlite"`,
 		`"--todo-capture-mode","explicit_only"`,
+		`"--browser-session-key","browser-session"`,
 		`"--session-key","capture-session"`,
 	} {
 		if !strings.Contains(got[1], want) {
@@ -262,12 +264,13 @@ func TestOpenCodeRuntimeMCPOverride(t *testing.T) {
 	manager := projectrun.NewManager()
 	defer func() { _ = manager.CloseAll() }()
 	req := LaunchRequest{
-		Provider:          ProviderOpenCode,
-		ProjectPath:       "/tmp/demo",
-		AppDataDir:        "/tmp/lcr-data",
-		CLIExecutablePath: "/tmp/lcroom-test-bin",
-		ResumeID:          "session-demo",
-		RuntimeManager:    manager,
+		Provider:                 ProviderOpenCode,
+		ProjectPath:              "/tmp/demo",
+		AppDataDir:               "/tmp/lcr-data",
+		CLIExecutablePath:        "/tmp/lcroom-test-bin",
+		ResumeID:                 "session-demo",
+		ManagedBrowserSessionKey: "browser-session",
+		RuntimeManager:           manager,
 	}
 
 	raw, ok, err := openCodeRuntimeMCPOverride(req)
@@ -288,7 +291,7 @@ func TestOpenCodeRuntimeMCPOverride(t *testing.T) {
 	if got.Type != "local" || !got.Enabled {
 		t.Fatalf("runtime override type/enabled = %q/%t, want local/true", got.Type, got.Enabled)
 	}
-	for _, want := range []string{"/tmp/lcroom-test-bin", "runtime-mcp", "--provider", "opencode", "--project-path", "/tmp/demo"} {
+	for _, want := range []string{"/tmp/lcroom-test-bin", "runtime-mcp", "--provider", "opencode", "--project-path", "/tmp/demo", "--browser-session-key", "browser-session"} {
 		if !containsString(got.Command, want) {
 			t.Fatalf("runtime override command = %#v, want entry %q", got.Command, want)
 		}

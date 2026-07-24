@@ -31,31 +31,33 @@ const (
 )
 
 type Options struct {
-	ProjectPath     string
-	Provider        string
-	DataDir         string
-	SessionKey      string
-	DBPath          string
-	TodoCaptureMode todocapture.CaptureMode
-	Input           io.Reader
-	Output          io.Writer
-	Manager         *projectrun.Manager
-	TodoHandler     todocapture.Handler
+	ProjectPath       string
+	Provider          string
+	DataDir           string
+	SessionKey        string
+	BrowserSessionKey string
+	DBPath            string
+	TodoCaptureMode   todocapture.CaptureMode
+	Input             io.Reader
+	Output            io.Writer
+	Manager           *projectrun.Manager
+	TodoHandler       todocapture.Handler
 }
 
 type Server struct {
-	projectPath     string
-	provider        string
-	dataDir         string
-	sessionKey      string
-	input           io.Reader
-	output          io.Writer
-	manager         *projectrun.Manager
-	ownManager      bool
-	todoMode        todocapture.CaptureMode
-	todoHandler     todocapture.Handler
-	todoStore       *store.Store
-	protocolVersion string
+	projectPath       string
+	provider          string
+	dataDir           string
+	sessionKey        string
+	browserSessionKey string
+	input             io.Reader
+	output            io.Writer
+	manager           *projectrun.Manager
+	ownManager        bool
+	todoMode          todocapture.CaptureMode
+	todoHandler       todocapture.Handler
+	todoStore         *store.Store
+	protocolVersion   string
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -101,18 +103,19 @@ func New(opts Options) (*Server, error) {
 		todoHandler = todocapture.NewExternalService(todoStore, todoMode)
 	}
 	return &Server{
-		projectPath:     projectPath,
-		provider:        strings.TrimSpace(opts.Provider),
-		dataDir:         strings.TrimSpace(opts.DataDir),
-		sessionKey:      strings.TrimSpace(opts.SessionKey),
-		input:           input,
-		output:          output,
-		manager:         manager,
-		ownManager:      ownManager,
-		todoMode:        todoMode,
-		todoHandler:     todoHandler,
-		todoStore:       todoStore,
-		protocolVersion: defaultProtocolVersion,
+		projectPath:       projectPath,
+		provider:          strings.TrimSpace(opts.Provider),
+		dataDir:           strings.TrimSpace(opts.DataDir),
+		sessionKey:        strings.TrimSpace(opts.SessionKey),
+		browserSessionKey: strings.TrimSpace(opts.BrowserSessionKey),
+		input:             input,
+		output:            output,
+		manager:           manager,
+		ownManager:        ownManager,
+		todoMode:          todoMode,
+		todoHandler:       todoHandler,
+		todoStore:         todoStore,
+		protocolVersion:   defaultProtocolVersion,
 	}, nil
 }
 
@@ -293,7 +296,12 @@ func (s *Server) requestBrowserAttention(req requestBrowserAttentionArgs) (map[s
 			"error":   fmt.Sprintf("message must be at most %d characters", managedBrowserAttentionMessageMaxRuneCount),
 		}, true
 	}
-	sessionKey := strings.TrimSpace(s.sessionKey)
+	sessionKey := strings.TrimSpace(s.browserSessionKey)
+	if sessionKey == "" {
+		// Backward compatibility for runtime MCP launchers from before browser
+		// and TODO capture identities were carried separately.
+		sessionKey = strings.TrimSpace(s.sessionKey)
+	}
 	if sessionKey == "" {
 		return map[string]any{
 			"success": false,

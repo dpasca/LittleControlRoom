@@ -52,59 +52,81 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 }
 
 func TestRuntimeMCPRequestBrowserAttentionValidatesAttachedBrowser(t *testing.T) {
-	projectPath := t.TempDir()
-	dataDir := t.TempDir()
-	const sessionKey = "managed-browser-session"
-	paths, err := browserctl.ManagedPlaywrightPathsFor(
-		dataDir,
-		"codex",
-		projectPath,
-		sessionKey,
-		"managed-browser-profile",
-		browserctl.ManagedLaunchModeBackground,
-	)
-	if err != nil {
-		t.Fatalf("ManagedPlaywrightPathsFor() error = %v", err)
-	}
-	if err := browserctl.WriteManagedPlaywrightState(paths, browserctl.ManagedPlaywrightState{
-		SessionKey:      sessionKey,
-		ProfileKey:      paths.ProfileKey,
-		Provider:        "codex",
-		ProjectPath:     projectPath,
-		LaunchMode:      browserctl.ManagedLaunchModeBackground,
-		Policy:          browserctl.DefaultPolicy(),
-		MCPPID:          4100,
-		BrowserPID:      4200,
-		BrowserAppName:  "Chromium",
-		RevealSupported: true,
-	}); err != nil {
-		t.Fatalf("WriteManagedPlaywrightState() error = %v", err)
-	}
+	for _, tc := range []struct {
+		name              string
+		sessionKey        string
+		browserSessionKey string
+	}{
+		{
+			name:       "legacy shared session key",
+			sessionKey: "managed-browser-session",
+		},
+		{
+			name:              "dedicated browser session key",
+			sessionKey:        "todo-capture-session",
+			browserSessionKey: "managed-browser-session",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projectPath := t.TempDir()
+			dataDir := t.TempDir()
+			const managedBrowserSessionKey = "managed-browser-session"
+			paths, err := browserctl.ManagedPlaywrightPathsFor(
+				dataDir,
+				"codex",
+				projectPath,
+				managedBrowserSessionKey,
+				"managed-browser-profile",
+				browserctl.ManagedLaunchModeBackground,
+			)
+			if err != nil {
+				t.Fatalf("ManagedPlaywrightPathsFor() error = %v", err)
+			}
+			if err := browserctl.WriteManagedPlaywrightState(paths, browserctl.ManagedPlaywrightState{
+				SessionKey:      managedBrowserSessionKey,
+				ProfileKey:      paths.ProfileKey,
+				Provider:        "codex",
+				ProjectPath:     projectPath,
+				LaunchMode:      browserctl.ManagedLaunchModeBackground,
+				Policy:          browserctl.DefaultPolicy(),
+				MCPPID:          4100,
+				BrowserPID:      4200,
+				BrowserAppName:  "Chromium",
+				RevealSupported: true,
+			}); err != nil {
+				t.Fatalf("WriteManagedPlaywrightState() error = %v", err)
+			}
 
-	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"request_browser_attention","arguments":{"message":"Sign in to Gitea, then return to Little Control Room."}}}`)
-	var output bytes.Buffer
-	err = Run(context.Background(), Options{
-		ProjectPath: projectPath,
-		Provider:    "codex",
-		DataDir:     dataDir,
-		SessionKey:  sessionKey,
-		Input:       input,
-		Output:      &output,
-	})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+			input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"request_browser_attention","arguments":{"message":"Sign in to Gitea, then return to Little Control Room."}}}`)
+			var output bytes.Buffer
+			err = Run(context.Background(), Options{
+				ProjectPath:       projectPath,
+				Provider:          "codex",
+				DataDir:           dataDir,
+				SessionKey:        tc.sessionKey,
+				BrowserSessionKey: tc.browserSessionKey,
+				Input:             input,
+				Output:            &output,
+			})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
 
-	responses := decodeResponses(t, output.String())
-	if len(responses) != 1 {
-		t.Fatalf("responses len = %d, want 1: %s", len(responses), output.String())
-	}
-	payload := decodeToolJSON(t, responses[0].Result)
-	if payload["success"] != true || payload["browser_pid"] != float64(4200) {
-		t.Fatalf("browser attention payload = %#v, want attached browser success", payload)
-	}
-	if got, want := payload["requested_action"], "Sign in to Gitea, then return to Little Control Room."; got != want {
-		t.Fatalf("requested action = %#v, want %q", got, want)
+			responses := decodeResponses(t, output.String())
+			if len(responses) != 1 {
+				t.Fatalf("responses len = %d, want 1: %s", len(responses), output.String())
+			}
+			payload := decodeToolJSON(t, responses[0].Result)
+			if payload["success"] != true || payload["browser_pid"] != float64(4200) {
+				t.Fatalf("browser attention payload = %#v, want attached browser success", payload)
+			}
+			if got, want := payload["session_key"], managedBrowserSessionKey; got != want {
+				t.Fatalf("browser session key = %#v, want %q", got, want)
+			}
+			if got, want := payload["requested_action"], "Sign in to Gitea, then return to Little Control Room."; got != want {
+				t.Fatalf("requested action = %#v, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -337,14 +359,15 @@ func TestRuntimeMCPTodoCallsInjectTrustedOrigin(t *testing.T) {
 	manager := projectrun.NewManager()
 	defer manager.CloseAll()
 	err := Run(context.Background(), Options{
-		ProjectPath:     "/trusted/project",
-		Provider:        "claude_code",
-		SessionKey:      "trusted-session",
-		TodoCaptureMode: todocapture.ModeExplicit,
-		TodoHandler:     handler,
-		Input:           input,
-		Output:          &output,
-		Manager:         manager,
+		ProjectPath:       "/trusted/project",
+		Provider:          "claude_code",
+		SessionKey:        "trusted-session",
+		BrowserSessionKey: "managed-browser-session",
+		TodoCaptureMode:   todocapture.ModeExplicit,
+		TodoHandler:       handler,
+		Input:             input,
+		Output:            &output,
+		Manager:           manager,
 	})
 	if err != nil {
 		t.Fatal(err)
