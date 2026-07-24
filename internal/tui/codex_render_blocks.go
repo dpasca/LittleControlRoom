@@ -1165,10 +1165,16 @@ func codexLocalArtifactOpenTarget(label, target string) (path, kind string, ok b
 		return dir, "dir", true
 	}
 	kind = codexArtifactKindForPath(openPath)
-	if kind == "" {
-		return "", "", false
+	if kind != "" {
+		return openPath, kind, true
 	}
-	return openPath, kind, true
+	// A direct directory link commonly has no extension. Treat that shape as a
+	// picker-openable local path without probing the filesystem from the render
+	// path; the open command validates the target asynchronously.
+	if filepath.Ext(openPath) == "" && !codexArtifactPathIsFilesystemRoot(openPath) {
+		return openPath, "file", true
+	}
+	return "", "", false
 }
 
 func codexLocalOpenPath(target string) (path, location string) {

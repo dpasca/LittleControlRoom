@@ -2373,6 +2373,78 @@ func TestCodexArtifactPickerOpensFolderNamedReadmeLinksAsDirectory(t *testing.T)
 	_ = updated
 }
 
+func TestCodexArtifactPickerOpensDirectExtensionlessDirectoryLinks(t *testing.T) {
+	root := t.TempDir()
+	archiveRoot := filepath.Join(root, "Dropbox (NEWTYPE)", "development", "terrain")
+	archiveDir := filepath.Join(archiveRoot, "khor-ash-sham-reference-v1-2026-07-24")
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatalf("create archive directory: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Saved and verified the research archive here:\n\n" +
+					"[Open the Khor Ash Sham terrain reference package](<" + archiveDir + ">)",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 100)
+	if strings.Contains(rendered, ansi.SetHyperlink(archiveDir)) {
+		t.Fatalf("direct directory links should not depend on terminal hyperlink handling: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "Open the Khor Ash Sham terrain reference package") ||
+		!strings.Contains(stripped, "Alt+O") {
+		t.Fatalf("direct directory link should advertise the picker: %q", stripped)
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+		codexViewport: viewport.New(100, 12),
+	}
+	rendered = m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 100)
+	m.codexViewport.SetContent(rendered)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("directory target should not queue a preview command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("direct directory picker state = %#v, want one target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Path != archiveDir {
+		t.Fatalf("direct directory target = %#v, want path %q", target, archiveDir)
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on direct directory target should queue open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("direct directory open command returned nil")
+	}
+	if opened != archiveDir {
+		t.Fatalf("direct directory picker opened %q, want %q", opened, archiveDir)
+	}
+	_ = updated
+}
+
 func TestRenderCodexTranscriptEntriesRendersGeneratedImagePreview(t *testing.T) {
 	imageBytes := mustTestPNG(color.RGBA{R: 40, G: 180, B: 220, A: 255})
 	path := "/tmp/demo/generated_images/ig_demo.png"
