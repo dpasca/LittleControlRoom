@@ -51,10 +51,17 @@ TUI confirmation -> existing typed control executor -> durable result
 
 The isolated MCP process writes a `proposed` operation to SQLite. A background
 TUI relay claims one proposal at a time and changes it to
-`waiting_for_confirmation`. The existing structured Chat confirmation dialog
-shows the capability-specific target and effects. Only `Enter` moves it to
-`running`; cancellation and the final execution result are written back for the
-originating session to inspect.
+`waiting_for_confirmation`. A TUI-owned modal shows the capability-specific
+target and effects over the operator's current surface, including an embedded
+Codex, OpenCode, or Claude Code pane. The modal does not open or depend on Help
+Chat. Only `Enter` moves the operation to `running`; cancellation and the final
+execution result are written back for the originating session to inspect.
+
+Follow-on host dialogs stay on that same surface. For example, confirming
+`git.prepare_commit` opens the normal commit preview over the embedded session
+and gives the preview input priority without hiding or closing the session.
+Help Chat proposals reuse the same stateless structured-dialog renderer, but
+Help Chat owns only proposals created by its own conversation.
 
 A canceled or failed operation ends the originating agent's current write-side
 workflow. The runtime result tells the agent to stop rather than retry the

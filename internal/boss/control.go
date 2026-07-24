@@ -39,8 +39,6 @@ type controlProposalError struct {
 	err error
 }
 
-var ErrControlConfirmationPending = errors.New("another control confirmation is already pending")
-
 func (e controlProposalError) Error() string {
 	if e.err == nil {
 		return "control proposal failed"
@@ -758,7 +756,7 @@ func controlProposalFooterHint(inv control.Invocation) string {
 	return "Enter confirms action | Esc cancels"
 }
 
-func controlProposalSubmittingStatus(inv control.Invocation) string {
+func ControlProposalSubmittingStatus(inv control.Invocation) string {
 	switch inv.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Sending request to engineer session..."
@@ -779,24 +777,6 @@ func (m Model) ControlConfirmationActive() bool {
 	return m.pendingControl != nil || m.pendingGoal != nil
 }
 
-func (m Model) PresentExternalControlProposal(inv control.Invocation, preview string) (Model, error) {
-	if m.pendingControl != nil || m.pendingGoal != nil {
-		return m, ErrControlConfirmationPending
-	}
-	normalized, err := control.ValidateInvocation(inv)
-	if err != nil {
-		return m, err
-	}
-	m.pendingControl = &ControlProposal{
-		Invocation: copyControlInvocation(normalized),
-		Preview:    strings.TrimSpace(preview),
-	}
-	m.pendingGoal = nil
-	m.status = controlProposalStatus(normalized)
-	m.syncLayout(true)
-	return m, nil
-}
-
 func (m Model) TodoOnlyConfirmationActive() bool {
 	return m.pendingControl != nil && m.pendingControl.Invocation.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer
 }
@@ -813,7 +793,7 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		inv := copyControlInvocation(m.pendingControl.Invocation)
 		m.pendingControl = nil
-		m.status = controlProposalSubmittingStatus(inv)
+		m.status = ControlProposalSubmittingStatus(inv)
 		return m, func() tea.Msg {
 			return ControlInvocationConfirmedMsg{Invocation: inv}
 		}

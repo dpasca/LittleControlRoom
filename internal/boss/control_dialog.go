@@ -11,6 +11,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// RenderControlConfirmationDialog renders a validated control proposal without
+// requiring a Chat model or making Chat own the confirmation lifecycle.
+func RenderControlConfirmationDialog(inv control.Invocation, preview string, bodyW, bodyH int) (string, error) {
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return "", err
+	}
+	m := Model{
+		pendingControl: &ControlProposal{
+			Invocation: copyControlInvocation(normalized),
+			Preview:    strings.TrimSpace(preview),
+		},
+	}
+	return m.renderControlConfirmationDialog(bodyW, bodyH), nil
+}
+
 func (m Model) renderControlConfirmationOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderControlConfirmationDialog(bodyW, bodyH)
 	panelW := lipgloss.Width(panel)

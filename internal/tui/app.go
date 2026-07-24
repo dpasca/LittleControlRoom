@@ -126,6 +126,7 @@ type Model struct {
 	helpChatMode                        bool
 	helpChatModelActive                 bool
 	helpChatModel                       bossui.Model
+	externalControlConfirmation         *externalControlConfirmationState
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
 	errorLogSelected                    int
@@ -1375,6 +1376,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(externalControlProposalLoadedMsg); ok {
 		return m.applyExternalControlProposalLoaded(msg)
 	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.externalControlConfirmation != nil {
+		return m.updateExternalControlConfirmationMode(key)
+	}
+	if _, ok := msg.(tea.MouseMsg); ok && m.externalControlConfirmation != nil {
+		return m, nil
+	}
 	if msg, ok := msg.(bossTrackedTodoLoadedMsg); ok {
 		return m.applyBossTrackedTodoLoaded(msg)
 	}
@@ -1685,6 +1692,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.archiveDialog != nil {
 			return m.updateArchiveDialogMode(msg)
 		}
+		if m.gitStatusDialog != nil {
+			return m.updateGitStatusDialogMode(msg)
+		}
+		if m.commitPreview != nil {
+			return m.updateCommitPreviewMode(msg)
+		}
 		if m.codexVisible() {
 			if m.browserAttentionDialogCanTakeFocus() && m.codexInputCopyDialog == nil && m.embeddedSidebarDetail == nil {
 				return m.updateBrowserAttentionMode(msg)
@@ -1696,12 +1709,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.diffView != nil {
 			return m.updateDiffMode(msg)
-		}
-		if m.gitStatusDialog != nil {
-			return m.updateGitStatusDialogMode(msg)
-		}
-		if m.commitPreview != nil {
-			return m.updateCommitPreviewMode(msg)
 		}
 		if m.setupMode {
 			return m.updateSetupMode(msg)
