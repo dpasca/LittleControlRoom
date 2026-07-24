@@ -80,6 +80,7 @@ const (
 	settingsFieldMobileListenAddress
 	settingsFieldEngineerTodoCaptureMode
 	settingsFieldAIBackend
+	settingsFieldConflictResolverProvider
 )
 
 type settingsSectionID string
@@ -217,6 +218,7 @@ func settingsSections() []settingsSection {
 			hint:    "A compact inventory of shared provider connections and global model display defaults. Use Getting Started for feature setup.",
 			fieldOrder: []int{
 				settingsFieldCodexLaunchPreset,
+				settingsFieldConflictResolverProvider,
 				settingsFieldHideReasoningSections,
 			},
 		},
@@ -861,6 +863,12 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldMobileInputEnabled),
 		m.settingsMobileListenAddressFromFields(),
 	)
+	if err != nil {
+		m.err = nil
+		m.status = err.Error()
+		return m, nil
+	}
+	settings.ConflictResolverProvider, err = config.ParseConflictResolverProvider(m.settingsFieldValue(settingsFieldConflictResolverProvider))
 	if err != nil {
 		m.err = nil
 		m.status = err.Error()
@@ -4068,6 +4076,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			32,
 			settingsSectionGettingStarted,
 		),
+		newSettingsField(
+			"Conflict resolver",
+			"Press Enter to choose the provider used by /resolve. This is independent of the last agent or the selected project's session history.",
+			string(config.NormalizeConflictResolverProvider(settings.ConflictResolverProvider)),
+			32,
+			settingsSectionAI,
+		),
 	}
 }
 
@@ -4152,6 +4167,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
 	settings.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
+	settings.ConflictResolverProvider = config.NormalizeConflictResolverProvider(settings.ConflictResolverProvider)
 	settings.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	settings.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)

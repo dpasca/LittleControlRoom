@@ -93,6 +93,54 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 	}
 }
 
+func TestSettingsConflictResolverProviderUsesChoicePickerAndSaves(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		settingsMode:       true,
+		settingsFields:     newSettingsFields(settings),
+		settingsBaseline:   &settings,
+		settingsConfigPath: filepath.Join(t.TempDir(), "config.toml"),
+		width:              100,
+		height:             24,
+	}
+	_ = m.setSettingsSelection(settingsFieldConflictResolverProvider)
+
+	updated, _ := m.openSettingsChoicePicker(settingsFieldConflictResolverProvider)
+	got := updated.(Model)
+	if got.settingsChoicePicker == nil {
+		t.Fatal("conflict resolver should open choice picker")
+	}
+	rendered := ansi.Strip(got.renderSettingsChoicePickerContent(56, 20))
+	for _, want := range []string{"Conflict Resolver", "Codex", "OpenCode", "Claude Code", "LCAgent"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("conflict resolver picker missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if value := got.settingsFieldValue(settingsFieldConflictResolverProvider); value != string(config.ConflictResolverProviderOpenCode) {
+		t.Fatalf("conflict resolver field = %q, want opencode", value)
+	}
+
+	updated, cmd := got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("saving conflict resolver setting should return a command")
+	}
+	saved, ok := cmd().(settingsSavedMsg)
+	if !ok {
+		t.Fatalf("save command returned unexpected message")
+	}
+	if saved.err != nil {
+		t.Fatalf("save conflict resolver setting: %v", saved.err)
+	}
+	if saved.settings.ConflictResolverProvider != config.ConflictResolverProviderOpenCode {
+		t.Fatalf("saved conflict resolver = %q, want opencode", saved.settings.ConflictResolverProvider)
+	}
+}
+
 func TestSettingsLCAgentReasoningPickerUsesProviderOptions(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.LCAgentProvider = "deepseek"
@@ -1454,7 +1502,7 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Codex launch mode", "Show reasoning"} {
+	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Codex launch mode", "Conflict resolver", "Codex", "Show reasoning"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("providers and models section missing %q: %q", want, rendered)
 		}
@@ -1473,8 +1521,8 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	if got.activeSettingsSection().id != settingsSectionAI {
 		t.Fatalf("compact settings should stay in Providers & Models section, got %q", got.activeSettingsSection().id)
 	}
-	if got.settingsSelected != settingsFieldHideReasoningSections {
-		t.Fatalf("settingsSelected = %d, want show reasoning row", got.settingsSelected)
+	if got.settingsSelected != settingsFieldConflictResolverProvider {
+		t.Fatalf("settingsSelected = %d, want conflict resolver row", got.settingsSelected)
 	}
 }
 

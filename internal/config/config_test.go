@@ -71,6 +71,47 @@ func TestDefaultUsesExplicitOnlyEngineerTodoCapture(t *testing.T) {
 	}
 }
 
+func TestDefaultUsesCodexConflictResolver(t *testing.T) {
+	if got, want := Default().ConflictResolverProvider, ConflictResolverProviderCodex; got != want {
+		t.Fatalf("default conflict resolver provider = %s, want %s", got, want)
+	}
+}
+
+func TestParseLoadsAndOverridesConflictResolverProvider(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("conflict_resolver_provider = \"claude_code\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.ConflictResolverProvider, ConflictResolverProviderClaudeCode; got != want {
+		t.Fatalf("config conflict resolver provider = %s, want %s", got, want)
+	}
+
+	cfg, err = Parse("scan", []string{"--config", configPath, "--conflict-resolver-provider", "opencode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.ConflictResolverProvider, ConflictResolverProviderOpenCode; got != want {
+		t.Fatalf("flag conflict resolver provider = %s, want %s", got, want)
+	}
+}
+
+func TestParseRejectsInvalidConflictResolverProvider(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("conflict_resolver_provider = \"whoever-ran-last\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse("scan", []string{"--config", configPath}); err == nil {
+		t.Fatal("expected invalid conflict resolver provider to be rejected")
+	}
+}
+
 func TestParseLoadsEngineerTodoCaptureMode(t *testing.T) {
 	useTempHome(t)
 	configPath := filepath.Join(t.TempDir(), "config.toml")
@@ -1016,6 +1057,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		LCAgentWebSearchEngineID:  "engine-id",
 		LCAgentWebSearchURL:       "http://127.0.0.1:8888",
 		CodexLaunchPreset:         codexcli.PresetFullAuto,
+		ConflictResolverProvider:  ConflictResolverProviderClaudeCode,
 		PlaywrightPolicy: browserctl.Policy{
 			ManagementMode:     browserctl.ManagementModeObserve,
 			DefaultBrowserMode: browserctl.BrowserModeHeaded,
@@ -1044,6 +1086,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, `engineer_todo_capture_mode = "explicit_and_clear_deferrals"`) {
 		t.Fatalf("saved config should include engineer TODO capture mode: %q", text)
+	}
+	if !strings.Contains(text, `conflict_resolver_provider = "claude_code"`) {
+		t.Fatalf("saved config should include conflict resolver provider: %q", text)
 	}
 	if !strings.Contains(text, "ai_backend = \"openai_api\"") {
 		t.Fatalf("saved config should include ai_backend: %q", text)

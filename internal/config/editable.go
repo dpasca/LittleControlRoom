@@ -75,6 +75,7 @@ type EditableSettings struct {
 	LCAgentWebSearchEngineID  string
 	LCAgentWebSearchURL       string
 	CodexLaunchPreset         codexcli.Preset
+	ConflictResolverProvider  ConflictResolverProvider
 	PlaywrightPolicy          browserctl.Policy
 	EngineerTodoCaptureMode   todocapture.CaptureMode
 	ScanInterval              time.Duration
@@ -148,6 +149,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentWebSearchEngineID:  cfg.LCAgentWebSearchEngineID,
 		LCAgentWebSearchURL:       cfg.LCAgentWebSearchURL,
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
+		ConflictResolverProvider:  NormalizeConflictResolverProvider(cfg.ConflictResolverProvider),
 		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
 		EngineerTodoCaptureMode:   todocapture.NormalizeCaptureMode(cfg.EngineerTodoCaptureMode),
 		ScanInterval:              cfg.ScanInterval,
@@ -233,6 +235,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 
 func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
+	settings.ConflictResolverProvider = NormalizeConflictResolverProvider(settings.ConflictResolverProvider)
 	settings.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	settings.MobileListenAddress = strings.TrimSpace(settings.MobileListenAddress)
 	if settings.MobileListenAddress == "" {
@@ -618,6 +621,7 @@ func validateEditableSettings(settings EditableSettings) error {
 		cfg.MobileListenAddress = DefaultMobileListenAddress
 	}
 	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
+	cfg.ConflictResolverProvider = NormalizeConflictResolverProvider(settings.ConflictResolverProvider)
 	cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	return validate(cfg)
 }
@@ -909,6 +913,7 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
+	lines = append(lines, fmt.Sprintf("conflict_resolver_provider = %s", strconv.Quote(string(NormalizeConflictResolverProvider(settings.ConflictResolverProvider)))))
 	lines = append(lines, "")
 	normalizedPolicy := settings.PlaywrightPolicy.Normalize()
 	lines = append(lines, fmt.Sprintf("playwright_management_mode = %s", strconv.Quote(string(normalizedPolicy.ManagementMode))))

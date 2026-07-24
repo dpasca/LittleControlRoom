@@ -84,6 +84,7 @@ type AppConfig struct {
 	LCAgentWebSearchEngineID  string
 	LCAgentWebSearchURL       string
 	CodexLaunchPreset         codexcli.Preset
+	ConflictResolverProvider  ConflictResolverProvider
 	PlaywrightPolicy          browserctl.Policy
 	EngineerTodoCaptureMode   todocapture.CaptureMode
 	DataDir                   string
@@ -246,6 +247,7 @@ type fileConfig struct {
 	LCAgentWebSearchEngineID  *string   `toml:"lcagent_web_search_engine_id"`
 	LCAgentWebSearchURL       *string   `toml:"lcagent_web_search_url"`
 	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
+	ConflictResolverProvider  *string   `toml:"conflict_resolver_provider"`
 	PlaywrightManagementMode  *string   `toml:"playwright_management_mode"`
 	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
 	PlaywrightLoginMode       *string   `toml:"playwright_login_mode"`
@@ -265,35 +267,36 @@ func Default() AppConfig {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, brand.DataDirName)
 	return AppConfig{
-		IncludePaths:            []string{filepath.Join(home, "dev", "repos")},
-		ScratchRoot:             filepath.Join(home, "LittleControlRoom", "tasks"),
-		CodexHome:               filepath.Join(home, ".codex"),
-		OpenCodeHome:            filepath.Join(home, ".local", "share", "opencode"),
-		ClaudeCodeHome:          filepath.Join(home, ".claude"),
-		LCAgentProvider:         "openrouter",
-		LCAgentAuto:             "low",
-		LCAgentToolProfile:      "balanced",
-		LCAgentContextProfile:   "balanced",
-		LCAgentRequestTimeout:   10 * time.Minute,
-		LCAgentUtilityProvider:  "main",
-		LCAgentVisionProvider:   "auto",
-		LCAgentWebSearchBackend: "off",
-		BossChatOllamaThinking:  true,
-		CodexLaunchPreset:       codexcli.DefaultPreset(),
-		PlaywrightPolicy:        browserctl.DefaultPolicy(),
-		EngineerTodoCaptureMode: todocapture.ModeExplicit,
-		DataDir:                 dataDir,
-		DBPath:                  filepath.Join(dataDir, brand.DBFileName),
-		ConfigPath:              filepath.Join(dataDir, brand.ConfigFileName),
-		SnapshotLimit:           3,
-		ScanInterval:            60 * time.Second,
-		ActiveThreshold:         20 * time.Minute,
-		StuckThreshold:          4 * time.Hour,
-		MobileEnabled:           true,
-		MobileInputEnabled:      false,
-		MobileListenAddress:     DefaultMobileListenAddress,
-		HideReasoningSections:   true,
-		PrivacyMode:             false,
+		IncludePaths:             []string{filepath.Join(home, "dev", "repos")},
+		ScratchRoot:              filepath.Join(home, "LittleControlRoom", "tasks"),
+		CodexHome:                filepath.Join(home, ".codex"),
+		OpenCodeHome:             filepath.Join(home, ".local", "share", "opencode"),
+		ClaudeCodeHome:           filepath.Join(home, ".claude"),
+		LCAgentProvider:          "openrouter",
+		LCAgentAuto:              "low",
+		LCAgentToolProfile:       "balanced",
+		LCAgentContextProfile:    "balanced",
+		LCAgentRequestTimeout:    10 * time.Minute,
+		LCAgentUtilityProvider:   "main",
+		LCAgentVisionProvider:    "auto",
+		LCAgentWebSearchBackend:  "off",
+		BossChatOllamaThinking:   true,
+		CodexLaunchPreset:        codexcli.DefaultPreset(),
+		ConflictResolverProvider: ConflictResolverProviderCodex,
+		PlaywrightPolicy:         browserctl.DefaultPolicy(),
+		EngineerTodoCaptureMode:  todocapture.ModeExplicit,
+		DataDir:                  dataDir,
+		DBPath:                   filepath.Join(dataDir, brand.DBFileName),
+		ConfigPath:               filepath.Join(dataDir, brand.ConfigFileName),
+		SnapshotLimit:            3,
+		ScanInterval:             60 * time.Second,
+		ActiveThreshold:          20 * time.Minute,
+		StuckThreshold:           4 * time.Hour,
+		MobileEnabled:            true,
+		MobileInputEnabled:       false,
+		MobileListenAddress:      DefaultMobileListenAddress,
+		HideReasoningSections:    true,
+		PrivacyMode:              false,
 	}
 }
 
@@ -345,6 +348,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
 	lcagentWebSearchURL := fs.String("lcagent-web-search-url", cfg.LCAgentWebSearchURL, "LCAgent web search endpoint URL, used by SearXNG")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
+	conflictResolverProvider := fs.String("conflict-resolver-provider", string(cfg.ConflictResolverProvider), "Provider for /resolve conflict repair: codex, opencode, claude_code, or lcagent")
 	engineerTodoCaptureMode := fs.String("engineer-todo-capture-mode", string(cfg.EngineerTodoCaptureMode), "Embedded engineer TODO capture: off, explicit_only, or explicit_and_clear_deferrals")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
@@ -458,6 +462,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.CodexLaunchPreset, err = codexcli.ParsePreset(*codexLaunchPreset)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("codex-launch-preset: %w", err)
+	}
+	cfg.ConflictResolverProvider, err = ParseConflictResolverProvider(*conflictResolverProvider)
+	if err != nil {
+		return AppConfig{}, fmt.Errorf("conflict-resolver-provider: %w", err)
 	}
 	cfg.EngineerTodoCaptureMode, err = todocapture.ParseCaptureMode(*engineerTodoCaptureMode)
 	if err != nil {
@@ -747,6 +755,13 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.CodexLaunchPreset = preset
 	}
+	if fc.ConflictResolverProvider != nil {
+		provider, err := ParseConflictResolverProvider(*fc.ConflictResolverProvider)
+		if err != nil {
+			return fmt.Errorf("config conflict_resolver_provider: %w", err)
+		}
+		cfg.ConflictResolverProvider = provider
+	}
 	if fc.PlaywrightManagementMode != nil {
 		value, err := browserctl.ParseManagementMode(*fc.PlaywrightManagementMode)
 		if err != nil {
@@ -826,6 +841,9 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	if _, err := codexcli.ParsePreset(string(cfg.CodexLaunchPreset)); err != nil {
+		return err
+	}
+	if _, err := ParseConflictResolverProvider(string(cfg.ConflictResolverProvider)); err != nil {
 		return err
 	}
 	if err := cfg.PlaywrightPolicy.Validate(); err != nil {

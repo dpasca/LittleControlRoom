@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 	"lcroom/internal/todocapture"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -36,7 +37,8 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 		settingsFieldBossChatOllamaThinking,
 		settingsFieldLCAgentToolProfile,
 		settingsFieldLCAgentContextProfile,
-		settingsFieldEngineerTodoCaptureMode:
+		settingsFieldEngineerTodoCaptureMode,
+		settingsFieldConflictResolverProvider:
 		return true
 	default:
 		return false
@@ -110,6 +112,33 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 			{Value: string(todocapture.ModeOff), Label: "Off", Summary: "Revoke TODO writes immediately.", Description: "Runtime process tools remain available. New or reconnected sessions omit TODO tools; calls from existing external sessions are denied by the live policy."},
 			{Value: string(todocapture.ModeExplicit), Label: "Explicit only", Summary: "Capture only direct user requests.", Description: "Safe default. The engineer lists current TODOs, checks semantic duplicates, then records a direct request and reports the result. Reconnect a session opened while capture was off."},
 			{Value: string(todocapture.ModeExplicitAndClearDeferrals), Label: "Explicit + clear deferrals", Summary: "Also capture unambiguous decisions to postpone work.", Description: "The engineer may record a concrete deferral without a direct add-TODO command, but must ask when intent is unclear and must not capture its own suggestions. Reconnect existing sessions to expose the expanded tool schema."},
+		}
+	case settingsFieldConflictResolverProvider:
+		return []settingsChoiceOption{
+			{
+				Value:       string(config.ConflictResolverProviderCodex),
+				Label:       "Codex",
+				Summary:     "Use Codex for /resolve conflict repair.",
+				Description: "Safe default for important merge repair. This choice stays fixed regardless of the last provider used elsewhere.",
+			},
+			{
+				Value:       string(config.ConflictResolverProviderOpenCode),
+				Label:       "OpenCode",
+				Summary:     "Use OpenCode for /resolve conflict repair.",
+				Description: "Choose this only when OpenCode is your intentional default for resolving Git conflicts.",
+			},
+			{
+				Value:       string(config.ConflictResolverProviderClaudeCode),
+				Label:       "Claude Code",
+				Summary:     "Use Claude Code for /resolve conflict repair.",
+				Description: "Choose this only when Claude Code is your intentional default for resolving Git conflicts.",
+			},
+			{
+				Value:       string(config.ConflictResolverProviderLCAgent),
+				Label:       "LCAgent",
+				Summary:     "Use experimental LCAgent for /resolve conflict repair.",
+				Description: "Uses the configured LCAgent coding route and provider credentials.",
+			},
 		}
 	case settingsFieldLCAgentAdminWrite:
 		return []settingsChoiceOption{
@@ -428,6 +457,12 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 		default:
 			return string(todocapture.ModeExplicit)
 		}
+	case settingsFieldConflictResolverProvider:
+		provider, err := config.ParseConflictResolverProvider(raw)
+		if err == nil {
+			return string(provider)
+		}
+		return normalized
 	default:
 		return normalized
 	}
@@ -480,6 +515,8 @@ func settingsChoiceTitle(fieldIndex int) string {
 		return "LCAgent Context Profile"
 	case settingsFieldEngineerTodoCaptureMode:
 		return "Engineer TODO Capture"
+	case settingsFieldConflictResolverProvider:
+		return "Conflict Resolver"
 	default:
 		return "Setting"
 	}

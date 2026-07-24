@@ -59,6 +59,7 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `exclude_paths`
 - `exclude_project_patterns`
 - `codex_launch_preset`
+- `conflict_resolver_provider`
 - `engineer_todo_capture_mode`
 - `embedded_lcagent_model`
 - `embedded_lcagent_reasoning_effort`
@@ -98,6 +99,9 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
+# /resolve uses this provider independently of normal last-used agent defaults.
+# Values: codex (default), opencode, claude_code, or lcagent.
+conflict_resolver_provider = "codex"
 # Embedded engineer TODO capture: off, explicit_only (default), or
 # explicit_and_clear_deferrals.
 engineer_todo_capture_mode = "explicit_only"
@@ -127,6 +131,10 @@ The default, `explicit_only`, acts only when the user directly asks to remember 
 Scope is derived from the embedded session's trusted launch path; the tool accepts no project-path override. A session in a linked worktree or repository subdirectory writes to the loaded main repository's TODO list. If Git/LCR scope cannot be resolved unambiguously, the write fails closed. Inserts are serialized across MCP processes, and exact retries are duplicate-safe even when two engineers race.
 
 Policy downgrades and `off` are enforced against already-running calls through the live policy. Newly enabled tools or an expanded clear-deferral schema require reopening or `/reconnect` for an already-initialized Codex, OpenCode, Claude Code, or LCAgent session. LCAgent receives the same contract through its per-run native tools.
+
+### Conflict resolver provider
+
+`conflict_resolver_provider` selects the embedded provider used by `/resolve`: `codex`, `opencode`, `claude_code`, or `lcagent`. It defaults to `codex` and is intentionally independent of the selected project's recent sessions and the provider last used for ordinary tasks. This prevents an unrelated launch choice from silently changing which agent performs conflict repair.
 
 Embedded Codex keeps the filesystem reach and approval behavior selected by
 `codex_launch_preset`; the default remains `yolo`. Little Control Room adds a
@@ -224,6 +232,7 @@ exclude_project_patterns = [
   "archive-*",
 ]
 codex_launch_preset = "yolo"
+conflict_resolver_provider = "codex"
 playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
@@ -530,4 +539,5 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail. When output is available, **Copy output** places that selected process's plain-text output on the clipboard, while **Add TODO** opens a prefilled, editable failure report under the repository-scoped project; press `Ctrl+S` there to save it.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
+- `conflict_resolver_provider` controls which embedded provider `/resolve` launches. The default is `codex`.
 - CLI flags override config file values.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -472,12 +473,12 @@ func (m Model) applyMergeConflictResolveTargetMsg(msg mergeConflictResolveTarget
 }
 
 func (m Model) launchMergeConflictResolver(project model.ProjectSummary) (tea.Model, tea.Cmd) {
-	provider := m.preferredEmbeddedProviderForProject(project)
+	provider := m.configuredConflictResolverProvider()
 	return m.launchParallelMergeConflictResolver(project, provider, mergeConflictResolvePrompt(project))
 }
 
 func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target service.GitlinkConflictResolveTarget) (tea.Model, tea.Cmd) {
-	provider := m.preferredEmbeddedProviderForProject(parent)
+	provider := m.configuredConflictResolverProvider()
 	project := model.ProjectSummary{
 		Path:          target.WorktreePath,
 		Name:          gitlinkConflictResolveProjectName(target),
@@ -487,6 +488,15 @@ func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target
 		RepoConflict:  true,
 	}
 	return m.launchParallelMergeConflictResolverForOwner(parent.Path, project, provider, gitlinkConflictResolvePrompt(parent, target))
+}
+
+func (m Model) configuredConflictResolverProvider() codexapp.Provider {
+	configured := m.currentSettingsBaseline().ConflictResolverProvider
+	provider := codexapp.Provider(config.NormalizeConflictResolverProvider(configured)).Normalized()
+	if provider == "" {
+		return codexapp.ProviderCodex
+	}
+	return provider
 }
 
 func (m Model) launchParallelMergeConflictResolver(project model.ProjectSummary, provider codexapp.Provider, prompt string) (tea.Model, tea.Cmd) {

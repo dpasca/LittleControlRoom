@@ -603,6 +603,64 @@ func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer
 	}
 }
 
+func TestResolveUsesConfiguredProviderInsteadOfProjectSessionHistory(t *testing.T) {
+	projectPath := "/tmp/resolve-provider"
+	project := model.ProjectSummary{
+		Path:                projectPath,
+		Name:                "resolve-provider",
+		PresentOnDisk:       true,
+		RepoConflict:        true,
+		LatestSessionFormat: "opencode_jsonl",
+	}
+
+	for _, tc := range []struct {
+		name       string
+		configured config.ConflictResolverProvider
+		want       codexapp.Provider
+	}{
+		{name: "default codex", configured: config.ConflictResolverProviderCodex, want: codexapp.ProviderCodex},
+		{name: "explicit claude", configured: config.ConflictResolverProviderClaudeCode, want: codexapp.ProviderClaudeCode},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var request codexapp.LaunchRequest
+			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+				request = req
+				return &fakeCodexSession{
+					projectPath: req.ProjectPath,
+					snapshot: codexapp.Snapshot{
+						Provider: req.Provider,
+						ThreadID: "resolve-provider-thread",
+						Started:  true,
+						Busy:     true,
+					},
+				}, nil
+			})
+			settings := config.EditableSettingsFromAppConfig(config.Default())
+			settings.ConflictResolverProvider = tc.configured
+			m := Model{
+				codexManager:     manager,
+				settingsBaseline: &settings,
+			}
+
+			_, cmd := m.launchMergeConflictResolver(project)
+			if cmd == nil {
+				t.Fatal("launchMergeConflictResolver() cmd = nil")
+			}
+			msg := cmd()
+			opened, ok := msg.(mergeConflictResolverOpenedMsg)
+			if !ok {
+				t.Fatalf("launch message = %#v, want mergeConflictResolverOpenedMsg", msg)
+			}
+			if opened.err != nil {
+				t.Fatalf("resolver launch error = %v", opened.err)
+			}
+			if request.Provider != tc.want {
+				t.Fatalf("resolver provider = %q, want %q; project history was OpenCode", request.Provider, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree(t *testing.T) {
 	parentPath := "/tmp/resolve-parent"
 	worktreePath := "/tmp/lcroom-submodule-merge/assets_src"
