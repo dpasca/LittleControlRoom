@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/todocapture"
 )
@@ -1254,8 +1255,8 @@ func TestLCAgentSessionReplayKeepsHistoricalModelAndStagesLaunchPreference(t *te
 	if snapshot.ReasoningEffort != "high" {
 		t.Fatalf("ReasoningEffort = %q, want replayed high reasoning", snapshot.ReasoningEffort)
 	}
-	if snapshot.PendingModel != "mimo-v2.5-pro" || snapshot.PendingReasoning != "high" {
-		t.Fatalf("pending model/reasoning = %q/%q, want mimo-v2.5-pro/high", snapshot.PendingModel, snapshot.PendingReasoning)
+	if snapshot.PendingModel != "mimo-v2.5-pro" || snapshot.PendingModelProvider != "xiaomi" || snapshot.PendingReasoning != "high" {
+		t.Fatalf("pending provider/model/reasoning = %q/%q/%q, want xiaomi/mimo-v2.5-pro/high", snapshot.PendingModelProvider, snapshot.PendingModel, snapshot.PendingReasoning)
 	}
 }
 
@@ -1660,6 +1661,63 @@ func TestLCAgentSessionListModelsKeepsCustomCurrentModel(t *testing.T) {
 	}
 	if len(models) == 0 || models[0].Model != "custom-experiment" {
 		t.Fatalf("custom model should be preserved first: %#v", models)
+	}
+}
+
+func TestLCAgentSessionLaunchKeepsProviderDiscoveredModelOutsideStaticCatalog(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_kimi3_session","cwd":"/tmp/demo","provider":"moonshot","model":"kimi-k3"}'
+printf '%s\n' '{"type":"turn_complete","summary":"kimi k3 run"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:              ProviderLCAgent,
+		ProjectPath:           root,
+		AppDataDir:            t.TempDir(),
+		LCAgentPath:           exe,
+		LCAgentProvider:       "moonshot",
+		LCAgentToolProfile:    "balanced",
+		LCAgentContextProfile: "balanced",
+		PendingModel:          "kimi-k3",
+		Prompt:                "use the discovered Moonshot model",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	if snapshot.Model != "kimi-k3" || snapshot.ModelProvider != "moonshot" {
+		t.Fatalf("snapshot model/provider = %q/%q, want moonshot/kimi-k3", snapshot.ModelProvider, snapshot.Model)
+	}
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--provider", "moonshot", "--model", "kimi-k3"} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
+	}
+	if lcagentTestStringSliceContains(args, modeladapter.DefaultMoonshotModel) {
+		t.Fatalf("provider-discovered model silently fell back to %q: %#v", modeladapter.DefaultMoonshotModel, args)
 	}
 }
 

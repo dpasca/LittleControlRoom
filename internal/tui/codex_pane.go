@@ -839,7 +839,7 @@ func (m *Model) maybeApplyCodexSuggestedInputDraft(projectPath string, snapshot 
 	}
 }
 
-func (m *Model) stageEmbeddedModelSelectionInCache(projectPath string, provider codexapp.Provider, model, reasoning string) (codexapp.Snapshot, bool) {
+func (m *Model) stageEmbeddedModelSelectionInCache(projectPath string, provider codexapp.Provider, model, modelProvider, reasoning string) (codexapp.Snapshot, bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		return codexapp.Snapshot{}, false
@@ -858,14 +858,20 @@ func (m *Model) stageEmbeddedModelSelectionInCache(projectPath string, provider 
 	snapshot.ProjectPath = projectPath
 	snapshot.Provider = provider
 	currentModel := strings.TrimSpace(snapshot.Model)
+	currentModelProvider := strings.TrimSpace(snapshot.ModelProvider)
 	currentReasoning := strings.TrimSpace(snapshot.ReasoningEffort)
 	model = firstNonEmptyTrimmed(model, currentModel)
+	modelProvider = firstNonEmptyTrimmed(modelProvider, currentModelProvider)
 	reasoning = firstNonEmptyTrimmed(reasoning, currentReasoning)
-	if strings.EqualFold(model, currentModel) && strings.EqualFold(reasoning, currentReasoning) {
+	if strings.EqualFold(model, currentModel) &&
+		strings.EqualFold(modelProvider, currentModelProvider) &&
+		strings.EqualFold(reasoning, currentReasoning) {
 		snapshot.PendingModel = ""
+		snapshot.PendingModelProvider = ""
 		snapshot.PendingReasoning = ""
 	} else {
 		snapshot.PendingModel = model
+		snapshot.PendingModelProvider = modelProvider
 		snapshot.PendingReasoning = reasoning
 	}
 	m.storeCodexSnapshot(projectPath, snapshot)

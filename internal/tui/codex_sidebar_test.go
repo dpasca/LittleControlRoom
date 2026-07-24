@@ -548,6 +548,7 @@ func TestEmbeddedSidebarShowsReplayedLCAgentModelBeforeNextModel(t *testing.T) {
 	snapshot.Model = "deepseek-v4-pro"
 	snapshot.ModelProvider = "deepseek"
 	snapshot.PendingModel = "mimo-v2.5-pro"
+	snapshot.PendingModelProvider = "xiaomi"
 	snapshot.PendingReasoning = "high"
 	snapshot.Entries = []codexapp.TranscriptEntry{
 		{Kind: codexapp.TranscriptStatus, Text: "Loaded LCAgent thread lca_demo from disk."},
@@ -556,8 +557,8 @@ func TestEmbeddedSidebarShowsReplayedLCAgentModelBeforeNextModel(t *testing.T) {
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
 	for _, want := range []string{
-		"Model deepseek-v4-pro",
-		"Next mimo-v2.5-pro / high",
+		"Model deepseek-v4-pro · DeepSeek",
+		"Next mimo-v2.5-pro · Xiaomi / high",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)

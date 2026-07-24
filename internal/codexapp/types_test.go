@@ -22,6 +22,7 @@ type fakeSession struct {
 	refreshFn      func(*fakeSession) error
 	reconcileCalls int
 	reconcileFn    func(*fakeSession) error
+	stagedProvider string
 }
 
 func (s *fakeSession) ProjectPath() string {
@@ -95,6 +96,14 @@ func (s *fakeSession) ListModels() ([]ModelOption, error) {
 
 func (s *fakeSession) StageModelOverride(model, reasoningEffort string) error {
 	s.snapshot.PendingModel = model
+	s.snapshot.PendingReasoning = reasoningEffort
+	return nil
+}
+
+func (s *fakeSession) StageModelProviderOverride(provider, model, reasoningEffort string) error {
+	s.stagedProvider = provider
+	s.snapshot.PendingModel = model
+	s.snapshot.PendingModelProvider = provider
 	s.snapshot.PendingReasoning = reasoningEffort
 	return nil
 }
@@ -416,6 +425,51 @@ func TestManagerOpenReusesExistingSessionAppliesPendingModelOverride(t *testing.
 	}
 	if got := session.submitted; len(got) != 1 || got[0] != "continue" {
 		t.Fatalf("submitted prompts = %#v, want [\"continue\"]", got)
+	}
+}
+
+func TestManagerOpenReusesLCAgentSessionAppliesPendingModelProvider(t *testing.T) {
+	session := &fakeSession{
+		projectPath: "/tmp/demo-lcagent",
+		snapshot: Snapshot{
+			Provider:      ProviderLCAgent,
+			Started:       true,
+			Model:         "mimo-v2.5-pro",
+			ModelProvider: "xiaomi",
+		},
+	}
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     session.projectPath,
+		LCAgentProvider: "xiaomi",
+	}); err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+
+	if _, reused, err := manager.Open(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     session.projectPath,
+		LCAgentProvider: "openrouter",
+		PendingModel:    "moonshotai/kimi-k3",
+		Prompt:          "continue",
+	}); err != nil {
+		t.Fatalf("second Open() error = %v", err)
+	} else if !reused {
+		t.Fatal("second Open() reused = false, want true")
+	}
+
+	if session.stagedProvider != "openrouter" ||
+		session.snapshot.PendingModelProvider != "openrouter" ||
+		session.snapshot.PendingModel != "moonshotai/kimi-k3" {
+		t.Fatalf(
+			"pending provider/model = %q/%q (staged %q), want openrouter/moonshotai/kimi-k3",
+			session.snapshot.PendingModelProvider,
+			session.snapshot.PendingModel,
+			session.stagedProvider,
+		)
 	}
 }
 

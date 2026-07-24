@@ -31,18 +31,19 @@ const (
 )
 
 type codexModelPickerState struct {
-	Models         []codexapp.ModelOption
-	FilteredModels []codexapp.ModelOption
-	RecentModels   []codexapp.ModelOption
-	FilterText     string
-	SelectedModel  string
-	ModelIndex     int
-	RecentIndex    int
-	EffortIndex    int
-	Focus          codexModelPickerFocus
-	Target         codexModelPickerTarget
-	Provider       codexapp.Provider
-	Loading        bool
+	Models                []codexapp.ModelOption
+	FilteredModels        []codexapp.ModelOption
+	RecentModels          []codexapp.ModelOption
+	FilterText            string
+	SelectedModel         string
+	SelectedModelProvider string
+	ModelIndex            int
+	RecentIndex           int
+	EffortIndex           int
+	Focus                 codexModelPickerFocus
+	Target                codexModelPickerTarget
+	Provider              codexapp.Provider
+	Loading               bool
 }
 
 func (m Model) codexModelPickerVisible() bool {
@@ -407,7 +408,7 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 		}
 	} else if snapshot, ok := m.currentCodexSnapshot(); ok {
 		desiredModel = firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
-		desiredModelProvider = strings.TrimSpace(snapshot.ModelProvider)
+		desiredModelProvider = firstNonEmptyTrimmed(snapshot.PendingModelProvider, snapshot.ModelProvider)
 		desiredReasoning = firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 	}
 
@@ -417,10 +418,12 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	}
 
 	if len(state.FilteredModels) > 0 && state.ModelIndex >= 0 && state.ModelIndex < len(state.FilteredModels) {
-		state.SelectedModel = codexModelOptionKey(state.FilteredModels[state.ModelIndex])
+		selected := state.FilteredModels[state.ModelIndex]
+		state.SelectedModel = codexModelOptionKey(selected)
+		state.SelectedModelProvider = strings.TrimSpace(selected.ModelProvider)
 	}
 	if state.RecentIndex < 0 {
-		state.RecentIndex = codexModelOptionIndex(state.RecentModels, state.SelectedModel)
+		state.RecentIndex = codexModelOptionIndexForProvider(state.RecentModels, state.SelectedModel, state.SelectedModelProvider)
 		if state.RecentIndex < 0 {
 			state.RecentIndex = 0
 		}
@@ -457,6 +460,7 @@ func (m *Model) syncCodexModelPickerSelectionWithReasoning(preferredReasoning st
 		state.ModelIndex = 0
 		state.EffortIndex = 0
 		state.SelectedModel = ""
+		state.SelectedModelProvider = ""
 		return
 	}
 	if len(state.FilteredModels) > 0 {
@@ -492,6 +496,7 @@ func (m *Model) syncCodexModelPickerSelectionWithReasoning(preferredReasoning st
 	}
 	if !ok {
 		state.SelectedModel = ""
+		state.SelectedModelProvider = ""
 		state.EffortIndex = 0
 		return
 	}
@@ -514,7 +519,7 @@ func (m Model) selectedCodexModelOption() (codexapp.ModelOption, bool) {
 	if selectedModel == "" {
 		return codexapp.ModelOption{}, false
 	}
-	if index := codexModelOptionIndex(state.Models, selectedModel); index >= 0 {
+	if index := codexModelOptionIndexForProvider(state.Models, selectedModel, state.SelectedModelProvider); index >= 0 {
 		return state.Models[index], true
 	}
 	return codexapp.ModelOption{}, false
@@ -558,10 +563,11 @@ func (m *Model) setCodexModelPickerModel(option codexapp.ModelOption, preferredR
 		return
 	}
 	state.SelectedModel = key
-	if index := codexModelOptionIndex(state.FilteredModels, key); index >= 0 {
+	state.SelectedModelProvider = strings.TrimSpace(option.ModelProvider)
+	if index := codexModelOptionIndexForProvider(state.FilteredModels, key, state.SelectedModelProvider); index >= 0 {
 		state.ModelIndex = index
 	}
-	if index := codexModelOptionIndex(state.RecentModels, key); index >= 0 {
+	if index := codexModelOptionIndexForProvider(state.RecentModels, key, state.SelectedModelProvider); index >= 0 {
 		state.RecentIndex = index
 	}
 	efforts := m.codexReasoningOptionsForModel(option)
@@ -1078,8 +1084,10 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			status += " is staged for the next fresh prompt"
 		}
 		if strings.EqualFold(strings.TrimSpace(snapshot.Model), modelName) &&
+			(modelProvider == "" || strings.EqualFold(strings.TrimSpace(snapshot.ModelProvider), modelProvider)) &&
 			strings.EqualFold(strings.TrimSpace(snapshot.ReasoningEffort), effort) &&
 			strings.TrimSpace(snapshot.PendingModel) == "" &&
+			strings.TrimSpace(snapshot.PendingModelProvider) == "" &&
 			strings.TrimSpace(snapshot.PendingReasoning) == "" {
 			status = "Embedded model remains " + modelName
 			if effort != "" {
