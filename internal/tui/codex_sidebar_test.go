@@ -308,7 +308,7 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 		"Next gpt-5 / medium",
 		"Context 6% of 200k",
 		"Tokens i10k c0% o2.0k",
-		"Limits 85% 5h reset 5h credit $4.25",
+		"Limits 85% left 5h reset 5h credit $4.25",
 		"Goal active 1,200/5,000 tok",
 		"ship conditional sidebar sections",
 		"Browser",
@@ -328,6 +328,32 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 		strings.Contains(rendered, "Please make the sidebar useful") ||
 		strings.Contains(rendered, "Ready to work") {
 		t.Fatalf("sidebar summary should not show transcript activity rows:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarUsageSummaryPrefersOrdinaryCodexAccountLimit(t *testing.T) {
+	now := time.Date(2026, 7, 24, 10, 0, 0, 0, time.Local)
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		UsageWindows: []codexapp.UsageWindowSnapshot{
+			{
+				Limit:       "GPT-5.3-Codex-Spark",
+				Window:      "weekly",
+				LeftPercent: 100,
+				ResetsAt:    time.Date(2026, 7, 31, 15, 0, 0, 0, time.Local),
+			},
+			{
+				Limit:       "codex",
+				Window:      "weekly",
+				LeftPercent: 24,
+				ResetsAt:    time.Date(2026, 7, 28, 10, 0, 0, 0, time.Local),
+			},
+		},
+	}
+
+	got := embeddedSidebarUsageWindowSummary(snapshot, now)
+	if got != "24% left weekly reset Jul28" {
+		t.Fatalf("usage summary = %q, want ordinary Codex account limit", got)
 	}
 }
 

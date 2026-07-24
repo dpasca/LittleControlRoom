@@ -29,6 +29,7 @@ const (
 	codexCodeModeHostFallback = "Codex compatibility fallback active: the code-mode helper is missing, so LCR disabled it for this embedded session. Tools will continue to work; no action is required."
 	playwrightMCPReadyTimeout = 12 * time.Second
 	runtimeMCPReadyTimeout    = 8 * time.Second
+	rateLimitsRefreshInterval = time.Minute
 )
 
 var errBusyTurnLikelyStuck = errors.New("embedded Codex session seems stuck or disconnected. Interrupt the current turn or use /reconnect before sending another prompt")
@@ -124,6 +125,8 @@ type appServerSession struct {
 	tokenUsage              *threadTokenUsage
 	rateLimits              *rateLimitSnapshot
 	rateLimitsByID          map[string]rateLimitSnapshot
+	rateLimitsRefreshActive bool
+	rateLimitsRefreshTryAt  time.Time
 	goal                    *ThreadGoal
 	pendingApproval         *ApprovalRequest
 	pendingToolInput        *ToolInputRequest
