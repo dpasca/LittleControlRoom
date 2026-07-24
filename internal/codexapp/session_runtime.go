@@ -124,6 +124,7 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	s.status = ""
 	s.mu.Unlock()
 	s.notify()
+	s.scheduleRateLimitsRefresh()
 	if compatibility.CodeModeHostDisabled {
 		s.appendSystemNotice(codexCodeModeHostFallback)
 	}
@@ -1080,10 +1081,17 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		if err := json.Unmarshal(params, &msg); err != nil {
 			return
 		}
+		isAccountLimit := isCodexAccountRateLimit(&msg.RateLimits)
 		s.mu.Lock()
 		s.touchLocked()
-		s.rateLimits = cloneRateLimitSnapshot(&msg.RateLimits)
+		s.storeRateLimitNotificationLocked(&msg.RateLimits)
+		if isAccountLimit {
+			s.rateLimitsRefreshTryAt = time.Now()
+		}
 		s.mu.Unlock()
+		if !isAccountLimit {
+			s.scheduleRateLimitsRefresh()
+		}
 		s.notify()
 	case "model/rerouted":
 		var msg modelReroutedNotification

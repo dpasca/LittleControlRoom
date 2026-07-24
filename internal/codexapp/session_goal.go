@@ -35,8 +35,8 @@ func (s *appServerSession) ShowStatus() error {
 		rateLimits = cloneRateLimitSnapshot(refreshed)
 		rateLimitsByID = cloneRateLimitSnapshotMap(byID)
 		s.mu.Lock()
-		s.rateLimits = cloneRateLimitSnapshot(refreshed)
-		s.rateLimitsByID = cloneRateLimitSnapshotMap(byID)
+		s.storeRateLimitsLocked(refreshed, byID)
+		s.rateLimitsRefreshTryAt = time.Now()
 		s.mu.Unlock()
 	} else if rateLimits == nil && len(rateLimitsByID) == 0 {
 		s.mu.Lock()

@@ -48,6 +48,77 @@ func (s *appServerSession) readRateLimits() (*rateLimitSnapshot, map[string]rate
 	return limits, cloneRateLimitSnapshotMap(response.RateLimitsByID), nil
 }
 
+func (s *appServerSession) scheduleRateLimitsRefresh() {
+	now := time.Now()
+	s.mu.Lock()
+	if s.closed ||
+		s.rateLimitsRefreshActive ||
+		(!s.rateLimitsRefreshTryAt.IsZero() && now.Sub(s.rateLimitsRefreshTryAt) < rateLimitsRefreshInterval) {
+		s.mu.Unlock()
+		return
+	}
+	s.rateLimitsRefreshActive = true
+	s.rateLimitsRefreshTryAt = now
+	s.mu.Unlock()
+
+	go s.refreshRateLimits()
+}
+
+func (s *appServerSession) refreshRateLimits() {
+	refreshed, byID, err := s.readRateLimits()
+
+	s.mu.Lock()
+	s.rateLimitsRefreshActive = false
+	if err != nil || s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.storeRateLimitsLocked(refreshed, byID)
+	s.mu.Unlock()
+	s.notify()
+}
+
+func (s *appServerSession) storeRateLimitsLocked(primary *rateLimitSnapshot, byID map[string]rateLimitSnapshot) {
+	s.rateLimits = cloneRateLimitSnapshot(primary)
+	s.rateLimitsByID = cloneRateLimitSnapshotMap(byID)
+	s.storeRateLimitByIDLocked(primary)
+}
+
+func (s *appServerSession) storeRateLimitNotificationLocked(snapshot *rateLimitSnapshot) {
+	s.rateLimits = cloneRateLimitSnapshot(snapshot)
+	// Codex emits one active limit per notification. Retain snapshots by ID so
+	// a model-specific allowance cannot replace the ordinary account limit.
+	s.storeRateLimitByIDLocked(snapshot)
+}
+
+func (s *appServerSession) storeRateLimitByIDLocked(snapshot *rateLimitSnapshot) {
+	key := rateLimitSnapshotKey(snapshot)
+	if key == "" {
+		return
+	}
+	if s.rateLimitsByID == nil {
+		s.rateLimitsByID = make(map[string]rateLimitSnapshot)
+	}
+	cloned := cloneRateLimitSnapshot(snapshot)
+	if cloned != nil {
+		s.rateLimitsByID[key] = *cloned
+	}
+}
+
+func rateLimitSnapshotKey(snapshot *rateLimitSnapshot) string {
+	if snapshot == nil {
+		return ""
+	}
+	return strings.ToLower(firstNonEmpty(
+		strings.TrimSpace(stringValue(snapshot.LimitID)),
+		strings.TrimSpace(stringValue(snapshot.LimitName)),
+	))
+}
+
+func isCodexAccountRateLimit(snapshot *rateLimitSnapshot) bool {
+	return rateLimitSnapshotKey(snapshot) == "codex"
+}
+
 func cloneThreadTokenUsage(in *threadTokenUsage) *threadTokenUsage {
 	if in == nil {
 		return nil

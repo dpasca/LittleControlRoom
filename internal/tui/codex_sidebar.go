@@ -969,7 +969,7 @@ func embeddedSidebarUsageWindowSummary(snapshot codexapp.Snapshot, now time.Time
 		return ""
 	}
 	window := windows[0]
-	parts := []string{fmt.Sprintf("%d%%", window.LeftPercent)}
+	parts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
 	if label := strings.TrimSpace(window.Window); label != "" {
 		parts = append(parts, label)
 	}

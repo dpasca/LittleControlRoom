@@ -1029,6 +1029,100 @@ func TestSnapshotIncludesStructuredMetadata(t *testing.T) {
 	}
 }
 
+func TestRateLimitNotificationsRetainOrdinaryCodexAccountLimit(t *testing.T) {
+	s := &appServerSession{
+		projectPath:            "/tmp/demo",
+		entryIndex:             make(map[string]int),
+		notify:                 func() {},
+		rateLimitsRefreshTryAt: time.Now(),
+	}
+
+	s.handleNotification("account/rateLimits/updated", json.RawMessage(`{
+		"rateLimits": {
+			"limitId": "codex",
+			"primary": {
+				"usedPercent": 76,
+				"windowDurationMins": 10080,
+				"resetsAt": 1785269116
+			},
+			"planType": "pro"
+		}
+	}`))
+	s.handleNotification("account/rateLimits/updated", json.RawMessage(`{
+		"rateLimits": {
+			"limitId": "codex_bengalfox",
+			"limitName": "GPT-5.3-Codex-Spark",
+			"primary": {
+				"usedPercent": 0,
+				"windowDurationMins": 10080,
+				"resetsAt": 1785459214
+			},
+			"planType": "pro"
+		}
+	}`))
+
+	windows := s.Snapshot().UsageWindows
+	if len(windows) != 2 {
+		t.Fatalf("usage windows = %#v, want ordinary Codex and model-specific limits", windows)
+	}
+	if !strings.EqualFold(windows[0].Limit, "codex") || windows[0].LeftPercent != 24 {
+		t.Fatalf("first usage window = %#v, want ordinary Codex limit with 24%% left", windows[0])
+	}
+	if windows[1].Limit != "GPT-5.3-Codex-Spark" || windows[1].LeftPercent != 100 {
+		t.Fatalf("second usage window = %#v, want model-specific limit with 100%% left", windows[1])
+	}
+}
+
+func TestScheduledRateLimitRefreshLoadsAllAccountLimits(t *testing.T) {
+	refreshed := make(chan struct{}, 1)
+	called := make(chan string, 1)
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify: func() {
+			select {
+			case refreshed <- struct{}{}:
+			default:
+			}
+		},
+		rpcCallHook: func(_ context.Context, method string, _ any) (json.RawMessage, error) {
+			called <- method
+			return json.RawMessage(`{
+				"rateLimits": {
+					"limitId": "codex",
+					"primary": {"usedPercent":76,"windowDurationMins":10080}
+				},
+				"rateLimitsByLimitId": {
+					"codex": {
+						"limitId": "codex",
+						"primary": {"usedPercent":76,"windowDurationMins":10080}
+					},
+					"codex_bengalfox": {
+						"limitId": "codex_bengalfox",
+						"limitName": "GPT-5.3-Codex-Spark",
+						"primary": {"usedPercent":0,"windowDurationMins":10080}
+					}
+				}
+			}`), nil
+		},
+	}
+
+	s.scheduleRateLimitsRefresh()
+	select {
+	case <-refreshed:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for rate-limit refresh")
+	}
+	if method := <-called; method != "account/rateLimits/read" {
+		t.Fatalf("method = %q, want account/rateLimits/read", method)
+	}
+
+	windows := s.Snapshot().UsageWindows
+	if len(windows) != 2 || !strings.EqualFold(windows[0].Limit, "codex") || windows[0].LeftPercent != 24 {
+		t.Fatalf("usage windows = %#v, want refreshed ordinary Codex limit first with 24%% left", windows)
+	}
+}
+
 func TestTokenUsageUpdateDoesNotRefreshBusyActivityTimestamp(t *testing.T) {
 	staleBusy := time.Now().Add(-2 * time.Hour).Round(0)
 	s := &appServerSession{
