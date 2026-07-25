@@ -1366,7 +1366,7 @@ func codexStandaloneLocalArtifactPathTargets(text string) []codexArtifactOpenTar
 	targets := make([]codexArtifactOpenTarget, 0)
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || !filepath.IsAbs(line) {
+		if line == "" || !filepath.IsAbs(line) || codexCommentShapedPathText(line) {
 			continue
 		}
 		if artifactPath, kind, ok := codexLocalArtifactOpenTarget("", line); ok {
@@ -1378,6 +1378,16 @@ func codexStandaloneLocalArtifactPathTargets(text string) []codexArtifactOpenTar
 		}
 	}
 	return targets
+}
+
+// codexCommentShapedPathText reports whether text looks like a C++-style
+// comment ("// ...", "/// ...", or "/* ... */") rather than a real absolute
+// path. Transcript link scans treat any line or inline-code span starting
+// with "/" as a path candidate, so comment lines from code and diff output
+// would otherwise surface as bogus file targets in the artifact picker.
+func codexCommentShapedPathText(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, "//") || strings.HasPrefix(text, "/*")
 }
 
 func earliestNonNegativeIndex(indexes ...int) int {
@@ -1450,6 +1460,9 @@ func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (cod
 func codexInlineCodePathCandidate(text string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" || strings.ContainsAny(text, "\r\n") {
+		return false
+	}
+	if codexCommentShapedPathText(text) {
 		return false
 	}
 	if strings.HasPrefix(text, "/") ||

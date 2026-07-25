@@ -2051,6 +2051,27 @@ func TestCodexArtifactTargetsPreferStandaloneAbsolutePathForImplicitProjectRelat
 	}
 }
 
+func TestCodexArtifactTargetsIgnoreCppStyleCommentLines(t *testing.T) {
+	projectPath := t.TempDir()
+	realPath := filepath.Join(projectPath, "evidence", "runway-final-world.png")
+	text := strings.Join([]string{
+		"// The 12 m vertical-error bound retains meaningful ridges without reproducing the coarse 32 m baseline.",
+		"// each categorical water sample with a locally refined fan while uniform 2x2 blocks",
+		"/// doc comment mentioning /Users/example/docs/guide.md",
+		"/* block comment opener that is not a path */",
+		"Note the inline span `// inline comment, not a path` from a diff.",
+		realPath,
+	}, "\n")
+
+	targets := codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)
+	if len(targets) != 1 {
+		t.Fatalf("targets = %#v, want exactly one real path target", targets)
+	}
+	if targets[0].Kind != "image" || targets[0].Path != realPath {
+		t.Fatalf("target = %#v, want image path %q", targets[0], realPath)
+	}
+}
+
 func TestCodexProgressiveLinkScanResolvesImplicitProjectRelativeVideoFromToolOutput(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "FractalMech")
