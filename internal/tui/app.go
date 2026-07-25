@@ -210,6 +210,7 @@ type Model struct {
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
 	runtimeActionSelected int
+	runtimeActionHits     []runtimeActionHit
 	runtimeOutputCopyBusy bool
 	focusedPane           paneFocus
 	assessmentFlashUntil  map[string]time.Time
@@ -1503,6 +1504,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.diffView.contentViewport, cmd = m.diffView.contentViewport.Update(msg)
 			m.updateDiffSelectionFromScroll()
+			return m, cmd
+		}
+		if cmd, handled := m.handleRuntimePaneMouse(msg); handled {
 			return m, cmd
 		}
 		if m.codexVisible() {

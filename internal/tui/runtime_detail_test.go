@@ -88,9 +88,10 @@ func TestRuntimePaneShowsRuntimeOutputAndActions(t *testing.T) {
 	if !strings.Contains(rendered, "ready on http://127.0.0.1:4310/") || !strings.Contains(rendered, "warming up") {
 		t.Fatalf("View() should show runtime output in the runtime pane: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Open URL") || !strings.Contains(rendered, "Restart") || !strings.Contains(rendered, "Stop") ||
-		!strings.Contains(rendered, "Copy output") || !strings.Contains(rendered, "Add TODO") {
-		t.Fatalf("View() should show runtime pane actions: %q", rendered)
+	for _, want := range []string{"Open", "Copy"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("View() should show runtime pane action %q: %q", want, rendered)
+		}
 	}
 	if !strings.Contains(rendered, "Focus: runtime") {
 		t.Fatalf("View() should show runtime focus in the footer: %q", rendered)
@@ -122,21 +123,22 @@ func TestRuntimeOutputActionsWrapWithoutHidingCaptureChoices(t *testing.T) {
 	}
 
 	actions := m.runtimePanelActions(projectPath)
-	if len(actions) != 5 {
-		t.Fatalf("runtime actions len = %d, want 5: %#v", len(actions), actions)
+	if len(actions) != 2 {
+		t.Fatalf("runtime actions len = %d, want 2: %#v", len(actions), actions)
 	}
-	if actions[3].Kind != runtimePaneActionCopyOutput || actions[4].Kind != runtimePaneActionAddTODO {
-		t.Fatalf("runtime capture actions = %#v, want copy then TODO", actions[3:])
+	if actions[1].Kind != runtimePaneActionCopyOutput {
+		t.Fatalf("runtime capture actions = %#v, want copy at index 1", actions[1:])
 	}
 
-	actionLines := m.renderRuntimePanelActionRows(36, projectPath)
-	if len(actionLines) < 2 {
-		t.Fatalf("narrow runtime actions should wrap, got %d line: %#v", len(actionLines), actionLines)
+	actionResult := m.renderRuntimePanelActionRows(36, projectPath)
+	actionLines := actionResult.lines
+	if len(actionLines) == 0 {
+		t.Fatalf("narrow runtime actions should render at least one line")
 	}
 	rendered := ansi.Strip(strings.Join(actionLines, "\n"))
-	for _, want := range []string{"Copy output", "Add TODO"} {
+	for _, want := range []string{"Open", "Copy"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("wrapped runtime actions missing %q: %q", want, rendered)
+			t.Fatalf("runtime actions missing %q: %q", want, rendered)
 		}
 	}
 	for _, line := range actionLines {
@@ -216,84 +218,6 @@ func TestRuntimeCopyShortcutCopiesSelectedProcessOutputAsPlainText(t *testing.T)
 	}
 }
 
-func TestRuntimeTodoActionPrefillsRepositoryScopedFailureTodo(t *testing.T) {
-	rootPath := "/tmp/demo"
-	worktreePath := "/tmp/demo--runtime-fix"
-	root := model.ProjectSummary{
-		Name:          "demo",
-		Path:          rootPath,
-		PresentOnDisk: true,
-		RunCommand:    "pnpm root-command",
-	}
-	worktree := model.ProjectSummary{
-		Name:             "demo--runtime-fix",
-		Path:             worktreePath,
-		PresentOnDisk:    true,
-		RunCommand:       "pnpm worktree-command",
-		WorktreeRootPath: rootPath,
-		WorktreeKind:     model.WorktreeKindLinked,
-	}
-	m := Model{
-		projects:              []model.ProjectSummary{worktree},
-		allProjects:           []model.ProjectSummary{root, worktree},
-		selected:              0,
-		focusedPane:           focusRuntime,
-		runtimeActionSelected: 4,
-		runtimeSnapshots: map[string]projectrun.Snapshot{
-			worktreePath: {
-				ID:            "rt_frontend",
-				Name:          "frontend",
-				ProjectPath:   worktreePath,
-				Command:       "pnpm worktree-command",
-				CWD:           filepath.Join(worktreePath, "web"),
-				ExitCode:      1,
-				ExitCodeKnown: true,
-				LastError:     "exit status 1",
-				RecentOutput: []string{
-					"\x1b[31mError: build crushed\x1b[0m",
-					"at compile (src/app.ts:42:7)",
-				},
-			},
-		},
-	}
-
-	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("runtime TODO action should focus the editor and refresh project TODO data")
-	}
-	if got.todoDialog == nil || got.todoDialog.ProjectPath != rootPath {
-		t.Fatalf("TODO dialog = %#v, want repository root %q", got.todoDialog, rootPath)
-	}
-	if got.todoEditor == nil || got.todoEditor.ProjectPath != rootPath || got.todoEditor.TodoID != 0 {
-		t.Fatalf("TODO editor = %#v, want new repository-scoped TODO", got.todoEditor)
-	}
-	text := got.todoEditor.Input.Value()
-	for _, want := range []string{
-		"Investigate and fix this runtime failure.",
-		"Run command: pnpm worktree-command",
-		"Working directory: web",
-		"Runtime process: rt_frontend frontend",
-		"Exit code: 1",
-		"Error: exit status 1",
-		"Recent run output:",
-		"Error: build crushed",
-		"at compile (src/app.ts:42:7)",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("runtime TODO text missing %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "\x1b[") {
-		t.Fatalf("runtime TODO should strip terminal styling: %q", text)
-	}
-	if strings.Contains(text, "pnpm root-command") {
-		t.Fatalf("runtime TODO should describe the selected worktree run, not the root's saved command: %q", text)
-	}
-	if got.status != "Review the runtime output TODO, then press Ctrl+S to add it" {
-		t.Fatalf("TODO status = %q, want review guidance", got.status)
-	}
-}
 
 func TestRuntimeTodoOutputKeepsRecentTailWithinEditorLimit(t *testing.T) {
 	const tail = "THE-ACTIONABLE-ERROR-AT-THE-END"
@@ -570,30 +494,18 @@ func TestRuntimePaneShowsExternalListenerAndStopConfirms(t *testing.T) {
 
 	m.syncRuntimeViewport(true)
 	rendered := ansi.Strip(m.renderRuntimePanel(80, 14))
-	for _, want := range []string{"local listener pid 4321", "External listener output is not captured", "Open URL", "Restart", "Stop"} {
+	for _, want := range []string{"local listener pid 4321", "External listener output is not captured", "Open"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("runtime pane missing %q: %q", want, rendered)
 		}
 	}
 
 	actions := m.runtimePanelActions(projectPath)
-	if len(actions) != 3 {
-		t.Fatalf("runtime actions len = %d, want 3", len(actions))
+	if len(actions) != 1 {
+		t.Fatalf("runtime actions len = %d, want 1", len(actions))
 	}
-	if actions[1].Enabled {
-		t.Fatalf("restart should be disabled for external listeners")
-	}
-	if !actions[2].Enabled {
-		t.Fatalf("stop should be enabled for external listener with PID")
-	}
-
-	m.runtimeActionSelected = 2
-	cmd := m.activateRuntimePaneAction()
-	if cmd != nil {
-		t.Fatalf("external runtime stop action should wait for confirmation, got command")
-	}
-	if m.externalStopConfirm == nil || m.externalStopConfirm.PID != 4321 {
-		t.Fatalf("external stop confirmation = %#v, want PID 4321", m.externalStopConfirm)
+	if actions[0].Kind != runtimePaneActionOpenURL {
+		t.Fatalf("runtime action[0] = %q, want open-url", actions[0].Kind)
 	}
 }
 
@@ -1530,5 +1442,179 @@ func TestQuitKeyStopsManagedRuntimes(t *testing.T) {
 	snapshot := waitForRuntimeStopped(t, manager, dir)
 	if snapshot.Running {
 		t.Fatalf("runtime should be stopped after quit: %+v", snapshot)
+	}
+}
+
+func runtimePaneMouseTestModel() (Model, string) {
+	projectPath := "/tmp/demo-runtime-mouse"
+	project := model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := Model{
+		width:       100,
+		height:      28,
+		projects:    []model.ProjectSummary{project},
+		allProjects: []model.ProjectSummary{project},
+		selected:    0,
+		visibility:  visibilityAllFolders,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			projectPath: {
+				ID:           "default",
+				Running:      true,
+				RecentOutput: []string{"ready", "listening on 4310"},
+			},
+		},
+	}
+	return m, projectPath
+}
+
+func runtimePaneChipPoint(t *testing.T, m Model, label string) (int, int) {
+	t.Helper()
+	rendered := ansi.Strip(m.View())
+	for y, line := range strings.Split(rendered, "\n") {
+		if idx := strings.Index(line, label); idx >= 0 {
+			return len([]rune(line[:idx])) + 1, y
+		}
+	}
+	t.Fatalf("View() should render the %q chip:\n%s", label, rendered)
+	return 0, 0
+}
+
+func TestRuntimePaneMouseClickActivatesCopyOutputChip(t *testing.T) {
+	m, projectPath := runtimePaneMouseTestModel()
+	x, y := runtimePaneChipPoint(t, m, "Copy")
+
+	cmd, handled := m.handleRuntimePaneMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      y,
+	})
+	if !handled {
+		t.Fatalf("click at (%d,%d) should be handled by the runtime pane", x, y)
+	}
+	if cmd == nil {
+		t.Fatalf("click on Copy output should queue the clipboard copy command")
+	}
+	if !m.runtimeOutputCopyBusy {
+		t.Fatalf("click on Copy output should mark the copy in progress")
+	}
+	if m.focusedPane != focusRuntime {
+		t.Fatalf("click should focus the runtime pane, got %v", m.focusedPane)
+	}
+	want := -1
+	for i, action := range m.runtimePanelActions(projectPath) {
+		if action.Kind == runtimePaneActionCopyOutput {
+			want = i
+		}
+	}
+	if want < 0 {
+		t.Fatalf("Copy output action should be available")
+	}
+	if m.runtimeActionSelected != want {
+		t.Fatalf("runtimeActionSelected = %d, want %d (Copy output)", m.runtimeActionSelected, want)
+	}
+}
+
+func TestRuntimePaneMouseClickDisabledChipShowsStatus(t *testing.T) {
+	m, _ := runtimePaneMouseTestModel()
+	x, y := runtimePaneChipPoint(t, m, "Open")
+
+	cmd, handled := m.handleRuntimePaneMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      y,
+	})
+	if !handled {
+		t.Fatalf("click at (%d,%d) should be handled by the runtime pane", x, y)
+	}
+	if cmd != nil {
+		t.Fatalf("disabled chip should not queue a command")
+	}
+	if m.status != "No runtime URL or detected port to open" {
+		t.Fatalf("status = %q, want disabled hint", m.status)
+	}
+}
+
+func TestRuntimePaneMouseClickOutsidePaneIgnored(t *testing.T) {
+	m, _ := runtimePaneMouseTestModel()
+	if _, handled := m.handleRuntimePaneMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      2,
+		Y:      2,
+	}); handled {
+		t.Fatalf("click inside the project list should not be claimed by the runtime pane")
+	}
+	if m.focusedPane == focusRuntime {
+		t.Fatalf("click outside the runtime pane should not move focus")
+	}
+}
+
+func TestRuntimePaneMouseWheelHandledOverPane(t *testing.T) {
+	m, _ := runtimePaneMouseTestModel()
+	x, y := runtimePaneChipPoint(t, m, "Copy")
+	if _, handled := m.handleRuntimePaneMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelUp,
+		X:      x,
+		Y:      y,
+	}); !handled {
+		t.Fatalf("wheel over the runtime pane should scroll the runtime output")
+	}
+}
+
+func TestRuntimePanelActionRowsGroupedOnRows(t *testing.T) {
+	// Chips are now grouped on rows to save space; verify the hit map
+	// correctly tracks which action index is at which position.
+	m, projectPath := runtimePaneMouseTestModel()
+	actions := m.runtimePanelActions(projectPath)
+	for _, width := range []int{120, 58, 36} {
+		result := m.renderRuntimePanelActionRows(width, projectPath)
+		if len(result.lines) == 0 {
+			t.Fatalf("renderRuntimePanelActionRows(%d) returned no lines", width)
+		}
+		// Every action must appear in exactly one hit entry.
+		seen := make(map[int]bool)
+		for _, hit := range result.hits {
+			seen[hit.actionIndex] = true
+		}
+		for i := range actions {
+			if !seen[i] {
+				t.Fatalf("renderRuntimePanelActionRows(%d): action %d (%q) missing from hit map", width, i, actions[i].Label)
+			}
+		}
+		// Every hit row must be within the rendered line count.
+		for _, hit := range result.hits {
+			if hit.row < 0 || hit.row >= len(result.lines) {
+				t.Fatalf("renderRuntimePanelActionRows(%d): hit for action %d has row %d, want 0..%d", width, hit.actionIndex, hit.row, len(result.lines)-1)
+			}
+		}
+		// At wide widths, all chips should fit on fewer rows than action count.
+		if width >= 120 && len(result.lines) >= len(actions) {
+			t.Fatalf("renderRuntimePanelActionRows(%d): expected grouping at wide width, got %d rows for %d actions", width, len(result.lines), len(actions))
+		}
+	}
+}
+
+func TestMoveRuntimeActionSelectionWraps(t *testing.T) {
+	m, _ := runtimePaneMouseTestModel()
+	m.focusedPane = focusRuntime
+	m.runtimeActionSelected = 0
+
+	m.moveRuntimeActionSelection(-1)
+	projectPath := m.runtimePanelProjectPath()
+	actions := m.runtimePanelActions(projectPath)
+	last := len(actions) - 1
+	if m.runtimeActionSelected != last {
+		t.Fatalf("moving left from the first action should wrap to the last (%d), got %d", last, m.runtimeActionSelected)
+	}
+	m.moveRuntimeActionSelection(1)
+	if m.runtimeActionSelected != 0 {
+		t.Fatalf("moving right from the last action should wrap to the first, got %d", m.runtimeActionSelected)
 	}
 }

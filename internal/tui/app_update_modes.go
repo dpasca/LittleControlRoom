@@ -173,7 +173,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "o":
 		if m.focusedPane == focusRuntime {
-			return m, nil
+			return m, m.activateRuntimeActionByKind(runtimePaneActionOpenURL)
 		}
 		if m.sortMode == sortByAttention {
 			return m, m.setSortMode(sortByRecent)

@@ -17,10 +17,7 @@ type runtimePaneActionKind string
 
 const (
 	runtimePaneActionOpenURL    runtimePaneActionKind = "open-url"
-	runtimePaneActionRestart    runtimePaneActionKind = "restart"
-	runtimePaneActionStop       runtimePaneActionKind = "stop"
 	runtimePaneActionCopyOutput runtimePaneActionKind = "copy-output"
-	runtimePaneActionAddTODO    runtimePaneActionKind = "add-todo"
 )
 
 type runtimePaneAction struct {
@@ -54,8 +51,9 @@ func (m *Model) syncRuntimeViewport(reset bool) {
 	m.runtimeViewport.Width = layout.runtimeContentWidth
 	innerHeight := max(1, layout.bottomPaneHeight-2)
 	summaryLines := m.renderRuntimePanelSummary(layout.runtimeContentWidth, projectPath)
-	actionLines := m.renderRuntimePanelActionRows(layout.runtimeContentWidth, projectPath)
-	outputHeight := max(3, innerHeight-len(summaryLines)-len(actionLines)-3)
+	actionResult := m.renderRuntimePanelActionRows(layout.runtimeContentWidth, projectPath)
+	m.runtimeActionHits = actionResult.hits
+	outputHeight := max(3, innerHeight-len(summaryLines)-len(actionResult.lines)-3)
 	m.runtimeViewport.Height = outputHeight
 	if m.codexVisible() {
 		if reset {
@@ -107,6 +105,26 @@ func (m *Model) clampRuntimeActionSelection(projectPath string) {
 	}
 }
 
+// activateRuntimeActionByKind finds the first action matching kind and runs it
+// directly, bypassing the arrow-key selection index. Used by keyboard shortcuts.
+func (m *Model) activateRuntimeActionByKind(kind runtimePaneActionKind) tea.Cmd {
+	project, ok := m.selectedProject()
+	if !ok {
+		m.status = "No project selected"
+		return nil
+	}
+	actions := m.runtimePanelActions(project.Path)
+	for i, action := range actions {
+		if action.Kind == kind {
+			m.runtimeActionSelected = i
+			m.clampRuntimeActionSelection(project.Path)
+			return m.activateRuntimePaneAction()
+		}
+	}
+	m.status = "Action not available"
+	return nil
+}
+
 func (m *Model) activateRuntimePaneAction() tea.Cmd {
 	project, ok := m.selectedProject()
 	if !ok {
@@ -138,32 +156,8 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 		}
 		m.status = "Opening runtime URL in browser..."
 		return m.openRuntimeURLInBrowserCmd(rawURL)
-	case runtimePaneActionRestart:
-		if snapshot.External {
-			m.status = "Stop the external listener before restarting as a managed runtime"
-			return nil
-		}
-		command := effectiveRuntimeCommand(project.RunCommand, snapshot)
-		if command == "" {
-			m.status = "Runtime command is not set"
-			return nil
-		}
-		m.status = "Restarting runtime..."
-		return m.restartProjectRuntimeCmd(project.Path, snapshot.ID, command, snapshot.CWD)
-	case runtimePaneActionStop:
-		if !snapshot.Running {
-			m.status = "Runtime is not running"
-			return nil
-		}
-		if snapshot.External {
-			return m.openExternalProcessStopConfirm(project, snapshot)
-		}
-		m.status = "Stopping runtime..."
-		return m.stopRuntimeProcessCmd(project.Path, snapshot.ID)
 	case runtimePaneActionCopyOutput:
 		return m.copyRuntimeOutput(project.Path, snapshot)
-	case runtimePaneActionAddTODO:
-		return m.openRuntimeOutputTodo(project, snapshot)
 	default:
 		m.status = "Runtime action unavailable"
 		return nil
@@ -181,7 +175,9 @@ func (m Model) renderRuntimePanel(width, height int) string {
 	summaryLines := m.renderRuntimePanelSummary(width, projectPath)
 	contentLines := append([]string(nil), summaryLines...)
 	contentLines = append(contentLines, "")
-	contentLines = append(contentLines, m.renderRuntimePanelActionRows(width, projectPath)...)
+	actionResult := m.renderRuntimePanelActionRows(width, projectPath)
+	m.runtimeActionHits = actionResult.hits
+	contentLines = append(contentLines, actionResult.lines...)
 	contentLines = append(contentLines, "")
 	contentLines = append(contentLines, detailSectionStyle.Render("Output"))
 	contentLines = append(contentLines, m.runtimeViewport.View())
@@ -291,37 +287,128 @@ func (m Model) renderRuntimePanelOutputContent(width int, projectPath string) st
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderRuntimePanelActionRows(width int, projectPath string) []string {
+// runtimeActionHit describes where a single action chip was rendered within a
+// row so that mouse clicks can be mapped back to the correct action index.
+type runtimeActionHit struct {
+	actionIndex int
+	row         int
+	xStart      int
+	xEnd        int
+}
+
+type runtimeActionRowResult struct {
+	lines []string
+	hits  []runtimeActionHit // per-row hit map for the mouse handler
+}
+
+func (m Model) renderRuntimePanelActionRows(width int, projectPath string) runtimeActionRowResult {
 	actions := m.runtimePanelActions(projectPath)
 	if len(actions) == 0 {
-		return []string{detailMutedStyle.Render("No runtime actions available")}
+		return runtimeActionRowResult{
+			lines: []string{detailMutedStyle.Render("No runtime actions available")},
+		}
 	}
 	width = max(1, width)
-	lines := make([]string, 0, 2)
+	var result runtimeActionRowResult
 	line := ""
+	lineHits := make([]runtimeActionHit, 0, 4)
+	cursor := 0
+	currentRow := 0
+	flushRow := func() {
+		if line != "" {
+			result.lines = append(result.lines, fitStyledWidth(line, width))
+			result.hits = append(result.hits, lineHits...)
+			line = ""
+			lineHits = lineHits[:0]
+			cursor = 0
+			currentRow++
+		}
+	}
 	for i, action := range actions {
 		selected := m.focusedPane == focusRuntime && i == m.runtimeActionSelected
 		chip := renderRuntimePaneActionChip(action, selected)
+		chipW := lipgloss.Width(chip)
 		if line == "" {
-			line = fitStyledWidth(chip, width)
+			line = chip
+			lineHits = append(lineHits, runtimeActionHit{actionIndex: i, row: currentRow, xStart: 0, xEnd: chipW})
+			cursor = chipW
 			continue
 		}
-		if lipgloss.Width(line)+1+lipgloss.Width(chip) > width {
-			lines = append(lines, fitStyledWidth(line, width))
-			line = fitStyledWidth(chip, width)
+		if cursor+1+chipW > width {
+			flushRow()
+			line = chip
+			lineHits = append(lineHits, runtimeActionHit{actionIndex: i, row: currentRow, xStart: 0, xEnd: chipW})
+			cursor = chipW
 			continue
 		}
 		line += " " + chip
+		lineHits = append(lineHits, runtimeActionHit{actionIndex: i, row: currentRow, xStart: cursor + 1, xEnd: cursor + 1 + chipW})
+		cursor += 1 + chipW
 	}
-	if line != "" {
-		lines = append(lines, fitStyledWidth(line, width))
+	flushRow()
+	return result
+}
+
+// handleRuntimePaneMouse maps mouse events over the runtime pane to pane
+// focus, output scrolling, and action chip activation. Without it, clicks on
+// the pane fall through to the codex transcript handlers and the action
+// chips can never be selected with the mouse.
+func (m *Model) handleRuntimePaneMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
+	layout := m.bodyLayout()
+	contentWidth := layout.runtimeContentWidth
+	innerHeight := max(1, layout.bottomPaneHeight-2)
+	if _, flair := m.renderRuntimeFlairPanel(contentWidth, innerHeight); flair {
+		return nil, false
 	}
-	return lines
+	paneX := layout.detailPaneWidth + 1
+	paneY := 1 + layout.listPaneHeight
+	if msg.X < paneX || msg.X >= paneX+layout.runtimePaneWidth ||
+		msg.Y < paneY || msg.Y >= paneY+layout.bottomPaneHeight {
+		return nil, false
+	}
+	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+		var cmd tea.Cmd
+		m.runtimeViewport, cmd = m.runtimeViewport.Update(msg)
+		return cmd, true
+	}
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return nil, false
+	}
+	m.focusedPane = focusRuntime
+	m.status = focusedPaneStatus(focusRuntime)
+	projectPath := m.runtimePanelProjectPath()
+	actions := m.runtimePanelActions(projectPath)
+	if len(actions) == 0 {
+		return nil, true
+	}
+	contentX := msg.X - (paneX + 2)
+	if contentX < 0 || contentX >= contentWidth {
+		return nil, true
+	}
+	// Compute the action-row hit map fresh here. renderRuntimePanel (called
+	// by View()) has a value receiver so it stores hits on a discarded copy;
+	// we need the pointer receiver *Model to carry the hit state forward.
+	actionResult := m.renderRuntimePanelActionRows(contentWidth, projectPath)
+	m.runtimeActionHits = actionResult.hits
+	summaryRows := len(m.renderRuntimePanelSummary(contentWidth, projectPath))
+	chipAreaStartY := paneY + 1 + summaryRows + 1 // blank separator
+	clickRow := msg.Y - chipAreaStartY
+	for _, hit := range m.runtimeActionHits {
+		if hit.row != clickRow {
+			continue
+		}
+		if contentX >= hit.xStart && contentX < hit.xEnd {
+			m.runtimeActionSelected = hit.actionIndex
+			return m.activateRuntimePaneAction(), true
+		}
+	}
+	return nil, true
 }
 
 func renderRuntimePaneActionChip(action runtimePaneAction, selected bool) string {
+	chipLabel := action.Label
 	if !action.Enabled {
-		return disabledActionKeyStyle.Render(action.Label)
+		return disabledActionKeyStyle.Render(chipLabel)
 	}
 	if !selected {
 		return lipgloss.NewStyle().
@@ -329,16 +416,9 @@ func renderRuntimePaneActionChip(action runtimePaneAction, selected bool) string
 			Background(lipgloss.Color("236")).
 			Padding(0, 1).
 			Bold(true).
-			Render(action.Label)
+			Render(chipLabel)
 	}
-	switch action.Kind {
-	case runtimePaneActionOpenURL, runtimePaneActionCopyOutput:
-		return pushActionKeyStyle.Render(action.Label)
-	case runtimePaneActionStop:
-		return cancelActionKeyStyle.Render(action.Label)
-	default:
-		return commitActionKeyStyle.Render(action.Label)
-	}
+	return pushActionKeyStyle.Render(chipLabel)
 }
 
 func (m Model) runtimePanelProjectPath() string {
@@ -353,39 +433,21 @@ func (m Model) runtimePanelActions(projectPath string) []runtimePaneAction {
 	if strings.TrimSpace(projectPath) == "" {
 		return nil
 	}
-	project, _ := m.projectSummaryByPath(projectPath)
+	_, _ = m.projectSummaryByPath(projectPath)
 	snapshot, _, _ := m.selectedRuntimeProcessSnapshot(projectPath)
-	command := effectiveRuntimeCommand(project.RunCommand, snapshot)
 	actions := []runtimePaneAction{
 		{
 			Kind:           runtimePaneActionOpenURL,
-			Label:          "Open URL",
+			Label:          "Open",
 			Enabled:        runtimePrimaryURL(snapshot) != "",
 			DisabledStatus: "No runtime URL or detected port to open",
-		},
-		{
-			Kind:           runtimePaneActionRestart,
-			Label:          "Restart",
-			Enabled:        command != "" && !snapshot.External,
-			DisabledStatus: runtimeRestartDisabledStatus(snapshot, command),
-		},
-		{
-			Kind:           runtimePaneActionStop,
-			Label:          "Stop",
-			Enabled:        snapshot.Running && (!snapshot.External || snapshot.PID > 0),
-			DisabledStatus: "Runtime is not running",
 		},
 	}
 	if runtimeOutputAvailable(snapshot) {
 		actions = append(actions,
 			runtimePaneAction{
 				Kind:    runtimePaneActionCopyOutput,
-				Label:   "Copy output",
-				Enabled: true,
-			},
-			runtimePaneAction{
-				Kind:    runtimePaneActionAddTODO,
-				Label:   "Add TODO",
+				Label:   "Copy",
 				Enabled: true,
 			},
 		)

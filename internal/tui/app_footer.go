@@ -1245,6 +1245,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 					footerPrimaryAction("Enter", "action"),
 					footerNavAction("Left/Right", "pick"),
 					footerNavAction("PgUp/PgDn", "page"),
+					footerNavAction("o", "open"),
 					footerNavAction("Tab", "switch"),
 					footerHideAction("Esc", "list"),
 					footerLowAction("/chat", "chat"),

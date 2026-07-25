@@ -20,7 +20,7 @@ import (
 
 const (
 	portRefreshInterval = 2 * time.Second
-	maxRecentOutput     = 8
+	maxRecentOutput     = 40
 	maxAnnouncedURLs    = 8
 	closeAllWaitTimeout = 2 * time.Second
 )

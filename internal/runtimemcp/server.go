@@ -19,6 +19,8 @@ import (
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
 	"lcroom/internal/todocapture"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -264,6 +266,13 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		}
 		report := s.processReport(ctx, !req.IncludeObservedSet || req.IncludeObserved)
 		return s.jsonToolResult(report, false)
+	case "read_process_output":
+		var req readProcessOutputArgs
+		if err := json.Unmarshal(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode read_process_output args: %w", err)
+		}
+		report, isErr := s.readProcessOutput(req)
+		return s.jsonToolResult(report, isErr)
 	case "start_process":
 		var req startProcessArgs
 		if err := json.Unmarshal(args, &req); err != nil {
@@ -745,6 +754,90 @@ func (s *Server) stopProcess(ctx context.Context, req stopProcessArgs) (map[stri
 	}, false
 }
 
+func (s *Server) readProcessOutput(req readProcessOutputArgs) (map[string]any, bool) {
+	snapshots := s.manager.SnapshotsForProject(s.projectPath)
+	if len(snapshots) == 0 {
+		return map[string]any{
+			"success":      true,
+			"found":        false,
+			"project_path": s.projectPath,
+			"message":      "No managed runtime processes for this project. Start one with start_process first.",
+		}, false
+	}
+	processID := strings.TrimSpace(req.ProcessID)
+	snapshot, ok := selectProcessOutputSnapshot(snapshots, processID)
+	if !ok {
+		return map[string]any{
+			"success":      false,
+			"found":        false,
+			"project_path": s.projectPath,
+			"process_id":   processID,
+			"error":        fmt.Sprintf("No managed runtime process with id %q for this project. Call list_processes for the known ids.", processID),
+		}, true
+	}
+	lines := cleanProcessOutputLines(snapshot.RecentOutput)
+	captured := len(lines)
+	truncated := false
+	if req.MaxLines > 0 && len(lines) > req.MaxLines {
+		lines = lines[len(lines)-req.MaxLines:]
+		truncated = true
+	}
+	if lines == nil {
+		lines = []string{}
+	}
+	lastError := cleanProcessOutputText(snapshot.LastError)
+	crashed := !snapshot.Running && ((snapshot.ExitCodeKnown && snapshot.ExitCode != 0) || lastError != "")
+	return map[string]any{
+		"success":             true,
+		"found":               true,
+		"project_path":        s.projectPath,
+		"process":             snapshotSummary(s.projectPath, snapshot),
+		"crashed":             crashed,
+		"output":              strings.Join(lines, "\n"),
+		"output_lines":        lines,
+		"captured_line_count": captured,
+		"output_truncated":    truncated,
+	}, false
+}
+
+func selectProcessOutputSnapshot(snapshots []projectrun.Snapshot, processID string) (projectrun.Snapshot, bool) {
+	if processID != "" {
+		for _, snapshot := range snapshots {
+			if snapshot.ID == processID {
+				return snapshot, true
+			}
+		}
+		return projectrun.Snapshot{}, false
+	}
+	latest := -1
+	for i := range snapshots {
+		if latest == -1 || snapshots[i].StartedAt.After(snapshots[latest].StartedAt) {
+			latest = i
+		}
+	}
+	if latest == -1 {
+		return projectrun.Snapshot{}, false
+	}
+	return snapshots[latest], true
+}
+
+func cleanProcessOutputLines(raw []string) []string {
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		line = cleanProcessOutputText(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func cleanProcessOutputText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.TrimSpace(ansi.Strip(text))
+}
+
 func (s *Server) processReport(ctx context.Context, includeObserved bool) map[string]any {
 	managed := s.manager.SnapshotsForProject(s.projectPath)
 	report := map[string]any{
@@ -866,6 +959,18 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 				"additionalProperties": false,
 				"properties": map[string]any{
 					"include_observed": map[string]any{"type": "boolean", "description": "Include project-local TCP listeners discovered from the OS. Defaults to true."},
+				},
+			},
+		},
+		mcpTool{
+			Name:        "read_process_output",
+			Description: "Read the captured tail output and exit state of a Little Control Room managed runtime process for this project, for example to check whether the last /run or start_process command crashed. Without process_id, reads the most recently started managed runtime for this project.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"process_id": map[string]any{"type": "string", "description": "Optional managed process id from list_processes. Defaults to the most recently started managed runtime for this project."},
+					"max_lines":  map[string]any{"type": "integer", "description": "Optional maximum number of trailing output lines to return. Defaults to every captured line; the manager keeps a bounded tail."},
 				},
 			},
 		},
@@ -1333,6 +1438,11 @@ type toolCallParams struct {
 type listProcessesArgs struct {
 	IncludeObserved    bool `json:"include_observed"`
 	IncludeObservedSet bool
+}
+
+type readProcessOutputArgs struct {
+	ProcessID string `json:"process_id"`
+	MaxLines  int    `json:"max_lines"`
 }
 
 type listControlCapabilitiesArgs struct {
