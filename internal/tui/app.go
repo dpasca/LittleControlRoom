@@ -1700,17 +1700,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commitPreview != nil {
 			return m.updateCommitPreviewMode(msg)
 		}
-		if m.codexVisible() {
-			if m.browserAttentionDialogCanTakeFocus() && m.codexInputCopyDialog == nil && m.embeddedSidebarDetail == nil {
-				return m.updateBrowserAttentionMode(msg)
-			}
-			return m.updateCodexMode(msg)
-		}
 		if m.commandMode {
 			return m.updateCommandMode(msg)
 		}
 		if m.diffView != nil {
 			return m.updateDiffMode(msg)
+		}
+		if m.codexVisible() {
+			if m.browserAttentionDialogCanTakeFocus() && m.codexInputCopyDialog == nil && m.embeddedSidebarDetail == nil {
+				return m.updateBrowserAttentionMode(msg)
+			}
+			return m.updateCodexMode(msg)
 		}
 		if m.setupMode {
 			return m.updateSetupMode(msg)

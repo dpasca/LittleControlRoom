@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -120,6 +121,75 @@ func TestVisibleCodexSlashSuggestsHostTaskActions(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashSuggestsProjectHostCommands(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "/run", want: "/run"},
+		{input: "/sta", want: "/start"},
+		{input: "/rest", want: "/restart"},
+		{input: "/sto", want: "/stop"},
+		{input: "/comm", want: "/commit"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			input := newCodexTextarea()
+			input.SetValue(tt.input)
+			m := Model{
+				codexVisibleProject: "/tmp/demo",
+				codexInput:          input,
+			}
+
+			suggestions := m.codexSlashSuggestions()
+			found := false
+			for _, suggestion := range suggestions {
+				if suggestion.Insert == tt.want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("codexSlashSuggestions(%q) = %#v, want %q", tt.input, suggestions, tt.want)
+			}
+		})
+	}
+}
+
+func TestCodexHostSlashCommandAllowsRuntimeSuiteAndCommit(t *testing.T) {
+	tests := []struct {
+		raw  string
+		kind commands.Kind
+	}{
+		{raw: "/run", kind: commands.KindRun},
+		{raw: "/run pnpm dev", kind: commands.KindRun},
+		{raw: "/start", kind: commands.KindRun},
+		{raw: "/restart", kind: commands.KindRestart},
+		{raw: "/run-edit", kind: commands.KindRunEdit},
+		{raw: "/runtime", kind: commands.KindRuntime},
+		{raw: "/stop", kind: commands.KindStop},
+		{raw: "/commit", kind: commands.KindCommit},
+		{raw: "/commit Ship embedded project commands", kind: commands.KindCommit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			inv, ok := codexHostSlashCommand(tt.raw)
+			if !ok {
+				t.Fatalf("codexHostSlashCommand(%q) rejected a supported project command", tt.raw)
+			}
+			if inv.Kind != tt.kind {
+				t.Fatalf("codexHostSlashCommand(%q) kind = %q, want %q", tt.raw, inv.Kind, tt.kind)
+			}
+		})
+	}
+
+	if _, ok := codexHostSlashCommand("/push"); ok {
+		t.Fatal("embedded host command allowlist should not silently include /push")
+	}
+}
+
 func TestVisibleCodexSlashTaskActionsFallsBackToHostCommand(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -173,6 +243,242 @@ func TestVisibleCodexSlashTaskActionsFallsBackToHostCommand(t *testing.T) {
 	rendered := ansi.Strip(got.View())
 	if !strings.Contains(rendered, "Task Actions") || !strings.Contains(rendered, "Archive") || !strings.Contains(rendered, "Delete") {
 		t.Fatalf("host task action dialog should render over visible Codex, got %q", rendered)
+	}
+}
+
+func TestVisibleCodexSlashRunEditTargetsEmbeddedProjectAndRendersDialog(t *testing.T) {
+	target := model.ProjectSummary{
+		Name:          "embedded",
+		Path:          "/tmp/embedded",
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := newVisibleCodexHostCommandTestModel(t, target, "/run-edit")
+	m.projects = []model.ProjectSummary{
+		{Name: "other", Path: "/tmp/other", PresentOnDisk: true},
+		target,
+	}
+	m.allProjects = append([]model.ProjectSummary(nil), m.projects...)
+	m.selected = 0
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("embedded /run-edit should queue dialog focus and suggestion loading")
+	}
+	if got.runCommandDialog == nil {
+		t.Fatal("embedded /run-edit should open the run command dialog")
+	}
+	if got.runCommandDialog.ProjectPath != target.Path {
+		t.Fatalf("run command dialog project = %q, want embedded project %q", got.runCommandDialog.ProjectPath, target.Path)
+	}
+	if got.runCommandDialog.Input.Value() != target.RunCommand {
+		t.Fatalf("run command dialog value = %q, want %q", got.runCommandDialog.Input.Value(), target.RunCommand)
+	}
+	if got.selected != 1 {
+		t.Fatalf("selected project index = %d, want embedded project index 1", got.selected)
+	}
+	if got.codexVisibleProject != target.Path {
+		t.Fatalf("embedded session was hidden while opening run editor: %q", got.codexVisibleProject)
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Run Command") || !strings.Contains(rendered, "embedded") {
+		t.Fatalf("run command dialog should render over embedded session: %q", rendered)
+	}
+}
+
+func TestVisibleCodexSlashRuntimeHidesSessionAndFocusesRuntimePane(t *testing.T) {
+	target := model.ProjectSummary{
+		Name:          "embedded",
+		Path:          "/tmp/embedded",
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := newVisibleCodexHostCommandTestModel(t, target, "/runtime")
+	m.projects = []model.ProjectSummary{
+		{Name: "other", Path: "/tmp/other", PresentOnDisk: true},
+		target,
+	}
+	m.allProjects = append([]model.ProjectSummary(nil), m.projects...)
+	m.selected = 0
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("embedded /runtime should queue hide/focus follow-up work")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("/runtime should hide the embedded session, got visible project %q", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != target.Path {
+		t.Fatalf("hidden embedded project = %q, want %q", got.codexHiddenProject, target.Path)
+	}
+	if got.focusedPane != focusRuntime {
+		t.Fatalf("/runtime focused pane = %q, want runtime", got.focusedPane)
+	}
+	if got.selected != 1 {
+		t.Fatalf("/runtime selected project index = %d, want embedded project index 1", got.selected)
+	}
+	if got.status != "Focus: runtime pane" {
+		t.Fatalf("/runtime status = %q, want runtime focus status", got.status)
+	}
+}
+
+func TestVisibleCodexSlashCommitTargetsEmbeddedProjectAndRendersPreview(t *testing.T) {
+	target := model.ProjectSummary{
+		Name:                 "embedded",
+		Path:                 "/tmp/embedded",
+		PresentOnDisk:        true,
+		LatestSessionSummary: "Implemented embedded project commands",
+	}
+	m := newVisibleCodexHostCommandTestModel(t, target, "/commit Ship embedded project commands")
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("embedded /commit should queue commit preview loading")
+	}
+	if got.commitPreview == nil {
+		t.Fatal("embedded /commit should open the commit preview")
+	}
+	if got.commitPreview.ProjectPath != target.Path {
+		t.Fatalf("commit preview project = %q, want %q", got.commitPreview.ProjectPath, target.Path)
+	}
+	if got.commitPreview.Message != "Ship embedded project commands" {
+		t.Fatalf("commit preview message = %q, want command message", got.commitPreview.Message)
+	}
+	if got.codexVisibleProject != target.Path {
+		t.Fatalf("embedded session was hidden while opening commit preview: %q", got.codexVisibleProject)
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Commit Preview") || !strings.Contains(rendered, "Ship embedded project commands") {
+		t.Fatalf("commit preview should render over embedded session: %q", rendered)
+	}
+}
+
+func TestEmbeddedCommitPreviewDiffRemainsInteractive(t *testing.T) {
+	target := model.ProjectSummary{
+		Name:          "embedded",
+		Path:          "/tmp/embedded",
+		PresentOnDisk: true,
+	}
+	m := newVisibleCodexHostCommandTestModel(t, target, "")
+	m.commitPreview = &service.CommitPreview{
+		ProjectPath: target.Path,
+		ProjectName: target.Name,
+		Message:     "Ship embedded project commands",
+	}
+
+	updated, cmd := m.updateCommitPreviewMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("opening diff from embedded commit preview should queue diff loading")
+	}
+	if got.diffView == nil {
+		t.Fatal("opening diff from embedded commit preview should create diff view")
+	}
+	if got.codexVisibleProject != target.Path {
+		t.Fatalf("diff transition lost embedded project = %q, want %q", got.codexVisibleProject, target.Path)
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Preparing diff") {
+		t.Fatalf("diff should render above the embedded session: %q", rendered)
+	}
+
+	updated, _ = got.updateDiffMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if got.diffView != nil {
+		t.Fatal("Esc should close diff and return to commit preview")
+	}
+	if got.commitPreview == nil {
+		t.Fatal("Esc should restore commit preview over embedded session")
+	}
+	rendered = ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Commit Preview") {
+		t.Fatalf("restored commit preview should render over embedded session: %q", rendered)
+	}
+}
+
+func TestVisibleCodexSlashStopRendersExternalProcessConfirmation(t *testing.T) {
+	const projectPath = "/tmp/embedded"
+	m := modelWithExternalProcess(projectPath, 4321, 4017)
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			ProjectPath: projectPath,
+			Provider:    codexapp.ProviderCodex,
+			Started:     true,
+			Preset:      codexcli.PresetYolo,
+			Status:      "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	input := newCodexTextarea()
+	input.SetValue("/stop")
+	m.codexManager = manager
+	m.codexVisibleProject = projectPath
+	m.codexHiddenProject = projectPath
+	m.codexInput = input
+	m.codexViewport = viewport.New(0, 0)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("external /stop should wait for confirmation, got command")
+	}
+	if got.externalStopConfirm == nil {
+		t.Fatal("embedded /stop should open external process confirmation")
+	}
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Stop External Process") || !strings.Contains(rendered, "4321") {
+		t.Fatalf("external stop confirmation should render over embedded session: %q", rendered)
+	}
+}
+
+func newVisibleCodexHostCommandTestModel(t *testing.T, project model.ProjectSummary, inputValue string) Model {
+	t.Helper()
+
+	session := &fakeCodexSession{
+		projectPath: project.Path,
+		snapshot: codexapp.Snapshot{
+			ProjectPath: project.Path,
+			Provider:    codexapp.ProviderCodex,
+			Started:     true,
+			Preset:      codexcli.PresetYolo,
+			Status:      "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: project.Path,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue(inputValue)
+	return Model{
+		codexManager:        manager,
+		codexVisibleProject: project.Path,
+		codexHiddenProject:  project.Path,
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		projects:            []model.ProjectSummary{project},
+		allProjects:         []model.ProjectSummary{project},
+		selected:            0,
+		width:               100,
+		height:              28,
 	}
 }
 

@@ -71,6 +71,15 @@ func (m Model) View() string {
 	m.noteUIProgress("View")
 	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
 	defer done()
+	if m.diffView != nil {
+		layout := m.bodyLayout()
+		header := m.renderTopStatusLine(layout.width)
+		body := m.renderDiffView(layout.width, layout.height)
+		if m.externalControlConfirmation != nil {
+			body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
+		}
+		return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
+	}
 	if m.codexVisible() {
 		body := m.renderCodexView()
 		width := m.width
@@ -133,11 +142,17 @@ func (m Model) View() string {
 		if m.agentTaskAction != nil {
 			return m.renderAgentTaskActionOverlay(body, width, height)
 		}
+		if m.externalStopConfirm != nil {
+			return m.renderExternalProcessStopConfirmOverlay(body, width, height)
+		}
 		if m.gitStatusDialog != nil {
 			return m.renderGitStatusDialogOverlay(body, width, height)
 		}
 		if m.commitPreview != nil {
 			return m.renderCommitPreviewOverlay(body, width, height)
+		}
+		if m.runCommandDialog != nil {
+			return m.renderRunCommandOverlay(body, width, height)
 		}
 		if m.browserAttentionDialogCanTakeFocus() {
 			return m.renderBrowserAttentionOverlay(body, width, height)
@@ -147,13 +162,6 @@ func (m Model) View() string {
 
 	layout := m.bodyLayout()
 	header := m.renderTopStatusLine(layout.width)
-	if m.diffView != nil {
-		body := m.renderDiffView(layout.width, layout.height)
-		if m.externalControlConfirmation != nil {
-			body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
-		}
-		return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
-	}
 	listHeight := max(1, layout.listPaneHeight-2)
 	bottomHeight := max(1, layout.bottomPaneHeight-2)
 	list := m.renderProjectList(layout.listContentWidth, listHeight)

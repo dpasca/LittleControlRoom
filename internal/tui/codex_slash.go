@@ -8,6 +8,7 @@ import (
 	"lcroom/internal/commands"
 	"lcroom/internal/slashcmd"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -24,12 +25,24 @@ func (m Model) codexSlashInput() string {
 }
 
 func (m Model) codexSlashSuggestions() []codexslash.Suggestion {
-	input := m.codexSlashInput()
-	suggestions := codexslash.Suggestions(input)
-	if len(suggestions) > 0 {
-		return suggestions
+	return codexSlashSuggestionsForInput(m.codexSlashInput())
+}
+
+func codexSlashSuggestionsForInput(input string) []codexslash.Suggestion {
+	suggestions := append([]codexslash.Suggestion(nil), codexslash.Suggestions(input)...)
+	seen := make(map[string]struct{}, len(suggestions))
+	for _, suggestion := range suggestions {
+		seen[strings.ToLower(strings.TrimSpace(suggestion.Insert))] = struct{}{}
 	}
-	return codexHostSlashSuggestions(input)
+	for _, suggestion := range codexHostSlashSuggestions(input) {
+		key := strings.ToLower(strings.TrimSpace(suggestion.Insert))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		suggestions = append(suggestions, suggestion)
+	}
+	return suggestions
 }
 
 func codexHostSlashCommand(input string) (commands.Invocation, bool) {
@@ -38,7 +51,15 @@ func codexHostSlashCommand(input string) (commands.Invocation, bool) {
 		return commands.Invocation{}, false
 	}
 	switch inv.Kind {
-	case commands.KindTaskActions, commands.KindResolve, commands.KindRepairTerminal:
+	case commands.KindTaskActions,
+		commands.KindResolve,
+		commands.KindRepairTerminal,
+		commands.KindRun,
+		commands.KindRestart,
+		commands.KindRunEdit,
+		commands.KindRuntime,
+		commands.KindStop,
+		commands.KindCommit:
 		return inv, true
 	default:
 		return commands.Invocation{}, false
@@ -59,6 +80,58 @@ func codexHostSlashSuggestions(input string) []codexslash.Suggestion {
 		})
 	}
 	return out
+}
+
+func (m Model) dispatchCodexHostSlashCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
+	if !codexHostSlashTargetsEmbeddedProject(inv.Kind) {
+		return m.dispatchCommand(inv)
+	}
+
+	projectPath := normalizeProjectPath(m.codexVisibleProject)
+	if projectPath == "" {
+		m.status = "Embedded project unavailable"
+		return m, nil
+	}
+
+	targetIndex := -1
+	for i, project := range m.projects {
+		if normalizeProjectPath(project.Path) == projectPath {
+			targetIndex = i
+			break
+		}
+	}
+	if targetIndex < 0 {
+		m.status = "Embedded project is not available in the current project view"
+		return m, nil
+	}
+
+	var focusCmd tea.Cmd
+	if m.selected != targetIndex {
+		focusCmd = m.focusProjectPath(m.projects[targetIndex].Path)
+	}
+	if inv.Kind == commands.KindRuntime {
+		updated, hideCmd := m.hideCodexSession()
+		hidden := normalizeUpdateModel(updated)
+		dispatched, commandCmd := hidden.dispatchCommand(inv)
+		return dispatched, batchCmds(focusCmd, hideCmd, commandCmd)
+	}
+
+	dispatched, commandCmd := m.dispatchCommand(inv)
+	return dispatched, batchCmds(focusCmd, commandCmd)
+}
+
+func codexHostSlashTargetsEmbeddedProject(kind commands.Kind) bool {
+	switch kind {
+	case commands.KindRun,
+		commands.KindRestart,
+		commands.KindRunEdit,
+		commands.KindRuntime,
+		commands.KindStop,
+		commands.KindCommit:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Model) syncCodexSlashSelection() {
@@ -124,7 +197,7 @@ func (m *Model) cycleAndApplyCodexSlashSuggestion(delta int) bool {
 	}
 	current := strings.TrimSpace(m.codexInput.Value())
 	suggestions := m.codexSlashSuggestions()
-	suggestion, selectedIndex, ok := slashcmd.CycleSuggestion(current, m.codexSlashSelected, suggestions, codexslash.Suggestions("/"), delta)
+	suggestion, selectedIndex, ok := slashcmd.CycleSuggestion(current, m.codexSlashSelected, suggestions, codexSlashSuggestionsForInput("/"), delta)
 	if !ok {
 		return false
 	}

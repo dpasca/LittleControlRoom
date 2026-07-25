@@ -245,7 +245,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if hostInv, ok := codexHostSlashCommand(raw); ok {
 					m.clearCodexDraft(m.codexVisibleProject)
 					m.err = nil
-					return m.dispatchCommand(hostInv)
+					return m.dispatchCodexHostSlashCommand(hostInv)
 				}
 				m.status = err.Error()
 				return m, nil
