@@ -85,6 +85,7 @@ Use its runtime tools for local app/server/watch processes:
 - Set ` + "`create_new`" + ` true only when the user needs another concurrent copy of the same command/cwd.
 - Set ` + "`replace_existing`" + ` true only when a fresh managed instance is needed.
 - Call ` + "`stop_process`" + ` only when the user asks to stop a managed runtime or when cleaning up a temporary process you started.
+- Call ` + "`read_process_output`" + ` to fetch the captured tail output and exit state of a managed runtime, for example to check whether the last /run or start_process command crashed.
 
 ## Progressive LCR control discovery
 

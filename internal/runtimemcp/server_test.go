@@ -48,6 +48,7 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	}
 	if !strings.Contains(string(responses[1].Result), `"start_process"`) ||
 		!strings.Contains(string(responses[1].Result), `"list_processes"`) ||
+		!strings.Contains(string(responses[1].Result), `"read_process_output"`) ||
 		!strings.Contains(string(responses[1].Result), `"stop_process"`) ||
 		!strings.Contains(string(responses[1].Result), `"request_browser_attention"`) ||
 		!strings.Contains(string(responses[1].Result), `"list_control_capabilities"`) ||
@@ -552,6 +553,100 @@ func TestRuntimeMCPStartProcessReusesMatchingProcess(t *testing.T) {
 	}
 	if running != 1 {
 		t.Fatalf("running snapshots = %d, want 1: %+v", running, manager.SnapshotsForProject(dir))
+	}
+}
+
+func TestRuntimeMCPReadProcessOutput(t *testing.T) {
+	dir := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	server, err := New(Options{ProjectPath: dir, Manager: manager})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	empty := callRuntimeToolForMap(t, server, "read_process_output", `{}`)
+	if empty["found"] != false {
+		t.Fatalf("empty found = %#v, want false: %#v", empty["found"], empty)
+	}
+
+	started := callRuntimeToolForMap(t, server, "start_process", `{"command":"sh -c 'echo alpha; echo beta; echo gamma; exit 3'","name":"crasher"}`)
+	if started["disposition"] != string(projectrun.StartDispositionStarted) {
+		t.Fatalf("start disposition = %#v: %#v", started["disposition"], started)
+	}
+	crashed := waitForRuntimeSnapshot(t, manager, dir, func(snapshot projectrun.Snapshot) bool {
+		return !snapshot.Running && snapshot.ExitCodeKnown && len(snapshot.RecentOutput) >= 3
+	})
+
+	report := callRuntimeToolForMap(t, server, "read_process_output", `{}`)
+	if report["found"] != true || report["crashed"] != true {
+		t.Fatalf("report found/crashed = %#v/%#v: %#v", report["found"], report["crashed"], report)
+	}
+	process, _ := report["process"].(map[string]any)
+	if process == nil {
+		t.Fatalf("report process missing: %#v", report)
+	}
+	if process["id"] != crashed.ID {
+		t.Fatalf("process id = %#v, want %q", process["id"], crashed.ID)
+	}
+	if code, ok := process["exit_code"].(float64); !ok || int(code) != 3 {
+		t.Fatalf("exit_code = %#v, want 3: %#v", process["exit_code"], report)
+	}
+	output, _ := report["output"].(string)
+	for _, want := range []string{"alpha", "beta", "gamma"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q: %q", want, output)
+		}
+	}
+
+	tailed := callRuntimeToolForMap(t, server, "read_process_output", `{"max_lines":2}`)
+	if lines, _ := tailed["output_lines"].([]any); len(lines) != 2 {
+		t.Fatalf("output_lines = %#v, want 2 lines", tailed["output_lines"])
+	}
+	if tailed["output_truncated"] != true {
+		t.Fatalf("output_truncated = %#v, want true", tailed["output_truncated"])
+	}
+	if tailOutput, _ := tailed["output"].(string); strings.Contains(tailOutput, "alpha") {
+		t.Fatalf("tailed output should drop the earliest line: %q", tailOutput)
+	}
+
+	missingParams := fmt.Sprintf(`{"name":%q,"arguments":%s}`, "read_process_output", `{"process_id":"missing-id"}`)
+	missingResult, err := server.handleToolCall(context.Background(), json.RawMessage(missingParams))
+	if err != nil {
+		t.Fatalf("read_process_output missing id call failed: %v", err)
+	}
+	if !missingResult.IsError {
+		t.Fatalf("missing process id should be an error result: %#v", missingResult.Content)
+	}
+
+	callRuntimeToolForMap(t, server, "start_process", `{"command":"sleep 30","name":"sleeper"}`)
+	latest := callRuntimeToolForMap(t, server, "read_process_output", `{}`)
+	latestProcess, _ := latest["process"].(map[string]any)
+	if latestProcess["running"] != true || latest["crashed"] != false {
+		t.Fatalf("latest report should prefer the most recently started runtime: %#v", latest)
+	}
+
+	byID := callRuntimeToolForMap(t, server, "read_process_output", mustJSON(t, map[string]any{"process_id": crashed.ID}))
+	if byID["crashed"] != true {
+		t.Fatalf("by-id report crashed = %#v, want true: %#v", byID["crashed"], byID)
+	}
+}
+
+func waitForRuntimeSnapshot(t *testing.T, manager *projectrun.Manager, projectPath string, want func(projectrun.Snapshot) bool) projectrun.Snapshot {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		snapshots := manager.SnapshotsForProject(projectPath)
+		for _, snapshot := range snapshots {
+			if want(snapshot) {
+				return snapshot
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for runtime snapshot: %+v", snapshots)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
