@@ -233,6 +233,16 @@ func isLCAgentBoilerplateStatusEntry(text string) bool {
 		"Loaded summarized LCAgent context from ",
 		"LCAgent web search enabled: ",
 		"LCAgent oversized search refinement enabled: ",
+		// Harness diagnostics and turn bookkeeping. These stay in the JSONL
+		// trace, the /lcagent compact trace, and dev review surfaces; the
+		// default transcript view hides them unless /show-status is on.
+		"LCAgent requested model response/tool call",
+		"LCAgent still waiting for model response/tool call",
+		"LCAgent model response/tool call received",
+		"Trace: verification ",
+		"LCAgent trace quality: ",
+		"Verification checks passed: ",
+		"Verification status: ",
 	} {
 		if strings.HasPrefix(text, prefix) {
 			return true
@@ -240,7 +250,8 @@ func isLCAgentBoilerplateStatusEntry(text string) bool {
 	}
 	return text == "Continuing LCAgent" ||
 		text == "Loaded exact LCAgent context" ||
-		text == "Loaded summarized LCAgent context"
+		text == "Loaded summarized LCAgent context" ||
+		text == "No verification check was run."
 }
 
 func codexTranscriptEntriesFromSnapshot(snapshot codexapp.Snapshot) []codexapp.TranscriptEntry {

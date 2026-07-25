@@ -185,14 +185,81 @@ func TestRenderCodexTranscriptEntriesShowsLCAgentBoilerplateStatusWhenVisible(t 
 		Entries: []codexapp.TranscriptEntry{
 			{Kind: codexapp.TranscriptStatus, Text: "Continuing LCAgent from lct_2b918f1c9d245c160500a0e2 [depth 1; exact replay 100 messages]"},
 			{Kind: codexapp.TranscriptStatus, Text: "LCAgent web search enabled: exa"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent model response/tool call received: turn 1; tool loop; moonshot; kimi-k3; finish stop"},
 		},
 	}
 	m := Model{codexLCAgentStatusVisible: map[string]struct{}{projectPath: {}}}
 
 	rendered := ansi.Strip(m.renderCodexTranscriptEntries(snapshot, 100))
-	for _, want := range []string{"Continuing LCAgent from lct_2b918f1c9d245c160500a0e2", "LCAgent web search enabled: exa"} {
+	for _, want := range []string{"Continuing LCAgent from lct_2b918f1c9d245c160500a0e2", "LCAgent web search enabled: exa", "model response/tool call received"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered transcript should show %q when status is visible: %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderCodexTranscriptEntriesSuppressesLCAgentDiagnosticStatusByDefault(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptUser, Text: "tests all good?"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent requested model response/tool call: turn 1; tool loop; moonshot; kimi-k3"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent still waiting for model response/tool call: turn 1; tool loop; moonshot; kimi-k3; elapsed 5s"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent model response/tool call received: turn 1; tool loop; moonshot; kimi-k3; finish stop"},
+			{Kind: codexapp.TranscriptStatus, Text: "Trace: verification verified; files main.go, main_test.go; 2 more"},
+			{Kind: codexapp.TranscriptStatus, Text: "Trace: verification not_run"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent trace quality: 95/excellent, tool failures: 1"},
+			{Kind: codexapp.TranscriptStatus, Text: "Verification checks passed: go test ./..."},
+			{Kind: codexapp.TranscriptStatus, Text: "No verification check was run."},
+			{Kind: codexapp.TranscriptStatus, Text: "Verification status: verified"},
+			{Kind: codexapp.TranscriptAgent, Text: "All green."},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 100))
+	for _, hidden := range []string{
+		"requested model response/tool call",
+		"still waiting for model response/tool call",
+		"model response/tool call received",
+		"Trace: verification",
+		"trace quality",
+		"Verification checks passed",
+		"No verification check was run.",
+		"Verification status:",
+	} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("rendered transcript should suppress diagnostic %q by default: %q", hidden, rendered)
+		}
+	}
+	for _, want := range []string{"tests all good?", "All green."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered transcript missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsLCAgentWarningStatusByDefault(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent model response was unusable: turn 2; tool loop; moonshot; kimi-k3"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent model request failed: turn 3; tool loop; moonshot; kimi-k3; rate_limit"},
+			{Kind: codexapp.TranscriptStatus, Text: "Verification checks failed: go test ./... (exit 1)"},
+			{Kind: codexapp.TranscriptStatus, Text: "No verification check was run or reported for changed files."},
+			{Kind: codexapp.TranscriptStatus, Text: "Verification was reported in final_response, but no purpose=verify check was recorded."},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent requested command approval: go test ./..."},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 100))
+	for _, want := range []string{
+		"model response was unusable",
+		"model request failed",
+		"Verification checks failed",
+		"No verification check was run or reported for changed files.",
+		"no purpose=verify check was recorded",
+		"requested command approval",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered transcript should keep warning %q by default: %q", want, rendered)
 		}
 	}
 }
