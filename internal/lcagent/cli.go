@@ -555,7 +555,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if searchRefineMinBytes < 0 {
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
-	reasoningEffort = openRouterReasoningEffortForProvider(provider, reasoningEffort)
+	reasoningEffort = openRouterReasoningEffortForProvider(provider, model, reasoningEffort)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
 		return err
@@ -2017,10 +2017,15 @@ func validateVisibleCompletion(provider string) func(modeladapter.Completion) er
 	}
 }
 
-func openRouterReasoningEffortForProvider(provider, reasoningEffort string) string {
+func openRouterReasoningEffortForProvider(provider, model, reasoningEffort string) string {
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "moonshot", "ollama":
+	case "moonshot":
+		if !modeladapter.MoonshotSupportsReasoningEffort(model) {
+			return ""
+		}
+		return reasoningEffort
+	case "ollama":
 		return ""
 	default:
 		return reasoningEffort

@@ -190,7 +190,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
 	launchModel := lcagentResolvedModelForSelection(modelProvider, routePreset, model)
 	launchReasoning := firstNonEmpty(strings.TrimSpace(req.PendingReasoning), lcagentRoutePresetReasoningEffort(routePreset))
-	launchReasoning = lcagentReasoningEffortForProvider(modelProvider, launchReasoning)
+	launchReasoning = lcagentReasoningEffortForProvider(modelProvider, model, launchReasoning)
 	hasLaunchOverride := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" || strings.TrimSpace(routePreset) != ""
 	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
@@ -255,7 +255,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightPolicy:         playwrightPolicy,
 		model:                    model,
 		modelProvider:            modelProvider,
-		reasoningEffort:          lcagentReasoningEffortForProvider(modelProvider, strings.TrimSpace(req.PendingReasoning)),
+		reasoningEffort:          lcagentReasoningEffortForProvider(modelProvider, model, strings.TrimSpace(req.PendingReasoning)),
 		status:                   "Ready",
 		managedBrowserSessionKey: managedSessionKey,
 		browserProfileKey:        browserProfileKey,
@@ -725,7 +725,6 @@ func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig
 	}
 	defaultModel := lcagentDefaultModel(provider)
 	options := make([]ModelOption, 0, len(listed))
-	supportedReasoningEfforts := lcagentReasoningEffortOptionsForProvider(provider)
 	for _, item := range listed {
 		id := strings.TrimSpace(item.ID)
 		if id == "" {
@@ -745,7 +744,7 @@ func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig
 			ModelProvider:             provider,
 			DisplayName:               displayName,
 			Description:               description,
-			SupportedReasoningEfforts: supportedReasoningEfforts,
+			SupportedReasoningEfforts: lcagentReasoningEffortOptionsForProvider(provider, id),
 			DefaultReasoningEffort:    lcagentDefaultReasoningEffort(provider, id),
 			IsDefault:                 strings.EqualFold(id, defaultModel),
 		})
@@ -830,7 +829,6 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		provider = lcagentDefaultProvider
 	}
 	defaultModel := lcagentDefaultModel(provider)
-	reasoning := lcagentReasoningEffortOptionsForProvider(provider)
 	option := func(model, displayName, description, defaultReasoning string, isDefault bool) ModelOption {
 		return ModelOption{
 			ID:                        model,
@@ -838,7 +836,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 			ModelProvider:             provider,
 			DisplayName:               displayName,
 			Description:               description,
-			SupportedReasoningEfforts: reasoning,
+			SupportedReasoningEfforts: lcagentReasoningEffortOptionsForProvider(provider, model),
 			DefaultReasoningEffort:    defaultReasoning,
 			IsDefault:                 isDefault,
 		}
@@ -859,6 +857,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 	case "moonshot":
 		return []ModelOption{
 			option(modeladapter.DefaultMoonshotModel, "Balanced: Kimi K2.7 Code", "Direct Moonshot/Kimi coding route.", "", true),
+			option("kimi-k3", "Thinking: Kimi K3", "Direct Moonshot/Kimi thinking route with reasoning effort control.", lcagentDefaultReasoningEffort(provider, "kimi-k3"), defaultModel == "kimi-k3"),
 		}
 	case "xiaomi":
 		return []ModelOption{
@@ -902,11 +901,19 @@ func lcagentDeepSeekReasoningEffortOptions() []ReasoningEffortOption {
 	}
 }
 
-func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
+// lcagentReasoningEffortOptionsForProvider is model-aware: some providers gate
+// reasoning effort per model (for example Moonshot supports it on kimi-k3 but
+// not on kimi-k2.x), so capability is keyed by model identity, not just route.
+func lcagentReasoningEffortOptionsForProvider(provider, model string) []ReasoningEffortOption {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "", "openai", "openrouter", "xiaomi":
 		return lcagentOpenAIStyleReasoningEffortOptions()
-	case "moonshot", "ollama":
+	case "moonshot":
+		if modeladapter.MoonshotSupportsReasoningEffort(model) {
+			return lcagentMoonshotReasoningEffortOptions()
+		}
+		return nil
+	case "ollama":
 		return nil
 	case "deepseek":
 		return lcagentDeepSeekReasoningEffortOptions()
@@ -916,12 +923,19 @@ func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffort
 }
 
 func LCAgentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
-	return append([]ReasoningEffortOption(nil), lcagentReasoningEffortOptionsForProvider(provider)...)
+	return append([]ReasoningEffortOption(nil), lcagentReasoningEffortOptionsForProvider(provider, "")...)
 }
 
-func lcagentReasoningEffortForProvider(provider, reasoningEffort string) string {
+// LCAgentReasoningEffortOptionsForModel returns the reasoning effort options
+// for a specific provider model. Prefer it over the provider-level helper
+// whenever the model ID is known.
+func LCAgentReasoningEffortOptionsForModel(provider, model string) []ReasoningEffortOption {
+	return append([]ReasoningEffortOption(nil), lcagentReasoningEffortOptionsForProvider(provider, model)...)
+}
+
+func lcagentReasoningEffortForProvider(provider, model, reasoningEffort string) string {
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
-	options := lcagentReasoningEffortOptionsForProvider(provider)
+	options := lcagentReasoningEffortOptionsForProvider(provider, model)
 	if len(options) == 0 || reasoningEffort == "" {
 		return ""
 	}
@@ -930,7 +944,7 @@ func lcagentReasoningEffortForProvider(provider, reasoningEffort string) string 
 			return strings.TrimSpace(option.ReasoningEffort)
 		}
 	}
-	return lcagentDefaultReasoningEffort(provider, "")
+	return lcagentDefaultReasoningEffort(provider, model)
 }
 
 func lcagentDefaultReasoningEffort(provider, model string) string {
@@ -942,7 +956,24 @@ func lcagentDefaultReasoningEffort(provider, model string) string {
 	if provider == "openai" || strings.HasPrefix(model, "openai/") {
 		return "low"
 	}
+	if modeladapter.MoonshotSupportsReasoningEffort(model) {
+		return "max"
+	}
 	return ""
+}
+
+// LCAgentDefaultReasoningEffort returns the default reasoning effort lcagent
+// requests for a provider model, or "" when the provider default should apply.
+func LCAgentDefaultReasoningEffort(provider, model string) string {
+	return lcagentDefaultReasoningEffort(provider, model)
+}
+
+func lcagentMoonshotReasoningEffortOptions() []ReasoningEffortOption {
+	return []ReasoningEffortOption{
+		{ReasoningEffort: "low", Description: "Light Kimi thinking for simpler coding turns."},
+		{ReasoningEffort: "high", Description: "Deeper Kimi thinking for difficult reviews or refactors."},
+		{ReasoningEffort: "max", Description: "Maximum Kimi thinking effort; this is the kimi-k3 default."},
+	}
 }
 
 func mergeLCAgentModelOptions(curated, discovered []ModelOption) []ModelOption {
@@ -984,7 +1015,7 @@ func lcagentModelOptionsWithCurrent(models []ModelOption, current string, checke
 	if current == "" || lcagentModelOptionExists(models, current) {
 		return models
 	}
-	reasoningEfforts := lcagentReasoningEffortOptionsForProvider(provider)
+	reasoningEfforts := lcagentReasoningEffortOptionsForProvider(provider, current)
 	description := "Custom LCAgent model."
 	if checkedProviderList {
 		description = "Custom LCAgent model. The provider model list did not return this ID."
@@ -1132,7 +1163,7 @@ func (s *lcagentSession) setPendingLaunchSelectionLocked(model, provider, reason
 		model = modeladapter.NormalizeModelForProvider(provider, model)
 	}
 	if requestedReasoning != "" {
-		reasoningEffort = lcagentReasoningEffortForProvider(provider, requestedReasoning)
+		reasoningEffort = lcagentReasoningEffortForProvider(provider, model, requestedReasoning)
 	}
 	if model == "" && reasoningEffort == "" {
 		s.pendingModel = ""
@@ -1467,7 +1498,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	}
 	s.appendModelSelectionWarningLocked()
 	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
-	reasoningEffort := lcagentReasoningEffortForProvider(modelProvider, firstNonEmpty(pendingReasoning, s.reasoningEffort, lcagentRoutePresetReasoningEffort(routePreset)))
+	reasoningEffort := lcagentReasoningEffortForProvider(modelProvider, model, firstNonEmpty(pendingReasoning, s.reasoningEffort, lcagentRoutePresetReasoningEffort(routePreset)))
 	s.provider = provider
 	s.routePreset = routePreset
 	s.model = model

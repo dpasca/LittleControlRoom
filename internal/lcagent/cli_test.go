@@ -4722,3 +4722,25 @@ func isolateSkillHomes(t *testing.T) {
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "codex"))
 	t.Setenv("AGENTS_HOME", filepath.Join(t.TempDir(), "agents"))
 }
+
+func TestOpenRouterReasoningEffortForProviderIsModelAwareForMoonshot(t *testing.T) {
+	cases := []struct {
+		provider string
+		model    string
+		effort   string
+		want     string
+	}{
+		{"moonshot", "kimi-k3", "low", "low"},
+		{"moonshot", "kimi-k3", "max", "max"},
+		{"moonshot", "kimi-k2.7-code", "low", ""},
+		{"moonshot", "", "low", ""},
+		{"ollama", "qwen3", "low", ""},
+		{"openrouter", "moonshotai/kimi-k3", "high", "high"},
+		{"deepseek", "deepseek-v4-pro", "max", "max"},
+	}
+	for _, tt := range cases {
+		if got := openRouterReasoningEffortForProvider(tt.provider, tt.model, tt.effort); got != tt.want {
+			t.Fatalf("openRouterReasoningEffortForProvider(%q, %q, %q) = %q, want %q", tt.provider, tt.model, tt.effort, got, tt.want)
+		}
+	}
+}

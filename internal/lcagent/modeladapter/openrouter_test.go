@@ -1865,3 +1865,85 @@ func TestOpenRouterClientClassifiesMalformedResponse(t *testing.T) {
 		t.Fatalf("provider error = %#v, want retryable malformed_response", providerErr)
 	}
 }
+
+func TestMoonshotKimiK3SendsReasoningEffort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoning_effort"`
+			Thinking        *struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Model != "kimi-k3" {
+			t.Fatalf("model = %q, want kimi-k3", req.Model)
+		}
+		if req.ReasoningEffort != "high" {
+			t.Fatalf("reasoning_effort = %q, want high", req.ReasoningEffort)
+		}
+		if req.Thinking != nil {
+			t.Fatalf("thinking should be omitted when reasoning effort is set: %+v", req.Thinking)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewMoonshotClient(OpenRouterConfig{
+		APIKey:  "moonshot-key",
+		BaseURL: server.URL,
+		Model:   "kimi-k3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{
+		ReasoningEffort: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMoonshotKimiK2StillRejectsReasoningEffort(t *testing.T) {
+	client, err := NewMoonshotClient(OpenRouterConfig{
+		APIKey:  "moonshot-key",
+		BaseURL: "http://127.0.0.1:1",
+		Model:   DefaultMoonshotModel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{
+		ReasoningEffort: "low",
+	})
+	if err == nil {
+		t.Fatal("expected reasoning effort rejection for " + DefaultMoonshotModel)
+	}
+	if !strings.Contains(err.Error(), "does not support") {
+		t.Fatalf("error = %v, want unsupported reasoning effort message", err)
+	}
+}
+
+func TestMoonshotKimiK3IsKnownAndSupportsReasoningEffort(t *testing.T) {
+	if !ModelIsKnownForProvider("moonshot", "kimi-k3") {
+		t.Fatal("kimi-k3 should be a known moonshot model")
+	}
+	if !ModelIsKnownForProvider("moonshot", "moonshotai/kimi-k3") {
+		t.Fatal("provider-prefixed kimi-k3 should be known after normalization")
+	}
+	if !MoonshotSupportsReasoningEffort("kimi-k3") {
+		t.Fatal("kimi-k3 should support reasoning effort")
+	}
+	if !MoonshotSupportsReasoningEffort("moonshotai/kimi-k3") {
+		t.Fatal("provider-prefixed kimi-k3 should support reasoning effort")
+	}
+	if MoonshotSupportsReasoningEffort(DefaultMoonshotModel) {
+		t.Fatalf("%s should not support reasoning effort", DefaultMoonshotModel)
+	}
+	if MoonshotSupportsReasoningEffort("kimi-k2.6") {
+		t.Fatal("kimi-k2.6 should not support reasoning effort")
+	}
+}

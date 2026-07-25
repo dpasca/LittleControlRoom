@@ -1445,7 +1445,7 @@ func codexReasoningOptionsFor(option codexapp.ModelOption) []codexapp.ReasoningE
 func (m Model) codexReasoningOptionsForModel(option codexapp.ModelOption) []codexapp.ReasoningEffortOption {
 	if len(option.SupportedReasoningEfforts) == 0 &&
 		strings.TrimSpace(option.DefaultReasoningEffort) != "" {
-		if efforts := codexapp.LCAgentReasoningEffortOptionsForProvider(option.ModelProvider); len(efforts) > 0 {
+		if efforts := codexapp.LCAgentReasoningEffortOptionsForModel(option.ModelProvider, option.Model); len(efforts) > 0 {
 			return efforts
 		}
 	}

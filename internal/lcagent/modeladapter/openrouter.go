@@ -406,7 +406,8 @@ func ModelIsKnownForProvider(provider, model string) bool {
 		return model == DefaultDeepSeekModel || model == "deepseek-v4-flash"
 	case "moonshot":
 		model = strings.ToLower(NormalizeModelForProvider("moonshot", model))
-		return model == DefaultMoonshotModel || model == "kimi-k2.6"
+		return model == DefaultMoonshotModel || model == "kimi-k2.6" ||
+			model == "kimi-k3" || strings.HasPrefix(model, "kimi-k3-")
 	case "xiaomi":
 		model = strings.ToLower(NormalizeModelForProvider("xiaomi", model))
 		return model == DefaultXiaomiUtilityModel ||
@@ -622,8 +623,14 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 			}
 		}
 	case "moonshot":
-		if strings.TrimSpace(opts.ReasoningEffort) != "" || opts.ReasoningMaxTokens > 0 {
-			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning effort or max_tokens options", c.providerLabel())
+		if opts.ReasoningMaxTokens > 0 {
+			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning max_tokens option", c.providerLabel())
+		}
+		if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
+			if !MoonshotSupportsReasoningEffort(c.model) {
+				return Completion{}, fmt.Errorf("%s model %s does not support lcagent reasoning effort option", c.providerLabel(), c.model)
+			}
+			body["reasoning_effort"] = effort
 		}
 		if opts.DisableThinking && moonshotSupportsDisableThinking(c.model) {
 			body["thinking"] = map[string]any{"type": "disabled"}
@@ -807,6 +814,14 @@ func moonshotSupportsDisableThinking(model string) bool {
 	default:
 		return false
 	}
+}
+
+// MoonshotSupportsReasoningEffort reports whether a Moonshot model accepts a
+// top-level reasoning_effort parameter. kimi-k3 introduced reasoning effort
+// control (low/high/max, default max); earlier kimi-k2.x models reject it.
+func MoonshotSupportsReasoningEffort(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(NormalizeModelForProvider("moonshot", model)))
+	return model == "kimi-k3" || strings.HasPrefix(model, "kimi-k3-")
 }
 
 func (c *Client) completeResponses(ctx context.Context, messages []Message, tools []ToolDefinition, opts CompletionOptions) (Completion, error) {

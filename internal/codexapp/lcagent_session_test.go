@@ -1551,10 +1551,10 @@ func TestLCAgentModelOptionsForOllamaUsesLocalModelList(t *testing.T) {
 	}
 }
 
-func TestLCAgentModelOptionsForProviderMoonshotHasNoReasoningControls(t *testing.T) {
+func TestLCAgentModelOptionsForProviderMoonshotK2HasNoReasoningControls(t *testing.T) {
 	options := lcagentModelOptionsForProvider("moonshot")
-	if len(options) != 1 {
-		t.Fatalf("provider options = %#v, want one moonshot option", options)
+	if len(options) != 2 {
+		t.Fatalf("provider options = %#v, want two moonshot options", options)
 	}
 	if options[0].Model != "kimi-k2.7-code" {
 		t.Fatalf("moonshot model = %q, want kimi-k2.7-code", options[0].Model)
@@ -3041,5 +3041,73 @@ func TestLCAgentResolvedUtilityModelUsesXiaomiUtilityDefault(t *testing.T) {
 	got := lcagentResolvedUtilityModel("mimo-2.5-pro-low", "xiaomi", "mimo-v2.5-pro", "main", "")
 	if got != "mimo-v2.5" {
 		t.Fatalf("lcagentResolvedUtilityModel() = %q, want mimo-v2.5", got)
+	}
+}
+
+func TestLCAgentReasoningEffortOptionsAreModelAwareForMoonshot(t *testing.T) {
+	k3 := lcagentReasoningEffortOptionsForProvider("moonshot", "kimi-k3")
+	if len(k3) != 3 {
+		t.Fatalf("kimi-k3 options = %#v, want 3 efforts", k3)
+	}
+	want := []string{"low", "high", "max"}
+	for i, option := range k3 {
+		if option.ReasoningEffort != want[i] {
+			t.Fatalf("kimi-k3 option[%d] = %q, want %q", i, option.ReasoningEffort, want[i])
+		}
+	}
+	if got := lcagentReasoningEffortOptionsForProvider("moonshot", "kimi-k2.7-code"); got != nil {
+		t.Fatalf("kimi-k2.7-code options = %#v, want nil", got)
+	}
+	if got := LCAgentReasoningEffortOptionsForProvider("moonshot"); got != nil {
+		t.Fatalf("provider-level moonshot options = %#v, want nil without model", got)
+	}
+	if got := LCAgentReasoningEffortOptionsForModel("moonshot", "kimi-k3"); len(got) != 3 {
+		t.Fatalf("exported model-aware options = %#v, want 3 efforts", got)
+	}
+}
+
+func TestLCAgentReasoningEffortValidationIsModelAwareForMoonshot(t *testing.T) {
+	if got := lcagentReasoningEffortForProvider("moonshot", "kimi-k3", "low"); got != "low" {
+		t.Fatalf("kimi-k3 low = %q, want low", got)
+	}
+	if got := lcagentReasoningEffortForProvider("moonshot", "kimi-k3", "bogus"); got != "max" {
+		t.Fatalf("kimi-k3 invalid effort = %q, want default max", got)
+	}
+	if got := lcagentReasoningEffortForProvider("moonshot", "kimi-k2.7-code", "low"); got != "" {
+		t.Fatalf("kimi-k2.7-code low = %q, want empty", got)
+	}
+}
+
+func TestLCAgentDefaultReasoningEffortIsModelAwareForMoonshot(t *testing.T) {
+	if got := lcagentDefaultReasoningEffort("moonshot", "kimi-k3"); got != "max" {
+		t.Fatalf("moonshot kimi-k3 default = %q, want max", got)
+	}
+	if got := lcagentDefaultReasoningEffort("openrouter", "moonshotai/kimi-k3"); got != "max" {
+		t.Fatalf("openrouter moonshotai/kimi-k3 default = %q, want max", got)
+	}
+	if got := lcagentDefaultReasoningEffort("moonshot", "kimi-k2.7-code"); got != "" {
+		t.Fatalf("moonshot kimi-k2.7-code default = %q, want empty", got)
+	}
+}
+
+func TestLCAgentMoonshotCuratedOptionsIncludeKimiK3WithEfforts(t *testing.T) {
+	options := lcagentModelOptionsForProvider("moonshot")
+	var k3 *ModelOption
+	for i := range options {
+		if options[i].Model == "kimi-k3" {
+			k3 = &options[i]
+		}
+	}
+	if k3 == nil {
+		t.Fatalf("curated moonshot options missing kimi-k3: %#v", options)
+	}
+	if len(k3.SupportedReasoningEfforts) != 3 {
+		t.Fatalf("kimi-k3 curated efforts = %#v, want 3", k3.SupportedReasoningEfforts)
+	}
+	if k3.DefaultReasoningEffort != "max" {
+		t.Fatalf("kimi-k3 curated default = %q, want max", k3.DefaultReasoningEffort)
+	}
+	if k3.IsDefault {
+		t.Fatal("kimi-k3 should not be the default moonshot model")
 	}
 }

@@ -633,7 +633,7 @@ func settingsLCAgentModelPickerCustomOption(state *settingsLCAgentModelPickerSta
 		ModelProvider:             provider,
 		DisplayName:               "Custom: " + model,
 		Description:               "Use this provider model ID exactly as typed.",
-		SupportedReasoningEfforts: codexapp.LCAgentReasoningEffortOptionsForProvider(provider),
+		SupportedReasoningEfforts: codexapp.LCAgentReasoningEffortOptionsForModel(provider, model),
 		DefaultReasoningEffort:    settingsLCAgentModelPickerDefaultReasoning(provider, model),
 	}, true
 }
@@ -654,7 +654,10 @@ func settingsLCAgentModelPickerHasModel(models []codexapp.ModelOption, model str
 }
 
 func settingsLCAgentModelPickerDefaultReasoning(provider, model string) string {
-	options := codexapp.LCAgentReasoningEffortOptionsForProvider(provider)
+	if defaultEffort := codexapp.LCAgentDefaultReasoningEffort(provider, model); defaultEffort != "" {
+		return defaultEffort
+	}
+	options := codexapp.LCAgentReasoningEffortOptionsForModel(provider, model)
 	if len(options) > 0 {
 		return strings.TrimSpace(options[0].ReasoningEffort)
 	}
@@ -1382,7 +1385,7 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	efforts := modelOption.SupportedReasoningEfforts
 	if len(efforts) == 0 {
 		provider := firstNonEmptyTrimmed(modelOption.ModelProvider, state.Provider)
-		efforts = codexapp.LCAgentReasoningEffortOptionsForProvider(provider)
+		efforts = codexapp.LCAgentReasoningEffortOptionsForModel(provider, modelOption.Model)
 	}
 	for _, effort := range efforts {
 		value := strings.TrimSpace(effort.ReasoningEffort)
