@@ -199,6 +199,40 @@ func parseLCAgentRecentModelID(raw string) (string, string) {
 	return "", raw
 }
 
+func appendRecentLCAgentSelection(values []config.LCAgentModelSelection, provider, model, reasoning string, limit int) []config.LCAgentModelSelection {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.TrimSpace(model)
+	reasoning = strings.ToLower(strings.TrimSpace(reasoning))
+	if provider == "" || model == "" || limit <= 0 {
+		return append([]config.LCAgentModelSelection(nil), values...)
+	}
+	selection := config.LCAgentModelSelection{
+		Provider:  provider,
+		Model:     model,
+		Reasoning: reasoning,
+	}
+	out := make([]config.LCAgentModelSelection, 0, min(len(values)+1, limit))
+	out = append(out, selection)
+	for _, existing := range values {
+		if strings.EqualFold(strings.TrimSpace(existing.Provider), provider) &&
+			strings.EqualFold(strings.TrimSpace(existing.Model), model) &&
+			strings.EqualFold(strings.TrimSpace(existing.Reasoning), reasoning) {
+			continue
+		}
+		existing.Provider = strings.ToLower(strings.TrimSpace(existing.Provider))
+		existing.Model = strings.TrimSpace(existing.Model)
+		existing.Reasoning = strings.ToLower(strings.TrimSpace(existing.Reasoning))
+		if existing.Provider == "" || existing.Model == "" {
+			continue
+		}
+		out = append(out, existing)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
 func embeddedModelSettingsEqual(left, right config.EditableSettings) bool {
 	return strings.TrimSpace(left.EmbeddedCodexModel) == strings.TrimSpace(right.EmbeddedCodexModel) &&
 		strings.TrimSpace(left.EmbeddedCodexReasoning) == strings.TrimSpace(right.EmbeddedCodexReasoning) &&
@@ -213,7 +247,8 @@ func embeddedModelSettingsEqual(left, right config.EditableSettings) bool {
 		trimmedStringSlicesEqual(left.RecentCodexModels, right.RecentCodexModels) &&
 		trimmedStringSlicesEqual(left.RecentClaudeModels, right.RecentClaudeModels) &&
 		trimmedStringSlicesEqual(left.RecentOpenCodeModels, right.RecentOpenCodeModels) &&
-		trimmedStringSlicesEqual(left.RecentLCAgentModels, right.RecentLCAgentModels)
+		trimmedStringSlicesEqual(left.RecentLCAgentModels, right.RecentLCAgentModels) &&
+		lcagentModelSelectionsEqual(left.RecentLCAgentSelections, right.RecentLCAgentSelections)
 }
 
 func trimmedStringSlicesEqual(left, right []string) bool {
@@ -222,6 +257,20 @@ func trimmedStringSlicesEqual(left, right []string) bool {
 	}
 	for i := range left {
 		if strings.TrimSpace(left[i]) != strings.TrimSpace(right[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func lcagentModelSelectionsEqual(left, right []config.LCAgentModelSelection) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !strings.EqualFold(strings.TrimSpace(left[i].Provider), strings.TrimSpace(right[i].Provider)) ||
+			!strings.EqualFold(strings.TrimSpace(left[i].Model), strings.TrimSpace(right[i].Model)) ||
+			!strings.EqualFold(strings.TrimSpace(left[i].Reasoning), strings.TrimSpace(right[i].Reasoning)) {
 			return false
 		}
 	}

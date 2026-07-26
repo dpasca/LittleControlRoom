@@ -4178,6 +4178,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
 	settings.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
+	settings.RecentLCAgentSelections = append([]config.LCAgentModelSelection(nil), settings.RecentLCAgentSelections...)
 	return settings
 }
 

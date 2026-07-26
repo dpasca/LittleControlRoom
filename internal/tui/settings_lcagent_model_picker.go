@@ -36,6 +36,7 @@ type settingsLCAgentModelPickerState struct {
 	FieldIndex         int
 	EmbeddedApply      bool
 	EmbeddedProject    string
+	PrelaunchApply     bool
 	Step               settingsLCAgentModelPickerStep
 	Provider           string
 	CurrentProvider    string
@@ -57,6 +58,8 @@ type settingsLCAgentModelPickerState struct {
 	CurrentReasoning   string
 	PendingReasoning   string
 	ReasoningSelected  int
+	RecentSelections   []config.LCAgentModelSelection
+	RecentSelected     int
 	Loading            bool
 	Err                string
 }
@@ -164,6 +167,8 @@ func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 		Current:          current,
 		FilterInput:      newSettingsLCAgentModelPickerFilterInput(),
 		CurrentReasoning: settingsLCAgentModelPickerRawReasoning(settings, fieldIndex),
+		RecentSelections: settingsLCAgentModelPickerRecentSelections(settings, fieldIndex),
+		RecentSelected:   -1,
 	}
 	m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(fieldIndex)) + " provider."
 	return m, nil
@@ -184,6 +189,41 @@ func (m Model) openEmbeddedLCAgentModelPicker() (tea.Model, tea.Cmd) {
 	}
 	m.status = "Choose the LCAgent provider and model."
 	return m, cmd
+}
+
+func (m Model) openTodoLCAgentModelPicker() (tea.Model, tea.Cmd) {
+	if m.todoCopyDialog != nil {
+		m.todoCopyDialog.OpenModelFirst = false
+	}
+	m.settingsFields = newSettingsFields(m.currentSettingsBaseline())
+	m.settingsSelected = settingsFieldLCAgentModel
+	next, cmd := m.openSettingsLCAgentModelPicker()
+	updated, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	m = updated
+	if state := m.settingsLCAgentModelPicker; state != nil {
+		state.EmbeddedApply = true
+		state.PrelaunchApply = true
+		state.EmbeddedProject = ""
+	}
+	m.status = "Choose the LCAgent provider, model, and reasoning before starting the TODO."
+	return m, cmd
+}
+
+func settingsLCAgentModelPickerRecentSelections(settings config.EditableSettings, fieldIndex int) []config.LCAgentModelSelection {
+	if fieldIndex != settingsFieldLCAgentModel {
+		return nil
+	}
+	recent := append([]config.LCAgentModelSelection(nil), settings.RecentLCAgentSelections...)
+	provider := settingsLCAgentModelPickerProvider(settings, fieldIndex)
+	model := settingsLCAgentModelPickerRawModel(settings, fieldIndex)
+	reasoning := settingsLCAgentModelPickerRawReasoning(settings, fieldIndex)
+	if strings.TrimSpace(model) != "" {
+		recent = appendRecentLCAgentSelection(recent, provider, model, reasoning, 5)
+	}
+	return recent
 }
 
 func settingsLCAgentModelListCmd(fieldIndex int, provider, current string, cfg codexapp.LCAgentModelListConfig) tea.Cmd {
@@ -445,16 +485,66 @@ func (m Model) updateSettingsLCAgentModelPickerProviderStep(msg tea.KeyMsg) (tea
 	case "esc":
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
 		return m, nil
+	case "r":
+		if len(state.RecentSelections) == 0 {
+			m.status = "No complete recent LCAgent configurations yet."
+			return m, nil
+		}
+		if state.RecentSelected >= 0 {
+			state.RecentSelected = -1
+			m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
+		} else {
+			state.RecentSelected = 0
+			m.status = "Choose a recent provider, model, and reasoning configuration."
+		}
+		return m, nil
 	case "up", "k", "shift+tab":
+		if state.RecentSelected >= 0 {
+			state.RecentSelected = wrapIndex(state.RecentSelected-1, len(state.RecentSelections))
+			return m, nil
+		}
 		state.ProviderSelected = wrapIndex(state.ProviderSelected-1, len(options))
 		return m, nil
 	case "down", "j", "tab":
+		if state.RecentSelected >= 0 {
+			state.RecentSelected = wrapIndex(state.RecentSelected+1, len(state.RecentSelections))
+			return m, nil
+		}
 		state.ProviderSelected = wrapIndex(state.ProviderSelected+1, len(options))
 		return m, nil
 	case "enter":
+		if state.RecentSelected >= 0 && state.RecentSelected < len(state.RecentSelections) {
+			return m.chooseSettingsLCAgentRecentSelection(state.RecentSelections[state.RecentSelected])
+		}
 		return m.chooseSettingsLCAgentModelPickerProvider(options[state.ProviderSelected])
 	}
 	return m, nil
+}
+
+func (m Model) chooseSettingsLCAgentRecentSelection(selection config.LCAgentModelSelection) (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(selection.Provider))
+	model := strings.TrimSpace(selection.Model)
+	if provider == "" || model == "" {
+		m.status = "That recent LCAgent configuration is incomplete."
+		return m, nil
+	}
+	state.Provider = provider
+	state.PendingModel = model
+	state.PendingModelAuto = false
+	state.PendingReasoning = strings.ToLower(strings.TrimSpace(selection.Reasoning))
+	state.PendingModelOption = codexapp.ModelOption{
+		ID:                        model,
+		Model:                     model,
+		ModelProvider:             provider,
+		DisplayName:               model,
+		SupportedReasoningEfforts: codexapp.LCAgentReasoningEffortOptionsForModel(provider, model),
+		DefaultReasoningEffort:    settingsLCAgentModelPickerDefaultReasoning(provider, model),
+	}
+	return m.applySettingsLCAgentModelPickerSelection()
 }
 
 func (m Model) chooseSettingsLCAgentModelPickerProvider(option settingsLCAgentProviderOption) (tea.Model, tea.Cmd) {
@@ -773,9 +863,16 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 	if state.EmbeddedApply {
 		settings := config.NormalizeEditableSettings(m.settingsDraftForInferenceStatus())
 		settings.RecentLCAgentModels = appendRecentString(settings.RecentLCAgentModels, formatLCAgentRecentModelID(provider, model), 5)
+		settings.RecentLCAgentSelections = appendRecentLCAgentSelection(
+			settings.RecentLCAgentSelections,
+			provider,
+			model,
+			state.PendingReasoning,
+			5,
+		)
 		path := m.currentWritableConfigPath()
 		projectPath := strings.TrimSpace(state.EmbeddedProject)
-		if projectPath == "" {
+		if projectPath == "" && !state.PrelaunchApply {
 			projectPath = strings.TrimSpace(m.codexVisibleProject)
 		}
 		m.settingsLCAgentModelPicker = nil
@@ -790,6 +887,7 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 				projectPath: projectPath,
 				settings:    settings,
 				path:        path,
+				prelaunch:   state.PrelaunchApply,
 				err:         err,
 			}
 		}
@@ -983,11 +1081,22 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 
 func (m Model) renderSettingsLCAgentModelPickerProviderContent(width, bodyH int, title string) string {
 	state := m.settingsLCAgentModelPicker
+	recentAction := ""
+	if state != nil && len(state.RecentSelections) > 0 {
+		recentAction = "   " + renderDialogAction("r", "recent", pushActionKeyStyle, pushActionTextStyle)
+	}
+	navigationLabel := "provider"
+	enterLabel := "continue"
+	if state != nil && state.RecentSelected >= 0 {
+		navigationLabel = "configuration"
+		enterLabel = "apply"
+	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
-		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("Enter", "continue", commitActionKeyStyle, commitActionTextStyle) + "   " +
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Up/Down", navigationLabel, navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Enter", enterLabel, commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle) +
+			recentAction,
 	}
 	if state == nil || len(state.ProviderOptions) == 0 {
 		lines = append(lines, "", commandPaletteHintStyle.Render("No provider options are available."))
@@ -995,6 +1104,27 @@ func (m Model) renderSettingsLCAgentModelPickerProviderContent(width, bodyH int,
 	}
 	currentLabel := settingsLCAgentModelValueLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex)
 	lines = append(lines, detailMutedStyle.Render("Current: "+truncateText(currentLabel, max(18, width-9))), "")
+	if state.RecentSelected >= 0 && len(state.RecentSelections) > 0 {
+		lines = append(lines, commandPaletteTitleStyle.Render("Recent configurations  [r] close"))
+		for i, selection := range state.RecentSelections {
+			lines = append(lines, renderSettingsLCAgentRecentSelectionRow(selection, i == state.RecentSelected, width))
+		}
+		selected := state.RecentSelections[state.RecentSelected]
+		lines = append(lines, "", detailField("Selected", detailValueStyle.Render(settingsLCAgentRecentSelectionLabel(selected))))
+		lines = append(lines, detailMutedStyle.Render("Enter applies this complete configuration immediately."))
+		if len(lines) > bodyH {
+			lines = lines[:bodyH]
+		}
+		return strings.Join(lines, "\n")
+	}
+	if len(state.RecentSelections) > 0 {
+		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf(
+			"Recent configurations: %d complete %s  [r] open",
+			len(state.RecentSelections),
+			pluralize("choice", len(state.RecentSelections)),
+		)))
+		lines = append(lines, commandPaletteTitleStyle.Render("Choose manually"))
+	}
 	for i, option := range state.ProviderOptions {
 		lines = append(lines, renderSettingsLCAgentProviderPickerRow(option, i == state.ProviderSelected, option.Value == state.CurrentProvider, width))
 	}
@@ -1010,6 +1140,27 @@ func (m Model) renderSettingsLCAgentModelPickerProviderContent(width, bodyH int,
 		lines = lines[:bodyH]
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderSettingsLCAgentRecentSelectionRow(selection config.LCAgentModelSelection, selected bool, width int) string {
+	row := settingsLCAgentRecentSelectionLabel(selection)
+	if selected {
+		return dialogSelectedRowStyle.Width(width).Render("> " + truncateText(row, max(12, width-2)))
+	}
+	return commandPaletteRowStyle.Width(width).Render("  " + truncateText(row, max(12, width-2)))
+}
+
+func settingsLCAgentRecentSelectionLabel(selection config.LCAgentModelSelection) string {
+	parts := []string{
+		settingsLCAgentModelPickerProviderLabel(selection.Provider),
+		strings.TrimSpace(selection.Model),
+	}
+	if reasoning := strings.TrimSpace(selection.Reasoning); reasoning != "" {
+		parts = append(parts, reasoning+" reasoning")
+	} else {
+		parts = append(parts, "provider-default reasoning")
+	}
+	return strings.Join(parts, "  ·  ")
 }
 
 func (m Model) renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH int, title string) string {

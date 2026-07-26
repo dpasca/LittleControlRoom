@@ -55,6 +55,7 @@ type EditableSettings struct {
 	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
 	RecentLCAgentModels       []string
+	RecentLCAgentSelections   []LCAgentModelSelection
 	LCAgentPath               string
 	LCAgentEnvFile            string
 	LCAgentRoutePreset        string
@@ -129,6 +130,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		RecentClaudeModels:        append([]string(nil), cfg.RecentClaudeModels...),
 		RecentOpenCodeModels:      append([]string(nil), cfg.RecentOpenCodeModels...),
 		RecentLCAgentModels:       append([]string(nil), cfg.RecentLCAgentModels...),
+		RecentLCAgentSelections:   append([]LCAgentModelSelection(nil), cfg.RecentLCAgentSelections...),
 		LCAgentPath:               cfg.LCAgentPath,
 		LCAgentEnvFile:            cfg.LCAgentEnvFile,
 		LCAgentRoutePreset:        cfg.LCAgentRoutePreset,
@@ -242,9 +244,34 @@ func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 		settings.MobileListenAddress = DefaultMobileListenAddress
 	}
 	settings.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider), settings.EmbeddedLCAgentModel)
+	settings.RecentLCAgentSelections = normalizeRecentLCAgentSelections(settings.RecentLCAgentSelections)
 	settings.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentUtilityProvider), settings.LCAgentUtilityModel)
 	settings.LCAgentVisionModel = normalizeLCAgentModelForProvider(lcagentEffectiveVisionProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentVisionProvider), settings.LCAgentVisionModel)
 	return settings
+}
+
+func normalizeRecentLCAgentSelections(values []LCAgentModelSelection) []LCAgentModelSelection {
+	const limit = 5
+	out := make([]LCAgentModelSelection, 0, min(len(values), limit))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Provider = strings.ToLower(strings.TrimSpace(value.Provider))
+		value.Model = normalizeLCAgentModelForProvider(value.Provider, value.Model)
+		value.Reasoning = strings.ToLower(strings.TrimSpace(value.Reasoning))
+		if value.Provider == "" || value.Model == "" {
+			continue
+		}
+		key := value.Provider + "\x00" + strings.ToLower(value.Model) + "\x00" + value.Reasoning
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func lcagentEffectiveMainProvider(routePreset, provider string) string {
@@ -908,6 +935,21 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, "recent_lcagent_models = [")
 		for _, model := range settings.RecentLCAgentModels {
 			lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(model)))
+		}
+		lines = append(lines, "]")
+		lines = append(lines, "")
+	}
+	if len(settings.RecentLCAgentSelections) > 0 {
+		lines = append(lines, "recent_lcagent_selections = [")
+		for _, selection := range settings.RecentLCAgentSelections {
+			fields := []string{
+				"provider = " + strconv.Quote(selection.Provider),
+				"model = " + strconv.Quote(selection.Model),
+			}
+			if strings.TrimSpace(selection.Reasoning) != "" {
+				fields = append(fields, "reasoning = "+strconv.Quote(selection.Reasoning))
+			}
+			lines = append(lines, "  { "+strings.Join(fields, ", ")+" },")
 		}
 		lines = append(lines, "]")
 		lines = append(lines, "")

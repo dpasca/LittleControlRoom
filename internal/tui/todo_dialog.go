@@ -908,7 +908,7 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		return m, m.cycleTodoCopyDialogProvider(-1)
 	case "m":
-		return m, m.toggleTodoCopyDialogOpenModelFirst()
+		return m.openTodoModelPicker()
 	case "e":
 		if copyDialog.RunMode != todoCopyModeNewWorktree {
 			return m, nil
@@ -976,13 +976,22 @@ func (m *Model) cycleTodoCopyDialogProvider(delta int) tea.Cmd {
 	return nil
 }
 
-func (m *Model) toggleTodoCopyDialogOpenModelFirst() tea.Cmd {
+func (m Model) openTodoModelPicker() (tea.Model, tea.Cmd) {
 	copyDialog := m.todoCopyDialog
 	if copyDialog == nil {
-		return nil
+		return m, nil
+	}
+	provider := explicitEmbeddedProvider(copyDialog.Provider)
+	if provider == codexapp.ProviderLCAgent {
+		return m.openTodoLCAgentModelPicker()
 	}
 	copyDialog.OpenModelFirst = !copyDialog.OpenModelFirst
-	return nil
+	if copyDialog.OpenModelFirst {
+		m.status = "The " + provider.Label() + " model picker will open when the fresh TODO session is ready."
+	} else {
+		m.status = "The TODO will use the saved " + provider.Label() + " model preference."
+	}
+	return m, nil
 }
 
 func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
@@ -1955,6 +1964,9 @@ func (m *Model) returnToTodoFromModelPicker() {
 func (m Model) embeddedModelLabelForProject(projectPath string, provider codexapp.Provider) string {
 	if pref, ok := m.embeddedModelPreference(provider); ok && pref.Model != "" {
 		label := pref.Model
+		if provider.Normalized() == codexapp.ProviderLCAgent && strings.TrimSpace(pref.ModelProvider) != "" {
+			label = settingsLCAgentModelPickerProviderLabel(pref.ModelProvider) + " / " + label
+		}
 		if pref.Reasoning != "" {
 			label += ", " + pref.Reasoning
 		}
@@ -1965,6 +1977,12 @@ func (m Model) embeddedModelLabelForProject(projectPath string, provider codexap
 		reasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 		if model != "" {
 			label := model
+			if provider.Normalized() == codexapp.ProviderLCAgent {
+				modelProvider := firstNonEmptyTrimmed(snapshot.PendingModelProvider, snapshot.ModelProvider)
+				if modelProvider != "" {
+					label = settingsLCAgentModelPickerProviderLabel(modelProvider) + " / " + label
+				}
+			}
 			if reasoning != "" {
 				label += ", " + reasoning
 			}
@@ -2387,7 +2405,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		label := m.todoCopyProviderButtonLabel(projectPath, provider, settings)
 		providerButtons = append(providerButtons, renderDialogButton(label, copyDialog.Provider == provider))
 	}
-	optionButtons := []string{m.renderTodoCopyModelToggle(copyDialog.OpenModelFirst)}
+	optionButtons := []string{m.renderTodoCopyModelSelection(projectPath, copyDialog.Provider, copyDialog.OpenModelFirst)}
 	lines = append(lines, m.renderTodoCopyChooserColumns(panelInnerW, runButtons, providerButtons, optionButtons))
 	if statusLine := m.todoCopyProviderStatusLine(copyDialog.Provider, settings); statusLine != "" {
 		lines = append(lines, detailField("Agent status", statusLine))
@@ -2549,14 +2567,20 @@ func renderTodoCopyHotkey(hotkey string) string {
 	return detailLabelStyle.Render("[" + strings.TrimSpace(hotkey) + "]")
 }
 
-func (m Model) renderTodoCopyModelToggle(enabled bool) string {
-	state := "off"
-	stateStyle := detailMutedStyle
-	if enabled {
-		state = "on"
-		stateStyle = detailWarningStyle
+func (m Model) renderTodoCopyModelSelection(projectPath string, provider codexapp.Provider, openModelFirst bool) string {
+	if provider.Normalized() != codexapp.ProviderLCAgent {
+		state := "off"
+		stateStyle := detailMutedStyle
+		if openModelFirst {
+			state = "on"
+			stateStyle = detailWarningStyle
+		}
+		return renderTodoCopyHotkey("m") + detailValueStyle.Render(" change model ") + stateStyle.Render("("+state+")")
 	}
-	return renderTodoCopyHotkey("m") + detailValueStyle.Render(" change model ") + stateStyle.Render("("+state+")")
+	selection := m.embeddedModelLabelForProject(projectPath, provider)
+	return renderTodoCopyHotkey("m") +
+		detailValueStyle.Render(" model ") +
+		detailMutedStyle.Render(selection)
 }
 
 func (m Model) renderTodoCopyChooserColumns(width int, runButtons, providerButtons, optionButtons []string) string {

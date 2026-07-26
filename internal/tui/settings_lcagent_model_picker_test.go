@@ -145,6 +145,164 @@ func TestOpenEmbeddedLCAgentModelPickerUsesUnifiedPicker(t *testing.T) {
 	}
 }
 
+func TestTodoLCAgentModelPickerRecentShortcutAppliesCompleteSelection(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "openai"
+	settings.EmbeddedLCAgentModel = "gpt-current"
+	settings.EmbeddedLCAgentReasoning = "medium"
+	settings.RecentLCAgentSelections = []config.LCAgentModelSelection{{
+		Provider:  "deepseek",
+		Model:     "deepseek-v4-pro",
+		Reasoning: "high",
+	}}
+	m := Model{
+		settingsBaseline:   &settings,
+		settingsConfigPath: configPath,
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/project",
+			Provider:    codexapp.ProviderLCAgent,
+		},
+	}
+
+	updated, cmd := m.openTodoLCAgentModelPicker()
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("openTodoLCAgentModelPicker() cmd = %v, want nil", cmd)
+	}
+	state := got.settingsLCAgentModelPicker
+	if state == nil || !state.PrelaunchApply || state.RecentSelected != -1 {
+		t.Fatalf("prelaunch picker state = %#v", state)
+	}
+	if len(state.RecentSelections) != 2 {
+		t.Fatalf("recent selections = %#v, want current plus saved recent", state.RecentSelections)
+	}
+
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker.RecentSelected != 0 {
+		t.Fatalf("recent selection index = %d, want 0", got.settingsLCAgentModelPicker.RecentSelected)
+	}
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker.RecentSelected != 1 {
+		t.Fatalf("recent selection index = %d, want saved recent", got.settingsLCAgentModelPicker.RecentSelected)
+	}
+	updated, cmd = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker != nil {
+		t.Fatal("recent shortcut should close the picker after choosing the complete tuple")
+	}
+	if cmd == nil {
+		t.Fatal("recent shortcut should save the prelaunch selection")
+	}
+	msg, ok := cmd().(codexLCAgentProviderSetupSavedMsg)
+	if !ok {
+		t.Fatalf("save command returned %T, want codexLCAgentProviderSetupSavedMsg", cmd())
+	}
+	if msg.err != nil {
+		t.Fatalf("save command error = %v", msg.err)
+	}
+	if !msg.prelaunch {
+		t.Fatal("recent TODO choice should be marked prelaunch")
+	}
+	if msg.settings.LCAgentProvider != "deepseek" ||
+		msg.settings.EmbeddedLCAgentModel != "deepseek-v4-pro" ||
+		msg.settings.EmbeddedLCAgentReasoning != "high" {
+		t.Fatalf("saved selection = provider %q model %q reasoning %q",
+			msg.settings.LCAgentProvider,
+			msg.settings.EmbeddedLCAgentModel,
+			msg.settings.EmbeddedLCAgentReasoning,
+		)
+	}
+	if len(msg.settings.RecentLCAgentSelections) == 0 ||
+		msg.settings.RecentLCAgentSelections[0] != (config.LCAgentModelSelection{
+			Provider:  "deepseek",
+			Model:     "deepseek-v4-pro",
+			Reasoning: "high",
+		}) {
+		t.Fatalf("saved recents = %#v, want chosen tuple first", msg.settings.RecentLCAgentSelections)
+	}
+
+	updated, reloadCmd := got.applyCodexLCAgentProviderSetupSavedMsg(msg)
+	got = updated.(Model)
+	if reloadCmd != nil {
+		t.Fatalf("prelaunch selection should not reload or start a session, cmd=%v", reloadCmd)
+	}
+	if got.todoCopyDialog == nil || got.todoCopyDialog.Provider != codexapp.ProviderLCAgent {
+		t.Fatalf("TODO launcher should remain open after prelaunch selection: %#v", got.todoCopyDialog)
+	}
+	if !strings.Contains(got.status, "TODO launch will use LCAgent DeepSeek / deepseek-v4-pro") ||
+		!strings.Contains(got.status, "high reasoning") {
+		t.Fatalf("status = %q, want complete prelaunch selection", got.status)
+	}
+}
+
+func TestTodoLCAgentModelPickerRendersAboveLaunchDialog(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "openai"
+	settings.EmbeddedLCAgentModel = "gpt-5.6"
+	settings.EmbeddedLCAgentReasoning = "high"
+	m := Model{
+		settingsBaseline: &settings,
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/project",
+			ProjectName: "project",
+			TodoText:    "Use the shared picker",
+			Provider:    codexapp.ProviderLCAgent,
+		},
+		width:  110,
+		height: 32,
+	}
+
+	updated, _ := m.openTodoLCAgentModelPicker()
+	got := updated.(Model)
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{
+		"LCAgent Main model",
+		"Choose manually",
+		"Recent configurations:",
+		"Selected: OpenAI",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered prelaunch picker missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestLCAgentModelPickerRecentsDoNotTakeInitialFocus(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "openai"
+	settings.EmbeddedLCAgentModel = "gpt-current"
+	settings.RecentLCAgentSelections = []config.LCAgentModelSelection{{
+		Provider:  "deepseek",
+		Model:     "deepseek-v4-pro",
+		Reasoning: "high",
+	}}
+	m := Model{
+		settingsBaseline: &settings,
+		settingsFields:   newSettingsFields(settings),
+		settingsSelected: settingsFieldLCAgentModel,
+	}
+
+	updated, _ := m.openSettingsLCAgentModelPicker()
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil || state.RecentSelected != -1 {
+		t.Fatalf("initial picker state = %#v, want manual provider focus", state)
+	}
+	collapsed := ansi.Strip(got.renderSettingsLCAgentModelPickerProviderContent(84, 30, "LCAgent Main Model"))
+	if !strings.Contains(collapsed, "Recent configurations: 2 complete choices  [r] open") ||
+		strings.Contains(collapsed, "deepseek-v4-pro") {
+		t.Fatalf("collapsed recent chooser = %q", collapsed)
+	}
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker == nil || got.settingsLCAgentModelPicker.Step != settingsLCAgentModelPickerStepAPIKey {
+		t.Fatalf("Enter should continue through the focused provider, state=%#v", got.settingsLCAgentModelPicker)
+	}
+}
+
 func TestSettingsLCAgentModelPickerWarnsWhenProviderDiscoveryFallsBack(t *testing.T) {
 	models := []codexapp.ModelOption{{
 		Model:         "deepseek/deepseek-v4-pro",

@@ -614,7 +614,7 @@ func TestTodoSessionOpenFailureShowsErrorModal(t *testing.T) {
 	}
 }
 
-func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
+func TestTodoDialogProviderNativeModelToggleOpensPickerAfterLaunch(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
@@ -671,22 +671,23 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	if got.todoCopyDialog.RunMode != todoCopyModeHere {
 		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeHere)
 	}
-	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	got = updated.(Model)
 	if !got.todoCopyDialog.OpenModelFirst {
-		t.Fatalf("copy dialog should enable model toggle after m")
+		t.Fatalf("copy dialog should enable provider-native model selection after launch")
+	}
+	if cmd != nil {
+		t.Fatalf("provider-native model toggle should not list models before launch, cmd=%v", cmd)
 	}
 
-	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd == nil {
 		t.Fatalf("starting a TODO should return an open command")
 	}
-
-	msg := cmd()
-	opened, ok := msg.(codexSessionOpenedMsg)
+	opened, ok := cmd().(codexSessionOpenedMsg)
 	if !ok {
-		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+		t.Fatalf("cmd() returned an unexpected message")
 	}
 	if opened.err != nil {
 		t.Fatalf("todo launch returned error = %v", opened.err)
@@ -698,7 +699,7 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	updated, cmd = got.Update(opened)
 	got = updated.(Model)
 	if got.codexModelPicker == nil || !got.codexModelPicker.Loading {
-		t.Fatalf("model picker should enter loading state when m is enabled")
+		t.Fatalf("provider-native model picker should enter loading state after launch")
 	}
 	if got.status != "Pick a model, then send the TODO draft." {
 		t.Fatalf("status = %q, want model picker guidance", got.status)
@@ -708,27 +709,15 @@ func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	}
 }
 
-func TestTodoDialogCanceledLCAgentModelPickerDefaultsNextLaunchToCodex(t *testing.T) {
+func TestTodoDialogCanceledLCAgentModelPickerKeepsLCAgentLaunchChoice(t *testing.T) {
 	item := model.TodoItem{
 		ID:          11,
 		ProjectPath: "/tmp/demo",
 		Text:        "Check model picker cancellation",
 	}
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		return &fakeCodexSession{
-			projectPath: req.ProjectPath,
-			snapshot: codexapp.Snapshot{
-				Provider: req.Provider.Normalized(),
-				ThreadID: "lca-model-canceled",
-				Started:  true,
-				Preset:   req.Preset,
-				Status:   req.Provider.Label() + " session ready",
-			},
-		}, nil
-	})
-
+	settings := config.EditableSettingsFromAppConfig(config.Default())
 	m := Model{
-		codexManager: manager,
+		settingsBaseline: &settings,
 		projects: []model.ProjectSummary{{
 			Path:          "/tmp/demo",
 			Name:          "demo",
@@ -759,38 +748,27 @@ func TestTodoDialogCanceledLCAgentModelPickerDefaultsNextLaunchToCodex(t *testin
 		height:        24,
 	}
 
-	updated, cmd := m.activateTodoCopyDialogSelection()
+	updated, cmd := m.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("starting the LCAgent TODO should return an open command")
+	if cmd != nil {
+		t.Fatalf("opening provider-first LCAgent picker should not need an immediate command")
 	}
-	opened, ok := cmd().(codexSessionOpenedMsg)
-	if !ok {
-		t.Fatalf("open command returned an unexpected message")
+	if got.settingsLCAgentModelPicker == nil || !got.settingsLCAgentModelPicker.PrelaunchApply {
+		t.Fatalf("LCAgent TODO launch should open the provider-first prelaunch picker: %#v", got.settingsLCAgentModelPicker)
 	}
-
-	updated, _ = got.Update(opened)
+	if got.todoCopyDialog.OpenModelFirst {
+		t.Fatal("prelaunch LCAgent picker should clear a stale provider-native post-launch toggle")
+	}
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEsc})
 	got = updated.(Model)
-	if got.codexModelPicker == nil {
-		t.Fatalf("LCAgent TODO launch should open the model picker")
-	}
-
-	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEsc})
-	got = updated.(Model)
-	if got.codexModelPicker != nil {
+	if got.settingsLCAgentModelPicker != nil {
 		t.Fatalf("Escape should close the model picker")
 	}
-
-	got.todoDialog = &todoDialogState{
-		ProjectPath: "/tmp/demo",
-		ProjectName: "demo",
-	}
-	got.openTodoCopyDialog(item)
 	if got.todoCopyDialog == nil {
-		t.Fatalf("TODO launcher should reopen")
+		t.Fatalf("canceling the prelaunch picker should leave the TODO launcher open")
 	}
-	if got.todoCopyDialog.Provider != codexapp.ProviderCodex {
-		t.Fatalf("provider after canceled LCAgent model picker = %q, want Codex", got.todoCopyDialog.Provider)
+	if got.todoCopyDialog.Provider != codexapp.ProviderLCAgent {
+		t.Fatalf("provider after canceled LCAgent model picker = %q, want LCAgent", got.todoCopyDialog.Provider)
 	}
 }
 

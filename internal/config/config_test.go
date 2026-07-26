@@ -859,6 +859,12 @@ func testEditableSettingsValue(t *testing.T, fieldName string, typ reflect.Type)
 		})
 	case reflect.TypeOf(time.Duration(0)):
 		return reflect.ValueOf(17 * time.Minute)
+	case reflect.TypeOf([]LCAgentModelSelection{}):
+		return reflect.ValueOf([]LCAgentModelSelection{{
+			Provider:  "openai",
+			Model:     "gpt-test",
+			Reasoning: "high",
+		}})
 	}
 	switch typ.Kind() {
 	case reflect.String:
@@ -904,6 +910,39 @@ func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *tes
 	}
 	if strings.Contains(text, "deepseek/deepseek") {
 		t.Fatalf("saved config kept provider-prefixed DeepSeek model: %q", text)
+	}
+}
+
+func TestSaveEditableSettingsRoundTripsRecentLCAgentSelections(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.RecentLCAgentSelections = []LCAgentModelSelection{
+		{Provider: " OpenAI ", Model: "gpt-5.6", Reasoning: " HIGH "},
+		{Provider: "deepseek", Model: "deepseek-v4-pro", Reasoning: "low"},
+	}
+
+	if err := SaveEditableSettings(configPath, settings); err != nil {
+		t.Fatalf("SaveEditableSettings() error = %v", err)
+	}
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := []LCAgentModelSelection{
+		{Provider: "openai", Model: "gpt-5.6", Reasoning: "high"},
+		{Provider: "deepseek", Model: "deepseek-v4-pro", Reasoning: "low"},
+	}
+	if !reflect.DeepEqual(cfg.RecentLCAgentSelections, want) {
+		t.Fatalf("recent LCAgent selections = %#v, want %#v", cfg.RecentLCAgentSelections, want)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(raw), `recent_lcagent_selections = [`) ||
+		!strings.Contains(string(raw), `{ provider = "openai", model = "gpt-5.6", reasoning = "high" }`) {
+		t.Fatalf("saved config missing typed recent selection: %s", raw)
 	}
 }
 

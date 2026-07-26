@@ -219,6 +219,14 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 				sourceProjectPath: firstNonEmptyTrimmed(draft.sourceProjectPath, draft.projectPath),
 				projectPath:       msg.projectPath,
 			}
+			if draft.provider.Normalized() == codexapp.ProviderLCAgent {
+				next, pickerCmd := m.openEmbeddedLCAgentModelPicker()
+				if updated, ok := next.(Model); ok {
+					m = updated
+				}
+				m.status = "Pick the LCAgent provider, model, and reasoning, then send the TODO draft."
+				return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, pickerCmd)
+			}
 			m.openCodexModelPickerLoading()
 			m.status = "Pick a model, then send the TODO draft."
 			return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, m.openCodexModelPickerCmd())

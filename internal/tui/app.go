@@ -638,6 +638,7 @@ type codexLCAgentProviderSetupSavedMsg struct {
 	projectPath string
 	settings    config.EditableSettings
 	path        string
+	prelaunch   bool
 	err         error
 }
 
