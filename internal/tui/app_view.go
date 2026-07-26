@@ -78,6 +78,9 @@ func (m Model) View() string {
 		if m.externalControlConfirmation != nil {
 			body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
 		}
+		if m.claudeAPIKeyWarning != nil {
+			body = m.renderClaudeAPIKeyWarningOverlay(body, layout.width, layout.height)
+		}
 		return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
 	}
 	if m.codexVisible() {
@@ -89,6 +92,9 @@ func (m Model) View() string {
 		height := m.height
 		if height <= 0 {
 			height = 30
+		}
+		if m.claudeAPIKeyWarning != nil {
+			return m.renderClaudeAPIKeyWarningOverlay(body, width, height)
 		}
 		if m.externalControlConfirmation != nil {
 			return m.renderExternalControlConfirmationOverlay(body, width, height)
@@ -344,6 +350,9 @@ func (m Model) View() string {
 	}
 	if m.externalControlConfirmation != nil {
 		body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
+	}
+	if m.claudeAPIKeyWarning != nil {
+		body = m.renderClaudeAPIKeyWarningOverlay(body, layout.width, layout.height)
 	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")

@@ -364,8 +364,7 @@ func (m Model) clearBossTrackedTodo(projectPath string, todoID int64) Model {
 }
 
 func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
-	return func() tea.Msg {
-		msg := cmd()
+	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		status, err := bossControlExecutionStatus(inv, msg)
 		activity := bossControlOpenedSessionActivity(inv, msg)
 		result := bossui.ControlInvocationResultMsg{
@@ -382,7 +381,7 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 			func() tea.Msg { return msg },
 			func() tea.Msg { return result },
 		}
-	}
+	})
 }
 
 func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, error) {
@@ -886,8 +885,7 @@ func (m Model) todoEngineerLaunchTrackingCmd(projectPath string, todoID int64, c
 		return cmd
 	}
 	projectPath = strings.TrimSpace(projectPath)
-	return func() tea.Msg {
-		msg := cmd()
+	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok || opened.err != nil {
 			return msg
@@ -920,7 +918,7 @@ func (m Model) todoEngineerLaunchTrackingCmd(projectPath string, todoID int64, c
 			}
 		}
 		return opened
-	}
+	})
 }
 
 func controlPromptTargetsNonSteerableActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {
@@ -2004,8 +2002,7 @@ func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWo
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return func() tea.Msg {
-		msg := cmd()
+	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok {
 			return msg
@@ -2041,7 +2038,7 @@ func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWo
 			opened.status += " The engineer is running, but TODO session tracking failed: " + err.Error()
 		}
 		return opened
-	}
+	})
 }
 
 func todoCreateWorktreeAndStartEngineerInvocationFromInput(input control.TodoCreateWorktreeAndStartEngineerInput) control.Invocation {
@@ -2623,8 +2620,7 @@ func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, b
 }
 
 func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, successStatus string) tea.Cmd {
-	return func() tea.Msg {
-		msg := cmd()
+	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok || opened.err != nil || m.svc == nil {
 			return msg
@@ -2649,7 +2645,7 @@ func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, suc
 		}
 		opened.status = status
 		return opened
-	}
+	})
 }
 
 func modelAgentTaskKindFromControl(kind control.AgentTaskKind) model.AgentTaskKind {

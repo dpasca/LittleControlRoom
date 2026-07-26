@@ -1546,7 +1546,7 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 	if resumeID != "" {
 		threadIDsToAvoid[resumeID] = struct{}{}
 	}
-	return func() tea.Msg {
+	launchCmd := func() tea.Msg {
 		startedAt := time.Now()
 		label := provider.Label()
 		if manager == nil {
@@ -1644,6 +1644,18 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 			restartWarmup:    restartWarmup,
 		}
 	}
+	cancelCmd := func() tea.Msg {
+		return codexSessionOpenedMsg{
+			projectPath:      req.ProjectPath,
+			provider:         provider,
+			openRequestID:    openRequestID,
+			perfOpID:         perfOpID,
+			restartIntentKey: restartIntentKey,
+			restartWarmup:    restartWarmup,
+			err:              errClaudeAPIKeyLaunchCanceled,
+		}
+	}
+	return m.deferClaudeLaunchForAPIKeyWarning(provider, req.ProjectPath, launchCmd, cancelCmd)
 }
 
 func extractForceNewReusedThread(err error) string {

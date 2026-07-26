@@ -97,6 +97,10 @@ type Model struct {
 	homeDirFn func() (string, error)
 	homeDir   string
 
+	anthropicAPIKeyPresentFn        func() bool
+	claudeAPIKeyWarning             *claudeAPIKeyWarningDialogState
+	claudeAPIKeyWarningAcknowledged bool
+
 	todoDialog                *todoDialogState
 	todoEditor                *todoEditorState
 	todoDeleteConfirm         *todoDeleteConfirmState
@@ -844,6 +848,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		nowFn:                         time.Now,
 		homeDirFn:                     os.UserHomeDir,
 		homeDir:                       strings.TrimSpace(homeDir),
+		anthropicAPIKeyPresentFn:      anthropicAPIKeyPresentInEnvironment,
 	}
 	if issue := settingsLocalFileIssue(initialSettings); issue != nil {
 		m.appendSettingsConfigIssue(issue)
@@ -1378,6 +1383,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := msg.(externalControlProposalLoadedMsg); ok {
 		return m.applyExternalControlProposalLoaded(msg)
+	}
+	if msg, ok := msg.(claudeAPIKeyWarningRequestedMsg); ok {
+		return m.applyClaudeAPIKeyWarningRequested(msg)
+	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.claudeAPIKeyWarning != nil {
+		return m.updateClaudeAPIKeyWarningMode(key)
+	}
+	if _, ok := msg.(tea.MouseMsg); ok && m.claudeAPIKeyWarning != nil {
+		return m, nil
 	}
 	if key, ok := msg.(tea.KeyMsg); ok && m.externalControlConfirmation != nil {
 		return m.updateExternalControlConfirmationMode(key)
