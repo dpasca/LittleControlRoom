@@ -143,12 +143,66 @@ func TestExtractSnapshotModernFixtureRecoversLifecycleFromTranscript(t *testing.
 	}
 }
 
+func TestExtractSnapshotModernRecoversConversationBeforeLargeToolOutput(t *testing.T) {
+	t.Parallel()
+
+	fixture := filepath.Join(t.TempDir(), "rollout-large-tool-output.jsonl")
+	largeToolOutput := strings.Repeat("x", 2*codexTailBytes)
+	lines := []string{
+		`{"timestamp":"2026-07-26T00:31:39Z","type":"session_meta","payload":{"id":"large-output","cwd":"/tmp/large-output"}}`,
+		fmt.Sprintf(`{"timestamp":"2026-07-26T00:31:40Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":%q}]}}`, strings.Repeat("project context ", 6000)),
+		`{"timestamp":"2026-07-26T00:31:41Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"timestamp":"2026-07-26T00:31:42Z","type":"event_msg","payload":{"type":"user_message","message":"Assess this output-heavy turn."}}`,
+		`{"timestamp":"2026-07-26T00:31:43Z","type":"event_msg","payload":{"type":"agent_message","message":"I am inspecting the generated geometry."}}`,
+		fmt.Sprintf(`{"timestamp":"2026-07-26T00:31:44Z","type":"response_item","payload":{"type":"function_call_output","output":%q}}`, largeToolOutput),
+	}
+	if err := os.WriteFile(fixture, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write large-output fixture: %v", err)
+	}
+
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "large-output",
+		ProjectPath:     "/tmp/large-output",
+		SessionFile:     fixture,
+		SessionFormat:   "modern",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if len(snapshot.Transcript) != 2 {
+		t.Fatalf("transcript = %#v, want user and assistant items", snapshot.Transcript)
+	}
+	if got := snapshot.Transcript[0]; got.Role != "user" || got.Text != "Assess this output-heavy turn." {
+		t.Fatalf("user transcript = %#v", got)
+	}
+	if got := snapshot.Transcript[1]; got.Role != "assistant" || got.Text != "I am inspecting the generated geometry." {
+		t.Fatalf("assistant transcript = %#v", got)
+	}
+
+	preview, err := ExtractPreview(context.Background(), model.SessionEvidence{
+		SessionFile: fixture,
+		Format:      "modern",
+	})
+	if err != nil {
+		t.Fatalf("extract preview: %v", err)
+	}
+	if preview.Title != "Assess this output-heavy turn." {
+		t.Fatalf("preview title = %q", preview.Title)
+	}
+	if preview.Summary != "I am inspecting the generated geometry." {
+		t.Fatalf("preview summary = %q", preview.Summary)
+	}
+}
+
 func TestExtractCodexTranscriptItemUsesUserVisibleEventsForUserTurns(t *testing.T) {
 	t.Parallel()
 
-	hidden := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/demo\n\n<INSTRUCTIONS>\nInternal context\n</INSTRUCTIONS>"}]}}`
-	if item, ok := extractCodexTranscriptItem(hidden); ok {
-		t.Fatalf("model-context user item should be hidden, got %#v", item)
+	for _, role := range []string{"user", "developer", "system"} {
+		hidden := fmt.Sprintf(`{"type":"response_item","payload":{"type":"message","role":%q,"content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/demo\n\n<INSTRUCTIONS>\nInternal context\n</INSTRUCTIONS>"}]}}`, role)
+		if item, ok := extractCodexTranscriptItem(hidden); ok {
+			t.Fatalf("model-context %s item should be hidden, got %#v", role, item)
+		}
 	}
 
 	visible := `{"type":"event_msg","payload":{"type":"user_message","message":"Fix the mobile transcript."}}`

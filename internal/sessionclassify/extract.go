@@ -22,6 +22,7 @@ import (
 const (
 	maxTranscriptItems = 8
 	maxTranscriptBytes = 800
+	codexHeadBytes     = 1024 * 1024
 	codexTailBytes     = 1024 * 1024
 	maxPreviewBytes    = 160
 	previewHeadBytes   = 64 * 1024
@@ -156,15 +157,10 @@ func PreviewFromTranscript(items []TranscriptItem) SessionPreview {
 }
 
 func extractCodexPreview(path string) (SessionPreview, error) {
-	headItems, err := extractCodexHeadTranscript(path)
+	items, err := extractCodexTranscript(path)
 	if err != nil {
 		return SessionPreview{}, err
 	}
-	tailItems, err := extractCodexTranscript(path)
-	if err != nil {
-		return SessionPreview{}, err
-	}
-	items := append(headItems, tailItems...)
 	if len(items) == 0 {
 		return SessionPreview{}, errors.New("no conversational transcript found")
 	}
@@ -172,13 +168,16 @@ func extractCodexPreview(path string) (SessionPreview, error) {
 }
 
 func extractCodexHeadTranscript(path string) ([]TranscriptItem, error) {
-	lines, err := readHeadLines(path, previewHeadBytes)
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open session file: %w", err)
 	}
+	defer file.Close()
+
+	scanner := newSessionScanner(io.LimitReader(file, codexHeadBytes))
 	items := make([]TranscriptItem, 0, previewItemLimit)
-	for _, line := range lines {
-		item, ok := extractCodexTranscriptItem(line)
+	for scanner.Scan() {
+		item, ok := extractCodexTranscriptItem(scanner.Text())
 		if !ok {
 			continue
 		}
@@ -186,6 +185,9 @@ func extractCodexHeadTranscript(path string) ([]TranscriptItem, error) {
 		if len(items) >= previewItemLimit {
 			break
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan session file: %w", err)
 	}
 	return finalizeTranscript(items), nil
 }
@@ -264,13 +266,37 @@ func extractCodexTranscript(path string) ([]TranscriptItem, error) {
 		return nil, err
 	}
 
-	items := make([]TranscriptItem, 0, len(lines))
+	tailItems := make([]TranscriptItem, 0, len(lines))
 	for _, line := range lines {
 		if item, ok := extractCodexTranscriptItem(line); ok {
-			items = append(items, item)
+			tailItems = append(tailItems, item)
 		}
 	}
-	return finalizeTranscript(items), nil
+	tailItems = finalizeTranscript(tailItems)
+	if transcriptContainsRole(tailItems, "user") {
+		return tailItems, nil
+	}
+
+	// A single structured tool result can be much larger than the tail window.
+	// In an active turn that can push every conversational event out of view,
+	// even though the rollout still contains a valid prompt and assistant
+	// updates near its beginning. Recover that initial conversation so
+	// classification does not fail while retaining any newer tail messages.
+	headItems, err := extractCodexHeadTranscript(path)
+	if err != nil {
+		return nil, err
+	}
+	return finalizeTranscript(append(headItems, tailItems...)), nil
+}
+
+func transcriptContainsRole(items []TranscriptItem, role string) bool {
+	role = strings.TrimSpace(strings.ToLower(role))
+	for _, item := range items {
+		if strings.TrimSpace(strings.ToLower(item.Role)) == role {
+			return true
+		}
+	}
+	return false
 }
 
 type codexTurnLifecycle struct {
@@ -399,10 +425,11 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 		if payload.Type != "message" {
 			return TranscriptItem{}, false
 		}
-		// Codex response-item user messages are model-context inputs, not
-		// user-visible transcript events. Project instructions and environment
-		// context can appear here; actual prompts use event_msg/user_message.
-		if strings.EqualFold(strings.TrimSpace(payload.Role), "user") {
+		// Only assistant response items are user-visible conversation. User,
+		// developer, and system items are model-context inputs that can contain
+		// the prompt, project instructions, or environment context; actual
+		// prompts use event_msg/user_message.
+		if !strings.EqualFold(strings.TrimSpace(payload.Role), "assistant") {
 			return TranscriptItem{}, false
 		}
 		text := extractCodexMessageText(payload.Content)
