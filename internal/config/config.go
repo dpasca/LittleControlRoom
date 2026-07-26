@@ -60,6 +60,7 @@ type AppConfig struct {
 	RecentClaudeModels        []string
 	RecentOpenCodeModels      []string
 	RecentLCAgentModels       []string
+	RecentLCAgentSelections   []LCAgentModelSelection
 	ScratchRoot               string
 	CodexHome                 string
 	OpenCodeHome              string
@@ -108,6 +109,12 @@ type AppConfig struct {
 	SanitizeSessionID         string
 	HideReasoningSections     bool
 	PrivacyMode               bool
+}
+
+type LCAgentModelSelection struct {
+	Provider  string `toml:"provider"`
+	Model     string `toml:"model"`
+	Reasoning string `toml:"reasoning"`
 }
 
 const (
@@ -187,80 +194,81 @@ func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 }
 
 type fileConfig struct {
-	AIBackend                 string    `toml:"ai_backend"`
-	BossChatBackend           string    `toml:"boss_chat_backend"`
-	BossChatModel             *string   `toml:"boss_chat_model"`
-	BossHelmModel             *string   `toml:"boss_helm_model"`
-	BossUtilityModel          *string   `toml:"boss_utility_model"`
-	BossChatOllamaThinking    *bool     `toml:"boss_chat_ollama_thinking"`
-	OpenAIAPIKey              *string   `toml:"openai_api_key"`
-	OpenRouterAPIKey          *string   `toml:"openrouter_api_key"`
-	OpenRouterModel           *string   `toml:"openrouter_model"`
-	DeepSeekAPIKey            *string   `toml:"deepseek_api_key"`
-	DeepSeekModel             *string   `toml:"deepseek_model"`
-	MoonshotAPIKey            *string   `toml:"moonshot_api_key"`
-	MoonshotModel             *string   `toml:"moonshot_model"`
-	XiaomiBaseURL             *string   `toml:"xiaomi_base_url"`
-	XiaomiAPIKey              *string   `toml:"xiaomi_api_key"`
-	XiaomiModel               *string   `toml:"xiaomi_model"`
-	ProjectReasoningEffort    *string   `toml:"project_reasoning_effort"`
-	MLXBaseURL                *string   `toml:"mlx_base_url"`
-	MLXAPIKey                 *string   `toml:"mlx_api_key"`
-	MLXModel                  *string   `toml:"mlx_model"`
-	OllamaBaseURL             *string   `toml:"ollama_base_url"`
-	OllamaAPIKey              *string   `toml:"ollama_api_key"`
-	OllamaModel               *string   `toml:"ollama_model"`
-	IncludePaths              *[]string `toml:"include_paths"`
-	ExcludePaths              *[]string `toml:"exclude_paths"`
-	ExcludeProjectPatterns    *[]string `toml:"exclude_project_patterns"`
-	PrivacyPatterns           *[]string `toml:"privacy_patterns"`
-	EmbeddedCodexModel        *string   `toml:"embedded_codex_model"`
-	EmbeddedCodexReasoning    *string   `toml:"embedded_codex_reasoning_effort"`
-	EmbeddedClaudeModel       *string   `toml:"embedded_claude_model"`
-	EmbeddedClaudeReasoning   *string   `toml:"embedded_claude_reasoning_effort"`
-	EmbeddedOpenCodeModel     *string   `toml:"embedded_opencode_model"`
-	EmbeddedOpenCodeReasoning *string   `toml:"embedded_opencode_reasoning_effort"`
-	EmbeddedLCAgentModel      *string   `toml:"embedded_lcagent_model"`
-	EmbeddedLCAgentReasoning  *string   `toml:"embedded_lcagent_reasoning_effort"`
-	OpenCodeModelTier         *string   `toml:"opencode_model_tier"`
-	RecentCodexModels         *[]string `toml:"recent_codex_models"`
-	RecentClaudeModels        *[]string `toml:"recent_claude_models"`
-	RecentOpenCodeModels      *[]string `toml:"recent_opencode_models"`
-	RecentLCAgentModels       *[]string `toml:"recent_lcagent_models"`
-	LCAgentPath               *string   `toml:"lcagent_path"`
-	LCAgentEnvFile            *string   `toml:"lcagent_env_file"`
-	LCAgentRoutePreset        *string   `toml:"lcagent_route_preset"`
-	LCAgentProvider           *string   `toml:"lcagent_provider"`
-	LCAgentAuto               *string   `toml:"lcagent_auto"`
-	LCAgentAdminWrite         *bool     `toml:"lcagent_admin_write"`
-	LCAgentToolProfile        *string   `toml:"lcagent_tool_profile"`
-	LCAgentContextProfile     *string   `toml:"lcagent_context_profile"`
-	LCAgentRequestTimeout     *string   `toml:"lcagent_request_timeout"`
-	LCAgentUtilityProvider    *string   `toml:"lcagent_utility_provider"`
-	LCAgentUtilityModel       *string   `toml:"lcagent_utility_model"`
-	LCAgentVisionProvider     *string   `toml:"lcagent_vision_provider"`
-	LCAgentVisionModel        *string   `toml:"lcagent_vision_model"`
-	LCAgentMainVisionProvider *string   `toml:"lcagent_main_vision_provider"`
-	LCAgentMainVisionModel    *string   `toml:"lcagent_main_vision_model"`
-	LCAgentWebSearchBackend   *string   `toml:"lcagent_web_search_backend"`
-	LCAgentWebSearchAPIKey    *string   `toml:"lcagent_web_search_api_key"`
-	LCAgentWebSearchEngineID  *string   `toml:"lcagent_web_search_engine_id"`
-	LCAgentWebSearchURL       *string   `toml:"lcagent_web_search_url"`
-	CodexLaunchPreset         string    `toml:"codex_launch_preset"`
-	ConflictResolverProvider  *string   `toml:"conflict_resolver_provider"`
-	PlaywrightManagementMode  *string   `toml:"playwright_management_mode"`
-	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
-	PlaywrightLoginMode       *string   `toml:"playwright_login_mode"`
-	PlaywrightIsolationScope  *string   `toml:"playwright_isolation_scope"`
-	EngineerTodoCaptureMode   *string   `toml:"engineer_todo_capture_mode"`
-	ScanInterval              string    `toml:"interval"`
-	ActiveThreshold           string    `toml:"active-threshold"`
-	StuckThreshold            string    `toml:"stuck-threshold"`
-	MobileEnabled             *bool     `toml:"mobile_enabled"`
-	MobileInputEnabled        *bool     `toml:"mobile_input_enabled"`
-	MobileListenAddress       *string   `toml:"mobile_listen_address"`
-	HideReasoningSections     *bool     `toml:"hide_reasoning_sections"`
-	PrivacyMode               *bool     `toml:"privacy_mode"`
+	AIBackend                 string                   `toml:"ai_backend"`
+	BossChatBackend           string                   `toml:"boss_chat_backend"`
+	BossChatModel             *string                  `toml:"boss_chat_model"`
+	BossHelmModel             *string                  `toml:"boss_helm_model"`
+	BossUtilityModel          *string                  `toml:"boss_utility_model"`
+	BossChatOllamaThinking    *bool                    `toml:"boss_chat_ollama_thinking"`
+	OpenAIAPIKey              *string                  `toml:"openai_api_key"`
+	OpenRouterAPIKey          *string                  `toml:"openrouter_api_key"`
+	OpenRouterModel           *string                  `toml:"openrouter_model"`
+	DeepSeekAPIKey            *string                  `toml:"deepseek_api_key"`
+	DeepSeekModel             *string                  `toml:"deepseek_model"`
+	MoonshotAPIKey            *string                  `toml:"moonshot_api_key"`
+	MoonshotModel             *string                  `toml:"moonshot_model"`
+	XiaomiBaseURL             *string                  `toml:"xiaomi_base_url"`
+	XiaomiAPIKey              *string                  `toml:"xiaomi_api_key"`
+	XiaomiModel               *string                  `toml:"xiaomi_model"`
+	ProjectReasoningEffort    *string                  `toml:"project_reasoning_effort"`
+	MLXBaseURL                *string                  `toml:"mlx_base_url"`
+	MLXAPIKey                 *string                  `toml:"mlx_api_key"`
+	MLXModel                  *string                  `toml:"mlx_model"`
+	OllamaBaseURL             *string                  `toml:"ollama_base_url"`
+	OllamaAPIKey              *string                  `toml:"ollama_api_key"`
+	OllamaModel               *string                  `toml:"ollama_model"`
+	IncludePaths              *[]string                `toml:"include_paths"`
+	ExcludePaths              *[]string                `toml:"exclude_paths"`
+	ExcludeProjectPatterns    *[]string                `toml:"exclude_project_patterns"`
+	PrivacyPatterns           *[]string                `toml:"privacy_patterns"`
+	EmbeddedCodexModel        *string                  `toml:"embedded_codex_model"`
+	EmbeddedCodexReasoning    *string                  `toml:"embedded_codex_reasoning_effort"`
+	EmbeddedClaudeModel       *string                  `toml:"embedded_claude_model"`
+	EmbeddedClaudeReasoning   *string                  `toml:"embedded_claude_reasoning_effort"`
+	EmbeddedOpenCodeModel     *string                  `toml:"embedded_opencode_model"`
+	EmbeddedOpenCodeReasoning *string                  `toml:"embedded_opencode_reasoning_effort"`
+	EmbeddedLCAgentModel      *string                  `toml:"embedded_lcagent_model"`
+	EmbeddedLCAgentReasoning  *string                  `toml:"embedded_lcagent_reasoning_effort"`
+	OpenCodeModelTier         *string                  `toml:"opencode_model_tier"`
+	RecentCodexModels         *[]string                `toml:"recent_codex_models"`
+	RecentClaudeModels        *[]string                `toml:"recent_claude_models"`
+	RecentOpenCodeModels      *[]string                `toml:"recent_opencode_models"`
+	RecentLCAgentModels       *[]string                `toml:"recent_lcagent_models"`
+	RecentLCAgentSelections   *[]LCAgentModelSelection `toml:"recent_lcagent_selections"`
+	LCAgentPath               *string                  `toml:"lcagent_path"`
+	LCAgentEnvFile            *string                  `toml:"lcagent_env_file"`
+	LCAgentRoutePreset        *string                  `toml:"lcagent_route_preset"`
+	LCAgentProvider           *string                  `toml:"lcagent_provider"`
+	LCAgentAuto               *string                  `toml:"lcagent_auto"`
+	LCAgentAdminWrite         *bool                    `toml:"lcagent_admin_write"`
+	LCAgentToolProfile        *string                  `toml:"lcagent_tool_profile"`
+	LCAgentContextProfile     *string                  `toml:"lcagent_context_profile"`
+	LCAgentRequestTimeout     *string                  `toml:"lcagent_request_timeout"`
+	LCAgentUtilityProvider    *string                  `toml:"lcagent_utility_provider"`
+	LCAgentUtilityModel       *string                  `toml:"lcagent_utility_model"`
+	LCAgentVisionProvider     *string                  `toml:"lcagent_vision_provider"`
+	LCAgentVisionModel        *string                  `toml:"lcagent_vision_model"`
+	LCAgentMainVisionProvider *string                  `toml:"lcagent_main_vision_provider"`
+	LCAgentMainVisionModel    *string                  `toml:"lcagent_main_vision_model"`
+	LCAgentWebSearchBackend   *string                  `toml:"lcagent_web_search_backend"`
+	LCAgentWebSearchAPIKey    *string                  `toml:"lcagent_web_search_api_key"`
+	LCAgentWebSearchEngineID  *string                  `toml:"lcagent_web_search_engine_id"`
+	LCAgentWebSearchURL       *string                  `toml:"lcagent_web_search_url"`
+	CodexLaunchPreset         string                   `toml:"codex_launch_preset"`
+	ConflictResolverProvider  *string                  `toml:"conflict_resolver_provider"`
+	PlaywrightManagementMode  *string                  `toml:"playwright_management_mode"`
+	PlaywrightDefaultBrowser  *string                  `toml:"playwright_default_browser_mode"`
+	PlaywrightLoginMode       *string                  `toml:"playwright_login_mode"`
+	PlaywrightIsolationScope  *string                  `toml:"playwright_isolation_scope"`
+	EngineerTodoCaptureMode   *string                  `toml:"engineer_todo_capture_mode"`
+	ScanInterval              string                   `toml:"interval"`
+	ActiveThreshold           string                   `toml:"active-threshold"`
+	StuckThreshold            string                   `toml:"stuck-threshold"`
+	MobileEnabled             *bool                    `toml:"mobile_enabled"`
+	MobileInputEnabled        *bool                    `toml:"mobile_input_enabled"`
+	MobileListenAddress       *string                  `toml:"mobile_listen_address"`
+	HideReasoningSections     *bool                    `toml:"hide_reasoning_sections"`
+	PrivacyMode               *bool                    `toml:"privacy_mode"`
 }
 
 func Default() AppConfig {
@@ -657,6 +665,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.RecentLCAgentModels != nil {
 		cfg.RecentLCAgentModels = trimStrings(*fc.RecentLCAgentModels)
+	}
+	if fc.RecentLCAgentSelections != nil {
+		cfg.RecentLCAgentSelections = normalizeRecentLCAgentSelections(*fc.RecentLCAgentSelections)
 	}
 	if fc.LCAgentPath != nil {
 		value, err := expandHome(strings.TrimSpace(*fc.LCAgentPath))

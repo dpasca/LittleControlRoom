@@ -278,7 +278,7 @@ Embedded providers expose LCR's local command subset, not every slash command fr
 - `/sessions [session-id]`: Open this project's session-history picker or jump to a saved session.
 - `/resume [session-id]` and `/session [session-id]`: Aliases for `/sessions`.
 - `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
-- `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR.
+- `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR. LCAgent uses the same provider → model → reasoning flow as TODO launch; press `r` on the provider step to expand complete recent provider/model/reasoning choices.
 - `/status`: Show the current provider/session status.
 - `/compact`: Compact the embedded Codex conversation history when supported.
 - `/review`: Ask embedded Codex to review uncommitted changes.
@@ -317,7 +317,7 @@ Most day-to-day use falls into a few buckets:
 
 - **Keep broad access with a narrow deletion seatbelt** — LCR-managed embedded Codex sessions keep the selected launch preset's cross-directory access, including YOLO. Their guarded `rm` allows plain `rm -rf /tmp/<name>` only when every target's parent resolves below `/tmp`; other `rm` uses, absolute executables, and common wrapper forms remain blocked. LCAgent still denies direct `rm` through both bounded commands and managed-process launches at every permission level. This is protection against the common accidental command, not a complete deletion sandbox; targeted editing tools and other filesystem APIs still work, so backups remain important. See the [destructive-command safety design](docs/destructive_command_safety.md) for the threat model and known limits.
 
-- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, OpenCode, or experimental LCAgent). New linked worktrees inherit the source project's saved run command and prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
+- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the engineer (Codex, Claude Code, OpenCode, or experimental LCAgent). Press `m` to change the model. LCAgent chooses before launch through the same provider → model → reasoning flow as `/model`, with complete recent configurations available behind `r`; provider-native engineers load their model picker when the fresh session is ready so it can use that provider's live model list. New linked worktrees inherit the source project's saved run command and prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
 

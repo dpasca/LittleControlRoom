@@ -2094,10 +2094,10 @@ func TestTodoDialogCopyDialogHotkeysChangeRunModeAndProvider(t *testing.T) {
 		t.Fatalf("copy dialog provider = %q, want %q after a", got.todoCopyDialog.Provider, codexapp.ProviderOpenCode)
 	}
 
-	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	got = updated.(Model)
-	if !got.todoCopyDialog.OpenModelFirst {
-		t.Fatalf("copy dialog should enable model toggle after m")
+	if !got.todoCopyDialog.OpenModelFirst || cmd != nil {
+		t.Fatalf("copy dialog should enable provider-native model selection after launch, dialog=%#v cmd=%v", got.todoCopyDialog, cmd)
 	}
 
 	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})

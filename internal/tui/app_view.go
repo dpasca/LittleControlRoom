@@ -312,6 +312,9 @@ func (m Model) View() string {
 	if m.todoCopyDialog != nil {
 		body = m.renderTodoCopyDialogOverlay(body, layout.width, layout.height)
 	}
+	if m.settingsLCAgentModelPicker != nil && !m.settingsMode && !m.setupMode {
+		body = m.renderSettingsLCAgentModelPickerOverlay(body, layout.width, layout.height)
+	}
 	if m.todoPendingLaunchDialog != nil {
 		body = m.renderTodoPendingLaunchDialogOverlay(body, layout.width, layout.height)
 	}

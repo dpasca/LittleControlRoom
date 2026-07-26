@@ -242,6 +242,13 @@ func (m Model) settingsFromCodexLCAgentProviderSetup(state *codexLCAgentProvider
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(state.Model.Model)
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(state.Reasoning)
 	settings.RecentLCAgentModels = appendRecentString(settings.RecentLCAgentModels, formatLCAgentRecentModelID(state.Provider, state.Model.Model), 5)
+	settings.RecentLCAgentSelections = appendRecentLCAgentSelection(
+		settings.RecentLCAgentSelections,
+		state.Provider,
+		state.Model.Model,
+		state.Reasoning,
+		5,
+	)
 	return config.NormalizeEditableSettings(settings)
 }
 
@@ -285,7 +292,7 @@ func (m Model) applyCodexLCAgentProviderSetupSavedMsg(msg codexLCAgentProviderSe
 	m.codexModelPicker = nil
 	m.settingsLCAgentModelPicker = nil
 	projectPath := strings.TrimSpace(msg.projectPath)
-	if projectPath == "" {
+	if projectPath == "" && !msg.prelaunch {
 		projectPath = strings.TrimSpace(m.codexVisibleProject)
 	}
 	modelLabel := strings.TrimSpace(saved.EmbeddedLCAgentModel)
@@ -293,6 +300,13 @@ func (m Model) applyCodexLCAgentProviderSetupSavedMsg(msg codexLCAgentProviderSe
 		modelLabel = settingsLCAgentMainModel(saved)
 	}
 	cmds := []tea.Cmd{m.applyEditableSettingsCmd(saved)}
+	if msg.prelaunch {
+		m.status = fmt.Sprintf("TODO launch will use LCAgent %s / %s", settingsLCAgentModelPickerProviderLabel(saved.LCAgentProvider), modelLabel)
+		if reasoning := strings.TrimSpace(saved.EmbeddedLCAgentReasoning); reasoning != "" {
+			m.status += " with " + reasoning + " reasoning"
+		}
+		return m, tea.Batch(cmds...)
+	}
 	if projectPath != "" {
 		m.status = fmt.Sprintf("Saved %s. Restarting LCAgent with %s.", msg.path, modelLabel)
 		cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(projectPath, saved))
