@@ -72,6 +72,12 @@ permission, or environment context alongside the real prompt. User-facing
 transcripts and classification input therefore take user turns from structured
 `event_msg.payload.type == "user_message"` records instead.
 
+Classification reads both a bounded head and tail of modern Codex rollouts when
+the tail has no user turn. The head preserves the initial user-visible prompt
+and early assistant updates when multi-megabyte structured tool results push
+all conversational events outside the tail window; any newer conversational
+tail events still take precedence.
+
 ### Format B: legacy JSONL
 
 Observed in older files (140/2053 sampled files):
