@@ -435,8 +435,7 @@ func liveEngineerTranscriptDetail(entries []codexapp.TranscriptEntry) string {
 				return summary
 			}
 		case codexapp.TranscriptStatus, codexapp.TranscriptSystem:
-			text := liveEngineerCleanSummary(rawText)
-			if detail := liveEngineerStatusDetail(text); detail != "" {
+			if detail := liveEngineerStatusDetail(rawText); detail != "" {
 				return detail
 			}
 		}
@@ -458,8 +457,11 @@ func liveEngineerCompactSummary(text string) string {
 }
 
 func liveEngineerStatusDetail(status string) string {
+	if isLCAgentStatusEntry(status) || isLCAgentBoilerplateStatusEntry(status) {
+		return ""
+	}
 	status = liveEngineerCleanSummary(status)
-	if status == "" || liveEngineerGenericStatus(status) {
+	if status == "" || liveEngineerGenericStatus(status) || isLCAgentBoilerplateStatusEntry(status) {
 		return ""
 	}
 	return status

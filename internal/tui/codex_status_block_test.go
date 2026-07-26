@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/model"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -234,6 +235,53 @@ func TestRenderCodexTranscriptEntriesSuppressesLCAgentDiagnosticStatusByDefault(
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered transcript missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestLiveEngineerSnapshotDetailSuppressesLCAgentDiagnosticStatus(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		ActivityPreview: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptAgent, Text: "Reviewing the failing classification path."},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent requested model response/tool call: turn 40; tool loop; xiaomi; mimo-v2.5-pro"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent model response/tool call received: turn 40; tool loop; xiaomi; mimo-v2.5-pro; 1 tool call"},
+		},
+		Status: "LCAgent model response/tool call received: turn 40; tool loop; xiaomi; mimo-v2.5-pro; 1 tool call",
+	}
+
+	if got := liveEngineerSnapshotDetail(snapshot); got != "Reviewing the failing classification path." {
+		t.Fatalf("liveEngineerSnapshotDetail() = %q, want useful assistant activity", got)
+	}
+}
+
+func TestLiveEngineerActiveSummaryFallsBackWhenLCAgentDiagnosticsAreOnlyActivity(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		ActivityPreview: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent requested model response/tool call: turn 29; tool loop; xiaomi; mimo-v2.5-pro"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent model response/tool call received: turn 29; tool loop; xiaomi; mimo-v2.5-pro; 1 tool call"},
+			{Kind: codexapp.TranscriptStatus, Text: "Embedded LCAgent status\nstatus: running\nmodel: mimo-v2.5-pro"},
+		},
+		Status: "LCAgent model response/tool call received: turn 29; tool loop; xiaomi; mimo-v2.5-pro; 1 tool call",
+	}
+
+	if got := liveEngineerActiveSummaryDetail(snapshot, model.ProjectSummary{}); got != "Work in progress" {
+		t.Fatalf("liveEngineerActiveSummaryDetail() = %q, want generic progress fallback", got)
+	}
+}
+
+func TestLiveEngineerSnapshotDetailKeepsLCAgentWarningStatus(t *testing.T) {
+	const warning = "LCAgent model request failed: turn 30; tool loop; xiaomi; mimo-v2.5-pro; rate_limit"
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		ActivityPreview: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptStatus, Text: warning},
+		},
+		Status: warning,
+	}
+
+	if got := liveEngineerSnapshotDetail(snapshot); got != warning {
+		t.Fatalf("liveEngineerSnapshotDetail() = %q, want actionable warning %q", got, warning)
 	}
 }
 
