@@ -718,7 +718,7 @@ func (m Model) launchParallelMergeConflictResolverWithOptions(ownerProjectPath s
 	} else {
 		m.status = "Starting background " + provider.Label() + " conflict resolver; progress is shown on the project row"
 	}
-	return m, func() tea.Msg {
+	launchCmd := func() tea.Msg {
 		if manager == nil {
 			return mergeConflictResolverOpenedMsg{
 				ownerProjectPath: ownerProjectPath,
@@ -789,12 +789,36 @@ func (m Model) launchParallelMergeConflictResolverWithOptions(ownerProjectPath s
 			restartWarmup:    options.restartWarmup,
 		}
 	}
+	cancelCmd := func() tea.Msg {
+		return mergeConflictResolverOpenedMsg{
+			ownerProjectPath: ownerProjectPath,
+			projectPath:      project.Path,
+			provider:         provider,
+			restartIntentKey: restartIntentKey,
+			restartWarmup:    options.restartWarmup,
+			err:              errClaudeAPIKeyLaunchCanceled,
+		}
+	}
+	return m, m.deferClaudeLaunchForAPIKeyWarning(provider, project.Path, launchCmd, cancelCmd)
 }
 
 func (m Model) applyMergeConflictResolverOpenedMsg(msg mergeConflictResolverOpenedMsg) (tea.Model, tea.Cmd) {
 	ownerProjectPath := normalizeProjectPath(msg.ownerProjectPath)
 	if ownerProjectPath == "" {
 		ownerProjectPath = normalizeProjectPath(msg.projectPath)
+	}
+	if errors.Is(msg.err, errClaudeAPIKeyLaunchCanceled) {
+		if msg.restartWarmup {
+			m.settleParallelRestartWarmup(msg.projectPath, false)
+		}
+		if state, ok := m.mergeConflictResolvers[ownerProjectPath]; ok &&
+			state.Phase == mergeConflictResolverStarting &&
+			normalizeProjectPath(state.SessionProjectPath) == normalizeProjectPath(msg.projectPath) {
+			delete(m.mergeConflictResolvers, ownerProjectPath)
+		}
+		m.err = nil
+		m.status = "Claude Code conflict resolver launch canceled"
+		return m, nil
 	}
 	if msg.err != nil {
 		if msg.restartWarmup {

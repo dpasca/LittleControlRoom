@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -141,6 +142,18 @@ type codexResumeChoicesMsg struct {
 }
 
 func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model, tea.Cmd) {
+	if errors.Is(msg.err, errClaudeAPIKeyLaunchCanceled) {
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, nil, "canceled")
+		m.err = nil
+		m.finishCodexPendingOpenRequest(msg.projectPath, msg.openRequestID, codexapp.Snapshot{}, false, false)
+		m.completeCodexOpenRequest(msg.openRequestID)
+		m.clearTodoLaunchDraft(msg.projectPath)
+		if msg.restartWarmup {
+			m.settleRestartWarmup(msg.projectPath, false)
+		}
+		m.status = "Claude Code launch canceled"
+		return m, nil
+	}
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 	m.err = nil
 	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
