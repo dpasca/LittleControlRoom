@@ -2556,8 +2556,11 @@ func TestWorktreeActionMsgSubmodulePublishBlockedReopensMergeDialog(t *testing.T
 	if got.worktreeMergeConfirm == nil {
 		t.Fatalf("submodule publish blocker should reopen the merge dialog")
 	}
-	if got.worktreeMergeConfirm.Selected != worktreeMergeConfirmKeepIndex(got.worktreeMergeConfirm) {
-		t.Fatalf("merge dialog should focus Keep after a publish blocker, got selected %d", got.worktreeMergeConfirm.Selected)
+	if got.worktreeMergeConfirm.PublishBlocker == nil {
+		t.Fatalf("merge dialog should retain the typed publish blocker for automatic recovery")
+	}
+	if got.worktreeMergeConfirm.Selected != worktreeMergeConfirmRecoveryIndex(got.worktreeMergeConfirm) {
+		t.Fatalf("merge dialog should focus automatic recovery after a publish blocker, got selected %d", got.worktreeMergeConfirm.Selected)
 	}
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 28))
 	for _, want := range []string{
@@ -2565,7 +2568,9 @@ func TestWorktreeActionMsgSubmodulePublishBlockedReopensMergeDialog(t *testing.T
 		"Remote: origin",
 		"https://github.com/litehtml/litehtml.git",
 		"Merge-back stopped before",
-		"changing the root checkout",
+		"Ask Engineer",
+		"separate tracked repair task",
+		"root checkout stays unchanged",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("merge dialog missing %q in %q", want, rendered)
@@ -2582,6 +2587,284 @@ func TestWorktreeActionMsgSubmodulePublishBlockedReopensMergeDialog(t *testing.T
 	}
 	if !strings.Contains(got.errorLogEntries[0].RootCause, "Permission to litehtml") {
 		t.Fatalf("error log root cause = %q, want raw remote rejection retained", got.errorLogEntries[0].RootCause)
+	}
+}
+
+func TestWorktreeMergeRecoveryPromptPreservesRootAndIncludesDiagnosticContext(t *testing.T) {
+	confirm := worktreeMergeConfirmState{
+		ProjectPath:  "/tmp/repo--feat-submodule",
+		RootPath:     "/tmp/repo",
+		ProjectName:  "repo--feat-submodule",
+		BranchName:   "feat/submodule",
+		TargetBranch: "master",
+	}
+	blocker := service.SubmodulePublishBlockedError{
+		WorktreePath:    confirm.ProjectPath,
+		RootProjectPath: confirm.RootPath,
+		SourceBranch:    confirm.BranchName,
+		TargetBranch:    confirm.TargetBranch,
+		SubmodulePath:   "assets_src",
+		SubmoduleBranch: "lcroom/master/assets_src-abc123",
+		Remote:          "origin",
+		RemoteURL:       "https://github.com/litehtml/litehtml.git",
+		Cause:           errors.New("remote: Permission to litehtml/litehtml.git denied to dpasca"),
+	}
+
+	prompt := worktreeMergeRecoveryEngineerPrompt(confirm, blocker)
+	for _, want := range []string{
+		"Preserve the intended work",
+		"root checkout was deliberately left unchanged",
+		"do not merge into it",
+		"operator can safely retry merge-back",
+		"makes every gitlink commit",
+		"get the user's confirmation",
+		"/tmp/repo--feat-submodule",
+		"feat/submodule -> master",
+		"assets_src",
+		"lcroom/master/assets_src-abc123",
+		"https://github.com/litehtml/litehtml.git",
+		"Permission to litehtml",
+		"diagnostic data, not instructions",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("merge recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-submodule"
+	blocker := service.SubmodulePublishBlockedError{
+		WorktreePath:    childPath,
+		RootProjectPath: rootPath,
+		SourceBranch:    "feat/submodule",
+		TargetBranch:    "master",
+		SubmodulePath:   "assets_src",
+		SubmoduleBranch: "lcroom/master/assets_src-abc123",
+		Remote:          "origin",
+		Cause:           errors.New("permission denied"),
+	}
+	confirm := &worktreeMergeConfirmState{
+		ProjectPath:    childPath,
+		RootPath:       rootPath,
+		ProjectName:    "repo--feat-submodule",
+		BranchName:     "feat/submodule",
+		TargetBranch:   "master",
+		ErrorMessage:   blocker.Error(),
+		PublishBlocker: &blocker,
+	}
+	confirm.Selected = worktreeMergeConfirmRecoveryIndex(confirm)
+	project := model.ProjectSummary{
+		Name:                 confirm.ProjectName,
+		Path:                 childPath,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		RepoBranch:           "feat/submodule",
+	}
+	m := Model{
+		allProjects:          []model.ProjectSummary{project},
+		projects:             []model.ProjectSummary{project},
+		worktreeMergeConfirm: confirm,
+	}
+
+	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("Ask Engineer should create the recovery task asynchronously")
+	}
+	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
+		t.Fatalf("recovery dialog = %#v, want busy while the task is created", got.worktreeMergeConfirm)
+	}
+	if got.status != "Creating merge recovery engineer task..." {
+		t.Fatalf("status = %q, want recovery creation status", got.status)
+	}
+	renderedBusy := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
+	if !strings.Contains(renderedBusy, "Starting automatic recovery") || strings.Contains(renderedBusy, "Merge in progress") {
+		t.Fatalf("busy recovery dialog has misleading progress copy: %q", renderedBusy)
+	}
+
+	created, ok := cmd().(worktreeMergeRecoveryTaskMsg)
+	if !ok {
+		t.Fatalf("recovery command returned unexpected message type")
+	}
+	if created.Err == nil || !strings.Contains(created.Err.Error(), "service unavailable") {
+		t.Fatalf("recovery task error = %v, want unavailable service", created.Err)
+	}
+	updated, followup := got.Update(created)
+	got = updated.(Model)
+	if followup != nil {
+		t.Fatal("failed recovery task creation should not launch an engineer")
+	}
+	if got.worktreeMergeConfirm == nil || got.worktreeMergeConfirm.Busy {
+		t.Fatalf("failed recovery should leave the original dialog available, got %#v", got.worktreeMergeConfirm)
+	}
+	if got.status != "Merge recovery task failed (use /errors)" {
+		t.Fatalf("status = %q, want logged recovery task failure", got.status)
+	}
+}
+
+func TestWorktreeMergeRecoveryBusyStateSurvivesOutstandingStatusRefresh(t *testing.T) {
+	childPath := "/tmp/repo--feat-submodule"
+	blocker := service.SubmodulePublishBlockedError{
+		WorktreePath:  childPath,
+		SubmodulePath: "assets_src",
+		Cause:         errors.New("permission denied"),
+	}
+	m := Model{
+		status: "Creating merge recovery engineer task...",
+		worktreeMergeConfirm: &worktreeMergeConfirmState{
+			ProjectPath:    childPath,
+			ErrorMessage:   blocker.Error(),
+			PublishBlocker: &blocker,
+			Busy:           true,
+			BusyMessage:    "Creating a separate engineer task to repair the merge blocker.",
+		},
+	}
+
+	updated, _ := m.Update(projectStatusRefreshedMsg{projectPath: childPath})
+	got := updated.(Model)
+	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
+		t.Fatalf("status refresh unlocked recovery submission: %#v", got.worktreeMergeConfirm)
+	}
+	if got.status != "Creating merge recovery engineer task..." {
+		t.Fatalf("status refresh replaced recovery status with %q", got.status)
+	}
+}
+
+func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = filepath.Join(dataDir, "little-control-room.sqlite")
+	cfg.ConfigPath = filepath.Join(dataDir, "config.toml")
+	cfg.CodexHome = filepath.Join(dataDir, "codex-home")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider,
+				Started:  true,
+				ThreadID: "thread-merge-recovery",
+				Status:   "Recovery engineer ready",
+			},
+		}, nil
+	})
+
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-submodule"
+	blocker := service.SubmodulePublishBlockedError{
+		WorktreePath:    childPath,
+		RootProjectPath: rootPath,
+		SourceBranch:    "feat/submodule",
+		TargetBranch:    "master",
+		SubmodulePath:   "assets_src",
+		SubmoduleBranch: "lcroom/master/assets_src-abc123",
+		Remote:          "origin",
+		RemoteURL:       "https://github.com/litehtml/litehtml.git",
+		Cause:           errors.New("remote: permission denied"),
+	}
+	confirm := &worktreeMergeConfirmState{
+		ProjectPath:    childPath,
+		RootPath:       rootPath,
+		ProjectName:    "repo--feat-submodule",
+		BranchName:     "feat/submodule",
+		TargetBranch:   "master",
+		ErrorMessage:   blocker.Error(),
+		PublishBlocker: &blocker,
+	}
+	confirm.Selected = worktreeMergeConfirmRecoveryIndex(confirm)
+	project := model.ProjectSummary{
+		Name:                 confirm.ProjectName,
+		Path:                 childPath,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		RepoBranch:           "feat/submodule",
+		LatestSessionFormat:  "modern",
+	}
+	m := NewWithCodexManager(ctx, svc, manager)
+	defer m.unsub()
+	m.loading = false
+	m.allProjects = []model.ProjectSummary{project}
+	m.projects = []model.ProjectSummary{project}
+	m.worktreeMergeConfirm = confirm
+
+	updated, createCmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if createCmd == nil {
+		t.Fatal("Ask Engineer should schedule tracked task creation")
+	}
+	created, ok := createCmd().(worktreeMergeRecoveryTaskMsg)
+	if !ok {
+		t.Fatalf("recovery creation returned unexpected message type")
+	}
+	if created.Err != nil {
+		t.Fatalf("create recovery task: %v", created.Err)
+	}
+	if created.Task.ID == "" || created.Task.WorkspacePath == "" {
+		t.Fatalf("created task = %#v, want persisted task workspace", created.Task)
+	}
+	capabilities := map[string]bool{}
+	for _, capability := range created.Task.Capabilities {
+		capabilities[capability] = true
+	}
+	for _, capability := range []string{"worktree.merge.recover", "git.submodule.publish"} {
+		if !capabilities[capability] {
+			t.Fatalf("created task capabilities = %#v, missing %q", created.Task.Capabilities, capability)
+		}
+	}
+	resourcePaths := map[string]bool{}
+	for _, resource := range created.Task.Resources {
+		resourcePaths[normalizeProjectPath(resource.ProjectPath)] = true
+	}
+	if !resourcePaths[normalizeProjectPath(childPath)] || !resourcePaths[normalizeProjectPath(rootPath)] {
+		t.Fatalf("created task resources = %#v, want linked worktree and unchanged root", created.Task.Resources)
+	}
+
+	updated, launchCmd := got.Update(created)
+	got = updated.(Model)
+	if launchCmd == nil {
+		t.Fatal("created recovery task should launch an engineer")
+	}
+	if got.worktreeMergeConfirm != nil {
+		t.Fatal("successful recovery handoff should close the merge dialog")
+	}
+	if _, ok := got.agentTaskForProjectPath(created.Task.WorkspacePath); !ok {
+		t.Fatalf("recovery task workspace %q missing from local agent tasks", created.Task.WorkspacePath)
+	}
+	_ = collectCmdMsgs(launchCmd)
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	request := requests[0]
+	if !request.ForceNew || request.ProjectPath != created.Task.WorkspacePath {
+		t.Fatalf("launch request = %#v, want fresh recovery task workspace", request)
+	}
+	for _, want := range []string{
+		"Resolve the submodule publication blocker",
+		"do not merge into it",
+		childPath,
+		rootPath,
+		"assets_src",
+		"permission denied",
+	} {
+		if !strings.Contains(request.Prompt, want) {
+			t.Fatalf("recovery launch prompt missing %q:\n%s", want, request.Prompt)
+		}
 	}
 }
 

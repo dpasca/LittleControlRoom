@@ -1756,6 +1756,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyMergeConflictResolverProviderSavedMsg(msg)
 	case repositoryIntegrityActionMsg:
 		return m.applyRepositoryIntegrityActionMsg(msg)
+	case worktreeMergeRecoveryTaskMsg:
+		return m.applyWorktreeMergeRecoveryTaskMsg(msg)
 	case mergeConflictResolverOpenedMsg:
 		return m.applyMergeConflictResolverOpenedMsg(msg)
 	case mergeConflictResolverUpdateMsg:
@@ -1999,7 +2001,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, followUp
 	case projectStatusRefreshedMsg:
-		if worktreeMergeConfirmTracksPath(m.worktreeMergeConfirm, msg.projectPath) {
+		if worktreeMergeConfirmTracksPath(m.worktreeMergeConfirm, msg.projectPath) &&
+			worktreeMergeConfirmRefreshing(m.worktreeMergeConfirm) {
 			if msg.err != nil {
 				m.worktreeMergeConfirm.ErrorMessage = "Could not refresh live git status: " + msg.err.Error()
 			}
