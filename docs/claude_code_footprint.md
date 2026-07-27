@@ -51,6 +51,15 @@ The encoded project directory name under `~/.claude/projects` is derived from th
 
 PID session metadata under `~/.claude/sessions/*.json` is useful for finding a still-open Claude CLI instance, but on its own it does not prove the latest turn is still running. An external terminal can stay open at the prompt after Claude has already finished the turn.
 
+Current Claude Code PID metadata also exposes structured turn activity:
+
+- `status == "busy"` while Claude is processing a turn
+- `status == "shell"` while an external shell action remains active
+- `status == "idle"` when the CLI is open at the prompt
+- `statusUpdatedAt` for the current status interval
+
+Little Control Room keeps a session read-only while another live Claude process owns it, but only `busy` and `shell` count as running work. The activity timer uses `statusUpdatedAt`, not the process-wide `startedAt`.
+
 ## 3. Structured async and subagent signals
 
 Observed machine-readable signals for unfinished delegated work:
@@ -97,7 +106,7 @@ Recommended filesystem-first approach:
    - `~/.claude/projects/<encoded-project>/<session-id>/subagents/*.jsonl`
    - temp `claude-*` task outputs under `/tmp`, `/private/tmp`, and `os.TempDir()`
 5. Treat a trailing ordinary `user` prompt as the start of a new unfinished turn until Claude answers it.
-6. Use live PID metadata only as a fallback when structured transcript state is missing or already incomplete; do not override an explicitly completed turn just because the CLI process is still alive.
+6. Use live PID metadata only as a fallback when structured transcript state is missing or already incomplete; do not override an explicitly completed turn just because the CLI process is still alive. For an externally owned session, separate process ownership from turn activity using the PID file's structured `status`.
 7. Invalidate parser caches when either the parent session JSONL mtime or auxiliary artifact mtimes change, preserving sub-second precision so same-second Claude writes do not get stuck behind stale cached parses.
 
 ## 6. Notes

@@ -598,3 +598,120 @@ func TestClaudeRefreshActiveSetsBusySinceFromPIDSession(t *testing.T) {
 		t.Fatalf("busySince = %v, want %v", session.busySince, startedAt)
 	}
 }
+
+func TestClaudeRefreshActiveUsesStatusUpdateForExternalTurnStart(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, ".claude")
+	sessionsDir := filepath.Join(claudeHome, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions dir: %v", err)
+	}
+
+	processStartedAt := time.Date(2026, 7, 27, 6, 20, 29, 0, time.UTC)
+	turnStartedAt := processStartedAt.Add(26 * time.Minute)
+	data, err := json.Marshal(map[string]any{
+		"pid":             os.Getpid(),
+		"sessionId":       "ses-busy",
+		"startedAt":       processStartedAt.UnixMilli(),
+		"status":          claudePIDStatusBusy,
+		"statusUpdatedAt": turnStartedAt.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("marshal pid session: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, "busy.json"), data, 0o644); err != nil {
+		t.Fatalf("write pid session: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		claudeHome:      claudeHome,
+		sessionID:       "ses-busy",
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.refreshActiveLocked()
+	session.updateStatusLocked()
+
+	if !session.busyExternal {
+		t.Fatal("busyExternal = false, want read-only external ownership")
+	}
+	if !session.externalTurnActive {
+		t.Fatal("externalTurnActive = false, want active turn for status=busy")
+	}
+	if !session.busySince.Equal(turnStartedAt) {
+		t.Fatalf("busySince = %v, want status update %v instead of process start %v", session.busySince, turnStartedAt, processStartedAt)
+	}
+	snapshot := session.Snapshot()
+	if !snapshot.Busy || snapshot.Phase != SessionPhaseExternal {
+		t.Fatalf("snapshot busy=%t phase=%q, want active external turn", snapshot.Busy, snapshot.Phase)
+	}
+}
+
+func TestClaudeRefreshActiveKeepsIdleExternalSessionReadOnlyWithoutBusyTimer(t *testing.T) {
+	root := t.TempDir()
+	claudeHome := filepath.Join(root, ".claude")
+	sessionsDir := filepath.Join(claudeHome, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		t.Fatalf("mkdir sessions dir: %v", err)
+	}
+
+	processStartedAt := time.Date(2026, 7, 27, 6, 20, 29, 0, time.UTC)
+	turnCompletedAt := processStartedAt.Add(51 * time.Minute)
+	data, err := json.Marshal(map[string]any{
+		"pid":             os.Getpid(),
+		"sessionId":       "ses-idle",
+		"startedAt":       processStartedAt.UnixMilli(),
+		"status":          claudePIDStatusIdle,
+		"statusUpdatedAt": turnCompletedAt.UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("marshal pid session: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, "idle.json"), data, 0o644); err != nil {
+		t.Fatalf("write pid session: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		claudeHome:         claudeHome,
+		sessionID:          "ses-idle",
+		started:            true,
+		busyExternal:       true,
+		externalTurnActive: true,
+		busySince:          processStartedAt,
+		status:             "Claude Code session active in another terminal",
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	session.refreshActiveLocked()
+	session.updateStatusLocked()
+
+	if !session.busyExternal {
+		t.Fatal("busyExternal = false, want the live external CLI to remain read-only")
+	}
+	if session.externalTurnActive {
+		t.Fatal("externalTurnActive = true, want status=idle to settle the turn")
+	}
+	if !session.busySince.IsZero() {
+		t.Fatalf("busySince = %v, want cleared after the external turn becomes idle", session.busySince)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Busy {
+		t.Fatal("snapshot.Busy = true, want idle external CLI excluded from running work")
+	}
+	if !snapshot.BusyExternal {
+		t.Fatal("snapshot.BusyExternal = false, want read-only ownership preserved")
+	}
+	if snapshot.Phase != SessionPhaseIdle {
+		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseIdle)
+	}
+	if snapshot.Status != claudeOpenElsewhereStatus {
+		t.Fatalf("snapshot.Status = %q, want %q", snapshot.Status, claudeOpenElsewhereStatus)
+	}
+	if err := session.Submit("do not race the external shell"); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("Submit() error = %v, want read-only ownership error", err)
+	}
+}

@@ -24,6 +24,7 @@ const (
 	claudeThinkingStatus                = "Claude Code is thinking..."
 	claudeFinishingStatus               = "Claude Code is finalizing the current turn..."
 	claudeReadyStatus                   = "Claude Code session ready"
+	claudeOpenElsewhereStatus           = "Claude Code session open in another terminal"
 	claudeFreshReadyStatus              = "Fresh embedded Claude Code session ready. Send a prompt to start it."
 	claudeSupportStatus                 = "Embedded Claude Code session ready"
 	claudeInterruptNotice               = "Interrupted embedded Claude Code turn."
@@ -43,6 +44,9 @@ const (
 	claudeRuntimeMCPGetControlTool      = "mcp__lcr_runtime__get_control_operation"
 	claudeRuntimeMCPListTODOsTool       = "mcp__lcr_runtime__list_project_todos"
 	claudeRuntimeMCPAddTODOTool         = "mcp__lcr_runtime__add_project_todo"
+	claudePIDStatusBusy                 = "busy"
+	claudePIDStatusIdle                 = "idle"
+	claudePIDStatusShell                = "shell"
 )
 
 type claudeCodeSession struct {
@@ -62,6 +66,7 @@ type claudeCodeSession struct {
 	closed             bool
 	busy               bool
 	busyExternal       bool
+	externalTurnActive bool
 	busySince          time.Time
 	pendingSubmissions int
 	interruptPending   bool
@@ -125,9 +130,11 @@ type claudeStreamMessage struct {
 }
 
 type claudeActivePIDSession struct {
-	PID       int    `json:"pid"`
-	SessionID string `json:"sessionId"`
-	StartedAt int64  `json:"startedAt"`
+	PID             int    `json:"pid"`
+	SessionID       string `json:"sessionId"`
+	StartedAt       int64  `json:"startedAt"`
+	Status          string `json:"status"`
+	StatusUpdatedAt int64  `json:"statusUpdatedAt"`
 }
 
 func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
@@ -246,7 +253,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		TranscriptRevision: s.transcriptRevision,
 		Phase:              s.phaseLocked(),
 		Started:            s.started,
-		Busy:               s.busy || s.busyExternal,
+		Busy:               s.busy || s.externalTurnActive,
 		BusyExternal:       s.busyExternal,
 		BusySince:          s.busySince,
 		Closed:             s.closed,
@@ -267,7 +274,7 @@ func (s *claudeCodeSession) phaseLocked() SessionPhase {
 	switch {
 	case s.closed:
 		phase = SessionPhaseClosed
-	case s.busyExternal:
+	case s.externalTurnActive:
 		phase = SessionPhaseExternal
 	case s.busy:
 		if s.pendingSubmissions > 0 {
@@ -773,7 +780,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	}
 	s.loadTranscriptLocked()
 	s.refreshActiveLocked()
-	if !s.busy && !s.busyExternal {
+	if !s.busy && !s.externalTurnActive {
 		s.busySince = time.Time{}
 	}
 
@@ -1077,7 +1084,7 @@ func (s *claudeCodeSession) updateStatusLocked() {
 	switch {
 	case s.closed:
 		s.status = "Claude Code session closed"
-	case s.busyExternal:
+	case s.externalTurnActive:
 		s.status = "Claude Code session active in another terminal"
 	case s.busy:
 		if s.pendingSubmissions > 0 {
@@ -1085,6 +1092,8 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		} else {
 			s.status = claudeFinishingStatus
 		}
+	case s.busyExternal:
+		s.status = claudeOpenElsewhereStatus
 	case strings.TrimSpace(s.lastError) != "":
 		s.status = "Claude Code error"
 	case s.started:
@@ -1181,8 +1190,10 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	switch lastType {
 	case "assistant", "progress":
 		s.busyExternal = true
+		s.externalTurnActive = true
 	default:
 		s.busyExternal = false
+		s.externalTurnActive = false
 	}
 
 	if len(entries) > 0 {
@@ -1193,6 +1204,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 func (s *claudeCodeSession) refreshActiveLocked() {
 	if strings.TrimSpace(s.sessionID) == "" {
 		s.busyExternal = false
+		s.externalTurnActive = false
 		if !s.busy {
 			s.busySince = time.Time{}
 		}
@@ -1203,7 +1215,8 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 	if err != nil {
 		return
 	}
-	active := false
+	external := false
+	turnActive := false
 	activeStartedAt := time.Time{}
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
@@ -1224,20 +1237,48 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 			continue
 		}
 		if pidSession.PID > 0 && syscall.Kill(pidSession.PID, 0) == nil {
-			active = true
-			if pidSession.StartedAt > 0 {
-				activeStartedAt = time.UnixMilli(pidSession.StartedAt)
+			external = true
+			if !claudePIDSessionTurnActive(pidSession.Status) {
+				continue
 			}
-			break
+			turnActive = true
+			startedAt := claudePIDSessionTurnStartedAt(pidSession)
+			if activeStartedAt.IsZero() || (!startedAt.IsZero() && startedAt.Before(activeStartedAt)) {
+				activeStartedAt = startedAt
+			}
 		}
 	}
-	s.busyExternal = active
+	s.busyExternal = external
+	s.externalTurnActive = turnActive
 	switch {
-	case active && !activeStartedAt.IsZero() && s.busySince.IsZero():
+	case turnActive && !activeStartedAt.IsZero():
 		s.busySince = activeStartedAt
-	case !active && !s.busy:
+	case !turnActive && !s.busy:
 		s.busySince = time.Time{}
 	}
+}
+
+func claudePIDSessionTurnActive(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case claudePIDStatusIdle:
+		return false
+	case claudePIDStatusBusy, claudePIDStatusShell:
+		return true
+	default:
+		// Older Claude Code versions did not publish structured status. Preserve
+		// the live-PID fallback for those versions and unknown future states.
+		return true
+	}
+}
+
+func claudePIDSessionTurnStartedAt(session claudeActivePIDSession) time.Time {
+	if session.StatusUpdatedAt > 0 && strings.TrimSpace(session.Status) != "" {
+		return time.UnixMilli(session.StatusUpdatedAt)
+	}
+	if session.StartedAt > 0 {
+		return time.UnixMilli(session.StartedAt)
+	}
+	return time.Time{}
 }
 
 func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {

@@ -253,8 +253,10 @@ func liveEngineerSessionStatus(snapshot codexapp.Snapshot) Status {
 		return Status{Label: "Closed", Tone: ToneMuted}
 	case snapshot.Phase == codexapp.SessionPhaseStalled:
 		return Status{Label: "Stalled", Tone: ToneDanger}
-	case snapshot.BusyExternal:
+	case snapshot.BusyExternal && snapshot.Busy:
 		return Status{Label: "External work", Tone: ToneInfo}
+	case snapshot.BusyExternal:
+		return Status{Label: "Open externally", Tone: ToneInfo}
 	case snapshot.Busy:
 		return Status{Label: "Working", Tone: TonePositive}
 	case snapshot.Started:

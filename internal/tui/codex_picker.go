@@ -582,6 +582,8 @@ func pickerSummaryForLiveSnapshot(snapshot codexapp.Snapshot) string {
 	label := embeddedProvider(snapshot).Label()
 	status := normalizedCodexStatus(snapshot.Status)
 	switch {
+	case snapshot.BusyExternal && !snapshot.Busy:
+		return "Open elsewhere: embedded view is read-only"
 	case snapshot.BusyExternal:
 		return "Live elsewhere: embedded view is read-only"
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:

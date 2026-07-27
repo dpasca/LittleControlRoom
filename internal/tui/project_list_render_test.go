@@ -543,6 +543,20 @@ func TestCompletedTurnStateSuppressesStaleLiveTimer(t *testing.T) {
 	}
 }
 
+func TestIdleExternalOwnershipSuppressesLiveTimer(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Started:      true,
+		Busy:         false,
+		BusyExternal: true,
+		Phase:        codexapp.SessionPhaseIdle,
+		Status:       "Claude Code session open in another terminal",
+	}
+
+	if gotStartedAt, active := embeddedSnapshotActiveStartedAt(snapshot, model.ProjectSummary{}); active || !gotStartedAt.IsZero() {
+		t.Fatalf("idle external snapshot reported active timer: active=%t started=%v", active, gotStartedAt)
+	}
+}
+
 func TestProjectAgentDisplayUsesConflictResolverTimer(t *testing.T) {
 	projectPath := "/tmp/demo"
 	startedAt := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)

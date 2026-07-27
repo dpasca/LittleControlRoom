@@ -414,7 +414,7 @@ func bossEngineerSnapshotActive(snapshot codexapp.Snapshot) bool {
 	if !snapshot.Started || snapshot.Closed {
 		return false
 	}
-	if snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+	if snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
 		return true
 	}
 	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {

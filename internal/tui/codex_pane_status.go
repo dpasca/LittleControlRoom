@@ -63,11 +63,11 @@ func codexSnapshotCanInterruptActiveTurn(snapshot codexapp.Snapshot) bool {
 }
 
 func codexSnapshotCanSubmitBusyInput(snapshot codexapp.Snapshot) bool {
-	if !snapshot.Busy {
-		return true
-	}
 	if snapshot.BusyExternal {
 		return false
+	}
+	if !snapshot.Busy {
+		return true
 	}
 	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
 		return snapshot.Phase == codexapp.SessionPhaseRunning || codexSnapshotBrowserWaitingForUser(snapshot)

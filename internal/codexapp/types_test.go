@@ -1025,6 +1025,37 @@ func TestManagerReconcileBusySessionsUsesBusyActivityTimestamp(t *testing.T) {
 	}
 }
 
+func TestManagerReconcileBusySessionsRechecksExternalOwnership(t *testing.T) {
+	session := &fakeSession{
+		projectPath: "/tmp/demo",
+		snapshot: Snapshot{
+			Started:        true,
+			Preset:         codexcli.PresetYolo,
+			BusyExternal:   true,
+			Phase:          SessionPhaseIdle,
+			LastActivityAt: time.Now(),
+		},
+	}
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		return session, nil
+	})
+
+	if _, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	manager.reconcileBusySessions(time.Now())
+	if session.refreshCalls != 1 {
+		t.Fatalf("external refresh calls = %d, want 1", session.refreshCalls)
+	}
+	if session.reconcileCalls != 0 {
+		t.Fatalf("busy reconcile calls = %d, want 0 for external ownership", session.reconcileCalls)
+	}
+}
+
 func TestManagerCoalescesDuplicateUpdatesUntilAck(t *testing.T) {
 	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
 		return &fakeSession{

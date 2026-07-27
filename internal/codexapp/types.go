@@ -512,8 +512,8 @@ type Snapshot struct {
 	TranscriptRevision          uint64
 	Phase                       SessionPhase
 	Started                     bool
-	Busy                        bool
-	BusyExternal                bool
+	Busy                        bool // A turn is currently active, whether local or external.
+	BusyExternal                bool // Another process owns the session; controls must remain read-only even when Busy is false.
 	BusySince                   time.Time
 	LastBusyActivityAt          time.Time
 	Closed                      bool
@@ -1376,12 +1376,21 @@ func (m *Manager) reconcileBusySessions(now time.Time) {
 	m.mu.Unlock()
 
 	for _, session := range sessions {
+		snapshot := sessionStateSnapshot(session)
+		if snapshot.Closed {
+			continue
+		}
+		if snapshot.BusyExternal {
+			if refresher, ok := session.(busyElsewhereRefresher); ok {
+				_ = refresher.RefreshBusyElsewhere()
+			}
+			continue
+		}
 		reconciler, ok := session.(busyReconciler)
 		if !ok {
 			continue
 		}
-		snapshot := sessionStateSnapshot(session)
-		if snapshot.Closed || snapshot.BusyExternal || !snapshot.Busy {
+		if !snapshot.Busy {
 			continue
 		}
 		if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {

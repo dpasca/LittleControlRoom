@@ -487,7 +487,7 @@ func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.P
 	if snapshot.LatestTurnStateKnown && snapshot.LatestTurnCompleted {
 		return time.Time{}, false
 	}
-	active := snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != ""
+	active := snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != ""
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseRunning, codexapp.SessionPhaseFinishing, codexapp.SessionPhaseExternal:
 		active = true

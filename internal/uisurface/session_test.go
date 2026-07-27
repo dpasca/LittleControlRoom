@@ -51,6 +51,25 @@ func TestBuildLiveEngineerSessionDetailUsesSemanticSnapshotState(t *testing.T) {
 	}
 }
 
+func TestBuildLiveEngineerSessionShowsIdleExternalOwnershipWithoutWork(t *testing.T) {
+	t.Parallel()
+
+	item := BuildLiveEngineerSession(codexapp.Snapshot{
+		Provider:     codexapp.ProviderClaudeCode,
+		ProjectPath:  "/tmp/claude-external",
+		ThreadID:     "claude-session",
+		Started:      true,
+		Busy:         false,
+		BusyExternal: true,
+		Phase:        codexapp.SessionPhaseIdle,
+		Status:       "Claude Code session open in another terminal",
+	}, time.Now())
+
+	if got, want := item.Status.Label, "Open externally"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
 func TestBuildLiveEngineerSessionDetailKeepsConversationWhenActivityIsDense(t *testing.T) {
 	t.Parallel()
 	entries := []codexapp.TranscriptEntry{
