@@ -943,7 +943,10 @@ func (s *Store) ensureProjectsWorktreeColumns(ctx context.Context) error {
 			return fmt.Errorf("add projects.worktree_origin_todo_id column: %w", err)
 		}
 	}
-	return s.backfillWorktreeInitialBranches(ctx)
+	if err := s.backfillWorktreeInitialBranches(ctx); err != nil {
+		return err
+	}
+	return s.backfillWorktreeParentBranches(ctx)
 }
 
 type worktreeInitialBranchBackfill struct {
@@ -1028,6 +1031,38 @@ func worktreeInitialBranchFromCreationEvent(payload string) string {
 		return ""
 	}
 	return branch
+}
+
+func (s *Store) backfillWorktreeParentBranches(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET worktree_parent_branch = (
+			SELECT TRIM(policy.expected_branch)
+			FROM repository_root_policies policy
+			WHERE policy.root_path = projects.worktree_root_path
+		)
+		WHERE worktree_kind = ?
+			AND present_on_disk != 0
+			AND forgotten = 0
+			AND TRIM(worktree_parent_branch) = ''
+			AND EXISTS (
+				SELECT 1
+				FROM repository_root_policies policy
+				WHERE policy.root_path = projects.worktree_root_path
+					AND TRIM(policy.expected_branch) != ''
+			)
+			AND EXISTS (
+				SELECT 1
+				FROM events event
+				WHERE event.project_path = projects.path
+					AND event.event_type = 'action_applied'
+					AND SUBSTR(event.payload, 1, 16) = 'create_worktree '
+			)
+	`, string(model.WorktreeKindLinked))
+	if err != nil {
+		return fmt.Errorf("backfill linked worktree parent branches: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) ensureProjectsManualAddedColumn(ctx context.Context) error {

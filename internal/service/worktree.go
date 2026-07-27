@@ -138,11 +138,16 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, fmt.Errorf("could not determine worktree branch or folder name")
 	}
 
-	parentBranch := ""
-	if s.gitRepoStatusReader != nil {
-		if status, statusErr := s.gitRepoStatusReader(ctx, worktreeRootPath); statusErr == nil {
-			parentBranch = strings.TrimSpace(status.Branch)
-		}
+	if s.gitRepoStatusReader == nil {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("cannot determine the parent branch for %s: Git status inspection is unavailable", worktreeRootPath)
+	}
+	rootStatus, err := s.readRootRepoStatusWithSubmoduleRepair(ctx, worktreeRootPath)
+	if err != nil {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("determine parent branch before creating a worktree in %s: %w", worktreeRootPath, err)
+	}
+	parentBranch := strings.TrimSpace(rootStatus.Branch)
+	if parentBranch == "" || parentBranch == "(detached)" {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("cannot create a mergeable worktree from %s because its parent branch is unavailable", worktreeRootPath)
 	}
 	if err := s.EnsureRepositoryRootExpectedBranch(ctx, worktreeRootPath, parentBranch, repositoryExpectedBranchWorktree); err != nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("record expected root branch for %s: %w", worktreeRootPath, err)

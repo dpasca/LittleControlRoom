@@ -1927,6 +1927,76 @@ func TestOpenBackfillsWorktreeInitialBranchFromCreationEvent(t *testing.T) {
 	}
 }
 
+func TestOpenBackfillsLCRCreatedWorktreeParentBranchFromRootPolicy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "worktree-parent-backfill.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--pause-consistency"
+	discoveredPath := "/tmp/repo--manually-discovered"
+	now := time.Now()
+	for _, projectPath := range []string{worktreePath, discoveredPath} {
+		if err := st.UpsertProjectState(ctx, model.ProjectState{
+			Path:                  projectPath,
+			Name:                  filepath.Base(projectPath),
+			Status:                model.StatusIdle,
+			PresentOnDisk:         true,
+			InScope:               true,
+			WorktreeRootPath:      rootPath,
+			WorktreeKind:          model.WorktreeKindLinked,
+			WorktreeInitialBranch: strings.TrimPrefix(filepath.Base(projectPath), "repo--"),
+			RepoBranch:            strings.TrimPrefix(filepath.Base(projectPath), "repo--"),
+			UpdatedAt:             now,
+		}); err != nil {
+			t.Fatalf("upsert linked worktree %s: %v", projectPath, err)
+		}
+	}
+	if err := st.AddEvent(ctx, model.StoredEvent{
+		ProjectPath: worktreePath,
+		Type:        "action_applied",
+		Payload:     "create_worktree root=/tmp/repo branch=pause-consistency",
+	}); err != nil {
+		t.Fatalf("record worktree creation: %v", err)
+	}
+	if err := st.UpsertRepositoryRootPolicy(ctx, model.RepositoryRootPolicy{
+		RootPath:             rootPath,
+		ExpectedBranch:       "master",
+		ExpectedBranchSource: "worktree_creation",
+		Mode:                 model.RepositoryIntegrityModeWarn,
+		UpdatedAt:            now,
+	}); err != nil {
+		t.Fatalf("record repository root policy: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store before migration: %v", err)
+	}
+
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	summary, err := st.GetProjectSummary(ctx, worktreePath, true)
+	if err != nil {
+		t.Fatalf("load backfilled worktree: %v", err)
+	}
+	if got, want := summary.WorktreeParentBranch, "master"; got != want {
+		t.Fatalf("backfilled parent branch = %q, want %q", got, want)
+	}
+	discovered, err := st.GetProjectSummary(ctx, discoveredPath, true)
+	if err != nil {
+		t.Fatalf("load discovered worktree: %v", err)
+	}
+	if discovered.WorktreeParentBranch != "" {
+		t.Fatalf("manually discovered worktree parent branch = %q, want empty", discovered.WorktreeParentBranch)
+	}
+}
+
 func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
