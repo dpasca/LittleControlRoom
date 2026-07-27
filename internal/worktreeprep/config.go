@@ -435,6 +435,9 @@ func PruneSubmoduleWorktrees(ctx context.Context, rootPath string) error {
 	if rootPath == "" || rootPath == "." {
 		return fmt.Errorf("root path is required")
 	}
+	if _, err := RepairRootSubmoduleWorktrees(ctx, rootPath); err != nil {
+		return err
+	}
 	paths, err := listConfiguredSubmodulePaths(ctx, rootPath)
 	if err != nil {
 		return err
@@ -453,6 +456,162 @@ func PruneSubmoduleWorktrees(ctx context.Context, rootPath string) error {
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// RepairRootSubmoduleWorktrees restores the canonical root checkout recorded by
+// initialized submodule repositories. Older linked-worktree sync paths could
+// rewrite the shared core.worktree value to a nested checkout; after that
+// checkout was removed, even `git status` in the parent repository failed.
+//
+// Only submodule gitdirs owned by the parent repository's modules directory are
+// eligible. This keeps repair bounded to metadata that the parent repo owns.
+func RepairRootSubmoduleWorktrees(ctx context.Context, rootPath string) ([]string, error) {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" || rootPath == "." {
+		return nil, fmt.Errorf("root path is required")
+	}
+	paths, err := listConfiguredSubmodulePaths(ctx, rootPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	rootGitDir, err := gitCommonDir(ctx, rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve root git directory for submodule repair in %s: %w", rootPath, err)
+	}
+	modulesDir := filepath.Join(rootGitDir, "modules")
+
+	repaired := make([]string, 0, len(paths))
+	for _, path := range paths {
+		submodulePath := filepath.Join(rootPath, filepath.FromSlash(path))
+		submoduleGitDir, initialized, err := directSubmoduleGitDir(submodulePath)
+		if err != nil {
+			return repaired, fmt.Errorf("inspect root submodule metadata for %s: %w", path, err)
+		}
+		if !initialized || !pathContainedBy(modulesDir, submoduleGitDir) {
+			continue
+		}
+
+		configuredWorktree, configured, err := gitCoreWorktree(ctx, submoduleGitDir, submodulePath)
+		if err != nil {
+			return repaired, fmt.Errorf("read root submodule worktree metadata for %s: %w", path, err)
+		}
+		if !configured {
+			continue
+		}
+		configuredPath := filepath.Clean(configuredWorktree)
+		if !filepath.IsAbs(configuredPath) {
+			configuredPath = filepath.Join(submoduleGitDir, configuredPath)
+		}
+		if sameCleanPath(configuredPath, submodulePath) {
+			continue
+		}
+
+		expectedWorktree, err := filepath.Rel(submoduleGitDir, submodulePath)
+		if err != nil {
+			return repaired, fmt.Errorf("resolve canonical root worktree for submodule %s: %w", path, err)
+		}
+		if err := setGitCoreWorktree(ctx, submoduleGitDir, submodulePath, expectedWorktree); err != nil {
+			return repaired, fmt.Errorf("repair root submodule worktree metadata for %s: %w", path, err)
+		}
+		repaired = append(repaired, path)
+	}
+	return repaired, nil
+}
+
+func directSubmoduleGitDir(submodulePath string) (string, bool, error) {
+	gitPath := filepath.Join(submodulePath, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("stat %s: %w", gitPath, err)
+	}
+	if info.IsDir() {
+		return filepath.Clean(gitPath), true, nil
+	}
+	raw, err := os.ReadFile(gitPath)
+	if err != nil {
+		return "", false, fmt.Errorf("read %s: %w", gitPath, err)
+	}
+	line := strings.TrimSpace(strings.SplitN(string(raw), "\n", 2)[0])
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(strings.ToLower(line), prefix) {
+		return "", false, fmt.Errorf("%s does not contain a gitdir reference", gitPath)
+	}
+	value := strings.TrimSpace(line[len(prefix):])
+	if value == "" {
+		return "", false, fmt.Errorf("%s contains an empty gitdir reference", gitPath)
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(submodulePath, value)
+	}
+	value = filepath.Clean(value)
+	if info, err := os.Stat(value); err != nil {
+		return "", false, fmt.Errorf("stat submodule gitdir %s: %w", value, err)
+	} else if !info.IsDir() {
+		return "", false, fmt.Errorf("submodule gitdir is not a directory: %s", value)
+	}
+	return value, true, nil
+}
+
+func gitCoreWorktree(ctx context.Context, gitDir, worktreePath string) (string, bool, error) {
+	cmd := exec.CommandContext(
+		ctx,
+		"git",
+		"--git-dir="+gitDir,
+		"--work-tree="+worktreePath,
+		"config",
+		"--local",
+		"--get",
+		"core.worktree",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return strings.TrimSpace(string(out)), true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(string(out)) == "" {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("git config failed: %w: %s", err, strings.TrimSpace(string(out)))
+}
+
+func setGitCoreWorktree(ctx context.Context, gitDir, worktreePath, value string) error {
+	cmd := exec.CommandContext(
+		ctx,
+		"git",
+		"--git-dir="+gitDir,
+		"--work-tree="+worktreePath,
+		"config",
+		"--local",
+		"core.worktree",
+		value,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git config failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func pathContainedBy(rootPath, childPath string) bool {
+	rootPath = filepath.Clean(rootPath)
+	childPath = filepath.Clean(childPath)
+	if resolved, err := filepath.EvalSymlinks(rootPath); err == nil {
+		rootPath = filepath.Clean(resolved)
+	}
+	if resolved, err := filepath.EvalSymlinks(childPath); err == nil {
+		childPath = filepath.Clean(resolved)
+	}
+	rel, err := filepath.Rel(rootPath, childPath)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
 func listConfiguredSubmodulePaths(ctx context.Context, rootPath string) ([]string, error) {

@@ -425,7 +425,7 @@ func (s *Service) UpdateWorktreeFromParent(ctx context.Context, projectPath stri
 		return UpdateWorktreeFromParentResult{}, fmt.Errorf("worktree branch %s already matches its parent branch", worktreeBranch)
 	}
 
-	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	rootStatus, err := s.readRootRepoStatusWithSubmoduleRepair(ctx, rootPath)
 	if err != nil {
 		return UpdateWorktreeFromParentResult{}, fmt.Errorf("read root repo status before worktree update: %w", err)
 	}
@@ -568,7 +568,7 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		return MergeWorktreeBackResult{}, fmt.Errorf("worktree branch %s already matches its parent branch", sourceBranch)
 	}
 
-	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	rootStatus, err := s.readRootRepoStatusWithSubmoduleRepair(ctx, rootPath)
 	if err != nil {
 		return MergeWorktreeBackResult{}, fmt.Errorf("read root repo status before merge-back: %w", err)
 	}
@@ -745,7 +745,12 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 		return MergeWorktreeBackResult{}, fmt.Errorf("worktree branch %s already matches its parent branch", sourceBranch)
 	}
 
-	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	unlockGitWrite, err := s.lockGitWrite(ctx, rootPath)
+	if err != nil {
+		return MergeWorktreeBackResult{}, err
+	}
+	rootStatus, err := s.readRootRepoStatusWithSubmoduleRepair(ctx, rootPath)
+	unlockGitWrite()
 	if err != nil {
 		return MergeWorktreeBackResult{}, fmt.Errorf("read root repo status before merge-back: %w", err)
 	}
@@ -788,6 +793,32 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 		return mergeResult, err
 	}
 	return mergeResult, nil
+}
+
+// readRootRepoStatusWithSubmoduleRepair retries a failed root status after
+// repairing stale canonical submodule worktree metadata. Callers must hold the
+// root repository's service-level Git write lock because repair updates the
+// submodule's shared config.
+func (s *Service) readRootRepoStatusWithSubmoduleRepair(ctx context.Context, rootPath string) (scanner.GitRepoStatus, error) {
+	status, statusErr := s.gitRepoStatusReader(ctx, rootPath)
+	if statusErr == nil {
+		return status, nil
+	}
+	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
+		return scanner.GitRepoStatus{}, fmt.Errorf("%w (submodule metadata repair blocked: %v)", statusErr, err)
+	}
+	repaired, repairErr := worktreeprep.RepairRootSubmoduleWorktrees(ctx, rootPath)
+	if repairErr != nil {
+		return scanner.GitRepoStatus{}, fmt.Errorf("%w (submodule metadata repair failed: %v)", statusErr, repairErr)
+	}
+	if len(repaired) == 0 {
+		return scanner.GitRepoStatus{}, statusErr
+	}
+	status, retryErr := s.gitRepoStatusReader(ctx, rootPath)
+	if retryErr != nil {
+		return scanner.GitRepoStatus{}, fmt.Errorf("%w (git status still failed after repairing submodule metadata for %s: %v)", statusErr, strings.Join(repaired, ", "), retryErr)
+	}
+	return status, nil
 }
 
 // FinalizeMergedWorktree applies the user-selected cleanup after a successful

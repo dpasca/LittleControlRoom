@@ -388,6 +388,58 @@ submodules = [
 	}
 }
 
+func TestRepairRootSubmoduleWorktreesRestoresCanonicalCheckout(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	originPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, mainPath, originPath, "Assets")
+	worktreePath := filepath.Join(root, "main--removed-task")
+	runGit(t, mainPath, "worktree", "add", "-b", "removed-task", worktreePath, "HEAD")
+	if _, err := Prepare(ctx, mainPath, worktreePath, ""); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	rootSubmodulePath := filepath.Join(mainPath, "Assets")
+	submoduleGitDir := gitOutputTest(t, rootSubmodulePath, "rev-parse", "--absolute-git-dir")
+	staleSubmodulePath := filepath.Join(worktreePath, "Assets")
+	staleCoreWorktree, err := filepath.Rel(submoduleGitDir, staleSubmodulePath)
+	if err != nil {
+		t.Fatalf("resolve stale core.worktree: %v", err)
+	}
+	runGit(t, rootSubmodulePath, "config", "--local", "core.worktree", staleCoreWorktree)
+	runGit(t, mainPath, "worktree", "remove", "--force", worktreePath)
+
+	statusCmd := exec.Command("git", "-C", mainPath, "status", "--porcelain=v2")
+	if out, err := statusCmd.CombinedOutput(); err == nil {
+		t.Fatalf("git status unexpectedly succeeded with stale submodule metadata: %s", strings.TrimSpace(string(out)))
+	}
+
+	repaired, err := RepairRootSubmoduleWorktrees(ctx, mainPath)
+	if err != nil {
+		t.Fatalf("RepairRootSubmoduleWorktrees() error = %v", err)
+	}
+	if len(repaired) != 1 || repaired[0] != "Assets" {
+		t.Fatalf("repaired paths = %#v, want [Assets]", repaired)
+	}
+	if got := gitOutputTest(t, mainPath, "status", "--porcelain=v2"); strings.TrimSpace(got) != "" {
+		t.Fatalf("parent status after repair = %q, want clean", got)
+	}
+	if got := gitOutputTest(t, rootSubmodulePath, "rev-parse", "--show-toplevel"); !samePath(t, got, rootSubmodulePath) {
+		t.Fatalf("root submodule top-level after repair = %q, want %q", got, rootSubmodulePath)
+	}
+
+	repaired, err = RepairRootSubmoduleWorktrees(ctx, mainPath)
+	if err != nil {
+		t.Fatalf("second RepairRootSubmoduleWorktrees() error = %v", err)
+	}
+	if len(repaired) != 0 {
+		t.Fatalf("second repaired paths = %#v, want none", repaired)
+	}
+}
+
 func initRepoWithSubmodule(t *testing.T, mainPath, originPath, submoduleName string) {
 	t.Helper()
 	initGitRepo(t, originPath)

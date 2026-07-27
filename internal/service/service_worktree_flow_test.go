@@ -2097,6 +2097,74 @@ func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	}
 }
 
+func TestMergeWorktreeBackRepairsStaleRootSubmoduleWorktreeMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	rootSubmodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Merge despite stale root submodule metadata",
+		"feat/repair-stale-submodule",
+		"feat-repair-stale-submodule",
+	)
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("ready to merge\n"), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "add mergeable feature")
+
+	submoduleGitDir := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "--absolute-git-dir"))
+	staleSubmodulePath := filepath.Join(root, "repo--removed-worktree", "assets_src")
+	staleCoreWorktree, err := filepath.Rel(submoduleGitDir, staleSubmodulePath)
+	if err != nil {
+		t.Fatalf("resolve stale core.worktree: %v", err)
+	}
+	runGit(t, rootSubmodulePath, "git", "config", "--local", "core.worktree", staleCoreWorktree)
+	if _, err := scanner.ReadGitRepoStatus(ctx, projectPath); err == nil {
+		t.Fatal("root git status unexpectedly succeeded with stale submodule metadata")
+	}
+
+	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("MergeWorktreeBack() error = %v", err)
+	}
+	if mergeResult.RootProjectPath != projectPath {
+		t.Fatalf("merge root path = %q, want %q", mergeResult.RootProjectPath, projectPath)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "FEATURE.txt")); err != nil {
+		t.Fatalf("merged feature missing from root: %v", err)
+	}
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read repaired root git status: %v", err)
+	}
+	if rootStatus.Dirty {
+		t.Fatalf("repaired root repo should be clean after merge-back, got %#v", rootStatus)
+	}
+}
+
 func TestMergeWorktreeBackPublishesDetachedNestedSubmoduleCommitBeforeMerge(t *testing.T) {
 	t.Parallel()
 
@@ -2243,13 +2311,14 @@ func TestMergeWorktreeBackReportsBlockedSubmodulePublishBeforeRootMerge(t *testi
 	}
 }
 
-func TestCommitAndMergeWorktreeBackCommitsDirtyWorktreeBeforeMerge(t *testing.T) {
+func TestCommitAndMergeWorktreeBackCommitsDirtyWorktreeAndRepairsStaleRootSubmoduleMetadata(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "repo")
-	initGitRepo(t, projectPath)
+	submoduleRootPath := filepath.Join(root, "assets")
+	rootSubmodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -2297,6 +2366,17 @@ func TestCommitAndMergeWorktreeBackCommitsDirtyWorktreeBeforeMerge(t *testing.T)
 	worktreeFile := filepath.Join(result.WorktreePath, "FEATURE.txt")
 	if err := os.WriteFile(worktreeFile, []byte("committed and merged from dirty worktree\n"), 0o644); err != nil {
 		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+
+	submoduleGitDir := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "--absolute-git-dir"))
+	staleSubmodulePath := filepath.Join(root, "repo--removed-worktree", "assets_src")
+	staleCoreWorktree, err := filepath.Rel(submoduleGitDir, staleSubmodulePath)
+	if err != nil {
+		t.Fatalf("resolve stale core.worktree: %v", err)
+	}
+	runGit(t, rootSubmodulePath, "git", "config", "--local", "core.worktree", staleCoreWorktree)
+	if _, err := scanner.ReadGitRepoStatus(ctx, projectPath); err == nil {
+		t.Fatal("root git status unexpectedly succeeded with stale submodule metadata")
 	}
 
 	mergeResult, err := svc.CommitAndMergeWorktreeBack(ctx, result.WorktreePath)
