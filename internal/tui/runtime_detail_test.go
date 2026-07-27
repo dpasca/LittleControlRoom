@@ -1555,6 +1555,24 @@ func TestRuntimePaneMouseClickOutsidePaneIgnored(t *testing.T) {
 	}
 }
 
+func TestRuntimePaneMouseIgnoredWhileEmbeddedSessionVisible(t *testing.T) {
+	m, _ := runtimePaneMouseTestModel()
+	x, y := runtimePaneChipPoint(t, m, "Copy")
+
+	m.codexVisibleProject = "/tmp/demo-runtime-mouse"
+	if _, handled := m.handleRuntimePaneMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      x,
+		Y:      y,
+	}); handled {
+		t.Fatalf("the embedded session replaces the dashboard body, so its clicks must not be claimed by the runtime pane")
+	}
+	if m.focusedPane == focusRuntime {
+		t.Fatalf("clicking inside the embedded session should not move dashboard focus to the runtime pane")
+	}
+}
+
 func TestRuntimePaneMouseWheelHandledOverPane(t *testing.T) {
 	m, _ := runtimePaneMouseTestModel()
 	x, y := runtimePaneChipPoint(t, m, "Copy")

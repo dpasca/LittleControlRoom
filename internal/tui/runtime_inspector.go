@@ -354,6 +354,15 @@ func (m Model) renderRuntimePanelActionRows(width int, projectPath string) runti
 // the pane fall through to the codex transcript handlers and the action
 // chips can never be selected with the mouse.
 func (m *Model) handleRuntimePaneMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
+	// Mouse tracking is only enabled for the full-screen embedded session,
+	// help chat, and diff views, so the dashboard geometry below describes a
+	// body that is not on screen. Hit-testing it anyway let clicks in the
+	// embedded transcript/composer area silently steal dashboard pane focus
+	// for the runtime pane, which then showed up as the Run panel being
+	// highlighted after leaving the session with Esc.
+	if m.codexVisible() {
+		return nil, false
+	}
 	layout := m.bodyLayout()
 	contentWidth := layout.runtimeContentWidth
 	innerHeight := max(1, layout.bottomPaneHeight-2)
