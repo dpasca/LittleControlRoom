@@ -106,6 +106,7 @@ type claudeStreamEnvelope struct {
 	Subtype     string          `json:"subtype"`
 	SessionID   string          `json:"session_id"`
 	UUID        string          `json:"uuid"`
+	Effort      string          `json:"effort"`
 	Message     json.RawMessage `json:"message"`
 	Result      string          `json:"result"`
 	IsError     bool            `json:"is_error"`
@@ -862,6 +863,10 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	var stdinToClose io.WriteCloser
 	s.mu.Lock()
 
+	if effort := strings.TrimSpace(env.Effort); effort != "" {
+		s.reasoningEffort = effort
+	}
+
 	switch env.Type {
 	case "system":
 		if env.Subtype == "init" {
@@ -1174,16 +1179,23 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
 	lastType := ""
+	latestReasoningEffort := ""
 	for sc.Scan() {
 		line := sc.Text()
-		lineEntries, entryType := parseCCLineEntries(line, toolCalls, toolResults)
+		lineEntries, entryType, reasoningEffort := parseCCLineEntries(line, toolCalls, toolResults)
 		entries = append(entries, lineEntries...)
 		if entryType != "" {
 			lastType = entryType
 		}
+		if reasoningEffort != "" {
+			latestReasoningEffort = reasoningEffort
+		}
 	}
 
 	s.entries = entries
+	if latestReasoningEffort != "" {
+		s.reasoningEffort = latestReasoningEffort
+	}
 	s.invalidateTranscriptCacheLocked()
 	s.lastFileSize = stat.Size()
 
@@ -1451,12 +1463,13 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) ([]TranscriptEntry, string) {
+func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) ([]TranscriptEntry, string, string) {
 	var raw struct {
 		Type    string `json:"type"`
 		Subtype string `json:"subtype"`
 		IsMeta  bool   `json:"isMeta"`
 		UUID    string `json:"uuid"`
+		Effort  string `json:"effort"`
 		Message struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
@@ -1464,26 +1477,27 @@ func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolRe
 		} `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return nil, ""
+		return nil, "", ""
 	}
+	reasoningEffort := strings.TrimSpace(raw.Effort)
 
 	if raw.IsMeta {
-		return nil, raw.Type
+		return nil, raw.Type, reasoningEffort
 	}
 
 	switch raw.Type {
 	case "user":
-		return extractCCUserEntries(raw.Message.Content, raw.UUID, toolCalls, toolResults), raw.Type
+		return extractCCUserEntries(raw.Message.Content, raw.UUID, toolCalls, toolResults), raw.Type, reasoningEffort
 
 	case "assistant":
-		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type
+		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type, reasoningEffort
 
 	case "progress":
-		return nil, raw.Type
+		return nil, raw.Type, reasoningEffort
 	case "system":
-		return nil, raw.Type
+		return nil, raw.Type, reasoningEffort
 	default:
-		return nil, raw.Type
+		return nil, raw.Type, reasoningEffort
 	}
 }
 

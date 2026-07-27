@@ -58,7 +58,7 @@ func TestClaudeStdoutLineBuildsToolAndCommandEntries(t *testing.T) {
 		toolResults:     make(map[string]struct{}),
 	}
 
-	session.handleClaudeStdoutLine(`{"type":"assistant","session_id":"ses-demo","message":{"id":"msg_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"npm test"}}]}}`)
+	session.handleClaudeStdoutLine(`{"type":"assistant","session_id":"ses-demo","effort":"high","message":{"id":"msg_1","model":"claude-sonnet-4-6","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"npm test"}}]}}`)
 	if len(session.entries) != 1 {
 		t.Fatalf("entry count after tool_use = %d, want 1", len(session.entries))
 	}
@@ -67,6 +67,9 @@ func TestClaudeStdoutLineBuildsToolAndCommandEntries(t *testing.T) {
 	}
 	if session.entries[0].Text != "Bash: npm test" {
 		t.Fatalf("tool_use entry text = %q, want Bash summary", session.entries[0].Text)
+	}
+	if got := session.Snapshot().ReasoningEffort; got != "high" {
+		t.Fatalf("reasoning effort after assistant event = %q, want high", got)
 	}
 
 	session.handleClaudeStdoutLine(`{"type":"user","session_id":"ses-demo","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"tests passed"}]}}`)
@@ -104,9 +107,12 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
 
-	assistantEntries, entryType := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults)
+	assistantEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","effort":"xhigh","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults)
 	if entryType != "assistant" {
 		t.Fatalf("assistant entry type = %q, want assistant", entryType)
+	}
+	if reasoningEffort != "xhigh" {
+		t.Fatalf("assistant reasoning effort = %q, want xhigh", reasoningEffort)
 	}
 	if len(assistantEntries) != 3 {
 		t.Fatalf("assistant entry count = %d, want 3", len(assistantEntries))
@@ -121,9 +127,12 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 		t.Fatalf("bash tool entry = %#v, want structured bash tool", assistantEntries[2])
 	}
 
-	userEntries, entryType := parseCCLineEntries(`{"type":"user","uuid":"msg_2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults)
+	userEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"user","uuid":"msg_2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults)
 	if entryType != "user" {
 		t.Fatalf("user entry type = %q, want user", entryType)
+	}
+	if reasoningEffort != "" {
+		t.Fatalf("user reasoning effort = %q, want empty", reasoningEffort)
 	}
 	if len(userEntries) != 1 {
 		t.Fatalf("user entry count = %d, want 1", len(userEntries))
@@ -179,6 +188,36 @@ func TestClaudeLoadTranscriptKeepsToolEntriesStructuredOnRefresh(t *testing.T) {
 	}
 	if !strings.Contains(session.entries[3].Text, "$ make test") {
 		t.Fatalf("command entry text = %q, want reconstructed bash command", session.entries[3].Text)
+	}
+}
+
+func TestClaudeLoadTranscriptRestoresLatestReasoningEffort(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","uuid":"msg_1","effort":"high","message":{"role":"assistant","content":[{"type":"text","text":"First reply."}]}}`,
+		`{"type":"user","uuid":"msg_2","message":{"role":"user","content":[{"type":"text","text":"Continue."}]}}`,
+		`{"type":"assistant","uuid":"msg_3","effort":"xhigh","message":{"role":"assistant","content":[{"type":"text","text":"Latest reply."}]}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile:      sessionFile,
+		pendingReasoning: "max",
+		toolCalls:        make(map[string]claudeToolCall),
+		toolResults:      make(map[string]struct{}),
+	}
+
+	session.loadTranscriptLocked()
+	snapshot := session.Snapshot()
+
+	if snapshot.ReasoningEffort != "xhigh" {
+		t.Fatalf("restored reasoning effort = %q, want latest xhigh", snapshot.ReasoningEffort)
+	}
+	if snapshot.PendingReasoning != "max" {
+		t.Fatalf("pending reasoning effort = %q, want staged max preserved", snapshot.PendingReasoning)
 	}
 }
 
