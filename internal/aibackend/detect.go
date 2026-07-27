@@ -3,13 +3,13 @@ package aibackend
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"lcroom/internal/claudecli"
 	"lcroom/internal/config"
 	"lcroom/internal/llm"
 
@@ -452,42 +452,14 @@ func formatContextTokenCount(tokens int64) string {
 	return fmt.Sprintf("%d", tokens)
 }
 
-type claudeAuthStatus struct {
-	LoggedIn         bool   `json:"loggedIn"`
-	AuthMethod       string `json:"authMethod"`
-	APIProvider      string `json:"apiProvider"`
-	SubscriptionType string `json:"subscriptionType"`
-}
+type claudeAuthStatus = claudecli.AuthenticationStatus
 
 func parseClaudeAuthStatus(raw string) (claudeAuthStatus, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return claudeAuthStatus{}, false
-	}
-	var auth claudeAuthStatus
-	if err := json.Unmarshal([]byte(raw), &auth); err == nil {
-		return auth, true
-	}
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end <= start {
-		return claudeAuthStatus{}, false
-	}
-	if err := json.Unmarshal([]byte(raw[start:end+1]), &auth); err != nil {
-		return claudeAuthStatus{}, false
-	}
-	return auth, true
+	return claudecli.ParseAuthenticationStatus(raw)
 }
 
 func claudeAuthDetail(auth claudeAuthStatus) string {
-	parts := []string{"Claude Code ready"}
-	if method := strings.TrimSpace(auth.AuthMethod); method != "" {
-		parts = append(parts, "via "+method)
-	}
-	if subscription := strings.TrimSpace(auth.SubscriptionType); subscription != "" {
-		parts = append(parts, "("+subscription+")")
-	}
-	return strings.Join(parts, " ")
+	return claudecli.AuthenticationDetail(auth)
 }
 
 func runCommand(parent context.Context, name string, args ...string) (string, error) {

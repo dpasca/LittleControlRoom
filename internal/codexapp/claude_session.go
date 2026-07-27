@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -311,18 +312,29 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 	}
 
 	s.mu.Lock()
-	if s.closed {
+	if err := s.submissionStateErrorLocked(); err != nil {
 		s.mu.Unlock()
-		return fmt.Errorf("Claude Code session is closed")
+		return err
 	}
-	s.refreshActiveLocked()
-	switch {
-	case s.busyExternal:
+	if s.cmd == nil {
 		s.mu.Unlock()
-		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
-	case s.busy && s.pendingSubmissions == 0:
-		s.mu.Unlock()
-		return fmt.Errorf("Claude Code is finishing the current turn")
+		if err := CheckClaudeCodeAuthentication(context.Background()); err != nil {
+			s.mu.Lock()
+			if s.closed {
+				s.mu.Unlock()
+				return fmt.Errorf("Claude Code session is closed")
+			}
+			s.appendSystemErrorLocked(err.Error())
+			s.touchLocked()
+			s.mu.Unlock()
+			s.notifyAsync()
+			return err
+		}
+		s.mu.Lock()
+		if err := s.submissionStateErrorLocked(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
 	}
 
 	var (
@@ -441,6 +453,21 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 	}
 	s.notifyAsync()
 	return nil
+}
+
+func (s *claudeCodeSession) submissionStateErrorLocked() error {
+	if s.closed {
+		return fmt.Errorf("Claude Code session is closed")
+	}
+	s.refreshActiveLocked()
+	switch {
+	case s.busyExternal:
+		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
+	case s.busy && s.pendingSubmissions == 0:
+		return fmt.Errorf("Claude Code is finishing the current turn")
+	default:
+		return nil
+	}
 }
 
 func (s *claudeCodeSession) ShowStatus() error {
@@ -586,6 +613,14 @@ func claudeEmbeddedModelOptions() []ModelOption {
 			IsDefault:                 true,
 		},
 		{
+			ID:                        "fable",
+			Model:                     "fable",
+			DisplayName:               "Fable",
+			Description:               "Latest Claude Fable alias.",
+			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
+			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
+		},
+		{
 			ID:                        "opus",
 			Model:                     "opus",
 			DisplayName:               "Opus",
@@ -613,6 +648,7 @@ func claudeReasoningEffortOptions() []ReasoningEffortOption {
 		{ReasoningEffort: "low", Description: "Fastest response"},
 		{ReasoningEffort: "medium", Description: "Balanced"},
 		{ReasoningEffort: "high", Description: "More deliberate"},
+		{ReasoningEffort: "xhigh", Description: "Extra deliberate"},
 		{ReasoningEffort: "max", Description: "Most thorough"},
 	}
 }
@@ -710,6 +746,11 @@ func (s *claudeCodeSession) consumeClaudeTurn(ctx context.Context, cmd *exec.Cmd
 	if ctx.Err() != nil && waitErr != nil {
 		waitErr = nil
 	}
+	if waitErr != nil {
+		if authErr := CheckClaudeCodeAuthentication(context.Background()); authErr != nil {
+			waitErr = authErr
+		}
+	}
 	s.finishClaudeTurn(waitErr, stdoutErr, stderrErr)
 }
 
@@ -741,6 +782,8 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 		s.lastError = ""
 		s.lastSystemNotice = claudeInterruptNotice
 		s.status = claudeReadyStatus
+	case errors.Is(waitErr, ErrClaudeCodeAuthenticationRequired):
+		s.appendSystemErrorLocked(waitErr.Error())
 	case waitErr != nil:
 		s.appendSystemErrorLocked(fmt.Sprintf("Claude Code exited with error: %v", waitErr))
 	case stdoutErr != nil:

@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,7 +192,7 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels() error = %v", err)
 	}
-	if len(models) < 3 {
+	if len(models) < 4 {
 		t.Fatalf("ListModels() returned %d models, want curated aliases", len(models))
 	}
 	if got := models[0].Model; got != "claude-opus-4-6" {
@@ -203,6 +204,9 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	if !claudeModelOptionExists(models, "sonnet") {
 		t.Fatalf("expected sonnet alias in model list")
 	}
+	if !claudeModelOptionExists(models, "fable") {
+		t.Fatalf("expected fable alias in model list")
+	}
 	if !claudeModelOptionExists(models, "opus") {
 		t.Fatalf("expected opus alias in model list")
 	}
@@ -211,6 +215,91 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	}
 	if got := models[2].DefaultReasoningEffort; got != claudeDefaultReasoningEffort {
 		t.Fatalf("default reasoning = %q, want %q", got, claudeDefaultReasoningEffort)
+	}
+}
+
+func TestClaudeReasoningEffortsIncludeXHigh(t *testing.T) {
+	efforts := claudeReasoningEffortOptions()
+	for _, effort := range efforts {
+		if effort.ReasoningEffort == "xhigh" {
+			return
+		}
+	}
+	t.Fatalf("reasoning efforts = %#v, want xhigh", efforts)
+}
+
+func TestClaudeSubmitReportsMissingAuthenticationBeforeStartingTurn(t *testing.T) {
+	binDir := t.TempDir()
+	claudePath := filepath.Join(binDir, "claude")
+	script := `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+	printf '%s\n' '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}'
+	exit 1
+fi
+exit 99
+`
+	if err := os.WriteFile(claudePath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude CLI: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	notified := false
+	session := &claudeCodeSession{
+		projectPath:     t.TempDir(),
+		claudeHome:      t.TempDir(),
+		preset:          codexcli.PresetSafe,
+		status:          claudeFreshReadyStatus,
+		closedCh:        make(chan struct{}),
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+		notify:          func() { notified = true },
+	}
+
+	err := session.SubmitInput(Submission{Text: "please fix the bug"})
+	if !errors.Is(err, ErrClaudeCodeAuthenticationRequired) {
+		t.Fatalf("SubmitInput() error = %v, want ErrClaudeCodeAuthenticationRequired", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Busy {
+		t.Fatal("Snapshot().Busy = true, want turn not started")
+	}
+	if snapshot.LastError != ErrClaudeCodeAuthenticationRequired.Error() {
+		t.Fatalf("Snapshot().LastError = %q, want actionable auth message", snapshot.LastError)
+	}
+	if !strings.Contains(snapshot.Transcript, "claude auth login") {
+		t.Fatalf("Snapshot().Transcript = %q, want login instructions", snapshot.Transcript)
+	}
+	if len(snapshot.Entries) != 1 || snapshot.Entries[0].Kind != TranscriptError {
+		t.Fatalf("Snapshot().Entries = %#v, want one auth error and no submitted user turn", snapshot.Entries)
+	}
+	if !notified {
+		t.Fatal("session did not notify after recording the authentication error")
+	}
+}
+
+func TestClaudeTurnAuthenticationFailureAvoidsGenericExitError(t *testing.T) {
+	session := &claudeCodeSession{
+		status:          claudeThinkingStatus,
+		busy:            true,
+		lastError:       "claude stderr: Failed to authenticate",
+		entries:         []TranscriptEntry{{Kind: TranscriptError, Text: "claude stderr: Failed to authenticate"}},
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.finishClaudeTurn(ErrClaudeCodeAuthenticationRequired, nil, nil)
+
+	snapshot := session.Snapshot()
+	if snapshot.LastError != ErrClaudeCodeAuthenticationRequired.Error() {
+		t.Fatalf("Snapshot().LastError = %q, want actionable auth message", snapshot.LastError)
+	}
+	if !strings.Contains(snapshot.Transcript, "claude auth login") {
+		t.Fatalf("Snapshot().Transcript = %q, want login instructions", snapshot.Transcript)
+	}
+	if strings.Contains(snapshot.Transcript, "Claude Code exited with error") {
+		t.Fatalf("Snapshot().Transcript = %q, want no generic exit-status error", snapshot.Transcript)
 	}
 }
 
