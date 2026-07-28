@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 )
@@ -30,7 +31,7 @@ type Detector struct {
 type cachedParse struct {
 	modTimeKey int64
 	auxTimeKey int64
-	result      parseResult
+	result     parseResult
 }
 
 type parseResult struct {
@@ -307,6 +308,7 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 	turnState := claudeTurnState{}
 	pendingAsync := map[string]struct{}{}
 	pendingAsyncStartedAt := time.Time{}
+	var conversationTracker claudeartifact.ConversationTracker
 	for sc.Scan() {
 		line := sc.Text()
 		var entry claudeSessionEntry
@@ -334,6 +336,14 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 		}
 
 		ts := entry.parsedTimestamp()
+		conversationalUser := conversationTracker.Observe(claudeartifact.TranscriptEntry{
+			Type:         entry.Type,
+			UUID:         entry.UUID,
+			ParentUUID:   entry.ParentUUID,
+			IsMeta:       entry.IsMeta,
+			PromptSource: entry.PromptSource,
+			OriginKind:   entry.Origin.Kind,
+		})
 		switch entry.Type {
 		case "assistant":
 			turnState.set(ts, entry.assistantTurnCompleted())
@@ -360,6 +370,9 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 						pendingAsyncStartedAt = time.Time{}
 					}
 				}
+				continue
+			}
+			if !conversationalUser {
 				continue
 			}
 			turnState.set(ts, false)
@@ -414,12 +427,16 @@ func (s *claudeTurnState) set(ts time.Time, completed bool) {
 }
 
 type claudeSessionEntry struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId"`
-	CWD       string `json:"cwd"`
-	Timestamp string `json:"timestamp"`
-	Subtype   string `json:"subtype"`
-	Origin    struct {
+	Type         string `json:"type"`
+	SessionID    string `json:"sessionId"`
+	CWD          string `json:"cwd"`
+	Timestamp    string `json:"timestamp"`
+	Subtype      string `json:"subtype"`
+	IsMeta       bool   `json:"isMeta"`
+	UUID         string `json:"uuid"`
+	ParentUUID   string `json:"parentUuid"`
+	PromptSource string `json:"promptSource"`
+	Origin       struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 	Operation string `json:"operation"`
@@ -692,9 +709,10 @@ func readTranscriptFrom(r io.Reader) ([]model.ClaudeCodeTranscriptEntry, error) 
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
 	var entries []model.ClaudeCodeTranscriptEntry
+	var conversationTracker claudeartifact.ConversationTracker
 	for sc.Scan() {
 		line := sc.Text()
-		entry, ok := parseTranscriptLine(line)
+		entry, ok := parseTranscriptLine(line, &conversationTracker)
 		if ok {
 			entries = append(entries, entry)
 		}
@@ -702,16 +720,21 @@ func readTranscriptFrom(r io.Reader) ([]model.ClaudeCodeTranscriptEntry, error) 
 	return entries, sc.Err()
 }
 
-func parseTranscriptLine(line string) (model.ClaudeCodeTranscriptEntry, bool) {
+func parseTranscriptLine(line string, conversationTracker *claudeartifact.ConversationTracker) (model.ClaudeCodeTranscriptEntry, bool) {
 	var raw struct {
-		Type      string `json:"type"`
-		Subtype   string `json:"subtype"`
-		IsMeta    bool   `json:"isMeta"`
-		UUID      string `json:"uuid"`
-		Timestamp string `json:"timestamp"`
-		SessionID string `json:"sessionId"`
-		CWD       string `json:"cwd"`
-		Message   struct {
+		Type         string `json:"type"`
+		Subtype      string `json:"subtype"`
+		IsMeta       bool   `json:"isMeta"`
+		UUID         string `json:"uuid"`
+		ParentUUID   string `json:"parentUuid"`
+		PromptSource string `json:"promptSource"`
+		Timestamp    string `json:"timestamp"`
+		SessionID    string `json:"sessionId"`
+		CWD          string `json:"cwd"`
+		Origin       struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
+		Message struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 			Model   string          `json:"model"`
@@ -720,9 +743,21 @@ func parseTranscriptLine(line string) (model.ClaudeCodeTranscriptEntry, bool) {
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
 		return model.ClaudeCodeTranscriptEntry{}, false
 	}
+	conversationalUser := true
+	if conversationTracker != nil {
+		conversationalUser = conversationTracker.Observe(claudeartifact.TranscriptEntry{
+			Type:         raw.Type,
+			UUID:         raw.UUID,
+			ParentUUID:   raw.ParentUUID,
+			IsMeta:       raw.IsMeta,
+			PromptSource: raw.PromptSource,
+			OriginKind:   raw.Origin.Kind,
+		})
+	}
 
-	// Skip meta entries (command outputs, caveats), progress updates,
-	// file-history-snapshot, and system/turn_duration entries.
+	// Skip metadata, progress updates, file-history snapshots, and system
+	// lifecycle entries. ConversationTracker also excludes non-meta user-role
+	// records generated as descendants of Claude Code local commands.
 	if raw.IsMeta {
 		return model.ClaudeCodeTranscriptEntry{}, false
 	}
@@ -736,6 +771,9 @@ func parseTranscriptLine(line string) (model.ClaudeCodeTranscriptEntry, bool) {
 
 	switch raw.Type {
 	case "user":
+		if !conversationalUser {
+			return model.ClaudeCodeTranscriptEntry{}, false
+		}
 		text := extractTextContent(raw.Message.Content)
 		if strings.TrimSpace(text) == "" {
 			return model.ClaudeCodeTranscriptEntry{}, false

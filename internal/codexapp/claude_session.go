@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/projectrun"
 )
@@ -1178,11 +1179,12 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	var entries []TranscriptEntry
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
+	var conversationTracker claudeartifact.ConversationTracker
 	lastType := ""
 	latestReasoningEffort := ""
 	for sc.Scan() {
 		line := sc.Text()
-		lineEntries, entryType, reasoningEffort := parseCCLineEntries(line, toolCalls, toolResults)
+		lineEntries, entryType, reasoningEffort := parseCCLineEntries(line, toolCalls, toolResults, &conversationTracker)
 		entries = append(entries, lineEntries...)
 		if entryType != "" {
 			lastType = entryType
@@ -1463,13 +1465,23 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) ([]TranscriptEntry, string, string) {
+func parseCCLineEntries(
+	line string,
+	toolCalls map[string]claudeToolCall,
+	toolResults map[string]struct{},
+	conversationTracker *claudeartifact.ConversationTracker,
+) ([]TranscriptEntry, string, string) {
 	var raw struct {
-		Type    string `json:"type"`
-		Subtype string `json:"subtype"`
-		IsMeta  bool   `json:"isMeta"`
-		UUID    string `json:"uuid"`
-		Effort  string `json:"effort"`
+		Type         string `json:"type"`
+		Subtype      string `json:"subtype"`
+		IsMeta       bool   `json:"isMeta"`
+		UUID         string `json:"uuid"`
+		ParentUUID   string `json:"parentUuid"`
+		PromptSource string `json:"promptSource"`
+		Effort       string `json:"effort"`
+		Origin       struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
 		Message struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
@@ -1480,6 +1492,17 @@ func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolRe
 		return nil, "", ""
 	}
 	reasoningEffort := strings.TrimSpace(raw.Effort)
+	includeUserText := true
+	if conversationTracker != nil {
+		includeUserText = conversationTracker.Observe(claudeartifact.TranscriptEntry{
+			Type:         raw.Type,
+			UUID:         raw.UUID,
+			ParentUUID:   raw.ParentUUID,
+			IsMeta:       raw.IsMeta,
+			PromptSource: raw.PromptSource,
+			OriginKind:   raw.Origin.Kind,
+		})
+	}
 
 	if raw.IsMeta {
 		return nil, raw.Type, reasoningEffort
@@ -1487,7 +1510,7 @@ func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolRe
 
 	switch raw.Type {
 	case "user":
-		return extractCCUserEntries(raw.Message.Content, raw.UUID, toolCalls, toolResults), raw.Type, reasoningEffort
+		return extractCCUserEntries(raw.Message.Content, raw.UUID, includeUserText, toolCalls, toolResults), raw.Type, reasoningEffort
 
 	case "assistant":
 		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type, reasoningEffort
@@ -1582,18 +1605,26 @@ func extractCCAssistantEntries(content json.RawMessage, itemID string, toolCalls
 	return entries
 }
 
-func extractCCUserEntries(content json.RawMessage, itemID string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) []TranscriptEntry {
+func extractCCUserEntries(
+	content json.RawMessage,
+	itemID string,
+	includeText bool,
+	toolCalls map[string]claudeToolCall,
+	toolResults map[string]struct{},
+) []TranscriptEntry {
 	if len(content) == 0 {
 		return nil
 	}
-	text := extractCCTextContent(content)
 	entries := make([]TranscriptEntry, 0, 2)
-	if strings.TrimSpace(text) != "" {
-		entries = append(entries, TranscriptEntry{
-			ItemID: itemID,
-			Kind:   TranscriptUser,
-			Text:   text,
-		})
+	if includeText {
+		text := extractCCTextContent(content)
+		if strings.TrimSpace(text) != "" {
+			entries = append(entries, TranscriptEntry{
+				ItemID: itemID,
+				Kind:   TranscriptUser,
+				Text:   text,
+			})
+		}
 	}
 
 	var blocks []struct {

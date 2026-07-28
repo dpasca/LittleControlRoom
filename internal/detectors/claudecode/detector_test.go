@@ -6,11 +6,107 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/scanner"
 )
+
+func TestReadTranscriptHidesGeneratedLocalCommandsAndKeepsRepeatedPrompt(t *testing.T) {
+	lines := []string{
+		`{"type":"assistant","uuid":"previous-answer","message":{"role":"assistant","content":[{"type":"text","text":"Choose one of the open items."}]}}`,
+		`{"type":"user","isMeta":true,"uuid":"command-caveat","parentUuid":"previous-answer","message":{"role":"user","content":"<local-command-caveat>generated records follow</local-command-caveat>"}}`,
+		`{"type":"user","uuid":"command-name","parentUuid":"command-caveat","message":{"role":"user","content":"<command-name>/model</command-name>"}}`,
+		`{"type":"user","uuid":"command-output","parentUuid":"command-name","message":{"role":"user","content":"<local-command-stdout>Set model to Opus 5</local-command-stdout>"}}`,
+		`{"type":"file-history-snapshot"}`,
+		`{"type":"user","uuid":"escaped-prompt","parentUuid":"command-output","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"which one you think is more improtant at this point"}}`,
+		`{"type":"file-history-snapshot"}`,
+		`{"type":"user","uuid":"continued-prompt","parentUuid":"command-output","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"which one you think is more improtant at this point"}}`,
+		`{"type":"assistant","uuid":"answer","parentUuid":"continued-prompt","message":{"role":"assistant","content":[{"type":"text","text":"Config plumbing is the most important."}]}}`,
+	}
+
+	entries, err := readTranscriptFrom(strings.NewReader(strings.Join(lines, "\n") + "\n"))
+	if err != nil {
+		t.Fatalf("readTranscriptFrom() error = %v", err)
+	}
+	if got, want := len(entries), 4; got != want {
+		t.Fatalf("entry count = %d, want %d: %#v", got, want, entries)
+	}
+	for i := 1; i <= 2; i++ {
+		if entries[i].Kind != "user" || entries[i].Text != "which one you think is more improtant at this point" {
+			t.Fatalf("repeated prompt entry %d = %#v", i, entries[i])
+		}
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Text, "<command-") || strings.Contains(entry.Text, "<local-command-") {
+			t.Fatalf("generated local command XML leaked into transcript: %#v", entry)
+		}
+	}
+}
+
+func TestParseSessionFileIgnoresLocalCommandsAfterCompletedTurn(t *testing.T) {
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	ts := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":         "user",
+			"uuid":         "prompt",
+			"promptSource": "typed",
+			"origin":       map[string]any{"kind": "human"},
+			"timestamp":    ts.Format(time.RFC3339Nano),
+			"message":      map[string]any{"role": "user", "content": "finish the task"},
+		},
+		{
+			"type":       "assistant",
+			"uuid":       "answer",
+			"parentUuid": "prompt",
+			"timestamp":  ts.Add(time.Second).Format(time.RFC3339Nano),
+			"message": map[string]any{
+				"role":        "assistant",
+				"stop_reason": "end_turn",
+				"content":     []map[string]any{{"type": "text", "text": "Done."}},
+			},
+		},
+		{
+			"type":       "system",
+			"subtype":    "turn_duration",
+			"uuid":       "turn-duration",
+			"parentUuid": "answer",
+			"timestamp":  ts.Add(2 * time.Second).Format(time.RFC3339Nano),
+		},
+		{
+			"type":       "user",
+			"isMeta":     true,
+			"uuid":       "command-caveat",
+			"parentUuid": "turn-duration",
+			"timestamp":  ts.Add(3 * time.Second).Format(time.RFC3339Nano),
+			"message":    map[string]any{"role": "user", "content": "generated command metadata"},
+		},
+		{
+			"type":       "user",
+			"uuid":       "command-name",
+			"parentUuid": "command-caveat",
+			"timestamp":  ts.Add(4 * time.Second).Format(time.RFC3339Nano),
+			"message":    map[string]any{"role": "user", "content": "<command-name>/model</command-name>"},
+		},
+		{
+			"type":       "user",
+			"uuid":       "command-output",
+			"parentUuid": "command-name",
+			"timestamp":  ts.Add(5 * time.Second).Format(time.RFC3339Nano),
+			"message":    map[string]any{"role": "user", "content": "<local-command-stdout>model changed</local-command-stdout>"},
+		},
+	})
+
+	result, err := parseSessionFile(sessionFile, ts.Add(5*time.Second), time.Time{})
+	if err != nil {
+		t.Fatalf("parseSessionFile() error = %v", err)
+	}
+	if !result.turnKnown || !result.turnDone {
+		t.Fatalf("turn state = known %v done %v, want completed after local command records", result.turnKnown, result.turnDone)
+	}
+}
 
 func TestDetectFindsSessionFromJSONL(t *testing.T) {
 	t.Parallel()
