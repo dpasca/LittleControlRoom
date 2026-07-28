@@ -104,6 +104,32 @@ func TestClaudeAssistantBlocksDeduplicateRepeatedEvents(t *testing.T) {
 	}
 }
 
+func TestClaudeSyntheticAssistantKeepsLastRealModel(t *testing.T) {
+	session := &claudeCodeSession{
+		model:           "claude-fable-5",
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","is_api_error_message":true,"message":{"id":"msg_limit","model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit."}]}}`)
+
+	snapshot := session.Snapshot()
+	if snapshot.Model != "claude-fable-5" {
+		t.Fatalf("model after synthetic limit message = %q, want last real model", snapshot.Model)
+	}
+	if !strings.Contains(snapshot.Transcript, "You've hit your session limit.") {
+		t.Fatalf("transcript = %q, want limit message preserved", snapshot.Transcript)
+	}
+	models, err := session.ListModels()
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if claudeModelOptionExists(models, "<synthetic>") {
+		t.Fatalf("model options = %#v, want internal synthetic marker omitted", models)
+	}
+}
+
 func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
@@ -467,6 +493,22 @@ func TestClaudeTurnArgsIncludeVerboseForStreamJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("claudeTurnArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestClaudeTurnArgsOmitSyntheticModelPlaceholder(t *testing.T) {
+	got := claudeTurnArgs("ses-demo", "<synthetic>", "high", "bypassPermissions")
+	want := []string{
+		"-p",
+		"--verbose",
+		"--input-format=stream-json",
+		"--output-format=stream-json",
+		"--permission-mode", "bypassPermissions",
+		"--resume", "ses-demo",
+		"--effort", "high",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("claudeTurnArgs() = %#v, want synthetic model marker omitted: %#v", got, want)
 	}
 }
 
