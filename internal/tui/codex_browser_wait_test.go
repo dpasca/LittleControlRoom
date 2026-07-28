@@ -159,6 +159,70 @@ func TestVisibleLCAgentBrowserWaitAlwaysHasEscapeAndInterrupt(t *testing.T) {
 	}
 }
 
+func TestVisibleIdleBrowserWaitCtrlCClosesSessionAndClearsProjectAttention(t *testing.T) {
+	projectPath := "/tmp/codex-idle-browser-wait"
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Started:  true,
+		Phase:    codexapp.SessionPhaseIdle,
+		Status:   "Turn finished",
+		BrowserActivity: browserctl.SessionActivity{
+			State:            browserctl.SessionActivityStateWaitingForUser,
+			ServerName:       "playwright",
+			ToolName:         "browser_handoff",
+			AttentionMessage: "Finish signing in.",
+		},
+	}
+	session := &fakeCodexSession{projectPath: projectPath, snapshot: snapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderCodex}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexInput: newCodexTextarea(),
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(footer, "ctrl+c close") {
+		t.Fatalf("idle browser-wait footer = %q, want ctrl+c close", footer)
+	}
+	if strings.Contains(footer, "ctrl+c stop") {
+		t.Fatalf("idle browser-wait footer = %q, want no ctrl+c stop", footer)
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+c during idle browser wait should close the session")
+	}
+	if got.status != "Closing embedded Codex session..." {
+		t.Fatalf("status = %q, want closing notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if !action.closed || !session.snapshot.Closed {
+		t.Fatalf("close action = %#v, session closed = %t; want both closed", action, session.snapshot.Closed)
+	}
+	if session.interrupted {
+		t.Fatal("idle browser wait should close without sending an unavailable turn interrupt")
+	}
+	if _, ok := got.projectPendingBrowserAttention(projectPath); ok {
+		t.Fatal("closed idle browser wait should no longer surface project attention")
+	}
+}
+
 func TestLCAgentBrowserWaitFocusesBlurredComposerForTyping(t *testing.T) {
 	projectPath := "/tmp/lcagent-browser-typing"
 	snapshot := codexapp.Snapshot{

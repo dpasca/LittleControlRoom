@@ -685,8 +685,12 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if m.managedBrowserCanReveal(snapshot) {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
+		ctrlCAction := footerExitAction("ctrl+c", "close")
+		if codexSnapshotCanInterruptActiveTurn(snapshot) {
+			ctrlCAction = footerExitAction("ctrl+c", "stop")
+		}
 		actions = append(actions,
-			footerExitAction("ctrl+c", "stop"),
+			ctrlCAction,
 			footerHideAction("Alt+Up", "hide"),
 			footerHideAction("Esc", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
