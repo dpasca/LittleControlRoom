@@ -3,10 +3,12 @@ package codexapp
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +32,6 @@ const (
 	claudeSupportStatus                 = "Embedded Claude Code session ready"
 	claudeInterruptNotice               = "Interrupted embedded Claude Code turn."
 	claudeCompactUnsupported            = "Embedded Claude Code compact is not supported yet"
-	claudeAttachmentsUnsupported        = "Embedded Claude Code attachments are not supported yet"
 	claudeApprovalUnsupported           = "Embedded Claude Code approval responses are not supported yet"
 	claudeToolInputUnsupported          = "Embedded Claude Code tool-input responses are not supported yet"
 	claudeElicitationUnsupported        = "Embedded Claude Code elicitation responses are not supported yet"
@@ -309,16 +310,20 @@ func (s *claudeCodeSession) Submit(prompt string) error {
 }
 
 func (s *claudeCodeSession) SubmitInput(input Submission) error {
+	input = normalizeSubmission(input)
 	if input.Empty() {
 		return nil
-	}
-	if len(input.Attachments) > 0 {
-		return fmt.Errorf(claudeAttachmentsUnsupported)
 	}
 
 	displayText := strings.TrimSpace(input.TranscriptDisplayText())
 	if displayText == "" {
 		return fmt.Errorf("Claude Code prompt required")
+	}
+
+	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
+	payload, err := buildClaudeStreamInput(modelInput)
+	if err != nil {
+		return fmt.Errorf("prepare Claude Code prompt: %w", err)
 	}
 
 	s.mu.Lock()
@@ -427,24 +432,6 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 		}
 	}
 
-	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
-	payload, err := buildClaudeStreamInput(modelInput.Text)
-	if err != nil {
-		if startStream {
-			_ = terminateAppServerCommand(cmd)
-			_ = stdin.Close()
-			s.finishClaudeTurn(fmt.Errorf("encode Claude input: %w", err), nil, nil)
-		} else {
-			s.mu.Lock()
-			if s.pendingSubmissions > 0 {
-				s.pendingSubmissions--
-			}
-			s.interruptPending = false
-			s.updateStatusLocked()
-			s.mu.Unlock()
-		}
-		return err
-	}
 	if _, err := io.WriteString(stdin, payload+"\n"); err != nil {
 		if startStream {
 			_ = terminateAppServerCommand(cmd)
@@ -1347,17 +1334,47 @@ func claudeTurnArgs(resumeID, model, reasoning, permissionMode string) []string 
 	return args
 }
 
-func buildClaudeStreamInput(prompt string) (string, error) {
+func buildClaudeStreamInput(input Submission) (string, error) {
+	input = normalizeSubmission(input)
+	content := make([]map[string]any, 0, 1+len(input.Attachments))
+	if input.Text != "" {
+		content = append(content, map[string]any{
+			"type": "text",
+			"text": input.Text,
+		})
+	}
+	for _, attachment := range input.Attachments {
+		if attachment.Kind != AttachmentLocalImage {
+			return "", fmt.Errorf("unsupported Claude Code attachment kind %q", attachment.Kind)
+		}
+		path := strings.TrimSpace(attachment.Path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read image attachment %q: %w", path, err)
+		}
+		mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(http.DetectContentType(data), ";", 2)[0]))
+		switch mediaType {
+		case "image/jpeg", "image/png", "image/gif", "image/webp":
+		default:
+			return "", fmt.Errorf("unsupported Claude Code image type %q for %q", mediaType, path)
+		}
+		content = append(content, map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type":       "base64",
+				"media_type": mediaType,
+				"data":       base64.StdEncoding.EncodeToString(data),
+			},
+		})
+	}
+	if len(content) == 0 {
+		return "", fmt.Errorf("Claude Code prompt required")
+	}
 	payload := map[string]any{
 		"type": "user",
 		"message": map[string]any{
-			"role": "user",
-			"content": []map[string]any{
-				{
-					"type": "text",
-					"text": strings.TrimSpace(prompt),
-				},
-			},
+			"role":    "user",
+			"content": content,
 		},
 	}
 	data, err := json.Marshal(payload)

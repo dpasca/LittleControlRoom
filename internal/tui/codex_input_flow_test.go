@@ -284,6 +284,94 @@ func TestVisibleCodexBackspaceRemovesInlineImageMarker(t *testing.T) {
 	}
 }
 
+func TestVisibleClaudeReplacingImageKeepsEnterSubmissionSendable(t *testing.T) {
+	paths := []string{"/tmp/old.png", "/tmp/replacement.png"}
+	previousExporter := clipboardImageExporter
+	clipboardImageExporter = func() (string, error) {
+		path := paths[0]
+		paths = paths[1:]
+		return path, nil
+	}
+	t.Cleanup(func() {
+		clipboardImageExporter = previousExporter
+	})
+
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderClaudeCode,
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			Status:   "Claude Code session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("Review the destroyed jet")
+	input.CursorEnd()
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
+	got := completeCodexClipboardPaste(t, updated.(Model), cmd)
+	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyBackspace})
+	got = updated.(Model)
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
+	got = completeCodexClipboardPaste(t, updated.(Model), cmd)
+
+	if got.codexInput.Value() != "Review the destroyed jet [Image #1]" {
+		t.Fatalf("composer after replacement = %q", got.codexInput.Value())
+	}
+	attachments := got.currentCodexAttachments()
+	if len(attachments) != 1 || attachments[0].Path != "/tmp/replacement.png" {
+		t.Fatalf("attachments after replacement = %#v, want only replacement", attachments)
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("Enter after replacing a Claude image should queue a submission")
+	}
+	action, ok := cmd().(codexActionMsg)
+	if !ok {
+		t.Fatalf("submission command returned unexpected message type")
+	}
+	if action.err != nil {
+		t.Fatalf("submission action error = %v", action.err)
+	}
+	if len(session.submissions) != 1 {
+		t.Fatalf("submissions = %#v, want one", session.submissions)
+	}
+	submission := session.submissions[0]
+	if submission.Text != "Review the destroyed jet" {
+		t.Fatalf("submission text = %q", submission.Text)
+	}
+	if len(submission.Attachments) != 1 || submission.Attachments[0].Path != "/tmp/replacement.png" {
+		t.Fatalf("submission attachments = %#v, want only replacement", submission.Attachments)
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("composer after Enter = %q, want cleared", got.codexInput.Value())
+	}
+}
+
 func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
 	previousExporter := clipboardImageExporter
 	clipboardImageExporter = func() (string, error) {

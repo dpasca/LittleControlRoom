@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -649,6 +650,87 @@ func TestClaudeSubmitInputSteersActiveStream(t *testing.T) {
 	}
 	if got := session.entries[len(session.entries)-1]; got.Kind != TranscriptUser || got.Text != "keep going" {
 		t.Fatalf("last entry = %#v, want steered user transcript entry", got)
+	}
+}
+
+func TestBuildClaudeStreamInputIncludesImageAttachment(t *testing.T) {
+	imageData := mustGeneratedImageTestPNG(t)
+	imagePath := filepath.Join(t.TempDir(), "replacement.png")
+	if err := os.WriteFile(imagePath, imageData, 0o600); err != nil {
+		t.Fatalf("write image attachment: %v", err)
+	}
+
+	raw, err := buildClaudeStreamInput(Submission{
+		Text: "Review the replacement image",
+		Attachments: []Attachment{{
+			Kind: AttachmentLocalImage,
+			Path: imagePath,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("buildClaudeStreamInput() error = %v", err)
+	}
+
+	var payload struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type   string `json:"type"`
+				Text   string `json:"text"`
+				Source struct {
+					Type      string `json:"type"`
+					MediaType string `json:"media_type"`
+					Data      string `json:"data"`
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("unmarshal Claude stream input: %v", err)
+	}
+	if payload.Type != "user" || payload.Message.Role != "user" {
+		t.Fatalf("payload envelope = %#v, want user message", payload)
+	}
+	if len(payload.Message.Content) != 2 {
+		t.Fatalf("content blocks = %#v, want text plus image", payload.Message.Content)
+	}
+	if payload.Message.Content[0].Type != "text" || payload.Message.Content[0].Text != "Review the replacement image" {
+		t.Fatalf("text block = %#v", payload.Message.Content[0])
+	}
+	imageBlock := payload.Message.Content[1]
+	if imageBlock.Type != "image" || imageBlock.Source.Type != "base64" || imageBlock.Source.MediaType != "image/png" {
+		t.Fatalf("image block = %#v", imageBlock)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(imageBlock.Source.Data)
+	if err != nil {
+		t.Fatalf("decode image attachment: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, imageData) {
+		t.Fatalf("decoded image attachment differs from source")
+	}
+}
+
+func TestClaudeSubmitInputRejectsMissingImageBeforeChangingSessionState(t *testing.T) {
+	session := &claudeCodeSession{
+		projectPath:     "/tmp/demo",
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	err := session.SubmitInput(Submission{
+		Text: "Review this",
+		Attachments: []Attachment{{
+			Kind: AttachmentLocalImage,
+			Path: filepath.Join(t.TempDir(), "missing.png"),
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "read image attachment") {
+		t.Fatalf("SubmitInput() error = %v, want missing image error", err)
+	}
+	if session.busy || session.pendingSubmissions != 0 || len(session.entries) != 0 {
+		t.Fatalf("failed image submission changed session state: busy=%t pending=%d entries=%#v", session.busy, session.pendingSubmissions, session.entries)
 	}
 }
 
