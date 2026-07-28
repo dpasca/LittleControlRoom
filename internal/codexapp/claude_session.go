@@ -38,6 +38,7 @@ const (
 	claudeStatusTranscriptTemplate      = "Claude session %s\nModel: %s\nMode: %s\nSession file: %s"
 	claudeDefaultModelAlias             = "sonnet"
 	claudeDefaultReasoningEffort        = "medium"
+	claudeSyntheticModelPlaceholder     = "<synthetic>"
 	claudeRuntimeMCPListControlsTool    = "mcp__lcr_runtime__list_control_capabilities"
 	claudeRuntimeMCPDescribeControlTool = "mcp__lcr_runtime__describe_control_capability"
 	claudeRuntimeMCPProposeControlTool  = "mcp__lcr_runtime__propose_control_operation"
@@ -165,7 +166,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		runtimeMCPConfig: runtimeMCPConfig,
 		runtimeMCPPrompt: runtimeMCPPrompt,
 		claudeHome:       claudeHome,
-		pendingModel:     strings.TrimSpace(req.PendingModel),
+		pendingModel:     concreteClaudeModel(req.PendingModel),
 		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
 		status:           claudeSupportStatus,
 		closedCh:         make(chan struct{}),
@@ -263,9 +264,9 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		LastError:          s.lastError,
 		LastSystemNotice:   s.lastSystemNotice,
 		LastActivityAt:     s.lastActivityAt,
-		Model:              s.model,
+		Model:              concreteClaudeModel(s.model),
 		ReasoningEffort:    s.reasoningEffort,
-		PendingModel:       s.pendingModel,
+		PendingModel:       concreteClaudeModel(s.pendingModel),
 		PendingReasoning:   s.pendingReasoning,
 	}
 }
@@ -356,7 +357,7 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 		startStream bool
 	)
 	if s.cmd == nil {
-		model := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingModel), strings.TrimSpace(s.model))
+		model := firstNonEmptyTrimmed(concreteClaudeModel(s.pendingModel), concreteClaudeModel(s.model))
 		reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
 		sessionID := strings.TrimSpace(s.sessionID)
 		permissionMode, modeNotice := claudePermissionModeForPreset(s.preset)
@@ -490,7 +491,7 @@ func (s *claudeCodeSession) ShowStatus() error {
 	if sessionID == "" {
 		sessionID = "(not started yet)"
 	}
-	model := strings.TrimSpace(s.model)
+	model := concreteClaudeModel(s.model)
 	if model == "" {
 		model = "(default)"
 	}
@@ -542,7 +543,7 @@ func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 	models := append([]ModelOption(nil), claudeEmbeddedModelOptions()...)
 	extra := make([]ModelOption, 0, 2)
 	for _, model := range []string{s.pendingModel, s.model} {
-		model = strings.TrimSpace(model)
+		model = concreteClaudeModel(model)
 		if model == "" || claudeModelOptionExists(models, model) {
 			continue
 		}
@@ -566,7 +567,7 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 	if s.closed {
 		return fmt.Errorf("Claude Code session is closed")
 	}
-	s.pendingModel = strings.TrimSpace(model)
+	s.pendingModel = concreteClaudeModel(model)
 	s.pendingReasoning = strings.TrimSpace(reasoning)
 	if s.pendingModel == "" && s.pendingReasoning == "" {
 		s.lastSystemNotice = ""
@@ -880,7 +881,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 				PermissionMode string `json:"permissionMode"`
 			}
 			if err := json.Unmarshal(env.Message, &initMsg); err == nil {
-				if model := strings.TrimSpace(initMsg.Model); model != "" {
+				if model := concreteClaudeModel(initMsg.Model); model != "" {
 					s.model = model
 					s.pendingModel = ""
 				}
@@ -940,7 +941,7 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
-	if model := strings.TrimSpace(msg.Model); model != "" {
+	if model := concreteClaudeModel(msg.Model); model != "" {
 		s.model = model
 		s.pendingModel = ""
 	}
@@ -1335,8 +1336,8 @@ func claudeTurnArgs(resumeID, model, reasoning, permissionMode string) []string 
 	if strings.TrimSpace(resumeID) != "" {
 		args = append(args, "--resume", strings.TrimSpace(resumeID))
 	}
-	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+	if model = concreteClaudeModel(model); model != "" {
+		args = append(args, "--model", model)
 	}
 	if strings.TrimSpace(reasoning) != "" {
 		args = append(args, "--effort", strings.TrimSpace(reasoning))
@@ -1461,6 +1462,17 @@ func firstNonEmptyTrimmed(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// Claude Code uses <synthetic> as message.model for locally generated
+// assistant records such as usage-limit and model-access errors. It is a
+// protocol placeholder, not a model name accepted by the --model flag.
+func concreteClaudeModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == claudeSyntheticModelPlaceholder {
+		return ""
+	}
+	return model
 }
 
 func parseCCLineEntries(line string, toolCalls map[string]claudeToolCall, toolResults map[string]struct{}) ([]TranscriptEntry, string, string) {
