@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexcli"
 )
 
@@ -106,8 +107,9 @@ func TestClaudeAssistantBlocksDeduplicateRepeatedEvents(t *testing.T) {
 func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
+	var conversationTracker claudeartifact.ConversationTracker
 
-	assistantEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","effort":"xhigh","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults)
+	assistantEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","effort":"xhigh","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults, &conversationTracker)
 	if entryType != "assistant" {
 		t.Fatalf("assistant entry type = %q, want assistant", entryType)
 	}
@@ -127,7 +129,7 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 		t.Fatalf("bash tool entry = %#v, want structured bash tool", assistantEntries[2])
 	}
 
-	userEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"user","uuid":"msg_2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults)
+	userEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"user","uuid":"msg_2","parentUuid":"msg_1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults, &conversationTracker)
 	if entryType != "user" {
 		t.Fatalf("user entry type = %q, want user", entryType)
 	}
@@ -142,6 +144,83 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	}
 	if !strings.Contains(userEntries[0].Text, "$ make test") || !strings.Contains(userEntries[0].Text, "tests passed") {
 		t.Fatalf("user result text = %q, want reconstructed command output", userEntries[0].Text)
+	}
+}
+
+func TestClaudeLoadTranscriptHidesLocalCommandRecordsAndKeepsRepeatedPrompt(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","uuid":"previous-answer","message":{"role":"assistant","content":[{"type":"text","text":"Choose one of the open items."}]}}`,
+		`{"type":"user","isMeta":true,"uuid":"model-caveat","parentUuid":"previous-answer","promptId":"model-command","message":{"role":"user","content":"<local-command-caveat>generated local command records follow</local-command-caveat>"}}`,
+		`{"type":"user","uuid":"model-command","parentUuid":"model-caveat","promptId":"model-command","message":{"role":"user","content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"}}`,
+		`{"type":"user","uuid":"model-output","parentUuid":"model-command","promptId":"model-command","message":{"role":"user","content":"<local-command-stdout>Set model to Opus 5</local-command-stdout>"}}`,
+		`{"type":"file-history-snapshot"}`,
+		`{"type":"user","isMeta":true,"uuid":"effort-caveat","parentUuid":"model-output","promptId":"effort-command","message":{"role":"user","content":"<local-command-caveat>generated local command records follow</local-command-caveat>"}}`,
+		`{"type":"user","uuid":"effort-command","parentUuid":"effort-caveat","promptId":"effort-command","message":{"role":"user","content":"<command-name>/effort</command-name>\n<command-message>effort</command-message>\n<command-args></command-args>"}}`,
+		`{"type":"user","uuid":"effort-output","parentUuid":"effort-command","promptId":"effort-command","message":{"role":"user","content":"<local-command-stdout>Set effort level to xhigh</local-command-stdout>"}}`,
+		`{"type":"file-history-snapshot"}`,
+		`{"type":"user","uuid":"escaped-prompt","parentUuid":"effort-output","promptId":"first-prompt","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"which one you think is more improtant at this point"}}`,
+		`{"type":"file-history-snapshot"}`,
+		`{"type":"user","uuid":"continued-prompt","parentUuid":"effort-output","promptId":"second-prompt","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"which one you think is more improtant at this point"}}`,
+		`{"type":"assistant","uuid":"answer","parentUuid":"continued-prompt","message":{"role":"assistant","content":[{"type":"text","text":"Config plumbing is the most important."}]}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+	session.loadTranscriptLocked()
+
+	if got, want := len(session.entries), 4; got != want {
+		t.Fatalf("entry count = %d, want %d: %#v", got, want, session.entries)
+	}
+	if session.entries[0].Kind != TranscriptAgent || session.entries[0].Text != "Choose one of the open items." {
+		t.Fatalf("previous assistant entry = %#v", session.entries[0])
+	}
+	for i := 1; i <= 2; i++ {
+		if session.entries[i].Kind != TranscriptUser || session.entries[i].Text != "which one you think is more improtant at this point" {
+			t.Fatalf("repeated prompt entry %d = %#v", i, session.entries[i])
+		}
+	}
+	if session.entries[3].Kind != TranscriptAgent || session.entries[3].Text != "Config plumbing is the most important." {
+		t.Fatalf("answer entry = %#v", session.entries[3])
+	}
+	for _, entry := range session.entries {
+		if strings.Contains(entry.Text, "<command-") || strings.Contains(entry.Text, "<local-command-") {
+			t.Fatalf("local command XML leaked into transcript entry: %#v", entry)
+		}
+	}
+}
+
+func TestClaudeLoadTranscriptPreservesSubmittedXMLLookingText(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	lines := []string{
+		`{"type":"user","isMeta":true,"uuid":"command-caveat","message":{"role":"user","content":"internal metadata"}}`,
+		`{"type":"user","uuid":"command-output","parentUuid":"command-caveat","message":{"role":"user","content":"internal command output"}}`,
+		`{"type":"user","uuid":"real-prompt","parentUuid":"command-output","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"Please explain <command-name>/model</command-name>."}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+	session.loadTranscriptLocked()
+
+	if got, want := len(session.entries), 1; got != want {
+		t.Fatalf("entry count = %d, want %d: %#v", got, want, session.entries)
+	}
+	if got, want := session.entries[0].Text, "Please explain <command-name>/model</command-name>."; got != want {
+		t.Fatalf("submitted XML-looking text = %q, want %q", got, want)
 	}
 }
 

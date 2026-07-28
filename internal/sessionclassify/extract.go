@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/model"
 	"lcroom/internal/opencodesqlite"
 	"lcroom/internal/pasteplaceholder"
@@ -1124,8 +1125,9 @@ func extractClaudeCodeTranscript(path string) ([]TranscriptItem, error) {
 		return nil, err
 	}
 	items := make([]TranscriptItem, 0, len(lines))
+	var conversationTracker claudeartifact.ConversationTracker
 	for _, line := range lines {
-		if item, ok := extractClaudeCodeTranscriptItem(line); ok {
+		if item, ok := extractClaudeCodeTranscriptItem(line, &conversationTracker); ok {
 			items = append(items, item)
 		}
 	}
@@ -1524,8 +1526,9 @@ func extractClaudeCodeHeadTranscript(path string) ([]TranscriptItem, error) {
 		return nil, err
 	}
 	items := make([]TranscriptItem, 0, previewItemLimit)
+	var conversationTracker claudeartifact.ConversationTracker
 	for _, line := range lines {
-		item, ok := extractClaudeCodeTranscriptItem(line)
+		item, ok := extractClaudeCodeTranscriptItem(line, &conversationTracker)
 		if !ok {
 			continue
 		}
@@ -1537,10 +1540,16 @@ func extractClaudeCodeHeadTranscript(path string) ([]TranscriptItem, error) {
 	return finalizeTranscript(items), nil
 }
 
-func extractClaudeCodeTranscriptItem(line string) (TranscriptItem, bool) {
+func extractClaudeCodeTranscriptItem(line string, conversationTracker *claudeartifact.ConversationTracker) (TranscriptItem, bool) {
 	var raw struct {
-		Type    string `json:"type"`
-		IsMeta  bool   `json:"isMeta"`
+		Type         string `json:"type"`
+		IsMeta       bool   `json:"isMeta"`
+		UUID         string `json:"uuid"`
+		ParentUUID   string `json:"parentUuid"`
+		PromptSource string `json:"promptSource"`
+		Origin       struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
 		Message struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
@@ -1549,12 +1558,26 @@ func extractClaudeCodeTranscriptItem(line string) (TranscriptItem, bool) {
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
 		return TranscriptItem{}, false
 	}
+	conversationalUser := true
+	if conversationTracker != nil {
+		conversationalUser = conversationTracker.Observe(claudeartifact.TranscriptEntry{
+			Type:         raw.Type,
+			UUID:         raw.UUID,
+			ParentUUID:   raw.ParentUUID,
+			IsMeta:       raw.IsMeta,
+			PromptSource: raw.PromptSource,
+			OriginKind:   raw.Origin.Kind,
+		})
+	}
 	if raw.IsMeta {
 		return TranscriptItem{}, false
 	}
 
 	switch raw.Type {
 	case "user":
+		if !conversationalUser {
+			return TranscriptItem{}, false
+		}
 		text := extractClaudeCodeTextContent(raw.Message.Content)
 		if text == "" {
 			return TranscriptItem{}, false
