@@ -109,7 +109,7 @@ func codexRuntimeMCPConfigOverrides(req LaunchRequest) []string {
 	}
 }
 
-func managedPlaywrightMCPExecutablePath(req LaunchRequest) (string, error) {
+func lcrCLIExecutablePath(req LaunchRequest) (string, error) {
 	if configured := strings.TrimSpace(req.CLIExecutablePath); configured != "" {
 		return configured, nil
 	}
@@ -122,7 +122,7 @@ func managedPlaywrightMCPCommand(req LaunchRequest) (string, []string, bool) {
 		return "", nil, false
 	}
 
-	executablePath, err := managedPlaywrightMCPExecutablePath(req)
+	executablePath, err := lcrCLIExecutablePath(req)
 	if err != nil || strings.TrimSpace(executablePath) == "" {
 		return "", nil, false
 	}
@@ -170,7 +170,7 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 	if projectPath == "" {
 		return "", nil, false
 	}
-	executablePath, err := managedPlaywrightMCPExecutablePath(req)
+	executablePath, err := lcrCLIExecutablePath(req)
 	if err != nil || strings.TrimSpace(executablePath) == "" {
 		return "", nil, false
 	}

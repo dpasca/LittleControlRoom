@@ -48,8 +48,12 @@ func claudeRuntimeMCPLaunchOptions(req LaunchRequest) (config, prompt string, er
 	return config, prompt, nil
 }
 
-func claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt string) []string {
+func claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt, safetySettings string) []string {
 	args := claudeTurnArgs(resumeID, model, reasoning, permissionMode)
+	safetySettings = strings.TrimSpace(safetySettings)
+	if safetySettings != "" {
+		args = append(args, "--settings", safetySettings)
+	}
 	runtimeMCPConfig = strings.TrimSpace(runtimeMCPConfig)
 	if runtimeMCPConfig == "" {
 		return args

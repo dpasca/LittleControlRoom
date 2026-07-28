@@ -60,6 +60,7 @@ type claudeCodeSession struct {
 	runtimeManager   *projectrun.Manager
 	runtimeMCPConfig string
 	runtimeMCPPrompt string
+	safetySettings   string
 
 	mu                 sync.Mutex
 	claudeHome         string
@@ -158,6 +159,10 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("configure Claude Code runtime MCP: %w", err)
 	}
+	safetySettings, err := claudeSafetyHookSettings(req)
+	if err != nil {
+		return nil, fmt.Errorf("configure Claude Code destructive-command guard: %w", err)
+	}
 
 	s := &claudeCodeSession{
 		projectPath:      req.ProjectPath,
@@ -167,6 +172,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		runtimeManager:   req.RuntimeManager,
 		runtimeMCPConfig: runtimeMCPConfig,
 		runtimeMCPPrompt: runtimeMCPPrompt,
+		safetySettings:   safetySettings,
 		claudeHome:       claudeHome,
 		pendingModel:     concreteClaudeModel(req.PendingModel),
 		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
@@ -370,7 +376,7 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cmd, stdin, stdout, stderr, err = startClaudeTurnWithRuntimeMCP(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy, s.runtimeMCPConfig, s.runtimeMCPPrompt)
+		cmd, stdin, stdout, stderr, err = startClaudeTurnWithRuntimeMCP(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy, s.runtimeMCPConfig, s.runtimeMCPPrompt, s.safetySettings)
 		if err != nil {
 			cancel()
 			s.mu.Unlock()
@@ -1283,12 +1289,11 @@ func claudePIDSessionTurnStartedAt(session claudeActivePIDSession) time.Time {
 	return time.Time{}
 }
 
-func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
-	return startClaudeTurnWithRuntimeMCP(ctx, projectPath, resumeID, model, reasoning, permissionMode, policy, "", "")
-}
-
-func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, runtimeMCPConfig, runtimeMCPPrompt string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
-	args := claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt)
+func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, runtimeMCPConfig, runtimeMCPPrompt, safetySettings string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+	if strings.TrimSpace(safetySettings) == "" {
+		return nil, nil, nil, nil, fmt.Errorf("Claude Code safety-hook settings are required")
+	}
+	args := claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt, safetySettings)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectPath

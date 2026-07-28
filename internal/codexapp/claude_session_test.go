@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexcli"
 )
@@ -518,7 +520,8 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		config = `{"mcpServers":{"lcr_runtime":{"type":"stdio","command":"/tmp/lcroom","args":["runtime-mcp"]}}}`
 		prompt = "Follow the shared LCR TODO capture policy."
 	)
-	got := claudeTurnArgsWithRuntimeMCP("ses-demo", "sonnet", "high", "acceptEdits", config, prompt)
+	const safetySettings = `{"hooks":{"PreToolUse":[]}}`
+	got := claudeTurnArgsWithRuntimeMCP("ses-demo", "sonnet", "high", "acceptEdits", config, prompt, safetySettings)
 	want := []string{
 		"-p",
 		"--verbose",
@@ -528,6 +531,7 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		"--resume", "ses-demo",
 		"--model", "sonnet",
 		"--effort", "high",
+		"--settings", safetySettings,
 		"--mcp-config", config,
 		"--append-system-prompt", prompt,
 		"--allowedTools", strings.Join([]string{
@@ -550,8 +554,9 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 }
 
 func TestClaudeTurnArgsOmitRuntimeMCPFlagsWithoutConfig(t *testing.T) {
-	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", "  ", "ignored instructions")
-	want := claudeTurnArgs("", "", "", "acceptEdits")
+	const safetySettings = `{"hooks":{"PreToolUse":[]}}`
+	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", "  ", "ignored instructions", safetySettings)
+	want := append(claudeTurnArgs("", "", "", "acceptEdits"), "--settings", safetySettings)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
 	}
@@ -559,9 +564,10 @@ func TestClaudeTurnArgsOmitRuntimeMCPFlagsWithoutConfig(t *testing.T) {
 
 func TestClaudeTurnArgsKeepRuntimeMCPWithoutTODOPreapproval(t *testing.T) {
 	const config = `{"mcpServers":{"lcr_runtime":{"type":"stdio","command":"/tmp/lcroom"}}}`
-	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", config, "")
+	const safetySettings = `{"hooks":{"PreToolUse":[]}}`
+	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", config, "", safetySettings)
 	want := append(
-		claudeTurnArgs("", "", "", "acceptEdits"),
+		append(claudeTurnArgs("", "", "", "acceptEdits"), "--settings", safetySettings),
 		"--mcp-config", config,
 		"--allowedTools", strings.Join([]string{
 			claudeRuntimeMCPListControlsTool,
@@ -572,6 +578,24 @@ func TestClaudeTurnArgsKeepRuntimeMCPWithoutTODOPreapproval(t *testing.T) {
 	)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+	}
+}
+
+func TestStartClaudeTurnFailsClosedWithoutSafetySettings(t *testing.T) {
+	_, _, _, _, err := startClaudeTurnWithRuntimeMCP(
+		context.Background(),
+		t.TempDir(),
+		"",
+		"sonnet",
+		"medium",
+		"bypassPermissions",
+		browserctl.Policy{},
+		"",
+		"",
+		"",
+	)
+	if err == nil || !strings.Contains(err.Error(), "safety-hook settings are required") {
+		t.Fatalf("startClaudeTurnWithRuntimeMCP() error = %v, want missing safety-hook rejection", err)
 	}
 }
 

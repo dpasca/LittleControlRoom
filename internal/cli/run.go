@@ -19,6 +19,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/buildinfo"
+	"lcroom/internal/claudehook"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/demorecord"
@@ -62,6 +63,9 @@ func Run(programName string, args []string) int {
 	}
 	if subcmd == "runtime-mcp" {
 		return runRuntimeMCP(args[1:])
+	}
+	if subcmd == claudehook.Subcommand {
+		return claudehook.Run(os.Stdin, os.Stderr)
 	}
 	if subcmd == "browser" {
 		return runBrowser(args[1:])

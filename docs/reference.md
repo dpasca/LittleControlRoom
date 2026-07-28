@@ -146,8 +146,10 @@ session. Its PATH-pinned `rm` shim permits plain `rm -rf /tmp/<name>` only when
 every operand is unambiguous and its parent resolves below `/tmp`; other named
 `rm` calls are rejected. Codex exec-policy rules separately forbid absolute
 executables and common wrapper forms that could bypass the shim. This does not
-confine reads or ordinary writes to the current project. LCAgent keeps its
-stricter policy and denies every direct `rm` invocation.
+confine reads or ordinary writes to the current project. Embedded Claude Code
+receives an LCR-owned Bash `PreToolUse` hook that denies direct `rm` before
+execution in every permission mode, including YOLO's `bypassPermissions`.
+LCAgent keeps its stricter policy and denies every direct `rm` invocation.
 
 The guard is deliberately narrower than a security sandbox. Other deletion
 mechanisms, an absolute executable hidden inside a script, or deliberate PATH
