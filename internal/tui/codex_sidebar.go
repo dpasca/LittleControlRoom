@@ -1153,6 +1153,7 @@ func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLin
 	modelProvider := strings.TrimSpace(snapshot.ModelProvider)
 	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)
 	showPendingAsCurrent := codexSnapshotShowsPendingModelAsCurrent(snapshot)
+	pendingMatchesCurrent := embeddedSidebarPendingModelMatchesCurrent(snapshot)
 	if showPendingAsCurrent {
 		model = strings.TrimSpace(snapshot.PendingModel)
 		modelProvider = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModelProvider), modelProvider)
@@ -1170,7 +1171,7 @@ func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLin
 	} else if reasoning != "" {
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, maxLines)...)
 	}
-	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
+	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent && !pendingMatchesCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
 		if snapshot.Provider == codexapp.ProviderLCAgent {
@@ -1184,6 +1185,24 @@ func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLin
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Next", next, detailWarningStyle, width, maxLines)...)
 	}
 	return rows
+}
+
+func embeddedSidebarPendingModelMatchesCurrent(snapshot codexapp.Snapshot) bool {
+	currentModel := strings.TrimSpace(snapshot.Model)
+	pendingModel := strings.TrimSpace(snapshot.PendingModel)
+	if !codexapp.ModelNamesEquivalent(snapshot.Provider, currentModel, pendingModel) {
+		return false
+	}
+
+	currentProvider := strings.TrimSpace(snapshot.ModelProvider)
+	pendingProvider := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModelProvider), currentProvider)
+	if !strings.EqualFold(currentProvider, pendingProvider) {
+		return false
+	}
+
+	currentReasoning := strings.TrimSpace(snapshot.ReasoningEffort)
+	pendingReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), currentReasoning)
+	return strings.EqualFold(currentReasoning, pendingReasoning)
 }
 
 func (m Model) renderEmbeddedSidebarQualitySection(snapshot codexapp.Snapshot, width int) []string {

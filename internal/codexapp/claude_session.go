@@ -39,6 +39,9 @@ const (
 	claudeSafePresetMappingNotice       = "Embedded Claude Code currently maps Safe/Full Auto presets to Claude's acceptEdits mode until Claude-specific approval prompts are wired."
 	claudeYoloPresetMappingNotice       = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
 	claudeDefaultModelAlias             = "sonnet"
+	claudeFableModelAlias               = "fable"
+	claudeOpusModelAlias                = "opus"
+	claudeHaikuModelAlias               = "haiku"
 	claudeDefaultReasoningEffort        = "medium"
 	claudeSyntheticModelPlaceholder     = "<synthetic>"
 	claudeRuntimeMCPListControlsTool    = "mcp__lcr_runtime__list_control_capabilities"
@@ -828,24 +831,24 @@ func claudeEmbeddedModelOptions() []ModelOption {
 			IsDefault:                 true,
 		},
 		{
-			ID:                        "fable",
-			Model:                     "fable",
+			ID:                        claudeFableModelAlias,
+			Model:                     claudeFableModelAlias,
 			DisplayName:               "Fable",
 			Description:               "Latest Claude Fable alias.",
 			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
 			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
 		},
 		{
-			ID:                        "opus",
-			Model:                     "opus",
+			ID:                        claudeOpusModelAlias,
+			Model:                     claudeOpusModelAlias,
 			DisplayName:               "Opus",
 			Description:               "Latest Claude Opus alias for deeper reasoning.",
 			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
 			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
 		},
 		{
-			ID:                        "haiku",
-			Model:                     "haiku",
+			ID:                        claudeHaikuModelAlias,
+			Model:                     claudeHaikuModelAlias,
 			DisplayName:               "Haiku",
 			Description:               "Latest Claude Haiku alias for faster, lighter turns.",
 			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
@@ -877,6 +880,32 @@ func claudeModelOptionExists(models []ModelOption, id string) bool {
 		}
 	}
 	return false
+}
+
+func claudeModelNamesEquivalent(left, right string) bool {
+	leftFamily, leftIsAlias := claudeModelAliasFamily(left)
+	rightFamily, rightIsAlias := claudeModelAliasFamily(right)
+	return (leftIsAlias || rightIsAlias) &&
+		leftFamily != "" &&
+		leftFamily == rightFamily
+}
+
+func claudeModelAliasFamily(model string) (string, bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	for _, alias := range []string{
+		claudeDefaultModelAlias,
+		claudeFableModelAlias,
+		claudeOpusModelAlias,
+		claudeHaikuModelAlias,
+	} {
+		if model == alias {
+			return alias, true
+		}
+		if strings.HasPrefix(model, "claude-"+alias+"-") {
+			return alias, false
+		}
+	}
+	return "", false
 }
 
 func (s *claudeCodeSession) RespondApproval(_ ApprovalDecision) error {

@@ -80,6 +80,24 @@ func (p Provider) SourceTag() string {
 	}
 }
 
+// ModelNamesEquivalent reports whether two model names identify the same
+// effective model for a provider. Provider aliases are handled without
+// treating distinct concrete model versions as interchangeable.
+func ModelNamesEquivalent(provider Provider, left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if strings.EqualFold(left, right) {
+		return true
+	}
+	if provider.Normalized() == ProviderClaudeCode {
+		return claudeModelNamesEquivalent(left, right)
+	}
+	return false
+}
+
 type TranscriptEntry struct {
 	ItemID         string
 	TurnID         string

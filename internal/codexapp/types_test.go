@@ -153,6 +153,74 @@ func (s *fakeSession) ReconcileBusyState() error {
 	return nil
 }
 
+func TestModelNamesEquivalent(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider Provider
+		left     string
+		right    string
+		want     bool
+	}{
+		{
+			name:     "exact Codex model",
+			provider: ProviderCodex,
+			left:     "gpt-5.6",
+			right:    " GPT-5.6 ",
+			want:     true,
+		},
+		{
+			name:     "Claude Fable alias and resolved model",
+			provider: ProviderClaudeCode,
+			left:     "claude-fable-5",
+			right:    "fable",
+			want:     true,
+		},
+		{
+			name:     "Claude alias comparison is symmetric",
+			provider: ProviderClaudeCode,
+			left:     "OPUS",
+			right:    "claude-opus-5",
+			want:     true,
+		},
+		{
+			name:     "distinct Claude families",
+			provider: ProviderClaudeCode,
+			left:     "claude-fable-5",
+			right:    "opus",
+			want:     false,
+		},
+		{
+			name:     "distinct concrete Claude versions",
+			provider: ProviderClaudeCode,
+			left:     "claude-sonnet-4-5",
+			right:    "claude-sonnet-4-6",
+			want:     false,
+		},
+		{
+			name:     "Claude names under another provider",
+			provider: ProviderOpenCode,
+			left:     "claude-fable-5",
+			right:    "fable",
+			want:     false,
+		},
+		{
+			name:     "blank names are unknown",
+			provider: ProviderClaudeCode,
+			left:     "",
+			right:    "",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ModelNamesEquivalent(tt.provider, tt.left, tt.right); got != tt.want {
+				t.Fatalf("ModelNamesEquivalent(%q, %q, %q) = %t, want %t", tt.provider, tt.left, tt.right, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTokenUsageSnapshotEstimatedContextUsesLastTurnPromptAndVisibleOutput(t *testing.T) {
 	usage := &TokenUsageSnapshot{
 		Last: TokenUsageBreakdown{

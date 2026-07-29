@@ -584,6 +584,51 @@ func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarHidesEquivalentClaudeAliasAsNextModel(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderClaudeCode
+	snapshot.Model = "claude-fable-5"
+	snapshot.ReasoningEffort = "high"
+	snapshot.PendingModel = "fable"
+	snapshot.PendingReasoning = "high"
+
+	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
+	if !strings.Contains(rendered, "Model claude-fable-5 / high") {
+		t.Fatalf("sidebar model rows should keep the concrete active Claude model:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Next") {
+		t.Fatalf("equivalent Claude alias should not be shown as a next-model change:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarShowsClaudeAliasWhenReasoningChanges(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderClaudeCode
+	snapshot.Model = "claude-fable-5"
+	snapshot.ReasoningEffort = "high"
+	snapshot.PendingModel = "fable"
+	snapshot.PendingReasoning = "max"
+
+	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
+	if !strings.Contains(rendered, "Next fable / max") {
+		t.Fatalf("equivalent Claude alias with a new reasoning effort should stay visible:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarShowsDifferentClaudeAliasAsNextModel(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderClaudeCode
+	snapshot.Model = "claude-fable-5"
+	snapshot.ReasoningEffort = "high"
+	snapshot.PendingModel = "opus"
+	snapshot.PendingReasoning = "high"
+
+	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
+	if !strings.Contains(rendered, "Next opus / high") {
+		t.Fatalf("different Claude alias should be shown as a next-model change:\n%s", rendered)
+	}
+}
+
 func TestEmbeddedSidebarShowsReplayedLCAgentModelBeforeNextModel(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Provider = codexapp.ProviderLCAgent
