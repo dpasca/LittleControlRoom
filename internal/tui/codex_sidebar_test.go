@@ -128,6 +128,35 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsClaudeBackgroundTasksAsActiveProcesses(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Provider = codexapp.ProviderClaudeCode
+	snapshot.BackgroundTasks = []codexapp.BackgroundTaskSnapshot{{
+		ID:        "task-bg-1",
+		ToolUseID: "toolu_bg",
+		Source:    "background_shell",
+		Tool:      "Bash",
+		Command:   "./telemetry --frames 2900",
+		Status:    "running",
+	}}
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarProcessSection(snapshot, projectPath, 46), "\n"))
+	for _, want := range []string{"Active Processes", "bg", "./telemetry --frames 2900", "task-bg-1"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("background-task process section missing %q:\n%s", want, rendered)
+		}
+	}
+
+	detail := ansi.Strip(strings.Join(m.embeddedSidebarProcessDetailRows(snapshot, projectPath, 46, 0), "\n"))
+	for _, want := range []string{"Status", "running", "Task", "task-bg-1", "Tool", "Bash", "Command", "./telemetry --frames 2900"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("background-task process detail missing %q:\n%s", want, detail)
+		}
+	}
+}
+
 func TestEmbeddedSidebarDiffUsesVisibleProjectWhenSnapshotPathDiffers(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	snapshotPath := "/tmp/lcr-sidebar-demo-from-snapshot"

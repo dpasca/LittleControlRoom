@@ -1,6 +1,6 @@
 # Claude Code Footprint Discovery
 
-Date observed: 2026-03-31; context/compaction fields re-verified 2026-07-29 (Asia/Tokyo)
+Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29 (Asia/Tokyo)
 Host: macOS user-home environment
 
 This document summarizes observed Claude Code on-disk artifacts and the detector assumptions Little Control Room currently relies on.
@@ -45,6 +45,7 @@ Useful stable fields include:
 - `timestamp`
 - `subtype`
 - `toolUseResult`
+- `tool_use_result` in stream-JSON output
 - `origin.kind`
 - `uuid` / `parentUuid`
 - `isMeta`
@@ -121,6 +122,11 @@ Observed completion statuses worth treating as terminal:
 - `errored`
 - `cancelled` / `canceled`
 - `interrupted`
+- `stopped`
+
+`stopped` is how a later Claude process reports a background command for which
+the previous process left no completion record. It is terminal for turn
+detection, but it is not evidence that the command succeeded.
 
 ## 5. Important detector implication
 
@@ -133,6 +139,14 @@ In particular:
 - temp `tasks/*.output` files may continue changing while the parent log is idle
 
 Because of that, latest-turn detection should not rely only on the final top-level JSONL entry type.
+
+The same distinction applies to an embedded stream-JSON process. A `result`
+record closes one model-response boundary; it does not mean provider-declared
+background work has finished. While a structured task id remains pending, LCR
+keeps the Claude stream and its process group alive, reports the task in
+**Active Processes**, and waits for a terminal task notification plus Claude's
+follow-up response. If the owning Claude process exits first, the task is shown
+as unresolved instead of treating the session as ready.
 
 ## 6. Practical detection strategy
 
@@ -150,6 +164,9 @@ Recommended filesystem-first approach:
    `isCompactSummary == true`.
 7. Use live PID metadata only as a fallback when structured transcript state is missing or already incomplete; do not override an explicitly completed turn just because the CLI process is still alive. For an externally owned session, separate process ownership from turn activity using the PID file's structured `status`.
 8. Invalidate parser caches when either the parent session JSONL mtime or auxiliary artifact mtimes change, preserving sub-second precision so same-second Claude writes do not get stuck behind stale cached parses.
+9. For an LCR-owned stream, keep the provider process alive across an
+   intermediate `result` while any structured async task remains pending. Do
+   not infer completion from the model's prose.
 
 ## 7. Notes
 

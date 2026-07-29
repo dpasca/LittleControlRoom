@@ -69,6 +69,9 @@ func codexSnapshotCanSubmitBusyInput(snapshot codexapp.Snapshot) bool {
 	if !snapshot.Busy {
 		return true
 	}
+	if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode && len(snapshot.BackgroundTasks) > 0 {
+		return false
+	}
 	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
 		return snapshot.Phase == codexapp.SessionPhaseRunning || codexSnapshotBrowserWaitingForUser(snapshot)
 	}

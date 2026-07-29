@@ -26,6 +26,7 @@ import (
 const (
 	claudeThinkingStatus                = "Claude Code is thinking..."
 	claudeFinishingStatus               = "Claude Code is finalizing the current turn..."
+	claudeBackgroundTaskUnresolved      = "Claude Code exited before its background work reported completion"
 	claudeReadyStatus                   = "Claude Code session ready"
 	claudeOpenElsewhereStatus           = "Claude Code session open in another terminal"
 	claudeFreshReadyStatus              = "Fresh embedded Claude Code session ready. Send a prompt to start it."
@@ -95,11 +96,13 @@ type claudeCodeSession struct {
 	closedOnce         sync.Once
 	modeNoticeShown    bool
 
-	assistantBlocks    map[string]map[string]struct{}
-	toolCalls          map[string]claudeToolCall
-	toolResults        map[string]struct{}
-	transcriptRevision uint64
-	transcriptCache    transcriptExportCache
+	assistantBlocks     map[string]map[string]struct{}
+	toolCalls           map[string]claudeToolCall
+	toolResults         map[string]struct{}
+	backgroundTasks     map[string]BackgroundTaskSnapshot
+	backgroundTaskOrder []string
+	transcriptRevision  uint64
+	transcriptCache     transcriptExportCache
 }
 
 type claudeToolCall struct {
@@ -230,6 +233,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		assistantBlocks:  make(map[string]map[string]struct{}),
 		toolCalls:        make(map[string]claudeToolCall),
 		toolResults:      make(map[string]struct{}),
+		backgroundTasks:  make(map[string]BackgroundTaskSnapshot),
 	}
 
 	if !req.ForceNew {
@@ -251,6 +255,9 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	s.mu.Lock()
 	s.loadTranscriptLocked()
 	s.refreshActiveLocked()
+	if !s.busy && !s.externalTurnActive {
+		s.markBackgroundTasksUnresolvedLocked()
+	}
 	s.updateStatusLocked()
 	s.mu.Unlock()
 
@@ -326,6 +333,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		PendingModel:       concreteClaudeModel(s.pendingModel),
 		PendingReasoning:   s.pendingReasoning,
 		TokenUsage:         cloneTokenUsageSnapshot(s.tokenUsage),
+		BackgroundTasks:    s.backgroundTaskSnapshotsLocked(),
 	}
 }
 
@@ -347,7 +355,7 @@ func (s *claudeCodeSession) phaseLocked() SessionPhase {
 	case s.compacting:
 		phase = SessionPhaseReconciling
 	case s.busy:
-		if s.pendingSubmissions > 0 {
+		if s.pendingSubmissions > 0 || s.runningBackgroundTaskCountLocked() > 0 {
 			phase = SessionPhaseRunning
 		} else {
 			phase = SessionPhaseFinishing
@@ -424,6 +432,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			return err
 		}
 	}
+	s.clearUnresolvedBackgroundTasksLocked()
 
 	var (
 		ctx         context.Context
@@ -549,6 +558,8 @@ func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode
 		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
 	case mode == claudeSubmissionCompact && s.busy:
 		return fmt.Errorf("Claude Code cannot compact while a turn is active")
+	case s.busy && s.pendingSubmissions == 0 && s.runningBackgroundTaskCountLocked() > 0:
+		return fmt.Errorf("Claude Code background work is still running")
 	case s.busy && s.pendingSubmissions == 0:
 		return fmt.Errorf("Claude Code is finishing the current turn")
 	default:
@@ -562,6 +573,9 @@ func (s *claudeCodeSession) ShowStatus() error {
 
 	s.loadTranscriptLocked()
 	s.refreshActiveLocked()
+	if !s.busy && !s.externalTurnActive {
+		s.markBackgroundTasksUnresolvedLocked()
+	}
 	s.updateStatusLocked()
 
 	sessionID := strings.TrimSpace(s.sessionID)
@@ -918,6 +932,9 @@ func (s *claudeCodeSession) RefreshBusyElsewhere() error {
 	defer s.mu.Unlock()
 	s.loadTranscriptLocked()
 	s.refreshActiveLocked()
+	if !s.busy && !s.externalTurnActive {
+		s.markBackgroundTasksUnresolvedLocked()
+	}
 	s.updateStatusLocked()
 	s.notifyAsync()
 	return nil
@@ -974,12 +991,24 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	}
 	s.loadTranscriptLocked()
 	s.refreshActiveLocked()
+	pendingBackgroundTasks := len(s.backgroundTasks)
+	if interrupted {
+		s.backgroundTasks = make(map[string]BackgroundTaskSnapshot)
+		s.backgroundTaskOrder = nil
+		pendingBackgroundTasks = 0
+	} else if pendingBackgroundTasks > 0 {
+		s.markBackgroundTasksUnresolvedLocked()
+	}
 	if !s.busy && !s.externalTurnActive {
 		s.busySince = time.Time{}
 	}
 
 	if compactCommand != nil {
 		result, compactErr := claudeCompactionCompletion(compactCommand, waitErr, stdoutErr, stderrErr)
+		if compactErr == nil && pendingBackgroundTasks > 0 {
+			result = CompactionResult{}
+			compactErr = errors.New(claudeBackgroundTaskUnresolved)
+		}
 		s.compactCommand = nil
 		s.compacting = false
 		if compactErr != nil {
@@ -1008,6 +1037,8 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code output: %v", stdoutErr))
 		case stderrErr != nil:
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code stderr: %v", stderrErr))
+		case pendingBackgroundTasks > 0:
+			s.appendSystemErrorLocked(claudeBackgroundTaskUnresolved)
 		default:
 			s.lastError = ""
 			s.lastSystemNotice = "Claude Code turn completed."
@@ -1121,6 +1152,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 
 	var stdinToClose io.WriteCloser
 	s.mu.Lock()
+	backgroundTaskStateChanged := s.observeClaudeBackgroundTaskEventsLocked(line, time.Now())
 
 	if effort := strings.TrimSpace(env.Effort); effort != "" {
 		s.reasoningEffort = effort
@@ -1192,12 +1224,15 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.lastError = ""
 			s.lastSystemNotice = claudeInterruptNotice
 		}
-		if s.pendingSubmissions == 0 && s.stdin != nil {
+		if s.pendingSubmissions == 0 && s.stdin != nil && s.runningBackgroundTaskCountLocked() == 0 {
 			stdinToClose = s.stdin
 			s.stdin = nil
 		}
 		s.updateStatusLocked()
 	default:
+	}
+	if backgroundTaskStateChanged {
+		s.updateStatusLocked()
 	}
 
 	s.touchLocked()
@@ -1444,6 +1479,141 @@ func (s *claudeCodeSession) touchLocked() {
 	s.lastActivityAt = time.Now()
 }
 
+func (s *claudeCodeSession) observeClaudeBackgroundTaskEventsLocked(line string, fallback time.Time) bool {
+	if s.backgroundTasks == nil {
+		s.backgroundTasks = make(map[string]BackgroundTaskSnapshot)
+	}
+	return applyClaudeBackgroundTaskEvents(s.backgroundTasks, &s.backgroundTaskOrder, s.toolCalls, line, fallback)
+}
+
+func applyClaudeBackgroundTaskEvents(
+	tasks map[string]BackgroundTaskSnapshot,
+	order *[]string,
+	toolCalls map[string]claudeToolCall,
+	line string,
+	fallback time.Time,
+) bool {
+	events := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+	if len(events) == 0 {
+		return false
+	}
+	changed := false
+	for _, event := range events {
+		taskID := strings.TrimSpace(event.TaskID)
+		if taskID == "" {
+			continue
+		}
+		at := event.At
+		if at.IsZero() {
+			at = fallback
+		}
+		switch event.Kind {
+		case claudeartifact.AsyncTaskLaunched:
+			task, exists := tasks[taskID]
+			if !exists {
+				task.ID = taskID
+				task.StartedAt = at
+				*order = append(*order, taskID)
+			}
+			task.ToolUseID = firstNonEmptyTrimmed(event.ToolUseID, task.ToolUseID)
+			task.Source = firstNonEmptyTrimmed(event.Source, task.Source)
+			task.Status = firstNonEmptyTrimmed(event.Status, "running")
+			task.UpdatedAt = at
+			if call, ok := toolCalls[task.ToolUseID]; ok {
+				task.Tool = firstNonEmptyTrimmed(call.Name, task.Tool)
+				task.Command = firstNonEmptyTrimmed(call.Command, call.Summary, task.Command)
+			}
+			tasks[taskID] = task
+			changed = true
+		case claudeartifact.AsyncTaskUpdated:
+			task, exists := tasks[taskID]
+			if claudeartifact.IsTerminalTaskStatus(event.Status) {
+				if exists {
+					delete(tasks, taskID)
+					*order = removeClaudeBackgroundTaskID(*order, taskID)
+					changed = true
+				}
+				continue
+			}
+			if !exists {
+				task.ID = taskID
+				task.StartedAt = at
+				*order = append(*order, taskID)
+			}
+			task.Status = firstNonEmptyTrimmed(event.Status, task.Status, "running")
+			task.OutputPath = firstNonEmptyTrimmed(event.OutputPath, task.OutputPath)
+			task.Summary = firstNonEmptyTrimmed(event.Summary, task.Summary)
+			task.UpdatedAt = at
+			tasks[taskID] = task
+			changed = true
+		}
+	}
+	return changed
+}
+
+func removeClaudeBackgroundTaskID(order []string, taskID string) []string {
+	for i, candidate := range order {
+		if candidate == taskID {
+			return append(order[:i], order[i+1:]...)
+		}
+	}
+	return order
+}
+
+func (s *claudeCodeSession) runningBackgroundTaskCountLocked() int {
+	count := 0
+	for _, task := range s.backgroundTasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "unresolved") {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *claudeCodeSession) markBackgroundTasksUnresolvedLocked() {
+	for taskID, task := range s.backgroundTasks {
+		if strings.EqualFold(strings.TrimSpace(task.Status), "unresolved") {
+			continue
+		}
+		task.Status = "unresolved"
+		task.UpdatedAt = time.Now()
+		s.backgroundTasks[taskID] = task
+	}
+}
+
+func (s *claudeCodeSession) clearUnresolvedBackgroundTasksLocked() {
+	for taskID, task := range s.backgroundTasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "unresolved") {
+			continue
+		}
+		delete(s.backgroundTasks, taskID)
+		s.backgroundTaskOrder = removeClaudeBackgroundTaskID(s.backgroundTaskOrder, taskID)
+	}
+	if len(s.backgroundTasks) == 0 {
+		s.backgroundTaskOrder = nil
+	}
+}
+
+func (s *claudeCodeSession) backgroundTaskSnapshotsLocked() []BackgroundTaskSnapshot {
+	if len(s.backgroundTasks) == 0 {
+		return nil
+	}
+	tasks := make([]BackgroundTaskSnapshot, 0, len(s.backgroundTasks))
+	for _, taskID := range s.backgroundTaskOrder {
+		if task, ok := s.backgroundTasks[taskID]; ok {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
+}
+
+func formatBackgroundTaskCount(count int) string {
+	if count == 1 {
+		return "1 background task"
+	}
+	return fmt.Sprintf("%d background tasks", count)
+}
+
 func (s *claudeCodeSession) updateStatusLocked() {
 	switch {
 	case s.closed:
@@ -1455,6 +1625,8 @@ func (s *claudeCodeSession) updateStatusLocked() {
 	case s.busy:
 		if s.pendingSubmissions > 0 {
 			s.status = claudeThinkingStatus
+		} else if count := s.runningBackgroundTaskCountLocked(); count > 0 {
+			s.status = fmt.Sprintf("Claude Code has %s running", formatBackgroundTaskCount(count))
 		} else {
 			s.status = claudeFinishingStatus
 		}
@@ -1462,6 +1634,8 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		s.status = claudeOpenElsewhereStatus
 	case strings.TrimSpace(s.lastError) != "":
 		s.status = "Claude Code error"
+	case len(s.backgroundTasks) > 0:
+		s.status = claudeBackgroundTaskUnresolved
 	case s.started:
 		s.status = claudeReadyStatus
 	default:
@@ -1539,6 +1713,8 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	var entries []TranscriptEntry
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
+	backgroundTasks := make(map[string]BackgroundTaskSnapshot)
+	backgroundTaskOrder := []string{}
 	var conversationTracker claudeartifact.ConversationTracker
 	lastType := ""
 	latestReasoningEffort := ""
@@ -1549,6 +1725,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 		line := sc.Text()
 		lineEntries, entryType, reasoningEffort, parsedState := parseCCLineEntries(line, toolCalls, toolResults, &conversationTracker)
 		entries = append(entries, lineEntries...)
+		applyClaudeBackgroundTaskEvents(backgroundTasks, &backgroundTaskOrder, toolCalls, line, stat.ModTime())
 		if entryType != "" {
 			lastType = entryType
 		}
@@ -1573,6 +1750,8 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	}
 
 	s.entries = entries
+	s.backgroundTasks = backgroundTasks
+	s.backgroundTaskOrder = backgroundTaskOrder
 	if latestReasoningEffort != "" {
 		s.reasoningEffort = latestReasoningEffort
 	}

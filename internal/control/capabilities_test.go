@@ -125,8 +125,8 @@ func TestEngineerSendPromptCapabilityMetadata(t *testing.T) {
 	if !providers[ProviderOpenCode].Available {
 		t.Fatalf("OpenCode provider should be available in default metadata")
 	}
-	if providers[ProviderClaudeCode].Available {
-		t.Fatalf("Claude Code provider should be disabled in default metadata")
+	if !providers[ProviderClaudeCode].Available {
+		t.Fatalf("Claude Code provider should be available in default metadata")
 	}
 	if !providers[ProviderLCAgent].Available {
 		t.Fatalf("LCAgent provider should be available in default metadata")

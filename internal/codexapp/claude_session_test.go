@@ -556,6 +556,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"C
 		sessionID:       "ses-demo",
 		started:         true,
 		preset:          codexcli.PresetSafe,
+		safetySettings:  `{"hooks":{"PreToolUse":[]}}`,
 		status:          claudeReadyStatus,
 		closedCh:        make(chan struct{}),
 		assistantBlocks: make(map[string]map[string]struct{}),
@@ -622,6 +623,40 @@ func TestClaudeCompactNoBoundaryReportsNoOp(t *testing.T) {
 	}
 	if result.Message != "Conversation is too short to compact." {
 		t.Fatalf("result.Message = %q", result.Message)
+	}
+}
+
+func TestClaudeCompactExitReportsUnresolvedBackgroundTask(t *testing.T) {
+	command := &claudeCompactCommand{done: make(chan claudeCompactCompletion, 1)}
+	session := &claudeCodeSession{
+		started:        true,
+		busy:           true,
+		compacting:     true,
+		compactCommand: command,
+		backgroundTasks: map[string]BackgroundTaskSnapshot{
+			"task-bg-1": {
+				ID:     "task-bg-1",
+				Status: "running",
+			},
+		},
+		backgroundTaskOrder: []string{"task-bg-1"},
+		assistantBlocks:     make(map[string]map[string]struct{}),
+		toolCalls:           make(map[string]claudeToolCall),
+		toolResults:         make(map[string]struct{}),
+	}
+
+	session.finishClaudeTurn(nil, nil, nil)
+
+	completion := <-command.done
+	if completion.err == nil || completion.err.Error() != claudeBackgroundTaskUnresolved {
+		t.Fatalf("compaction error = %v, want unresolved background-task error", completion.err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.LastError != claudeBackgroundTaskUnresolved {
+		t.Fatalf("LastError = %q, want unresolved-task error", snapshot.LastError)
+	}
+	if len(snapshot.BackgroundTasks) != 1 || snapshot.BackgroundTasks[0].Status != "unresolved" {
+		t.Fatalf("BackgroundTasks = %#v, want visible unresolved task", snapshot.BackgroundTasks)
 	}
 }
 
@@ -1023,6 +1058,136 @@ func TestClaudeResultMovesSessionToFinishingWhenTurnDrains(t *testing.T) {
 	}
 	if snapshot := session.Snapshot(); snapshot.Phase != SessionPhaseFinishing {
 		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseFinishing)
+	}
+}
+
+func TestClaudeResultKeepsStreamOpenUntilBackgroundTaskSettles(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 1,
+		stdin:              stdin,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+		backgroundTasks:    make(map[string]BackgroundTaskSnapshot),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_bg","name":"Bash","input":{"command":"./telemetry --frames 2900","run_in_background":true}}]}}`)
+	session.handleClaudeStdoutLine(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bg","content":"background task launched"}]},"tool_use_result":{"backgroundTaskId":"task-bg-1"}}`)
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"success","is_error":false,"result":"waiting for telemetry"}`)
+
+	if session.pendingSubmissions != 0 {
+		t.Fatalf("pendingSubmissions = %d, want drained model turn", session.pendingSubmissions)
+	}
+	if stdin.closed {
+		t.Fatal("stdin closed while the provider-declared background task was still running")
+	}
+	if session.stdin != stdin {
+		t.Fatalf("session.stdin = %#v, want stream retained", session.stdin)
+	}
+	snapshot := session.Snapshot()
+	if !snapshot.Busy || snapshot.Phase != SessionPhaseRunning {
+		t.Fatalf("snapshot busy=%t phase=%q, want running background work", snapshot.Busy, snapshot.Phase)
+	}
+	if len(snapshot.BackgroundTasks) != 1 {
+		t.Fatalf("background tasks = %#v, want one active task", snapshot.BackgroundTasks)
+	}
+	task := snapshot.BackgroundTasks[0]
+	if task.ID != "task-bg-1" || task.ToolUseID != "toolu_bg" || task.Tool != "Bash" || task.Command != "./telemetry --frames 2900" {
+		t.Fatalf("background task = %#v, want structured Bash task metadata", task)
+	}
+	if !strings.Contains(snapshot.Status, "1 background task") {
+		t.Fatalf("snapshot.Status = %q, want visible background-task status", snapshot.Status)
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"queue-operation","content":"<task-notification>\n<task-id>task-bg-1</task-id>\n<status>completed</status>\n<summary>Telemetry completed (exit code 0)</summary>\n</task-notification>"}`)
+
+	snapshot = session.Snapshot()
+	if len(snapshot.BackgroundTasks) != 0 {
+		t.Fatalf("background tasks after completion = %#v, want settled", snapshot.BackgroundTasks)
+	}
+	if snapshot.Phase != SessionPhaseFinishing {
+		t.Fatalf("phase after task completion = %q, want final provider result", snapshot.Phase)
+	}
+	if stdin.closed {
+		t.Fatal("stdin closed before Claude could consume the task notification")
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"success","is_error":false,"result":"telemetry validated"}`)
+
+	if !stdin.closed {
+		t.Fatal("stdin remained open after the background task and follow-up model turn settled")
+	}
+	if session.stdin != nil {
+		t.Fatalf("session.stdin = %#v, want nil after final result", session.stdin)
+	}
+}
+
+func TestClaudeUnexpectedExitReportsUnresolvedBackgroundTask(t *testing.T) {
+	session := &claudeCodeSession{
+		projectPath: "/tmp/demo",
+		started:     true,
+		busy:        true,
+		status:      claudeThinkingStatus,
+		backgroundTasks: map[string]BackgroundTaskSnapshot{
+			"task-bg-1": {
+				ID:      "task-bg-1",
+				Status:  "running",
+				Command: "./telemetry --frames 2900",
+			},
+		},
+		backgroundTaskOrder: []string{"task-bg-1"},
+		assistantBlocks:     make(map[string]map[string]struct{}),
+		toolCalls:           make(map[string]claudeToolCall),
+		toolResults:         make(map[string]struct{}),
+	}
+
+	session.finishClaudeTurn(nil, nil, nil)
+
+	snapshot := session.Snapshot()
+	if snapshot.Busy {
+		t.Fatal("snapshot.Busy = true after provider process exited")
+	}
+	if snapshot.LastError != claudeBackgroundTaskUnresolved {
+		t.Fatalf("LastError = %q, want unresolved-task error", snapshot.LastError)
+	}
+	if len(snapshot.BackgroundTasks) != 1 || snapshot.BackgroundTasks[0].Status != "unresolved" {
+		t.Fatalf("BackgroundTasks = %#v, want visible unresolved task", snapshot.BackgroundTasks)
+	}
+}
+
+func TestClaudeRefreshMarksUnownedBackgroundTaskUnresolved(t *testing.T) {
+	session := &claudeCodeSession{
+		claudeHome: t.TempDir(),
+		started:    true,
+		backgroundTasks: map[string]BackgroundTaskSnapshot{
+			"task-bg-1": {
+				ID:     "task-bg-1",
+				Status: "running",
+			},
+		},
+		backgroundTaskOrder: []string{"task-bg-1"},
+		assistantBlocks:     make(map[string]map[string]struct{}),
+		toolCalls:           make(map[string]claudeToolCall),
+		toolResults:         make(map[string]struct{}),
+	}
+
+	if err := session.RefreshBusyElsewhere(); err != nil {
+		t.Fatalf("RefreshBusyElsewhere() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Busy {
+		t.Fatal("snapshot.Busy = true without a live task owner")
+	}
+	if snapshot.Status != claudeBackgroundTaskUnresolved {
+		t.Fatalf("Status = %q, want unresolved-task status", snapshot.Status)
+	}
+	if len(snapshot.BackgroundTasks) != 1 || snapshot.BackgroundTasks[0].Status != "unresolved" {
+		t.Fatalf("BackgroundTasks = %#v, want visible unresolved task", snapshot.BackgroundTasks)
 	}
 }
 

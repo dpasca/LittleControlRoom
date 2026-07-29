@@ -141,6 +141,23 @@ func TestCodexFooterStatusDoesNotCountIdleExternalSessionAsRunning(t *testing.T)
 	}
 }
 
+func TestClaudeBackgroundTaskKeepsComposerReadOnly(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode,
+		Started:  true,
+		Busy:     true,
+		Phase:    codexapp.SessionPhaseRunning,
+		BackgroundTasks: []codexapp.BackgroundTaskSnapshot{{
+			ID:     "task-telemetry",
+			Status: "running",
+		}},
+	}
+
+	if codexSnapshotCanSubmitBusyInput(snapshot) {
+		t.Fatal("Claude background task should keep the composer read-only until its follow-up turn settles")
+	}
+}
+
 func TestCodexFooterStatusShowsFinishingState(t *testing.T) {
 	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{

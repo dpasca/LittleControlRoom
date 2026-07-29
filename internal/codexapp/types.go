@@ -505,6 +505,23 @@ type MCPUsageSnapshot struct {
 	Tools      []MCPToolUsageSnapshot
 }
 
+// BackgroundTaskSnapshot describes provider-declared work that outlives the
+// model response which launched it. These tasks are separate from managed
+// runtimes: they belong to the embedded engineer turn and must settle before
+// that provider process can be released safely.
+type BackgroundTaskSnapshot struct {
+	ID         string
+	ToolUseID  string
+	Source     string
+	Tool       string
+	Command    string
+	OutputPath string
+	Status     string
+	Summary    string
+	StartedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 type Snapshot struct {
 	Provider                    Provider
 	ProjectPath                 string
@@ -533,7 +550,8 @@ type Snapshot struct {
 	PendingApproval             *ApprovalRequest
 	PendingToolInput            *ToolInputRequest
 	PendingElicitation          *ElicitationRequest
-	ActivityPreview             []TranscriptEntry // Bounded text-only tail for lightweight state snapshots.
+	BackgroundTasks             []BackgroundTaskSnapshot // Provider-declared background work still awaiting a terminal notification.
+	ActivityPreview             []TranscriptEntry        // Bounded text-only tail for lightweight state snapshots.
 	Entries                     []TranscriptEntry
 	Transcript                  string
 	Status                      string
