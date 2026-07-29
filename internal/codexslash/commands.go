@@ -18,6 +18,7 @@ const (
 	KindModel       Kind = "model"
 	KindReconnect   Kind = "reconnect"
 	KindCompact     Kind = "compact"
+	KindContext     Kind = "context"
 	KindReview      Kind = "review"
 	KindDevLCReview Kind = "dev-lcreview"
 	KindPermissions Kind = "permissions"
@@ -43,14 +44,15 @@ const (
 )
 
 type Invocation struct {
-	Kind            Kind
-	Prompt          string
-	SessionID       string
-	PermissionLevel string
-	GoalAction      GoalAction
-	GoalObjective   string
-	GoalTokenBudget *int64
-	Canonical       string
+	Kind                Kind
+	Prompt              string
+	SessionID           string
+	PermissionLevel     string
+	GoalAction          GoalAction
+	GoalObjective       string
+	GoalTokenBudget     *int64
+	CompactInstructions string
+	Canonical           string
 }
 
 var specs = []Spec{
@@ -63,7 +65,8 @@ var specs = []Spec{
 	{Name: "show-status", Usage: "/show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
-	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
+	{Name: "compact", Usage: "/compact [instructions]", Summary: "Compact conversation history, optionally preserving a specific focus"},
+	{Name: "context", Usage: "/context", Summary: "Show current context use and the model context window"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
 	{Name: "dev-lcreview", Usage: "/dev-lcreview", Summary: "Add an LCAgent trace-quality review TODO to the Little Control Room project", Hidden: true},
 	{Name: "permissions", Usage: "/permissions [off|low|medium]", Summary: "Show or change LCAgent permission level for this session"},
@@ -140,8 +143,14 @@ func Suggestions(input string) []Suggestion {
 	case "compact":
 		return []Suggestion{{
 			Insert:  "/compact",
-			Display: "/compact",
-			Summary: "Compact conversation history to free up context",
+			Display: "/compact [instructions]",
+			Summary: "Compact conversation history, optionally preserving a specific focus",
+		}}
+	case "context":
+		return []Suggestion{{
+			Insert:  "/context",
+			Display: "/context",
+			Summary: "Show current context use and the model context window",
 		}}
 	case "review":
 		return []Suggestion{{
@@ -351,12 +360,19 @@ func Parse(input string) (Invocation, error) {
 			Canonical: "/reconnect",
 		}, nil
 	case "compact":
+		instructions := strings.TrimSpace(rawArgs)
+		return Invocation{
+			Kind:                KindCompact,
+			CompactInstructions: instructions,
+			Canonical:           slashcmd.CanonicalCommand("compact", instructions),
+		}, nil
+	case "context":
 		if strings.TrimSpace(rawArgs) != "" {
-			return Invocation{}, fmt.Errorf("usage: /compact")
+			return Invocation{}, fmt.Errorf("usage: /context")
 		}
 		return Invocation{
-			Kind:      KindCompact,
-			Canonical: "/compact",
+			Kind:      KindContext,
+			Canonical: "/context",
 		}, nil
 	case "review":
 		if strings.TrimSpace(rawArgs) != "" {

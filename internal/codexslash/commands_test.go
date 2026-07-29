@@ -193,6 +193,32 @@ func TestParseShowStatusCommand(t *testing.T) {
 	}
 }
 
+func TestParseContextCommand(t *testing.T) {
+	inv, err := Parse("/context")
+	if err != nil {
+		t.Fatalf("Parse(/context) error = %v", err)
+	}
+	if inv.Kind != KindContext || inv.Canonical != "/context" {
+		t.Fatalf("Parse(/context) = %#v, want context invocation", inv)
+	}
+}
+
+func TestParseCompactInstructions(t *testing.T) {
+	inv, err := Parse("/compact preserve the renderer decisions")
+	if err != nil {
+		t.Fatalf("Parse(/compact ...) error = %v", err)
+	}
+	if inv.Kind != KindCompact {
+		t.Fatalf("Parse(/compact ...) kind = %q, want %q", inv.Kind, KindCompact)
+	}
+	if inv.CompactInstructions != "preserve the renderer decisions" {
+		t.Fatalf("compact instructions = %q", inv.CompactInstructions)
+	}
+	if inv.Canonical != "/compact preserve the renderer decisions" {
+		t.Fatalf("canonical compact command = %q", inv.Canonical)
+	}
+}
+
 func TestParseDevShowStatusCommand(t *testing.T) {
 	inv, err := Parse("/dev-show-status")
 	if err != nil {

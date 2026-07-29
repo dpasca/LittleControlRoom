@@ -1995,7 +1995,7 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 	return m.openCodexSessionCmd(req)
 }
 
-func (m Model) compactVisibleCodexSessionCmd() tea.Cmd {
+func (m Model) compactVisibleCodexSessionCmd(instructions string) tea.Cmd {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
 		return nil
@@ -2005,10 +2005,27 @@ func (m Model) compactVisibleCodexSessionCmd() tea.Cmd {
 		label = embeddedProvider(snapshot).Label()
 	}
 	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if compactor, ok := session.(codexapp.InstructionCompactor); ok {
+			result, err := compactor.CompactWithInstructions(instructions)
+			if err != nil {
+				return codexActionMsg{projectPath: projectPath, err: err}
+			}
+			status := strings.TrimSpace(result.Message)
+			if status == "" {
+				status = "Embedded " + label + " conversation compaction completed"
+			}
+			return codexActionMsg{projectPath: projectPath, status: status, refreshView: true}
+		}
+		if strings.TrimSpace(instructions) != "" {
+			return codexActionMsg{
+				projectPath: projectPath,
+				err:         fmt.Errorf("%s does not support /compact instructions", label),
+			}
+		}
 		if err := session.Compact(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " conversation compaction completed"}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " conversation compaction completed", refreshView: true}
 	})
 }
 

@@ -331,6 +331,19 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsAbsoluteContextWhenWindowIsUnavailable(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		TokenUsage: &codexapp.TokenUsageSnapshot{
+			ContextTokens: 650914,
+		},
+	}
+
+	row := ansi.Strip(embeddedSidebarContextRow(snapshot, 40))
+	if !strings.Contains(row, "Context 650k used") {
+		t.Fatalf("context row = %q, want absolute usage without a known model window", row)
+	}
+}
+
 func TestEmbeddedSidebarUsageSummaryPrefersOrdinaryCodexAccountLimit(t *testing.T) {
 	now := time.Date(2026, 7, 24, 10, 0, 0, 0, time.Local)
 	snapshot := codexapp.Snapshot{

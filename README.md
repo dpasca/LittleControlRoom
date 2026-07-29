@@ -279,8 +279,9 @@ Embedded providers expose LCR's local command subset, not every slash command fr
 - `/resume [session-id]` and `/session [session-id]`: Aliases for `/sessions`.
 - `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
 - `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR. LCAgent uses the same provider → model → reasoning flow as TODO launch; press `r` on the provider step to expand complete recent provider/model/reasoning choices.
-- `/status`: Show the current provider/session status.
-- `/compact`: Compact the embedded Codex conversation history when supported.
+- `/status`: Show the current provider/session status, including context usage when the provider reports it.
+- `/context`: Show the same status report with an explicit context-oriented command.
+- `/compact [instructions]`: Compact conversation history when supported. Embedded Claude Code forwards optional focus instructions to Claude's native compaction flow and reports whether a compaction boundary actually occurred.
 - `/review`: Ask embedded Codex to review uncommitted changes.
 - `/chat`: Hide the embedded pane and open Chat over the main dashboard.
 

@@ -678,7 +678,7 @@ func mobileCodexCommandSupport(raw string) (bool, string) {
 		return false, err.Error()
 	}
 	switch invocation.Kind {
-	case codexslash.KindStatus, codexslash.KindShowStatus, codexslash.KindCompact, codexslash.KindReview, codexslash.KindPermissions, codexslash.KindGoal:
+	case codexslash.KindStatus, codexslash.KindShowStatus, codexslash.KindContext, codexslash.KindCompact, codexslash.KindReview, codexslash.KindPermissions, codexslash.KindGoal:
 		return true, ""
 	default:
 		return false, "This command currently requires the desktop TUI"
@@ -817,9 +817,20 @@ func (s *Server) executeMobileCodexCommand(request mobileCommandExecuteRequest, 
 	}
 	label := snapshot.Provider.Label()
 	switch invocation.Kind {
-	case codexslash.KindStatus, codexslash.KindShowStatus:
+	case codexslash.KindStatus, codexslash.KindShowStatus, codexslash.KindContext:
 		return "Status added to the transcript", canonical, "session", session.ShowStatus()
 	case codexslash.KindCompact:
+		if compactor, ok := session.(codexapp.InstructionCompactor); ok {
+			result, err := compactor.CompactWithInstructions(invocation.CompactInstructions)
+			message := strings.TrimSpace(result.Message)
+			if message == "" {
+				message = "Conversation compaction completed"
+			}
+			return message, canonical, "session", err
+		}
+		if strings.TrimSpace(invocation.CompactInstructions) != "" {
+			return "", canonical, "session", fmt.Errorf("%s does not support /compact instructions", label)
+		}
 		return "Conversation compaction started", canonical, "session", session.Compact()
 	case codexslash.KindReview:
 		return "Review started", canonical, "session", session.Review()

@@ -31,13 +31,12 @@ const (
 	claudeFreshReadyStatus              = "Fresh embedded Claude Code session ready. Send a prompt to start it."
 	claudeSupportStatus                 = "Embedded Claude Code session ready"
 	claudeInterruptNotice               = "Interrupted embedded Claude Code turn."
-	claudeCompactUnsupported            = "Embedded Claude Code compact is not supported yet"
+	claudeCompactingStatus              = "Claude Code is compacting conversation history..."
 	claudeApprovalUnsupported           = "Embedded Claude Code approval responses are not supported yet"
 	claudeToolInputUnsupported          = "Embedded Claude Code tool-input responses are not supported yet"
 	claudeElicitationUnsupported        = "Embedded Claude Code elicitation responses are not supported yet"
 	claudeSafePresetMappingNotice       = "Embedded Claude Code currently maps Safe/Full Auto presets to Claude's acceptEdits mode until Claude-specific approval prompts are wired."
 	claudeYoloPresetMappingNotice       = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
-	claudeStatusTranscriptTemplate      = "Claude session %s\nModel: %s\nMode: %s\nSession file: %s"
 	claudeDefaultModelAlias             = "sonnet"
 	claudeDefaultReasoningEffort        = "medium"
 	claudeSyntheticModelPlaceholder     = "<synthetic>"
@@ -70,12 +69,16 @@ type claudeCodeSession struct {
 	busy               bool
 	busyExternal       bool
 	externalTurnActive bool
+	compacting         bool
+	compactCommand     *claudeCompactCommand
 	busySince          time.Time
 	pendingSubmissions int
 	interruptPending   bool
 	lastActivityAt     time.Time
 	model              string
 	reasoningEffort    string
+	tokenUsage         *TokenUsageSnapshot
+	modelContextWindow int64
 	pendingModel       string
 	pendingReasoning   string
 	status             string
@@ -104,17 +107,62 @@ type claudeToolCall struct {
 	Command string
 }
 
+type claudeSubmissionMode int
+
+const (
+	claudeSubmissionNormal claudeSubmissionMode = iota
+	claudeSubmissionCompact
+)
+
+type claudeTokenUsage struct {
+	InputTokens              int64 `json:"input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+}
+
+type claudeModelUsage struct {
+	InputTokens              int64 `json:"inputTokens"`
+	CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
+	CacheReadInputTokens     int64 `json:"cacheReadInputTokens"`
+	OutputTokens             int64 `json:"outputTokens"`
+	ContextWindow            int64 `json:"contextWindow"`
+}
+
+type claudeCompactMetadata struct {
+	PreTokens int64  `json:"pre_tokens"`
+	Trigger   string `json:"trigger"`
+}
+
+type claudeCompactCommand struct {
+	done         chan claudeCompactCompletion
+	boundarySeen bool
+	metadata     claudeCompactMetadata
+	resultText   string
+	resultError  bool
+}
+
+type claudeCompactCompletion struct {
+	result CompactionResult
+	err    error
+}
+
 type claudeStreamEnvelope struct {
-	Type        string          `json:"type"`
-	Subtype     string          `json:"subtype"`
-	SessionID   string          `json:"session_id"`
-	UUID        string          `json:"uuid"`
-	Effort      string          `json:"effort"`
-	Message     json.RawMessage `json:"message"`
-	Result      string          `json:"result"`
-	IsError     bool            `json:"is_error"`
-	StopReason  string          `json:"stop_reason"`
-	LastMessage string          `json:"last_message"`
+	Type              string                      `json:"type"`
+	Subtype           string                      `json:"subtype"`
+	SessionID         string                      `json:"session_id"`
+	UUID              string                      `json:"uuid"`
+	Model             string                      `json:"model"`
+	PermissionMode    string                      `json:"permissionMode"`
+	Effort            string                      `json:"effort"`
+	Message           json.RawMessage             `json:"message"`
+	Result            string                      `json:"result"`
+	IsError           bool                        `json:"is_error"`
+	StopReason        string                      `json:"stop_reason"`
+	LastMessage       string                      `json:"last_message"`
+	ModelUsage        map[string]claudeModelUsage `json:"modelUsage"`
+	CompactMetadata   claudeCompactMetadata       `json:"compact_metadata"`
+	CompactMetadataV2 claudeCompactMetadata       `json:"compactMetadata"`
 }
 
 type claudeStreamMessage struct {
@@ -131,6 +179,7 @@ type claudeStreamMessage struct {
 		ToolUseID string          `json:"tool_use_id"`
 		Content   any             `json:"content"`
 	} `json:"content"`
+	Usage claudeTokenUsage `json:"usage"`
 }
 
 type claudeActivePIDSession struct {
@@ -257,7 +306,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		TranscriptRevision: s.transcriptRevision,
 		Phase:              s.phaseLocked(),
 		Started:            s.started,
-		Busy:               s.busy || s.externalTurnActive,
+		Busy:               s.busy || s.externalTurnActive || s.compacting,
 		BusyExternal:       s.busyExternal,
 		BusySince:          s.busySince,
 		Closed:             s.closed,
@@ -270,7 +319,16 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		ReasoningEffort:    s.reasoningEffort,
 		PendingModel:       concreteClaudeModel(s.pendingModel),
 		PendingReasoning:   s.pendingReasoning,
+		TokenUsage:         cloneTokenUsageSnapshot(s.tokenUsage),
 	}
+}
+
+func cloneTokenUsageSnapshot(usage *TokenUsageSnapshot) *TokenUsageSnapshot {
+	if usage == nil {
+		return nil
+	}
+	cloned := *usage
+	return &cloned
 }
 
 func (s *claudeCodeSession) phaseLocked() SessionPhase {
@@ -280,6 +338,8 @@ func (s *claudeCodeSession) phaseLocked() SessionPhase {
 		phase = SessionPhaseClosed
 	case s.externalTurnActive:
 		phase = SessionPhaseExternal
+	case s.compacting:
+		phase = SessionPhaseReconciling
 	case s.busy:
 		if s.pendingSubmissions > 0 {
 			phase = SessionPhaseRunning
@@ -310,6 +370,10 @@ func (s *claudeCodeSession) Submit(prompt string) error {
 }
 
 func (s *claudeCodeSession) SubmitInput(input Submission) error {
+	return s.submitInput(input, claudeSubmissionNormal, nil)
+}
+
+func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
 	input = normalizeSubmission(input)
 	if input.Empty() {
 		return nil
@@ -320,14 +384,17 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 		return fmt.Errorf("Claude Code prompt required")
 	}
 
-	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
+	modelInput := input
+	if mode == claudeSubmissionNormal {
+		modelInput = augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
+	}
 	payload, err := buildClaudeStreamInput(modelInput)
 	if err != nil {
 		return fmt.Errorf("prepare Claude Code prompt: %w", err)
 	}
 
 	s.mu.Lock()
-	if err := s.submissionStateErrorLocked(); err != nil {
+	if err := s.submissionStateErrorLocked(mode, compactCommand); err != nil {
 		s.mu.Unlock()
 		return err
 	}
@@ -346,7 +413,7 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 			return err
 		}
 		s.mu.Lock()
-		if err := s.submissionStateErrorLocked(); err != nil {
+		if err := s.submissionStateErrorLocked(mode, compactCommand); err != nil {
 			s.mu.Unlock()
 			return err
 		}
@@ -389,6 +456,10 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 		}
 		startStream = true
 	} else {
+		if mode == claudeSubmissionCompact {
+			s.mu.Unlock()
+			return fmt.Errorf("Claude Code cannot compact while a turn is active")
+		}
 		stdin = s.stdin
 		if stdin == nil {
 			s.mu.Unlock()
@@ -409,9 +480,15 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 	s.busyExternal = false
 	s.pendingSubmissions++
 	s.interruptPending = control != ""
-	s.status = claudeThinkingStatus
+	if mode == claudeSubmissionCompact {
+		s.status = claudeCompactingStatus
+	} else {
+		s.status = claudeThinkingStatus
+	}
 	s.lastError = ""
-	s.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: displayText})
+	if mode == claudeSubmissionNormal {
+		s.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: displayText})
+	}
 	s.touchLocked()
 	s.mu.Unlock()
 
@@ -452,14 +529,20 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 	return nil
 }
 
-func (s *claudeCodeSession) submissionStateErrorLocked() error {
+func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
 	if s.closed {
 		return fmt.Errorf("Claude Code session is closed")
 	}
 	s.refreshActiveLocked()
 	switch {
+	case s.compacting && (mode != claudeSubmissionCompact || compactCommand == nil || s.compactCommand != compactCommand):
+		return fmt.Errorf("Claude Code is already compacting conversation history")
+	case mode == claudeSubmissionCompact && (!s.compacting || compactCommand == nil || s.compactCommand != compactCommand):
+		return fmt.Errorf("Claude Code compaction request is no longer active")
 	case s.busyExternal:
 		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
+	case mode == claudeSubmissionCompact && s.busy:
+		return fmt.Errorf("Claude Code cannot compact while a turn is active")
 	case s.busy && s.pendingSubmissions == 0:
 		return fmt.Errorf("Claude Code is finishing the current turn")
 	default:
@@ -488,9 +571,50 @@ func (s *claudeCodeSession) ShowStatus() error {
 	if sessionFile == "" {
 		sessionFile = "(not created yet)"
 	}
+	lines := []string{
+		"Claude session " + sessionID,
+		"Model: " + model,
+		"Mode: " + mode,
+		"Session file: " + sessionFile,
+	}
+	usage := cloneTokenUsageSnapshot(s.tokenUsage)
+	contextWindow := s.modelContextWindow
+	if usage != nil && usage.ModelContextWindow > 0 {
+		contextWindow = usage.ModelContextWindow
+	}
+	switch {
+	case usage != nil && contextWindow > 0:
+		used := usage.EstimatedContextTokens()
+		usedPercent := int(float64(used)*100/float64(contextWindow) + 0.5)
+		if usedPercent < 0 {
+			usedPercent = 0
+		}
+		if usedPercent > 100 {
+			usedPercent = 100
+		}
+		lines = append(lines, fmt.Sprintf(
+			"Context: %d / %d tokens used (%d%% used, %d%% left)",
+			used,
+			contextWindow,
+			usedPercent,
+			100-usedPercent,
+		))
+	case usage != nil:
+		lines = append(lines, fmt.Sprintf(
+			"Context: %d tokens used (model context window unavailable)",
+			usage.EstimatedContextTokens(),
+		))
+	case contextWindow > 0:
+		lines = append(lines, fmt.Sprintf(
+			"Context: current usage unavailable; model window is %d tokens",
+			contextWindow,
+		))
+	default:
+		lines = append(lines, "Context: unavailable until Claude completes a turn")
+	}
 	s.appendEntryLocked(TranscriptEntry{
 		Kind: TranscriptStatus,
-		Text: fmt.Sprintf(claudeStatusTranscriptTemplate, sessionID, model, mode, sessionFile),
+		Text: strings.Join(lines, "\n"),
 	})
 	s.notifyAsync()
 	return nil
@@ -517,7 +641,80 @@ func (s *claudeCodeSession) ClearGoal() error {
 }
 
 func (s *claudeCodeSession) Compact() error {
-	return fmt.Errorf(claudeCompactUnsupported)
+	_, err := s.CompactWithInstructions("")
+	return err
+}
+
+func (s *claudeCodeSession) CompactWithInstructions(instructions string) (CompactionResult, error) {
+	instructions = strings.TrimSpace(instructions)
+	command := &claudeCompactCommand{
+		done: make(chan claudeCompactCompletion, 1),
+	}
+
+	s.mu.Lock()
+	s.loadTranscriptLocked()
+	s.refreshActiveLocked()
+	switch {
+	case s.closed:
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("Claude Code session is closed")
+	case s.compacting:
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("Claude Code is already compacting conversation history")
+	case s.busyExternal:
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("this Claude Code session is already open in another process; Little Control Room is read-only")
+	case s.busy || s.externalTurnActive:
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("Claude Code cannot compact while a turn is active")
+	case strings.TrimSpace(s.sessionID) == "":
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("start the Claude Code session with a prompt before compacting it")
+	}
+	s.compacting = true
+	s.compactCommand = command
+	s.status = claudeCompactingStatus
+	s.lastError = ""
+	s.touchLocked()
+	s.mu.Unlock()
+	s.notifyAsync()
+
+	prompt := "/compact"
+	if instructions != "" {
+		prompt += " " + instructions
+	}
+	if err := s.submitInput(Submission{Text: prompt}, claudeSubmissionCompact, command); err != nil {
+		s.mu.Lock()
+		if s.compactCommand == command {
+			s.compactCommand = nil
+			s.compacting = false
+			s.updateStatusLocked()
+		}
+		s.mu.Unlock()
+		s.notifyAsync()
+		return CompactionResult{}, err
+	}
+
+	timer := time.NewTimer(compactionWaitTimeout)
+	defer timer.Stop()
+	select {
+	case completion := <-command.done:
+		return completion.result, completion.err
+	case <-timer.C:
+		s.mu.Lock()
+		cmd := s.cmd
+		if s.compactCommand == command {
+			s.compactCommand = nil
+			s.compacting = false
+		}
+		s.updateStatusLocked()
+		s.mu.Unlock()
+		if cmd != nil {
+			_ = terminateAppServerCommand(cmd)
+		}
+		s.notifyAsync()
+		return CompactionResult{}, fmt.Errorf("timed out waiting for Claude Code to compact conversation history")
+	}
 }
 
 func (s *claudeCodeSession) Review() error {
@@ -755,6 +952,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	compactCommand := s.compactCommand
 	pendingSubmissions := s.pendingSubmissions
 	s.busy = false
 	s.pendingSubmissions = 0
@@ -774,29 +972,95 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 		s.busySince = time.Time{}
 	}
 
-	switch {
-	case interrupted:
-		s.lastError = ""
-		s.lastSystemNotice = claudeInterruptNotice
-		s.status = claudeReadyStatus
-	case errors.Is(waitErr, ErrClaudeCodeAuthenticationRequired):
-		s.appendSystemErrorLocked(waitErr.Error())
-	case waitErr != nil:
-		s.appendSystemErrorLocked(fmt.Sprintf("Claude Code exited with error: %v", waitErr))
-	case stdoutErr != nil:
-		s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code output: %v", stdoutErr))
-	case stderrErr != nil:
-		s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code stderr: %v", stderrErr))
-	default:
-		s.lastError = ""
-		s.lastSystemNotice = "Claude Code turn completed."
-		s.updateStatusLocked()
+	if compactCommand != nil {
+		result, compactErr := claudeCompactionCompletion(compactCommand, waitErr, stdoutErr, stderrErr)
+		s.compactCommand = nil
+		s.compacting = false
+		if compactErr != nil {
+			if strings.TrimSpace(s.lastError) == "" {
+				s.appendSystemErrorLocked(compactErr.Error())
+			}
+		} else {
+			s.lastError = ""
+			if strings.TrimSpace(result.Message) != "" && result.Message != s.lastSystemNotice {
+				s.appendSystemNoticeLocked(result.Message)
+			}
+			s.updateStatusLocked()
+		}
+		compactCommand.done <- claudeCompactCompletion{result: result, err: compactErr}
+	} else {
+		switch {
+		case interrupted:
+			s.lastError = ""
+			s.lastSystemNotice = claudeInterruptNotice
+			s.status = claudeReadyStatus
+		case errors.Is(waitErr, ErrClaudeCodeAuthenticationRequired):
+			s.appendSystemErrorLocked(waitErr.Error())
+		case waitErr != nil:
+			s.appendSystemErrorLocked(fmt.Sprintf("Claude Code exited with error: %v", waitErr))
+		case stdoutErr != nil:
+			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code output: %v", stdoutErr))
+		case stderrErr != nil:
+			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code stderr: %v", stderrErr))
+		default:
+			s.lastError = ""
+			s.lastSystemNotice = "Claude Code turn completed."
+			s.updateStatusLocked()
+		}
 	}
 
 	if s.closed {
 		s.closeClosedCh()
 	}
 	s.notifyAsync()
+}
+
+func claudeCompactionCompletion(command *claudeCompactCommand, waitErr, stdoutErr, stderrErr error) (CompactionResult, error) {
+	if command.boundarySeen {
+		result := CompactionResult{
+			Compacted: true,
+			PreTokens: command.metadata.PreTokens,
+			Trigger:   strings.TrimSpace(command.metadata.Trigger),
+			Message:   claudeCompactionNotice(command.metadata),
+		}
+		return result, nil
+	}
+
+	message := strings.TrimSpace(command.resultText)
+	switch {
+	case command.resultError:
+		if message == "" {
+			message = "Claude Code returned an error while compacting conversation history"
+		}
+		return CompactionResult{}, errors.New(message)
+	case errors.Is(waitErr, ErrClaudeCodeAuthenticationRequired):
+		return CompactionResult{}, waitErr
+	case waitErr != nil:
+		return CompactionResult{}, fmt.Errorf("Claude Code exited while compacting conversation history: %w", waitErr)
+	case stdoutErr != nil:
+		return CompactionResult{}, fmt.Errorf("could not read Claude Code compaction output: %w", stdoutErr)
+	case stderrErr != nil:
+		return CompactionResult{}, fmt.Errorf("could not read Claude Code compaction stderr: %w", stderrErr)
+	}
+
+	if message == "" {
+		message = "Claude Code completed /compact without compacting; the conversation may already be below its compaction threshold."
+	}
+	return CompactionResult{
+		Compacted: false,
+		Message:   message,
+	}, nil
+}
+
+func claudeCompactionNotice(metadata claudeCompactMetadata) string {
+	message := "Claude Code compacted conversation history."
+	if metadata.PreTokens > 0 {
+		message = fmt.Sprintf("Claude Code compacted conversation history (%d tokens before compaction).", metadata.PreTokens)
+	}
+	if trigger := strings.TrimSpace(metadata.Trigger); trigger != "" && !strings.EqualFold(trigger, "manual") {
+		message = strings.TrimSuffix(message, ".") + "; trigger: " + trigger + "."
+	}
+	return message
 }
 
 func (s *claudeCodeSession) readClaudeStdout(r io.Reader) error {
@@ -858,7 +1122,8 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 
 	switch env.Type {
 	case "system":
-		if env.Subtype == "init" {
+		switch env.Subtype {
+		case "init":
 			if sessionID := strings.TrimSpace(env.SessionID); sessionID != "" {
 				s.sessionID = sessionID
 				s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, sessionID)
@@ -869,19 +1134,27 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 				PermissionMode string `json:"permissionMode"`
 			}
 			if err := json.Unmarshal(env.Message, &initMsg); err == nil {
-				if model := concreteClaudeModel(initMsg.Model); model != "" {
-					s.model = model
-					s.pendingModel = ""
-				}
-				if effort := strings.TrimSpace(s.pendingReasoning); effort != "" {
-					s.reasoningEffort = effort
-					s.pendingReasoning = ""
-				}
-				if mode := strings.TrimSpace(initMsg.PermissionMode); mode != "" {
-					s.lastSystemNotice = "Claude Code permission mode: " + mode
-				}
+				env.Model = firstNonEmptyTrimmed(env.Model, initMsg.Model)
+				env.PermissionMode = firstNonEmptyTrimmed(env.PermissionMode, initMsg.PermissionMode)
 			}
-			s.status = claudeThinkingStatus
+			if model := concreteClaudeModel(env.Model); model != "" {
+				s.model = model
+				s.pendingModel = ""
+			}
+			if effort := strings.TrimSpace(s.pendingReasoning); effort != "" {
+				s.reasoningEffort = effort
+				s.pendingReasoning = ""
+			}
+			if mode := strings.TrimSpace(env.PermissionMode); mode != "" {
+				s.lastSystemNotice = "Claude Code permission mode: " + mode
+			}
+			if s.compacting {
+				s.status = claudeCompactingStatus
+			} else {
+				s.status = claudeThinkingStatus
+			}
+		case "compact_boundary":
+			s.handleClaudeCompactBoundaryLocked(claudeCompactMetadataFromEnvelope(env))
 		}
 	case "assistant":
 		s.handleClaudeAssistantLocked(env.Message)
@@ -892,12 +1165,17 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 		if interruptedResult {
 			s.interruptPending = false
 		}
+		s.applyClaudeModelUsageLocked(env.ModelUsage)
+		if command := s.compactCommand; command != nil {
+			command.resultText = firstNonEmptyTrimmed(env.Result, env.LastMessage, command.resultText)
+			command.resultError = env.IsError
+		}
 		if env.IsError {
 			message := strings.TrimSpace(env.Result)
 			if message == "" {
 				message = "Claude Code returned an error result"
 			}
-			if !interruptedResult {
+			if !interruptedResult && s.compactCommand == nil {
 				s.appendSystemErrorLocked(message)
 			}
 		}
@@ -933,6 +1211,7 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 		s.model = model
 		s.pendingModel = ""
 	}
+	s.applyClaudeUsageLocked(msg.Usage)
 	if msg.ID == "" {
 		msg.ID = fmt.Sprintf("assistant-%d", len(s.entries))
 	}
@@ -997,6 +1276,91 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 				}
 			}
 		}
+	}
+	if command := s.compactCommand; command != nil {
+		for _, block := range msg.Content {
+			if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+				command.resultText = strings.TrimSpace(block.Text)
+			}
+		}
+	}
+}
+
+func (s *claudeCodeSession) applyClaudeUsageLocked(usage claudeTokenUsage) {
+	snapshot := claudeTokenUsageSnapshot(usage, s.modelContextWindow)
+	if snapshot == nil {
+		return
+	}
+	s.tokenUsage = snapshot
+}
+
+func claudeTokenUsageSnapshot(usage claudeTokenUsage, contextWindow int64) *TokenUsageSnapshot {
+	inputTokens := max(usage.InputTokens, 0)
+	cacheCreationTokens := max(usage.CacheCreationInputTokens, 0)
+	cacheReadTokens := max(usage.CacheReadInputTokens, 0)
+	outputTokens := max(usage.OutputTokens, 0)
+	contextTokens := inputTokens + cacheCreationTokens + cacheReadTokens
+	if contextTokens == 0 && outputTokens == 0 {
+		return nil
+	}
+	breakdown := TokenUsageBreakdown{
+		CachedInputTokens: cacheReadTokens,
+		InputTokens:       contextTokens,
+		OutputTokens:      outputTokens,
+		TotalTokens:       contextTokens + outputTokens,
+	}
+	return &TokenUsageSnapshot{
+		Last:               breakdown,
+		Total:              breakdown,
+		ModelContextWindow: contextWindow,
+		ContextTokens:      contextTokens,
+	}
+}
+
+func (s *claudeCodeSession) applyClaudeModelUsageLocked(modelUsage map[string]claudeModelUsage) {
+	if len(modelUsage) == 0 {
+		return
+	}
+
+	currentModel := concreteClaudeModel(s.model)
+	var selected claudeModelUsage
+	found := false
+	for model, usage := range modelUsage {
+		if currentModel != "" && strings.EqualFold(strings.TrimSpace(model), currentModel) {
+			selected = usage
+			found = true
+			break
+		}
+		if !found || usage.ContextWindow > selected.ContextWindow {
+			selected = usage
+			found = true
+		}
+	}
+	if !found || selected.ContextWindow <= 0 {
+		return
+	}
+	s.modelContextWindow = selected.ContextWindow
+	if s.tokenUsage != nil {
+		s.tokenUsage.ModelContextWindow = selected.ContextWindow
+	}
+}
+
+func claudeCompactMetadataFromEnvelope(env claudeStreamEnvelope) claudeCompactMetadata {
+	if env.CompactMetadata.PreTokens > 0 || strings.TrimSpace(env.CompactMetadata.Trigger) != "" {
+		return env.CompactMetadata
+	}
+	return env.CompactMetadataV2
+}
+
+func (s *claudeCodeSession) handleClaudeCompactBoundaryLocked(metadata claudeCompactMetadata) {
+	s.tokenUsage = nil
+	if command := s.compactCommand; command != nil {
+		command.boundarySeen = true
+		command.metadata = metadata
+	}
+	notice := claudeCompactionNotice(metadata)
+	if notice != s.lastSystemNotice {
+		s.appendSystemNoticeLocked(notice)
 	}
 }
 
@@ -1080,6 +1444,8 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		s.status = "Claude Code session closed"
 	case s.externalTurnActive:
 		s.status = "Claude Code session active in another terminal"
+	case s.compacting:
+		s.status = claudeCompactingStatus
 	case s.busy:
 		if s.pendingSubmissions > 0 {
 			s.status = claudeThinkingStatus
@@ -1170,9 +1536,12 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	var conversationTracker claudeartifact.ConversationTracker
 	lastType := ""
 	latestReasoningEffort := ""
+	latestModel := ""
+	var latestUsage *TokenUsageSnapshot
+	sawTokenState := false
 	for sc.Scan() {
 		line := sc.Text()
-		lineEntries, entryType, reasoningEffort := parseCCLineEntries(line, toolCalls, toolResults, &conversationTracker)
+		lineEntries, entryType, reasoningEffort, parsedState := parseCCLineEntries(line, toolCalls, toolResults, &conversationTracker)
 		entries = append(entries, lineEntries...)
 		if entryType != "" {
 			lastType = entryType
@@ -1180,11 +1549,35 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 		if reasoningEffort != "" {
 			latestReasoningEffort = reasoningEffort
 		}
+		if parsedState.model != "" {
+			latestModel = parsedState.model
+		}
+		if parsedState.usage != nil {
+			latestUsage = parsedState.usage
+			sawTokenState = true
+		}
+		if parsedState.compactBoundary {
+			latestUsage = nil
+			sawTokenState = true
+			if command := s.compactCommand; command != nil {
+				command.boundarySeen = true
+				command.metadata = parsedState.compactMetadata
+			}
+		}
 	}
 
 	s.entries = entries
 	if latestReasoningEffort != "" {
 		s.reasoningEffort = latestReasoningEffort
+	}
+	if latestModel != "" {
+		s.model = latestModel
+	}
+	if sawTokenState {
+		s.tokenUsage = cloneTokenUsageSnapshot(latestUsage)
+		if s.tokenUsage != nil {
+			s.tokenUsage.ModelContextWindow = s.modelContextWindow
+		}
 	}
 	s.invalidateTranscriptCacheLocked()
 	s.lastFileSize = stat.Size()
@@ -1499,58 +1892,90 @@ func parseCCLineEntries(
 	toolCalls map[string]claudeToolCall,
 	toolResults map[string]struct{},
 	conversationTracker *claudeartifact.ConversationTracker,
-) ([]TranscriptEntry, string, string) {
+) ([]TranscriptEntry, string, string, claudeParsedLineState) {
 	var raw struct {
-		Type         string `json:"type"`
-		Subtype      string `json:"subtype"`
-		IsMeta       bool   `json:"isMeta"`
-		UUID         string `json:"uuid"`
-		ParentUUID   string `json:"parentUuid"`
-		PromptSource string `json:"promptSource"`
-		Effort       string `json:"effort"`
-		Origin       struct {
+		Type              string                `json:"type"`
+		Subtype           string                `json:"subtype"`
+		IsMeta            bool                  `json:"isMeta"`
+		IsCompactSummary  bool                  `json:"isCompactSummary"`
+		UUID              string                `json:"uuid"`
+		ParentUUID        string                `json:"parentUuid"`
+		PromptSource      string                `json:"promptSource"`
+		Effort            string                `json:"effort"`
+		Model             string                `json:"model"`
+		CompactMetadata   claudeCompactMetadata `json:"compact_metadata"`
+		CompactMetadataV2 claudeCompactMetadata `json:"compactMetadata"`
+		Origin            struct {
 			Kind string `json:"kind"`
 		} `json:"origin"`
 		Message struct {
-			Role    string          `json:"role"`
-			Content json.RawMessage `json:"content"`
-			Model   string          `json:"model"`
+			Role    string           `json:"role"`
+			Content json.RawMessage  `json:"content"`
+			Model   string           `json:"model"`
+			Usage   claudeTokenUsage `json:"usage"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return nil, "", ""
+		return nil, "", "", claudeParsedLineState{}
 	}
 	reasoningEffort := strings.TrimSpace(raw.Effort)
+	state := claudeParsedLineState{
+		model: concreteClaudeModel(firstNonEmptyTrimmed(raw.Message.Model, raw.Model)),
+	}
+	if raw.Type == "assistant" {
+		state.usage = claudeTokenUsageSnapshot(raw.Message.Usage, 0)
+	}
+	if raw.Type == "system" && raw.Subtype == "compact_boundary" {
+		state.compactBoundary = true
+		state.compactMetadata = raw.CompactMetadata
+		if state.compactMetadata.PreTokens == 0 && strings.TrimSpace(state.compactMetadata.Trigger) == "" {
+			state.compactMetadata = raw.CompactMetadataV2
+		}
+	}
 	includeUserText := true
 	if conversationTracker != nil {
 		includeUserText = conversationTracker.Observe(claudeartifact.TranscriptEntry{
-			Type:         raw.Type,
-			UUID:         raw.UUID,
-			ParentUUID:   raw.ParentUUID,
-			IsMeta:       raw.IsMeta,
-			PromptSource: raw.PromptSource,
-			OriginKind:   raw.Origin.Kind,
+			Type:             raw.Type,
+			UUID:             raw.UUID,
+			ParentUUID:       raw.ParentUUID,
+			IsMeta:           raw.IsMeta,
+			IsCompactSummary: raw.IsCompactSummary,
+			PromptSource:     raw.PromptSource,
+			OriginKind:       raw.Origin.Kind,
 		})
 	}
 
-	if raw.IsMeta {
-		return nil, raw.Type, reasoningEffort
+	if raw.IsMeta || raw.IsCompactSummary {
+		return nil, raw.Type, reasoningEffort, state
 	}
 
 	switch raw.Type {
 	case "user":
-		return extractCCUserEntries(raw.Message.Content, raw.UUID, includeUserText, toolCalls, toolResults), raw.Type, reasoningEffort
+		return extractCCUserEntries(raw.Message.Content, raw.UUID, includeUserText, toolCalls, toolResults), raw.Type, reasoningEffort, state
 
 	case "assistant":
-		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type, reasoningEffort
+		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type, reasoningEffort, state
 
 	case "progress":
-		return nil, raw.Type, reasoningEffort
+		return nil, raw.Type, reasoningEffort, state
 	case "system":
-		return nil, raw.Type, reasoningEffort
+		if state.compactBoundary {
+			return []TranscriptEntry{{
+				Kind: TranscriptSystem,
+				Text: claudeCompactionNotice(state.compactMetadata),
+			}}, raw.Type, reasoningEffort, state
+		}
+		return nil, raw.Type, reasoningEffort, state
 	default:
-		return nil, raw.Type, reasoningEffort
+		return nil, raw.Type, reasoningEffort, state
 	}
+}
+
+type claudeParsedLineState struct {
+	model           string
+	usage           *TokenUsageSnapshot
+	compactBoundary bool
+	compactMetadata claudeCompactMetadata
 }
 
 func extractCCTextContent(content json.RawMessage) string {

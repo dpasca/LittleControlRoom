@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/service"
 	"lcroom/internal/store"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -776,7 +777,7 @@ func TestVisibleCodexCompactSlashUsesStartAndCompletionMessages(t *testing.T) {
 	}
 
 	input := newCodexTextarea()
-	input.SetValue("/compact")
+	input.SetValue("/compact preserve the renderer decisions")
 
 	m := Model{
 		codexManager:        manager,
@@ -813,6 +814,9 @@ func TestVisibleCodexCompactSlashUsesStartAndCompletionMessages(t *testing.T) {
 	}
 	if session.compactCalls != 1 {
 		t.Fatalf("compact calls = %d, want 1", session.compactCalls)
+	}
+	if got, want := session.compactInstructions, []string{"preserve the renderer decisions"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("compact instructions = %#v, want %#v", got, want)
 	}
 }
 

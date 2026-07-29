@@ -105,6 +105,71 @@ func TestClaudeAssistantBlocksDeduplicateRepeatedEvents(t *testing.T) {
 	}
 }
 
+func TestClaudeStreamUsagePopulatesContextSnapshot(t *testing.T) {
+	session := &claudeCodeSession{
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"ses-demo","model":"claude-opus-5"}`)
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg_1","model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"Done."}],"usage":{"input_tokens":914,"cache_creation_input_tokens":500000,"cache_read_input_tokens":150000,"output_tokens":42}}}`)
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"success","is_error":false,"result":"Done.","modelUsage":{"claude-opus-5":{"inputTokens":914,"cacheCreationInputTokens":500000,"cacheReadInputTokens":150000,"outputTokens":42,"contextWindow":1000000}}}`)
+
+	snapshot := session.Snapshot()
+	if snapshot.TokenUsage == nil {
+		t.Fatal("TokenUsage = nil, want Claude usage snapshot")
+	}
+	if got, want := snapshot.TokenUsage.ContextTokens, int64(650914); got != want {
+		t.Fatalf("ContextTokens = %d, want %d", got, want)
+	}
+	if got, want := snapshot.TokenUsage.ModelContextWindow, int64(1000000); got != want {
+		t.Fatalf("ModelContextWindow = %d, want %d", got, want)
+	}
+	if got, want := snapshot.TokenUsage.ContextLeftPercent(), 35; got != want {
+		t.Fatalf("ContextLeftPercent() = %d, want %d", got, want)
+	}
+	if got, want := snapshot.Model, "claude-opus-5"; got != want {
+		t.Fatalf("Model = %q, want %q", got, want)
+	}
+	if err := session.ShowStatus(); err != nil {
+		t.Fatalf("ShowStatus() error = %v", err)
+	}
+	if got := session.Snapshot().Transcript; !strings.Contains(got, "Context: 650914 / 1000000 tokens used (65% used, 35% left)") {
+		t.Fatalf("status transcript = %q, want Claude context report", got)
+	}
+}
+
+func TestClaudeCompactBoundaryClearsStaleUsage(t *testing.T) {
+	command := &claudeCompactCommand{done: make(chan claudeCompactCompletion, 1)}
+	session := &claudeCodeSession{
+		compacting:     true,
+		compactCommand: command,
+		tokenUsage: &TokenUsageSnapshot{
+			ContextTokens:      650914,
+			ModelContextWindow: 1000000,
+		},
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":650914}}`)
+
+	if session.tokenUsage != nil {
+		t.Fatalf("tokenUsage = %#v, want stale pre-compaction usage cleared", session.tokenUsage)
+	}
+	if !command.boundarySeen {
+		t.Fatal("compact boundary was not recorded")
+	}
+	if command.metadata.PreTokens != 650914 || command.metadata.Trigger != "manual" {
+		t.Fatalf("compact metadata = %#v", command.metadata)
+	}
+	if got := session.entries[len(session.entries)-1].Text; !strings.Contains(got, "650914 tokens before compaction") {
+		t.Fatalf("compact notice = %q, want pre-compaction count", got)
+	}
+}
+
 func TestClaudeSyntheticAssistantKeepsLastRealModel(t *testing.T) {
 	session := &claudeCodeSession{
 		model:           "claude-fable-5",
@@ -131,12 +196,51 @@ func TestClaudeSyntheticAssistantKeepsLastRealModel(t *testing.T) {
 	}
 }
 
+func TestClaudeLoadTranscriptRestoresUsageAndHidesCompactSummary(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","uuid":"before","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"Older reply."}],"usage":{"input_tokens":10,"cache_creation_input_tokens":600000,"cache_read_input_tokens":50000,"output_tokens":20}}}`,
+		`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","pre_tokens":650010}}`,
+		`{"type":"user","uuid":"summary","isCompactSummary":true,"message":{"role":"user","content":"This is Claude's generated compact summary, not a human prompt."}}`,
+		`{"type":"user","uuid":"after","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"Continue."}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+	session.loadTranscriptLocked()
+
+	if session.tokenUsage != nil {
+		t.Fatalf("tokenUsage = %#v, want pre-compaction usage cleared", session.tokenUsage)
+	}
+	if got, want := len(session.entries), 3; got != want {
+		t.Fatalf("entry count = %d, want %d: %#v", got, want, session.entries)
+	}
+	if session.entries[1].Kind != TranscriptSystem || !strings.Contains(session.entries[1].Text, "compacted conversation history") {
+		t.Fatalf("compact boundary entry = %#v", session.entries[1])
+	}
+	if session.entries[2].Kind != TranscriptUser || session.entries[2].Text != "Continue." {
+		t.Fatalf("post-compact user entry = %#v", session.entries[2])
+	}
+	for _, entry := range session.entries {
+		if strings.Contains(entry.Text, "generated compact summary") {
+			t.Fatalf("compact summary leaked into transcript: %#v", entry)
+		}
+	}
+}
+
 func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})
 	var conversationTracker claudeartifact.ConversationTracker
 
-	assistantEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","effort":"xhigh","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults, &conversationTracker)
+	assistantEntries, entryType, reasoningEffort, _ := parseCCLineEntries(`{"type":"assistant","uuid":"msg_1","effort":"xhigh","message":{"role":"assistant","content":[{"type":"text","text":"Checking logs."},{"type":"tool_use","id":"toolu_1","name":"Grep","input":{"pattern":"refresh"}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"make test"}}]}}`, toolCalls, toolResults, &conversationTracker)
 	if entryType != "assistant" {
 		t.Fatalf("assistant entry type = %q, want assistant", entryType)
 	}
@@ -156,7 +260,7 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 		t.Fatalf("bash tool entry = %#v, want structured bash tool", assistantEntries[2])
 	}
 
-	userEntries, entryType, reasoningEffort := parseCCLineEntries(`{"type":"user","uuid":"msg_2","parentUuid":"msg_1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults, &conversationTracker)
+	userEntries, entryType, reasoningEffort, _ := parseCCLineEntries(`{"type":"user","uuid":"msg_2","parentUuid":"msg_1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"tests passed"}]}}`, toolCalls, toolResults, &conversationTracker)
 	if entryType != "user" {
 		t.Fatalf("user entry type = %q, want user", entryType)
 	}
@@ -420,6 +524,102 @@ exit 99
 	}
 	if !notified {
 		t.Fatal("session did not notify after recording the authentication error")
+	}
+}
+
+func TestClaudeCompactForwardsInstructionsAndRequiresBoundary(t *testing.T) {
+	binDir := t.TempDir()
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	claudePath := filepath.Join(binDir, "claude")
+	script := `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+	printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}'
+	exit 0
+fi
+IFS= read -r payload
+printf '%s\n' "$payload" > "$CLAUDE_TEST_INPUT"
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"ses-demo","model":"claude-opus-5","permissionMode":"acceptEdits"}'
+printf '%s\n' '{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":650914}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"Compacted","modelUsage":{"claude-opus-5":{"contextWindow":1000000}}}'
+`
+	if err := os.WriteFile(claudePath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude CLI: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("CLAUDE_TEST_INPUT", inputPath)
+
+	session := &claudeCodeSession{
+		projectPath:     t.TempDir(),
+		claudeHome:      t.TempDir(),
+		sessionID:       "ses-demo",
+		started:         true,
+		preset:          codexcli.PresetSafe,
+		status:          claudeReadyStatus,
+		closedCh:        make(chan struct{}),
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	result, err := session.CompactWithInstructions("preserve the renderer decisions")
+	if err != nil {
+		t.Fatalf("CompactWithInstructions() error = %v", err)
+	}
+	if !result.Compacted || result.PreTokens != 650914 || result.Trigger != "manual" {
+		t.Fatalf("compaction result = %#v", result)
+	}
+
+	data, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatalf("read captured Claude input: %v", err)
+	}
+	var payload struct {
+		Message struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode captured Claude input: %v", err)
+	}
+	if got, want := payload.Message.Content[0].Text, "/compact preserve the renderer decisions"; got != want {
+		t.Fatalf("Claude compact prompt = %q, want %q", got, want)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Busy || snapshot.Phase != SessionPhaseIdle {
+		t.Fatalf("snapshot busy=%t phase=%q, want settled session", snapshot.Busy, snapshot.Phase)
+	}
+	for _, entry := range snapshot.Entries {
+		if entry.Kind == TranscriptUser && strings.Contains(entry.Text, "/compact") {
+			t.Fatalf("host compact command leaked in as a conversational prompt: %#v", entry)
+		}
+	}
+	if snapshot.TokenUsage != nil {
+		t.Fatalf("TokenUsage = %#v, want stale usage unavailable after compact", snapshot.TokenUsage)
+	}
+
+	if err := session.ShowStatus(); err != nil {
+		t.Fatalf("ShowStatus() error = %v", err)
+	}
+	if got := session.Snapshot().Transcript; !strings.Contains(got, "model window is 1000000 tokens") {
+		t.Fatalf("status transcript = %q, want retained model context window", got)
+	}
+}
+
+func TestClaudeCompactNoBoundaryReportsNoOp(t *testing.T) {
+	result, err := claudeCompactionCompletion(&claudeCompactCommand{
+		resultText: "Conversation is too short to compact.",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("claudeCompactionCompletion() error = %v", err)
+	}
+	if result.Compacted {
+		t.Fatalf("result.Compacted = true, want no-op without compact boundary")
+	}
+	if result.Message != "Conversation is too short to compact." {
+		t.Fatalf("result.Message = %q", result.Message)
 	}
 }
 
