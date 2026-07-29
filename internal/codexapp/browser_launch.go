@@ -113,7 +113,11 @@ func lcrCLIExecutablePath(req LaunchRequest) (string, error) {
 	if configured := strings.TrimSpace(req.CLIExecutablePath); configured != "" {
 		return configured, nil
 	}
-	return os.Executable()
+	executablePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return durableLCRCLIExecutablePath(executablePath, req.AppDataDir)
 }
 
 func managedPlaywrightMCPCommand(req LaunchRequest) (string, []string, bool) {

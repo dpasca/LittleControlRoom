@@ -75,10 +75,11 @@ func TestCodexPlaywrightMCPConfigOverridesManagedHeaded(t *testing.T) {
 }
 
 func TestCodexPlaywrightMCPConfigOverridesUsesCurrentExecutableByDefault(t *testing.T) {
+	dataDir := t.TempDir()
 	req := LaunchRequest{
 		Provider:    ProviderCodex,
 		ProjectPath: "/tmp/demo",
-		AppDataDir:  "/tmp/lcr-data",
+		AppDataDir:  dataDir,
 		PlaywrightPolicy: browserctl.Policy{
 			ManagementMode:     browserctl.ManagementModeManaged,
 			DefaultBrowserMode: browserctl.BrowserModeHeadless,
@@ -96,8 +97,12 @@ func TestCodexPlaywrightMCPConfigOverridesUsesCurrentExecutableByDefault(t *test
 	if err != nil {
 		t.Fatalf("os.Executable() error = %v", err)
 	}
-	if got[0] != `mcp_servers.playwright.command="`+executablePath+`"` {
-		t.Fatalf("command override = %q, want lcroom executable %q", got[0], executablePath)
+	wantExecutable, err := durableLCRCLIExecutablePath(executablePath, dataDir)
+	if err != nil {
+		t.Fatalf("durableLCRCLIExecutablePath() error = %v", err)
+	}
+	if got[0] != `mcp_servers.playwright.command="`+wantExecutable+`"` {
+		t.Fatalf("command override = %q, want lcroom executable %q", got[0], wantExecutable)
 	}
 }
 
