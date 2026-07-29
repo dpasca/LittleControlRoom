@@ -261,10 +261,11 @@ func CuratedTopics() []Topic {
 			Kind:    TopicKindWorkflow,
 			Surface: SurfaceMainTUI,
 			Title:   "Remove or prune linked worktrees",
-			Summary: "Use x or /wt remove on a linked worktree to remove it, and /wt prune on a root family to clean stale Git worktree registrations.",
+			Summary: "Use x or /wt remove on a linked worktree to remove it. On a root with orphaned folders, the same action offers strictly guarded .DS_Store-only cleanup. Use /wt prune to clean stale Git worktree registrations.",
 			Usage:   []string{"x", "/wt remove", "/wt prune"},
 			ManualSteps: []string{
 				"Select a linked worktree and press x, or run /wt remove, to open the remove confirmation.",
+				"On a repository root with orphaned checkout folders, x or /wt remove offers to delete only folders whose sole entry is one regular .DS_Store file; every other folder is kept.",
 				"For a clean merged worktree linked to an open TODO, leave Mark linked TODO done enabled to complete the item before removing the checkout.",
 				"If the selected row is a pending TODO worktree launch, x aborts the pending launch.",
 				"Select a repo root or family and run /wt prune to clean stale Git worktree registrations.",

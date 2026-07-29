@@ -39,6 +39,7 @@ const (
 	worktreeMergePendingSummary       = "Merging worktree back..."
 	worktreeCommitMergePendingSummary = "Committing and merging worktree back..."
 	worktreeRemovePendingSummary      = "Removing worktree..."
+	worktreeResidualCleanupSummary    = "Cleaning safe residual worktree folders..."
 	worktreeFinalizeRemoveSummary     = "Completing linked TODO and removing worktree..."
 	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
 	tuiWorktreeRemoveTimeout          = 20 * time.Second
@@ -57,19 +58,21 @@ type projectListRow struct {
 }
 
 type worktreeRemoveConfirmState struct {
-	ProjectPath  string
-	RootPath     string
-	ProjectName  string
-	BranchName   string
-	TargetBranch string
-	MergeStatus  model.WorktreeMergeStatus
-	LinkedTodoID int64
-	Dirty        bool
-	ForceRemove  bool
-	MarkTodoDone bool
-	Busy         bool
-	BusyMessage  string
-	Selected     int
+	ProjectPath           string
+	RootPath              string
+	ProjectName           string
+	BranchName            string
+	TargetBranch          string
+	MergeStatus           model.WorktreeMergeStatus
+	LinkedTodoID          int64
+	Dirty                 bool
+	ForceRemove           bool
+	MarkTodoDone          bool
+	ResidualCleanup       bool
+	OrphanedCheckoutCount int
+	Busy                  bool
+	BusyMessage           string
+	Selected              int
 }
 
 func worktreeRemoveConfirmOptionCount(confirm *worktreeRemoveConfirmState) int {
@@ -1392,6 +1395,9 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 	if m.canRemoveWorktree(project) {
 		hints = append(hints, "x or /wt remove")
 	}
+	if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
+		hints = append(hints, "x or /wt remove (clean safe orphan residues)")
+	}
 	if project.WorktreeKind != model.WorktreeKindLinked && len(family) > 1 {
 		hints = append(hints, "/wt prune")
 	}
@@ -1999,6 +2005,28 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		m.status = "No project selected"
 		return nil
 	}
+	if projectIsWorktreeRoot(project) {
+		rootPath := projectWorktreeRootPath(project)
+		orphanedCount := m.orphanedWorktreeCount(rootPath)
+		if orphanedCount > 0 {
+			if _, pending := m.pendingGitOperation(rootPath); pending {
+				m.status = "A worktree cleanup is already in progress for this repository"
+				return nil
+			}
+			state := &worktreeRemoveConfirmState{
+				ProjectPath:           project.Path,
+				RootPath:              rootPath,
+				ProjectName:           project.Name,
+				BranchName:            fmt.Sprintf("%d orphaned checkout folder(s)", orphanedCount),
+				ResidualCleanup:       true,
+				OrphanedCheckoutCount: orphanedCount,
+			}
+			state.Selected = worktreeRemoveConfirmKeepIndex(state)
+			m.worktreeRemoveConfirm = state
+			m.status = "Confirm safe residual worktree cleanup"
+			return nil
+		}
+	}
 	if row.Kind != projectListRowWorktree || project.WorktreeKind != model.WorktreeKindLinked {
 		m.status = "Select a linked worktree to remove it"
 		return nil
@@ -2078,6 +2106,10 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 			m.status = "Check \"Force remove\" to discard uncommitted changes"
 			return m, nil
 		}
+		if confirm.ResidualCleanup {
+			m.beginAsyncWorktreeAction(confirm.RootPath, worktreeResidualCleanupSummary, worktreeResidualCleanupSummary)
+			return m, m.cleanupResidualWorktreeDirectoriesCmd(confirm.RootPath)
+		}
 		if confirm.MarkTodoDone && confirm.LinkedTodoID > 0 {
 			m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeFinalizeRemoveSummary, worktreeFinalizeRemoveSummary)
 			return m, m.finalizeMergedWorktreeCmd(confirm.ProjectPath, confirm.RootPath, confirm.ForceRemove)
@@ -2130,6 +2162,42 @@ func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.C
 	}
 }
 
+func (m Model) cleanupResidualWorktreeDirectoriesCmd(rootPath string) tea.Cmd {
+	if m.svc == nil {
+		return func() tea.Msg {
+			return worktreeActionMsg{projectPath: rootPath, selectPath: rootPath, err: fmt.Errorf("service unavailable")}
+		}
+	}
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiWorktreeRemoveTimeout)
+		defer cancel()
+		result, err := m.svc.CleanupResidualWorktreeDirectories(ctx, rootPath)
+		err = timeoutActionError(err, tuiWorktreeRemoveTimeout, "cleaning residual worktree folders")
+		return worktreeActionMsg{
+			projectPath:            rootPath,
+			selectPath:             rootPath,
+			status:                 residualWorktreeCleanupStatus(result),
+			clearPendingGitSummary: true,
+			err:                    err,
+		}
+	}
+}
+
+func residualWorktreeCleanupStatus(result service.CleanupResidualWorktreeDirectoriesResult) string {
+	removed := len(result.RemovedPaths)
+	kept := len(result.KeptPaths)
+	switch {
+	case removed > 0 && kept > 0:
+		return fmt.Sprintf("Cleared %d .DS_Store-only residual folder(s); kept %d orphaned folder(s) containing other files", removed, kept)
+	case removed > 0:
+		return fmt.Sprintf("Cleared %d .DS_Store-only residual worktree folder(s)", removed)
+	case kept > 0:
+		return fmt.Sprintf("No folders cleared; kept %d orphaned folder(s) containing other files", kept)
+	default:
+		return "No residual worktree folders needed cleanup"
+	}
+}
+
 func (m Model) removeWorktreeWithTimeout(projectPath string, force bool) error {
 	if m.svc == nil {
 		return fmt.Errorf("service unavailable")
@@ -2176,6 +2244,9 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	panelW := min(max(48, bodyW-24), 78)
 	panelInnerW := max(24, panelW-4)
 	removeLabel := "Remove"
+	if confirm.ResidualCleanup {
+		removeLabel = "Clean Safe Residues"
+	}
 	if confirm.Dirty && confirm.ForceRemove {
 		removeLabel = "Force Remove"
 	}
@@ -2195,20 +2266,35 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if confirm.Busy {
 		buttons = removeButton
 	}
+	dialogTitle := "Remove worktree"
+	if confirm.ResidualCleanup {
+		dialogTitle = "Clean residual worktree folders"
+	}
 	lines := []string{
-		detailSectionStyle.Render("Remove worktree"),
+		detailSectionStyle.Render(dialogTitle),
 		"",
 		detailValueStyle.Render(truncateText(confirm.BranchName, panelInnerW)),
 		detailMutedStyle.Render(truncateText(confirm.ProjectPath, panelInnerW)),
 	}
-	if statusHeader, statusBody, statusStyle := worktreeRemoveSafetyCopy(confirm.MergeStatus, confirm.TargetBranch, confirm.Dirty); statusHeader != "" || statusBody != "" {
+	if !confirm.ResidualCleanup {
+		if statusHeader, statusBody, statusStyle := worktreeRemoveSafetyCopy(confirm.MergeStatus, confirm.TargetBranch, confirm.Dirty); statusHeader != "" || statusBody != "" {
+			lines = append(lines, "")
+			if statusHeader != "" {
+				lines = append(lines, statusStyle.Render(statusHeader))
+			}
+			if statusBody != "" {
+				lines = append(lines, renderWrappedDialogTextLines(statusStyle, panelInnerW, statusBody)...)
+			}
+		}
+	}
+	if confirm.ResidualCleanup {
 		lines = append(lines, "")
-		if statusHeader != "" {
-			lines = append(lines, statusStyle.Render(statusHeader))
-		}
-		if statusBody != "" {
-			lines = append(lines, renderWrappedDialogTextLines(statusStyle, panelInnerW, statusBody)...)
-		}
+		lines = append(lines, detailWarningStyle.Render("Strict cleanup guard"))
+		lines = append(lines, renderWrappedDialogTextLines(
+			detailMutedStyle,
+			panelInnerW,
+			"Little Control Room will inspect each orphaned folder and delete it only when its sole entry is one regular .DS_Store file. It removes that file and then the empty directory with non-recursive deletes. Any folder containing another entry is kept untouched.",
+		)...)
 	}
 	if confirm.Dirty && !confirm.Busy {
 		lines = append(lines, "")
@@ -2247,7 +2333,11 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		}
 	}
 	lines = append(lines, "")
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Removing a linked worktree deletes the checkout only. The branch ref stays in the repo.")...)
+	if confirm.ResidualCleanup {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "This cleanup does not delete branches or any folder that still contains project files.")...)
+	} else {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Removing a linked worktree deletes the checkout only. The branch ref stays in the repo.")...)
+	}
 	if confirm.Busy {
 		lines = append(lines, "")
 		lines = append(lines, detailValueStyle.Render("Removal in progress"))

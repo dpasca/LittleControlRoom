@@ -1612,11 +1612,18 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		worktreeParentBranch := old.WorktreeParentBranch
 		worktreeMergeStatus := old.WorktreeMergeStatus
 		inferredMissingLinkedWorktree := false
+		residualLinkedWorktree := false
 		if presentOnDisk && !isGitRepo {
-			worktreeRootPath = ""
-			worktreeKind = model.WorktreeKindNone
-			worktreeParentBranch = ""
-			worktreeMergeStatus = model.WorktreeMergeStatus("")
+			if inferredRootPath, ok := inferResidualLinkedWorktreeRoot(path); ok {
+				worktreeRootPath = inferredRootPath
+				worktreeKind = model.WorktreeKindLinked
+				residualLinkedWorktree = true
+			} else {
+				worktreeRootPath = ""
+				worktreeKind = model.WorktreeKindNone
+				worktreeParentBranch = ""
+				worktreeMergeStatus = model.WorktreeMergeStatus("")
+			}
 		} else if !presentOnDisk {
 			if worktreeKind == model.WorktreeKindNone || strings.TrimSpace(worktreeRootPath) == "" {
 				if inferredRootPath, ok := inferMissingLinkedWorktreeRoot(path); ok {
@@ -1658,14 +1665,21 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 				repoBehindCount = old.RepoBehindCount
 				repoSubmoduleDirtyCount = old.RepoSubmoduleDirtyCount
 				repoSubmoduleUnpushedCount = old.RepoSubmoduleUnpushedCount
+			} else if residualLinkedWorktree {
+				repoBranch = old.RepoBranch
 			}
-			worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
+			if !residualLinkedWorktree {
+				worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
+			}
 		}
 		archived := archivedWithWorktreeRoot(old.Archived, worktreeRootPath, worktreeKind, oldMap)
 		forgotten := old.Forgotten
-		staleLinkedWorktree := false
+		staleLinkedWorktree := residualLinkedWorktree
 		if worktreeKind == model.WorktreeKindLinked && liveLinkedWorktreeMissing(liveWorktreePathsByRoot, worktreeRootPath, path) {
 			staleLinkedWorktree = true
+			forgotten = true
+		}
+		if residualLinkedWorktree {
 			forgotten = true
 		}
 		if inferredMissingLinkedWorktree {
@@ -2208,6 +2222,26 @@ func liveLinkedWorktreeMissing(livePathsByRoot map[string]map[string]struct{}, r
 func inferMissingLinkedWorktreeRoot(projectPath string) (string, bool) {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" || projectPath == "." || projectPathExists(projectPath) {
+		return "", false
+	}
+	return inferLinkedWorktreeRootFromSiblingName(projectPath)
+}
+
+func inferResidualLinkedWorktreeRoot(projectPath string) (string, bool) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return "", false
+	}
+	onlyDSStore, err := directoryContainsOnlyRegularDSStore(projectPath)
+	if err != nil || !onlyDSStore {
+		return "", false
+	}
+	return inferLinkedWorktreeRootFromSiblingName(projectPath)
+}
+
+func inferLinkedWorktreeRootFromSiblingName(projectPath string) (string, bool) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
 		return "", false
 	}
 	dir := filepath.Dir(projectPath)
@@ -2958,10 +2992,17 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		repoSubmoduleDirtyCount := 0
 		repoSubmoduleUnpushedCount := 0
 		if metadata.presentOnDisk && !metadata.isGitRepo {
-			worktreeRootPath = ""
-			worktreeKind = model.WorktreeKindNone
-			worktreeParentBranch = ""
-			worktreeMergeStatus = model.WorktreeMergeStatus("")
+			if metadata.worktreeKind == model.WorktreeKindLinked && metadata.staleLinkedWorktree {
+				worktreeRootPath = metadata.worktreeRootPath
+				worktreeKind = metadata.worktreeKind
+				worktreeMergeStatus = metadata.worktreeMergeStatus
+				repoBranch = metadata.repoBranch
+			} else {
+				worktreeRootPath = ""
+				worktreeKind = model.WorktreeKindNone
+				worktreeParentBranch = ""
+				worktreeMergeStatus = model.WorktreeMergeStatus("")
+			}
 		} else if metadata.presentOnDisk {
 			worktreeRootPath = metadata.worktreeRootPath
 			worktreeKind = metadata.worktreeKind
@@ -3087,6 +3128,19 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		return meta
 	}
 	if !meta.isGitRepo {
+		if residualRootPath, ok := inferResidualLinkedWorktreeRoot(projectPath); ok {
+			meta.worktreeRootPath = residualRootPath
+			meta.worktreeKind = model.WorktreeKindLinked
+			meta.repoDirty = false
+			meta.repoConflict = false
+			meta.repoSyncStatus = model.RepoSyncStatus("")
+			meta.repoAheadCount = 0
+			meta.repoBehindCount = 0
+			meta.repoSubmoduleDirtyCount = 0
+			meta.repoSubmoduleUnpushedCount = 0
+			meta.staleLinkedWorktree = true
+			return meta
+		}
 		meta.worktreeRootPath = ""
 		meta.worktreeKind = model.WorktreeKindNone
 		meta.worktreeMergeStatus = model.WorktreeMergeStatus("")

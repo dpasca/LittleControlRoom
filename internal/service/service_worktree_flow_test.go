@@ -974,6 +974,164 @@ func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestCleanupResidualWorktreeDirectoriesDeletesOnlyDSStoreOnlyFolders(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	safePath := filepath.Join(root, "repo--safe-residue")
+	keptPath := filepath.Join(root, "repo--contains-project-files")
+	for _, path := range []string{safePath, keptPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(filepath.Join(path, ".DS_Store"), []byte("finder metadata"), 0o644); err != nil {
+			t.Fatalf("write %s/.DS_Store: %v", path, err)
+		}
+	}
+	keptFile := filepath.Join(keptPath, "important.txt")
+	if err := os.WriteFile(keptFile, []byte("keep me"), 0o644); err != nil {
+		t.Fatalf("write kept project file: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	for _, path := range []string{safePath, keptPath} {
+		if err := st.UpsertProjectState(ctx, model.ProjectState{
+			Path:             path,
+			Name:             filepath.Base(path),
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			Forgotten:        true,
+			InScope:          true,
+			WorktreeRootPath: projectPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+			UpdatedAt:        time.Now(),
+		}); err != nil {
+			t.Fatalf("seed orphaned worktree %s: %v", path, err)
+		}
+	}
+
+	result, err := svc.CleanupResidualWorktreeDirectories(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("CleanupResidualWorktreeDirectories() error = %v", err)
+	}
+	if len(result.RemovedPaths) != 1 || result.RemovedPaths[0] != safePath {
+		t.Fatalf("RemovedPaths = %#v, want [%q]", result.RemovedPaths, safePath)
+	}
+	if len(result.KeptPaths) != 1 || result.KeptPaths[0] != keptPath {
+		t.Fatalf("KeptPaths = %#v, want [%q]", result.KeptPaths, keptPath)
+	}
+	if _, err := os.Stat(safePath); !os.IsNotExist(err) {
+		t.Fatalf("safe residual path still exists: %v", err)
+	}
+	if content, err := os.ReadFile(keptFile); err != nil || string(content) != "keep me" {
+		t.Fatalf("kept project file = %q, %v", content, err)
+	}
+	safeDetail, err := st.GetProjectDetail(ctx, safePath, 1)
+	if err != nil {
+		t.Fatalf("GetProjectDetail(safe residual) error = %v", err)
+	}
+	if safeDetail.Summary.PresentOnDisk || !safeDetail.Summary.Forgotten {
+		t.Fatalf("safe residual state = %#v, want missing and forgotten", safeDetail.Summary)
+	}
+	keptDetail, err := st.GetProjectDetail(ctx, keptPath, 1)
+	if err != nil {
+		t.Fatalf("GetProjectDetail(kept orphan) error = %v", err)
+	}
+	if !keptDetail.Summary.PresentOnDisk || !keptDetail.Summary.Forgotten {
+		t.Fatalf("kept orphan state = %#v, want present and forgotten", keptDetail.Summary)
+	}
+}
+
+func TestRemoveWorktreeRefusesUnregisteredFolderContainingProjectFiles(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	orphanPath := filepath.Join(root, "repo--orphaned")
+	if err := os.MkdirAll(orphanPath, 0o755); err != nil {
+		t.Fatalf("mkdir orphaned path: %v", err)
+	}
+	importantPath := filepath.Join(orphanPath, "important.txt")
+	if err := os.WriteFile(importantPath, []byte("do not delete"), 0o644); err != nil {
+		t.Fatalf("write important file: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             orphanPath,
+		Name:             filepath.Base(orphanPath),
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		Forgotten:        true,
+		InScope:          true,
+		WorktreeRootPath: projectPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+		UpdatedAt:        time.Now(),
+	}); err != nil {
+		t.Fatalf("seed orphaned worktree: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	err = svc.RemoveWorktree(ctx, orphanPath, true)
+	if err == nil || !strings.Contains(err.Error(), "left the folder untouched") {
+		t.Fatalf("RemoveWorktree() error = %v, want guarded refusal", err)
+	}
+	if content, err := os.ReadFile(importantPath); err != nil || string(content) != "do not delete" {
+		t.Fatalf("important file = %q, %v", content, err)
+	}
+}
+
+func TestDirectoryContainsOnlyRegularDSStoreRejectsSymlink(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	residualPath := filepath.Join(root, "repo--symlink-residue")
+	if err := os.MkdirAll(residualPath, 0o755); err != nil {
+		t.Fatalf("mkdir residual path: %v", err)
+	}
+	targetPath := filepath.Join(root, "outside-metadata")
+	if err := os.WriteFile(targetPath, []byte("outside"), 0o644); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Symlink(targetPath, filepath.Join(residualPath, ".DS_Store")); err != nil {
+		t.Fatalf("create .DS_Store symlink: %v", err)
+	}
+
+	onlyDSStore, err := directoryContainsOnlyRegularDSStore(residualPath)
+	if err != nil {
+		t.Fatalf("directoryContainsOnlyRegularDSStore() error = %v", err)
+	}
+	if onlyDSStore {
+		t.Fatal("directoryContainsOnlyRegularDSStore() accepted a symlink")
+	}
+	if err := removeDSStoreOnlyDirectory(residualPath); err == nil {
+		t.Fatal("removeDSStoreOnlyDirectory() accepted a symlink")
+	}
+	if content, err := os.ReadFile(targetPath); err != nil || string(content) != "outside" {
+		t.Fatalf("symlink target = %q, %v; want untouched", content, err)
+	}
+}
+
 func TestRemoveWorktreeRetriesWithForceForInitializedSubmodules(t *testing.T) {
 	t.Parallel()
 

@@ -1204,8 +1204,13 @@ func (m Model) openHideActionForSelection() (tea.Model, tea.Cmd) {
 	case model.ProjectKindScratchTask:
 		return m, m.openScratchTaskActionConfirmForSelection()
 	}
-	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
-		return m, m.openWorktreeRemoveConfirmForSelection()
+	if row, project, ok := m.selectedProjectRow(); ok {
+		if row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
+			return m, m.openWorktreeRemoveConfirmForSelection()
+		}
+		if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
+			return m, m.openWorktreeRemoveConfirmForSelection()
+		}
 	}
 	m.status = "Select an agent task or linked worktree to archive or remove it"
 	return m, nil

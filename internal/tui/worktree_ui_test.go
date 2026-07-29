@@ -717,6 +717,12 @@ func TestRenderDetailContentShowsOrphanedWorktreeWarning(t *testing.T) {
 	if !strings.Contains(rendered, orphanPath) {
 		t.Fatalf("renderDetailContent() should show the orphaned checkout path, got %q", rendered)
 	}
+	if !strings.Contains(rendered, ".DS_Store file; every other folder is kept untouched") {
+		t.Fatalf("renderDetailContent() should explain guarded residual cleanup, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "x or /wt remove (clean safe orphan residues)") {
+		t.Fatalf("renderDetailContent() should expose residual cleanup from the root row, got %q", rendered)
+	}
 }
 
 func TestRenderDetailContentShowsSessionSummaryBeforeWorktreeInfo(t *testing.T) {
@@ -1902,6 +1908,124 @@ func TestDispatchCommandWorktreeRemoveOpensConfirm(t *testing.T) {
 	}
 	if got.worktreeRemoveConfirm == nil {
 		t.Fatalf("dispatchCommand(/wt remove) should open the remove confirmation dialog")
+	}
+}
+
+func TestDispatchCommandWorktreeRemoveOnRootOpensResidualCleanupConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	orphanPath := "/tmp/repo--residual"
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:             "repo",
+			Path:             rootPath,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+		}},
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			rootPath: {{
+				Name:             "repo--residual",
+				Path:             orphanPath,
+				PresentOnDisk:    true,
+				Forgotten:        true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+			}},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeRemove})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/wt remove) should open residual cleanup confirmation without scheduling work")
+	}
+	confirm := got.worktreeRemoveConfirm
+	if confirm == nil || !confirm.ResidualCleanup || confirm.OrphanedCheckoutCount != 1 {
+		t.Fatalf("residual cleanup confirmation = %#v", confirm)
+	}
+	rendered := ansi.Strip(got.renderWorktreeRemoveConfirmOverlay("body", 100, 28))
+	for _, want := range []string{
+		"Clean residual worktree folders",
+		"Clean Safe Residues",
+		"sole entry is one regular .DS_Store file",
+		"non-recursive deletes",
+		"containing another entry is kept untouched",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("residual cleanup confirmation missing %q in %q", want, rendered)
+		}
+	}
+
+	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
+	updated, cmd = got.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("confirming residual cleanup should queue work")
+	}
+	if got.worktreeRemoveConfirm != nil {
+		t.Fatal("residual cleanup confirmation should close while work runs")
+	}
+	if got.pendingGitSummary(rootPath) != worktreeResidualCleanupSummary {
+		t.Fatalf("pending summary = %q, want %q", got.pendingGitSummary(rootPath), worktreeResidualCleanupSummary)
+	}
+}
+
+func TestResidualWorktreeCleanupHotkeyOnRootOpensConfirm(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:             "repo",
+			Path:             rootPath,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+		}},
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			rootPath: {{
+				Path:             "/tmp/repo--residual",
+				PresentOnDisk:    true,
+				Forgotten:        true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+			}},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("x on a root with orphaned folders should open a confirmation without scheduling work")
+	}
+	if got.worktreeRemoveConfirm == nil || !got.worktreeRemoveConfirm.ResidualCleanup {
+		t.Fatalf("x residual cleanup confirmation = %#v", got.worktreeRemoveConfirm)
+	}
+
+	got.worktreeRemoveConfirm = nil
+	got.setPendingGitSummary(rootPath, worktreeResidualCleanupSummary)
+	updated, cmd = got.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got = updated.(Model)
+	if cmd != nil || got.worktreeRemoveConfirm != nil {
+		t.Fatalf("repeat x during residual cleanup should be ignored: confirm=%#v cmd=%v", got.worktreeRemoveConfirm, cmd)
+	}
+	if got.status != "A worktree cleanup is already in progress for this repository" {
+		t.Fatalf("repeat cleanup status = %q", got.status)
+	}
+}
+
+func TestResidualWorktreeCleanupStatusReportsRemovedAndKeptFolders(t *testing.T) {
+	got := residualWorktreeCleanupStatus(service.CleanupResidualWorktreeDirectoriesResult{
+		RemovedPaths: []string{"/tmp/repo--one", "/tmp/repo--two"},
+		KeptPaths:    []string{"/tmp/repo--keep"},
+	})
+	want := "Cleared 2 .DS_Store-only residual folder(s); kept 1 orphaned folder(s) containing other files"
+	if got != want {
+		t.Fatalf("residualWorktreeCleanupStatus() = %q, want %q", got, want)
 	}
 }
 

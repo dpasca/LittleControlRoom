@@ -72,6 +72,11 @@ type FinalizeMergedWorktreeResult struct {
 	WorktreeRemoved       bool
 }
 
+type CleanupResidualWorktreeDirectoriesResult struct {
+	RemovedPaths []string
+	KeptPaths    []string
+}
+
 func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktreeRequest) (CreateTodoWorktreeResult, error) {
 	if s == nil || s.store == nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("service unavailable")
@@ -1209,8 +1214,24 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		return err
 	}
 	defer unlockGitWrite()
+	staleLinkedWorktree := s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath)
+	residualDirectoryRemoved := false
+	if presentOnDisk && staleLinkedWorktree {
+		onlyDSStore, inspectErr := directoryContainsOnlyRegularDSStore(projectPath)
+		if inspectErr != nil {
+			return fmt.Errorf("inspect orphaned worktree directory before cleanup: %w", inspectErr)
+		}
+		if !onlyDSStore {
+			return fmt.Errorf("Git no longer tracks this worktree, and %s contains files other than a single regular .DS_Store; Little Control Room left the folder untouched", projectPath)
+		}
+		if err := removeDSStoreOnlyDirectory(projectPath); err != nil {
+			return fmt.Errorf("remove .DS_Store-only worktree residue: %w", err)
+		}
+		presentOnDisk = false
+		residualDirectoryRemoved = true
+	}
 	allowSubmoduleForceFallback := false
-	if presentOnDisk && !force && s.gitRepoStatusReader != nil {
+	if presentOnDisk && !residualDirectoryRemoved && !force && s.gitRepoStatusReader != nil {
 		status, err := s.gitRepoStatusReader(ctx, projectPath)
 		if err != nil {
 			return fmt.Errorf("read git status before removing worktree: %w", err)
@@ -1220,19 +1241,23 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		}
 		allowSubmoduleForceFallback = true
 	}
-	if err := gitWorktreeRemove(ctx, rootPath, projectPath, force); err != nil {
-		if !(allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(err)) {
-			if !s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath) {
-				return err
-			}
-		} else if err := gitWorktreeRemove(ctx, rootPath, projectPath, true); err != nil {
-			if !s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath) {
-				return err
+	if !residualDirectoryRemoved {
+		if err := gitWorktreeRemove(ctx, rootPath, projectPath, force); err != nil {
+			if !(allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(err)) {
+				if !staleLinkedWorktree {
+					return err
+				}
+			} else if err := gitWorktreeRemove(ctx, rootPath, projectPath, true); err != nil {
+				if !staleLinkedWorktree {
+					return err
+				}
 			}
 		}
 	}
-	if err := worktreeprep.PruneSubmoduleWorktrees(ctx, rootPath); err != nil {
-		return fmt.Errorf("prune submodule worktrees after removing %s: %w", projectPath, err)
+	if !residualDirectoryRemoved {
+		if err := worktreeprep.PruneSubmoduleWorktrees(ctx, rootPath); err != nil {
+			return fmt.Errorf("prune submodule worktrees after removing %s: %w", projectPath, err)
+		}
 	}
 	unlockProjectState := s.lockProjectStateMutation(projectPath)
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
@@ -1269,6 +1294,96 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		Type:        string(events.ActionApplied),
 		Payload:     "remove_worktree",
 	})
+	return nil
+}
+
+func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPath string) (CleanupResidualWorktreeDirectoriesResult, error) {
+	if s == nil || s.store == nil {
+		return CleanupResidualWorktreeDirectoriesResult{}, fmt.Errorf("service unavailable")
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" || rootPath == "." {
+		return CleanupResidualWorktreeDirectoriesResult{}, fmt.Errorf("worktree root is required")
+	}
+
+	orphaned, err := s.store.GetOrphanedWorktreeSummaryMap(ctx)
+	if err != nil {
+		return CleanupResidualWorktreeDirectoriesResult{}, fmt.Errorf("list orphaned worktrees: %w", err)
+	}
+	paths := make([]string, 0, len(orphaned))
+	for path, summary := range orphaned {
+		if samePath(summary.WorktreeRootPath, rootPath) {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
+	result := CleanupResidualWorktreeDirectoriesResult{}
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		onlyDSStore, inspectErr := directoryContainsOnlyRegularDSStore(path)
+		if inspectErr != nil {
+			return result, fmt.Errorf("inspect orphaned worktree directory %s: %w", path, inspectErr)
+		}
+		if !onlyDSStore {
+			result.KeptPaths = append(result.KeptPaths, path)
+			continue
+		}
+		if err := s.RemoveWorktree(ctx, path, false); err != nil {
+			return result, fmt.Errorf("clean residual worktree directory %s: %w", path, err)
+		}
+		result.RemovedPaths = append(result.RemovedPaths, path)
+	}
+	return result, nil
+}
+
+func directoryContainsOnlyRegularDSStore(path string) (bool, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return false, nil
+	}
+	directoryInfo, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
+		return false, nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) != 1 || entries[0].Name() != ".DS_Store" {
+		return false, nil
+	}
+	dsStorePath := filepath.Join(path, ".DS_Store")
+	dsStoreInfo, err := os.Lstat(dsStorePath)
+	if err != nil {
+		return false, err
+	}
+	return dsStoreInfo.Mode().IsRegular() && dsStoreInfo.Mode()&os.ModeSymlink == 0, nil
+}
+
+func removeDSStoreOnlyDirectory(path string) error {
+	onlyDSStore, err := directoryContainsOnlyRegularDSStore(path)
+	if err != nil {
+		return err
+	}
+	if !onlyDSStore {
+		return fmt.Errorf("%s is not a directory containing only one regular .DS_Store file", path)
+	}
+	dsStorePath := filepath.Join(filepath.Clean(path), ".DS_Store")
+	if err := os.Remove(dsStorePath); err != nil {
+		return fmt.Errorf("remove %s: %w", dsStorePath, err)
+	}
+	if err := os.Remove(filepath.Clean(path)); err != nil {
+		return fmt.Errorf("remove now-empty directory %s: %w", path, err)
+	}
 	return nil
 }
 
