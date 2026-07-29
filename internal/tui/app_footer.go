@@ -236,6 +236,9 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Merged worktree: Enter remove, Tab keep, Esc keep", supplementSegments...)
 	}
 	if m.worktreeRemoveConfirm != nil {
+		if m.worktreeRemoveConfirm.ResidualCleanup {
+			return m.renderModalFooter(width, "Residual cleanup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
+		}
 		if m.worktreeRemoveConfirm.Busy {
 			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", supplementSegments...)
 		}

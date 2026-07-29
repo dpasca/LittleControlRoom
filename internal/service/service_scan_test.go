@@ -2728,6 +2728,124 @@ func TestScanOnceForgetsStaleLinkedWorktreeDirectoryStillOnDisk(t *testing.T) {
 	}
 }
 
+func TestScanOnceRecognizesDSStoreOnlyResidualWorktreeDirectory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	residualPath := filepath.Join(root, "repo--finished-work")
+	if err := os.MkdirAll(residualPath, 0o755); err != nil {
+		t.Fatalf("mkdir residual worktree path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(residualPath, ".DS_Store"), []byte("finder metadata"), 0o644); err != nil {
+		t.Fatalf("write residual .DS_Store: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			residualPath: fakeActivity(residualPath, "ses_residual_worktree", activityAt),
+		},
+	}
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, residualPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail(residual worktree) error = %v", err)
+	}
+	if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk {
+		t.Fatalf("residual worktree should be forgotten but present: %#v", detail.Summary)
+	}
+	if detail.Summary.WorktreeRootPath != projectPath {
+		t.Fatalf("WorktreeRootPath = %q, want %q", detail.Summary.WorktreeRootPath, projectPath)
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		t.Fatalf("WorktreeKind = %q, want %q", detail.Summary.WorktreeKind, model.WorktreeKindLinked)
+	}
+
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	if len(visible) != 1 || visible[0].Path != projectPath {
+		t.Fatalf("visible projects = %#v, want only the repo root", visible)
+	}
+	orphaned, err := st.GetOrphanedWorktreeSummaryMap(ctx)
+	if err != nil {
+		t.Fatalf("GetOrphanedWorktreeSummaryMap() error = %v", err)
+	}
+	if orphaned[residualPath].WorktreeRootPath != projectPath {
+		t.Fatalf("orphaned residual = %#v, want root %q", orphaned[residualPath], projectPath)
+	}
+}
+
+func TestRefreshProjectStatusRecognizesDSStoreOnlyResidualWorktreeDirectory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	residualPath := filepath.Join(root, "repo--finished-work")
+	if err := os.MkdirAll(residualPath, 0o755); err != nil {
+		t.Fatalf("mkdir residual worktree path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(residualPath, ".DS_Store"), []byte("finder metadata"), 0o644); err != nil {
+		t.Fatalf("write residual .DS_Store: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          residualPath,
+		Name:          filepath.Base(residualPath),
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed residual project state: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.RefreshProjectStatus(ctx, residualPath); err != nil {
+		t.Fatalf("RefreshProjectStatus() error = %v", err)
+	}
+	detail, err := st.GetProjectDetail(ctx, residualPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail(residual worktree) error = %v", err)
+	}
+	if !detail.Summary.Forgotten ||
+		detail.Summary.WorktreeKind != model.WorktreeKindLinked ||
+		detail.Summary.WorktreeRootPath != projectPath {
+		t.Fatalf("refreshed residual worktree = %#v", detail.Summary)
+	}
+}
+
 func TestRefreshProjectStatusForgetsStaleLinkedWorktreeDirectoryStillOnDisk(t *testing.T) {
 	t.Parallel()
 

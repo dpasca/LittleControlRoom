@@ -170,6 +170,9 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 		if orphanedCount > 0 {
 			surface.Section("Worktree warnings")
 			surface.Bullet(fmt.Sprintf("%d orphaned checkout(s) still exist on disk. Git no longer tracks them as live worktrees. Remove the leftover folder when you no longer need its files.", orphanedCount), projectDetailToneWarning)
+			if projectIsWorktreeRoot(p) {
+				surface.Bullet("Press x or use /wt remove to inspect these folders. Little Control Room will only auto-delete a folder whose sole entry is one regular .DS_Store file; every other folder is kept untouched.", projectDetailToneWarning)
+			}
 			for _, orphan := range orphanedFamily {
 				surface.Bullet(orphanedWorktreeDetailText(orphan), projectDetailToneWarning)
 				surface.Bullet(m.displayPathWithHomeTilde(orphan.Path), projectDetailToneMuted)

@@ -206,3 +206,18 @@ identity needed for recovery discovery and reconstruction.
 Recovery cannot reconstruct uncommitted files that existed only in the deleted
 checkout. The resumed conversation may still contain enough context to recreate
 that work, but LCR does not present conversation context as a filesystem backup.
+
+### Residual checkout directories
+
+Removing a worktree can leave its former folder behind when Finder later writes
+a `.DS_Store` file into the otherwise-empty directory. The path still exists,
+but it has no `.git` entry and no longer appears in `git worktree list`.
+
+LCR treats a `root-name--suffix` sibling containing exactly one regular
+`.DS_Store` file as a residual linked-worktree directory rather than a
+standalone project. It remains attached to the repository family as an orphaned
+checkout warning. From the repository root, `x` or `/wt remove` offers guarded
+cleanup across those warnings. Cleanup rechecks every directory and only calls
+non-recursive file removal for `.DS_Store`, followed by non-recursive removal of
+the now-empty directory. A symlink, an empty folder, or any additional entry
+causes that folder to be kept untouched.
