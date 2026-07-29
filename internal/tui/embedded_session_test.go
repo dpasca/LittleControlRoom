@@ -386,6 +386,12 @@ func TestCodexUpdateThrottlesBackgroundStreamingWithoutCopyingTranscript(t *test
 		Kind: codexapp.TranscriptAgent,
 		Text: "The updated session summary is ready for the main project row.",
 	}}
+	next.BackgroundTasks = []codexapp.BackgroundTaskSnapshot{{
+		ID:      "task-telemetry",
+		Source:  "background_shell",
+		Command: "./telemetry --frames 2900",
+		Status:  "running",
+	}}
 
 	session, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
 	session.tryStateSnapshotFn = func(*fakeCodexSession) (codexapp.Snapshot, bool) {
@@ -421,6 +427,9 @@ func TestCodexUpdateThrottlesBackgroundStreamingWithoutCopyingTranscript(t *test
 	}
 	if cached, ok := got.codexCachedSnapshot(projectPath); !ok || liveEngineerSnapshotDetail(cached) != "The updated session summary is ready for the main project row." {
 		t.Fatalf("background state refresh should update the main-row activity preview, got %#v", cached.ActivityPreview)
+	}
+	if cached, ok := got.codexCachedSnapshot(projectPath); !ok || len(cached.BackgroundTasks) != 1 || cached.BackgroundTasks[0].ID != "task-telemetry" {
+		t.Fatalf("background state refresh should update Claude task state, got %#v", cached.BackgroundTasks)
 	}
 	if delay := got.codexStreamingUpdateAckDelay(projectPath); delay != codexBackgroundStreamingUpdateAckDelay {
 		t.Fatalf("background ack delay = %s, want %s", delay, codexBackgroundStreamingUpdateAckDelay)

@@ -68,6 +68,12 @@ workflow. The runtime result tells the agent to stop rather than retry the
 operation or continue later mutations or external actions through shell or
 another tool. A fresh proposal can be created on a later user turn.
 
+The confirmed `engineer.send_prompt` capability can target Codex, OpenCode,
+Claude Code, or LCAgent. It reuses an open idle session for the requested
+provider when possible. A Claude launch still passes through the normal
+`ANTHROPIC_API_KEY` billing warning; enabling Claude in the control executor
+does not bypass that operator acknowledgement.
+
 Waiting confirmations are returned to `proposed` when a new TUI host starts, so
 a restart does not strand the request. The standalone web server does not claim
 operations because it has no equivalent operator-confirmation surface.

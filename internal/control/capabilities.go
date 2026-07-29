@@ -453,8 +453,7 @@ func EngineerSendPromptCapability() Capability {
 			},
 			{
 				ID:        ProviderClaudeCode,
-				Available: false,
-				Reason:    "disabled",
+				Available: true,
 				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew},
 			},
 			{

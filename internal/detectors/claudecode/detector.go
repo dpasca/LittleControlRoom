@@ -336,6 +336,32 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 		}
 
 		ts := entry.parsedTimestamp()
+		asyncEvents := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+		asyncUserEvent := false
+		for _, event := range asyncEvents {
+			switch event.Kind {
+			case claudeartifact.AsyncTaskLaunched:
+				if len(pendingAsync) == 0 && !ts.IsZero() {
+					pendingAsyncStartedAt = ts
+				}
+				pendingAsync[event.TaskID] = struct{}{}
+				if entry.Type == "user" {
+					asyncUserEvent = true
+					turnState.set(ts, false)
+				}
+			case claudeartifact.AsyncTaskUpdated:
+				if entry.Type == "user" {
+					asyncUserEvent = true
+					turnState.set(ts, false)
+				}
+				if claudeartifact.IsTerminalTaskStatus(event.Status) {
+					delete(pendingAsync, event.TaskID)
+					if len(pendingAsync) == 0 {
+						pendingAsyncStartedAt = time.Time{}
+					}
+				}
+			}
+		}
 		conversationalUser := conversationTracker.Observe(claudeartifact.TranscriptEntry{
 			Type:         entry.Type,
 			UUID:         entry.UUID,
@@ -354,33 +380,13 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 				turnState.set(ts, true)
 			}
 		case "user":
-			if taskID := entry.asyncLaunchID(); taskID != "" {
-				if len(pendingAsync) == 0 && !ts.IsZero() {
-					pendingAsyncStartedAt = ts
-				}
-				pendingAsync[taskID] = struct{}{}
-				turnState.set(ts, false)
-				continue
-			}
-			if taskID, status, ok := entry.taskNotification(); ok {
-				turnState.set(ts, false)
-				if isTerminalTaskStatus(status) {
-					delete(pendingAsync, taskID)
-					if len(pendingAsync) == 0 {
-						pendingAsyncStartedAt = time.Time{}
-					}
-				}
+			if asyncUserEvent {
 				continue
 			}
 			if !conversationalUser {
 				continue
 			}
 			turnState.set(ts, false)
-		case "queue-operation":
-			taskID, status, ok := entry.taskNotification()
-			if ok && isTerminalTaskStatus(status) {
-				delete(pendingAsync, taskID)
-			}
 		}
 	}
 
@@ -439,19 +445,11 @@ type claudeSessionEntry struct {
 	Origin       struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
-	Operation string `json:"operation"`
-	Content   string `json:"content"`
-	Message   struct {
+	Message struct {
 		Role       string          `json:"role"`
 		Content    json.RawMessage `json:"content"`
 		StopReason string          `json:"stop_reason"`
 	} `json:"message"`
-	ToolUseResult struct {
-		BackgroundTaskID string `json:"backgroundTaskId"`
-		IsAsync          bool   `json:"isAsync"`
-		Status           string `json:"status"`
-		AgentID          string `json:"agentId"`
-	} `json:"toolUseResult"`
 }
 
 func (e claudeSessionEntry) parsedTimestamp() time.Time {
@@ -465,68 +463,12 @@ func (e claudeSessionEntry) parsedTimestamp() time.Time {
 	return t
 }
 
-func (e claudeSessionEntry) asyncLaunchID() string {
-	if id := strings.TrimSpace(e.ToolUseResult.BackgroundTaskID); id != "" {
-		return id
-	}
-	if e.ToolUseResult.IsAsync && strings.EqualFold(strings.TrimSpace(e.ToolUseResult.Status), "async_launched") {
-		return strings.TrimSpace(e.ToolUseResult.AgentID)
-	}
-	return ""
-}
-
-func (e claudeSessionEntry) taskNotification() (taskID, status string, ok bool) {
-	raw := ""
-	switch {
-	case strings.EqualFold(strings.TrimSpace(e.Origin.Kind), "task-notification"):
-		raw = extractTextContent(e.Message.Content)
-	case e.Type == "queue-operation":
-		raw = strings.TrimSpace(e.Content)
-	default:
-		return "", "", false
-	}
-	taskID = extractTaggedValue(raw, "task-id")
-	status = strings.ToLower(strings.TrimSpace(extractTaggedValue(raw, "status")))
-	if taskID == "" || status == "" {
-		return "", "", false
-	}
-	return taskID, status, true
-}
-
 func (e claudeSessionEntry) assistantTurnCompleted() bool {
 	if e.Type != "assistant" {
 		return false
 	}
 	stopReason := strings.ToLower(strings.TrimSpace(e.Message.StopReason))
 	return stopReason != "" && stopReason != "tool_use"
-}
-
-func isTerminalTaskStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "completed", "failed", "error", "errored", "cancelled", "canceled", "interrupted":
-		return true
-	default:
-		return false
-	}
-}
-
-func extractTaggedValue(raw, tag string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || tag == "" {
-		return ""
-	}
-	open := "<" + tag + ">"
-	close := "</" + tag + ">"
-	start := strings.Index(raw, open)
-	if start < 0 {
-		return ""
-	}
-	start += len(open)
-	end := strings.Index(raw[start:], close)
-	if end < 0 {
-		return ""
-	}
-	return strings.TrimSpace(raw[start : start+end])
 }
 
 func claudeAuxiliaryActivity(path string) time.Time {

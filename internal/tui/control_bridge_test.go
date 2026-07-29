@@ -367,29 +367,115 @@ func TestExecuteControlEngineerSendPromptAutoProviderUsesProjectPreference(t *te
 	}
 }
 
-func TestExecuteControlEngineerSendPromptRejectsDisabledClaudeCode(t *testing.T) {
+func TestExecuteControlEngineerSendPromptLaunchesClaudeCode(t *testing.T) {
 	projectPath := "/tmp/control-claude"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "claude-control-session",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
 	m := Model{
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-claude",
 			PresentOnDisk: true,
 		}},
+		codexManager: manager,
 	}
 
-	updated, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+	_, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
 		ProjectPath: projectPath,
 		Provider:    control.ProviderClaudeCode,
 		SessionMode: control.SessionModeResumeOrNew,
 		Prompt:      "try claude",
 		Reveal:      true,
 	}))
-	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want nil for disabled provider", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want Claude launch")
 	}
-	if !strings.Contains(got.status, "Claude Code") || !strings.Contains(got.status, "disabled") {
-		t.Fatalf("status = %q, want disabled Claude Code message", got.status)
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			break
+		}
+	}
+	if opened.err != nil {
+		t.Fatalf("Claude control launch error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("request provider = %q, want Claude Code", requests[0].Provider)
+	}
+	if requests[0].ForceNew {
+		t.Fatal("request ForceNew = true, want resume-or-new")
+	}
+	if !strings.Contains(requests[0].Prompt, "try claude") {
+		t.Fatalf("request prompt = %q, want control prompt", requests[0].Prompt)
+	}
+}
+
+func TestExecuteControlEngineerSendPromptReusesExistingClaudeSession(t *testing.T) {
+	projectPath := "/tmp/control-claude-reuse"
+	live := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderClaudeCode,
+			ThreadID: "claude-existing-session",
+			Started:  true,
+			Phase:    codexapp.SessionPhaseIdle,
+			Status:   "Claude Code session ready",
+		},
+	}
+	factoryCalls := 0
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		factoryCalls++
+		return live, nil
+	})
+	if _, reused, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil || reused {
+		t.Fatalf("initial manager.Open() reused=%t err=%v", reused, err)
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:                projectPath,
+			Name:                "control-claude-reuse",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "claude_jsonl",
+		}},
+		codexManager: manager,
+	}
+
+	_, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+		ProjectPath: projectPath,
+		Provider:    control.ProviderClaudeCode,
+		SessionMode: control.SessionModeResumeOrNew,
+		Prompt:      "use the completed telemetry workaround",
+		Reveal:      true,
+	}))
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want existing Claude handoff")
+	}
+	_ = collectCmdMsgs(cmd)
+
+	if factoryCalls != 1 {
+		t.Fatalf("factory calls = %d, want existing Claude session reused", factoryCalls)
+	}
+	if len(live.submissions) != 1 || !strings.Contains(live.submissions[0].Text, "use the completed telemetry workaround") {
+		t.Fatalf("existing Claude submissions = %#v, want control prompt", live.submissions)
 	}
 }
 

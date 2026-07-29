@@ -1707,9 +1707,6 @@ func (m Model) executeProjectCreateAndStartEngineerControlWithOutcome(input cont
 func (m Model) resolveControlEngineerProviderForNewProject(requested control.Provider) (codexapp.Provider, error) {
 	if requested.Normalized() == control.ProviderAuto {
 		provider, _ := m.defaultEmbeddedProviderForNewItem()
-		if provider.Normalized() == codexapp.ProviderClaudeCode {
-			return "", errors.New("Claude Code is present in the protocol but disabled for control execution")
-		}
 		return provider, nil
 	}
 	return m.resolveControlEngineerProvider(requested, model.ProjectSummary{})
@@ -2669,7 +2666,7 @@ func (m Model) resolveAgentTaskControlProvider(provider control.Provider, task m
 	case control.ProviderOpenCode:
 		return codexapp.ProviderOpenCode, nil
 	case control.ProviderClaudeCode:
-		return "", errors.New("Claude Code is present in the protocol but disabled for control execution")
+		return codexapp.ProviderClaudeCode, nil
 	case control.ProviderLCAgent:
 		return codexapp.ProviderLCAgent, nil
 	default:
@@ -3100,17 +3097,13 @@ func controlProjectNameMatches(project model.ProjectSummary, name string) bool {
 func (m Model) resolveControlEngineerProvider(provider control.Provider, project model.ProjectSummary) (codexapp.Provider, error) {
 	switch provider.Normalized() {
 	case control.ProviderAuto:
-		resolved := m.preferredEmbeddedProviderForProject(project)
-		if resolved.Normalized() == codexapp.ProviderClaudeCode {
-			return "", errors.New("Claude Code is present in the protocol but disabled for control execution")
-		}
-		return resolved, nil
+		return m.preferredEmbeddedProviderForProject(project), nil
 	case control.ProviderCodex:
 		return codexapp.ProviderCodex, nil
 	case control.ProviderOpenCode:
 		return codexapp.ProviderOpenCode, nil
 	case control.ProviderClaudeCode:
-		return "", errors.New("Claude Code is present in the protocol but disabled for control execution")
+		return codexapp.ProviderClaudeCode, nil
 	case control.ProviderLCAgent:
 		return codexapp.ProviderLCAgent, nil
 	default:

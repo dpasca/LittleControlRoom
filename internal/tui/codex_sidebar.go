@@ -529,7 +529,7 @@ func (m Model) embeddedSidebarDetailRows(section embeddedCodexSidebarSection, sn
 	case embeddedCodexSidebarMCP:
 		return embeddedSidebarMCPDetailRows(snapshot, width)
 	case embeddedCodexSidebarProcesses:
-		rows := m.embeddedSidebarProcessDetailRows(projectPath, width, 0)
+		rows := m.embeddedSidebarProcessDetailRows(snapshot, projectPath, width, 0)
 		if len(rows) == 0 {
 			return []string{embeddedSidebarMutedStyle.Render(fitLine("No active project processes", width))}
 		}
@@ -809,7 +809,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarMCPSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
-	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(snapshot, projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSummarySection(snapshot, contentWidth))
 	return lipgloss.NewStyle().PaddingLeft(1).Render(fitPaneContent(strings.Join(lines, "\n"), contentWidth, height))
 }
@@ -1672,9 +1672,9 @@ func (m Model) renderEmbeddedSidebarSummarySection(snapshot codexapp.Snapshot, w
 	return append([]string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarSummary, "Summary", width)}, rows...)
 }
 
-func (m Model) renderEmbeddedSidebarProcessSection(projectPath string, width int) []string {
+func (m Model) renderEmbeddedSidebarProcessSection(snapshot codexapp.Snapshot, projectPath string, width int) []string {
 	lines := []string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarProcesses, "Active Processes", width)}
-	rows := m.embeddedSidebarProcessRows(projectPath, width, 5)
+	rows := m.embeddedSidebarProcessRows(snapshot, projectPath, width, 5)
 	if len(rows) == 0 {
 		lines = append(lines, embeddedSidebarMutedStyle.Render(fitLine("No active project processes", width)))
 		return lines
@@ -1682,12 +1682,18 @@ func (m Model) renderEmbeddedSidebarProcessSection(projectPath string, width int
 	return append(lines, rows...)
 }
 
-func (m Model) embeddedSidebarProcessRows(projectPath string, width, limit int) []string {
+func (m Model) embeddedSidebarProcessRows(snapshot codexapp.Snapshot, projectPath string, width, limit int) []string {
 	projectPath = normalizeProjectPath(projectPath)
 	if projectPath == "" || limit <= 0 {
 		return nil
 	}
 	rows := make([]string, 0, limit)
+	for _, task := range snapshot.BackgroundTasks {
+		if len(rows) >= limit {
+			break
+		}
+		rows = append(rows, embeddedSidebarBackgroundTaskRow(task, width))
+	}
 	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
 		if len(rows) >= limit {
 			break
@@ -1714,7 +1720,7 @@ func (m Model) embeddedSidebarProcessRows(projectPath string, width, limit int) 
 	return rows
 }
 
-func (m Model) embeddedSidebarProcessDetailRows(projectPath string, width, limit int) []string {
+func (m Model) embeddedSidebarProcessDetailRows(snapshot codexapp.Snapshot, projectPath string, width, limit int) []string {
 	projectPath = normalizeProjectPath(projectPath)
 	if projectPath == "" {
 		return nil
@@ -1724,6 +1730,12 @@ func (m Model) embeddedSidebarProcessDetailRows(projectPath string, width, limit
 		capacity = 0
 	}
 	rows := make([]string, 0, capacity)
+	for _, task := range snapshot.BackgroundTasks {
+		if limit > 0 && len(rows) >= limit {
+			break
+		}
+		rows = append(rows, embeddedSidebarBackgroundTaskDetailRows(task, width)...)
+	}
 	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
 		if limit > 0 && len(rows) >= limit {
 			break
@@ -1749,6 +1761,47 @@ func (m Model) embeddedSidebarProcessDetailRows(projectPath string, width, limit
 	}
 	if limit > 0 && len(rows) > limit {
 		return rows[:limit]
+	}
+	return rows
+}
+
+func embeddedSidebarBackgroundTaskRow(task codexapp.BackgroundTaskSnapshot, width int) string {
+	status := "bg"
+	style := detailValueStyle
+	if strings.EqualFold(strings.TrimSpace(task.Status), "unresolved") {
+		status = "lost"
+		style = detailDangerStyle
+	}
+	label := firstNonEmptyTrimmed(task.Command, task.Tool, task.Source, task.ID, "Claude background task")
+	if task.ID != "" && !strings.Contains(label, task.ID) {
+		label += " " + task.ID
+	}
+	return fitStyledWidth(style.Render(status)+" "+embeddedSidebarMutedStyle.Render(truncateText(label, max(1, width-len(status)-1))), width)
+}
+
+func embeddedSidebarBackgroundTaskDetailRows(task codexapp.BackgroundTaskSnapshot, width int) []string {
+	status := firstNonEmptyTrimmed(task.Status, "running")
+	style := detailValueStyle
+	if strings.EqualFold(status, "unresolved") {
+		style = detailDangerStyle
+	}
+	rows := []string{
+		embeddedSidebarFieldRow("Status", status, style, width),
+	}
+	if task.ID != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Task", task.ID, embeddedSidebarMutedStyle, width))
+	}
+	if task.Tool != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Tool", task.Tool, embeddedSidebarMutedStyle, width))
+	}
+	if task.Command != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Command", task.Command, embeddedSidebarMutedStyle, width, 0)...)
+	}
+	if task.OutputPath != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Output", task.OutputPath, embeddedSidebarMutedStyle, width, 0)...)
+	}
+	if task.Summary != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Summary", task.Summary, embeddedSidebarMutedStyle, width, 0)...)
 	}
 	return rows
 }
