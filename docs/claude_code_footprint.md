@@ -121,12 +121,20 @@ In particular:
 Because of that, latest-turn detection should not rely only on the final top-level JSONL entry type.
 
 The same distinction applies to an embedded stream-JSON process. A `result`
-record closes one model-response boundary; it does not mean provider-declared
-background work has finished. While a structured task id remains pending, LCR
-keeps the Claude stream and its process group alive, reports the task in
-**Active Processes**, and waits for a terminal task notification plus Claude's
-follow-up response. If the owning Claude process exits first, the task is shown
-as unresolved instead of treating the session as ready.
+record closes one model-response boundary; it does not prove that
+provider-declared background work finished. However, keeping stream input open
+is not sufficient to retain ownership: Claude Code can emit its final result,
+exit the headless `claude -p` process, and clean up a child background task
+before it records a terminal notification.
+
+For that reason, every LCR-owned embedded Claude process is launched with
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. Bash commands and tests then remain
+foreground work owned by the Claude turn, so LCR does not mistake an
+intermediate model response for durable process ownership. Structured async
+tracking remains a defensive detector for restored transcripts, externally
+owned sessions, and any task evidence a future Claude version still emits. If
+the owning Claude process exits with such a task unresolved, LCR shows the task
+as lost instead of treating the session as ready.
 
 ## 6. Practical detection strategy
 
@@ -143,9 +151,12 @@ Recommended filesystem-first approach:
    or visible transcript entries.
 7. Use live PID metadata only as a fallback when structured transcript state is missing or already incomplete; do not override an explicitly completed turn just because the CLI process is still alive. For an externally owned session, separate process ownership from turn activity using the PID file's structured `status`.
 8. Invalidate parser caches when either the parent session JSONL mtime or auxiliary artifact mtimes change, preserving sub-second precision so same-second Claude writes do not get stuck behind stale cached parses.
-9. For an LCR-owned stream, keep the provider process alive across an
-   intermediate `result` while any structured async task remains pending. Do
-   not infer completion from the model's prose.
+9. Disable Claude Code's native background-task functionality for an LCR-owned
+   stream. A foreground tool call keeps the provider process alive until the
+   command exits; leaving stream input open does not keep a native background
+   task alive after `claude -p` exits.
+10. Continue parsing structured task events defensively. Surface unresolved
+    ownership explicitly, and never infer completion from the model's prose.
 
 ## 7. Notes
 

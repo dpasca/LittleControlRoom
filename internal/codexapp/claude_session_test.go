@@ -599,6 +599,32 @@ func TestStartClaudeTurnFailsClosedWithoutSafetySettings(t *testing.T) {
 	}
 }
 
+func TestApplyEmbeddedClaudeProcessEnvironmentDisablesNativeBackgroundTasks(t *testing.T) {
+	cmd := &exec.Cmd{
+		Env: []string{
+			"KEEP=value",
+			claudeDisableBackgroundTasksEnv + "=0",
+			claudeDisableBackgroundTasksEnv + "=false",
+		},
+	}
+
+	applyEmbeddedClaudeProcessEnvironment(cmd)
+
+	var backgroundSettings []string
+	for _, entry := range cmd.Env {
+		if strings.HasPrefix(entry, claudeDisableBackgroundTasksEnv+"=") {
+			backgroundSettings = append(backgroundSettings, entry)
+		}
+	}
+	want := []string{claudeDisableBackgroundTasksEnv + "=1"}
+	if !reflect.DeepEqual(backgroundSettings, want) {
+		t.Fatalf("background task settings = %#v, want %#v", backgroundSettings, want)
+	}
+	if !containsString(cmd.Env, "KEEP=value") {
+		t.Fatalf("environment = %#v, want unrelated values preserved", cmd.Env)
+	}
+}
+
 func TestClaudeSnapshotIncludesBusySinceForInternalTurn(t *testing.T) {
 	startedAt := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
 	session := &claudeCodeSession{
