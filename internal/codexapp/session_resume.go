@@ -747,6 +747,9 @@ func (s *appServerSession) clearCompactionProgress() {
 	s.mu.Lock()
 	s.compacting = false
 	s.contextCompactionActive = false
+	if !s.busy {
+		s.busySince = time.Time{}
+	}
 	s.mu.Unlock()
 }
 

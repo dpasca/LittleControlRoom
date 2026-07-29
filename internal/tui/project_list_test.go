@@ -186,12 +186,26 @@ func TestCodexFooterStatusShowsReconcilingState(t *testing.T) {
 
 func TestCodexFooterStatusShowsCompactingState(t *testing.T) {
 	snapshot := codexapp.Snapshot{
-		Phase:  codexapp.SessionPhaseReconciling,
-		Status: "Compacting conversation history...",
+		Phase:      codexapp.SessionPhaseReconciling,
+		Compacting: true,
+		Status:     "Claude Code is compacting conversation history...",
 	}
 
 	if got := codexFooterStatus(snapshot, time.Now()); got != "Compacting conversation" {
 		t.Fatalf("codexFooterStatus() = %q, want %q", got, "Compacting conversation")
+	}
+}
+
+func TestCodexFooterStatusTimesCompactingState(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 30, 0, 0, time.Local)
+	snapshot := codexapp.Snapshot{
+		Phase:      codexapp.SessionPhaseReconciling,
+		Compacting: true,
+		BusySince:  now.Add(-3*time.Minute - 12*time.Second),
+	}
+
+	if got := codexFooterStatus(snapshot, now); got != "Compacting conversation 03:12" {
+		t.Fatalf("codexFooterStatus() = %q, want %q", got, "Compacting conversation 03:12")
 	}
 }
 
@@ -229,8 +243,9 @@ func TestPickerSummaryForFinishingLiveSnapshot(t *testing.T) {
 
 func TestPickerSummaryForCompactingLiveSnapshot(t *testing.T) {
 	snapshot := codexapp.Snapshot{
-		Phase:  codexapp.SessionPhaseReconciling,
-		Status: "Compacting conversation history...",
+		Phase:      codexapp.SessionPhaseReconciling,
+		Compacting: true,
+		Status:     "Claude Code is compacting conversation history...",
 	}
 
 	if got := pickerSummaryForLiveSnapshot(snapshot); got != "Compacting: waiting for conversation history to settle" {

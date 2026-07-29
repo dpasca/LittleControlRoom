@@ -1697,3 +1697,7 @@ func normalizedCodexStatus(status string) string {
 func codexStatusIsCompacting(status string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(status)), "compacting conversation history")
 }
+
+func codexSnapshotIsCompacting(snapshot codexapp.Snapshot) bool {
+	return snapshot.Compacting || codexStatusIsCompacting(snapshot.Status)
+}

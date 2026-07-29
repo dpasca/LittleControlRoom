@@ -947,6 +947,12 @@ func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerF
 			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("221"))
 	case status == "Finishing":
 		return renderCodexAnimatedFooterLabel("Finishing", spinnerFrame, codexFinishingFooterPalette)
+	case strings.HasPrefix(status, "Compacting conversation "):
+		timer := strings.TrimPrefix(status, "Compacting conversation ")
+		return renderCodexAnimatedFooterLabel("Compacting conversation", spinnerFrame, codexReconcilingFooterPalette) + " " +
+			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("229"))
+	case status == "Compacting conversation":
+		return renderCodexAnimatedFooterLabel("Compacting conversation", spinnerFrame, codexReconcilingFooterPalette)
 	case strings.HasPrefix(status, "Rechecking turn"):
 		return renderCodexAnimatedFooterText(status, spinnerFrame, codexReconcilingFooterPalette)
 	default:

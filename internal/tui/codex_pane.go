@@ -560,6 +560,7 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 	cached.Started = state.Started
 	cached.Busy = state.Busy
 	cached.BusyExternal = state.BusyExternal
+	cached.Compacting = state.Compacting
 	cached.BusySince = state.BusySince
 	cached.LastBusyActivityAt = state.LastBusyActivityAt
 	cached.Phase = state.Phase

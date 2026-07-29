@@ -555,6 +555,7 @@ type Snapshot struct {
 	Started                     bool
 	Busy                        bool // A turn is currently active, whether local or external.
 	BusyExternal                bool // Another process owns the session; controls must remain read-only even when Busy is false.
+	Compacting                  bool // Distinguishes known conversation compaction from generic reconciling state.
 	BusySince                   time.Time
 	LastBusyActivityAt          time.Time
 	Closed                      bool

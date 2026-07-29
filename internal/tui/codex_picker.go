@@ -587,7 +587,7 @@ func pickerSummaryForLiveSnapshot(snapshot codexapp.Snapshot) string {
 	case snapshot.BusyExternal:
 		return "Live elsewhere: embedded view is read-only"
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:
-		if codexStatusIsCompacting(snapshot.Status) {
+		if codexSnapshotIsCompacting(snapshot) {
 			return "Compacting: waiting for conversation history to settle"
 		}
 		return "Rechecking whether the turn has gone idle"

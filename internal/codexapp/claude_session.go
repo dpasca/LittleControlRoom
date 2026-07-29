@@ -142,6 +142,23 @@ type claudeCompactMetadata struct {
 	Trigger   string `json:"trigger"`
 }
 
+func (m *claudeCompactMetadata) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		PreTokens      int64  `json:"pre_tokens"`
+		PreTokensCamel int64  `json:"preTokens"`
+		Trigger        string `json:"trigger"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.PreTokens = raw.PreTokens
+	if m.PreTokens == 0 {
+		m.PreTokens = raw.PreTokensCamel
+	}
+	m.Trigger = raw.Trigger
+	return nil
+}
+
 type claudeCompactCommand struct {
 	done         chan claudeCompactCompletion
 	boundarySeen bool
@@ -325,6 +342,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		Started:            s.started,
 		Busy:               s.busy || s.externalTurnActive || s.compacting,
 		BusyExternal:       s.busyExternal,
+		Compacting:         s.compacting,
 		BusySince:          s.busySince,
 		Closed:             s.closed,
 		ActivityPreview:    activityPreviewFromEntries(s.entries),
@@ -1047,8 +1065,16 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 			}
 		} else {
 			s.lastError = ""
-			if strings.TrimSpace(result.Message) != "" && result.Message != s.lastSystemNotice {
+			if strings.TrimSpace(result.Message) != "" &&
+				result.Message != s.lastSystemNotice &&
+				!claudeTranscriptHasSystemNotice(s.entries, result.Message) {
 				s.appendSystemNoticeLocked(result.Message)
+			} else if strings.TrimSpace(result.Message) != "" {
+				// Claude may persist compact_boundary to the transcript without
+				// emitting it on stream-json. The reload above already rendered
+				// that boundary, so retain its notice state without appending a
+				// second identical transcript entry.
+				s.lastSystemNotice = result.Message
 			}
 			s.updateStatusLocked()
 		}
@@ -1128,6 +1154,19 @@ func claudeCompactionNotice(metadata claudeCompactMetadata) string {
 		message = strings.TrimSuffix(message, ".") + "; trigger: " + trigger + "."
 	}
 	return message
+}
+
+func claudeTranscriptHasSystemNotice(entries []TranscriptEntry, notice string) bool {
+	notice = strings.TrimSpace(notice)
+	if notice == "" {
+		return false
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == TranscriptSystem && strings.TrimSpace(entries[i].Text) == notice {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *claudeCodeSession) readClaudeStdout(r io.Reader) error {

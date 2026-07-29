@@ -626,6 +626,49 @@ func TestClaudeCompactNoBoundaryReportsNoOp(t *testing.T) {
 	}
 }
 
+func TestClaudeCompactTranscriptBoundaryDoesNotDuplicateNotice(t *testing.T) {
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	line := `{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":738407}}`
+	if err := os.WriteFile(sessionFile, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatalf("write Claude transcript: %v", err)
+	}
+
+	command := &claudeCompactCommand{done: make(chan claudeCompactCompletion, 1)}
+	session := &claudeCodeSession{
+		sessionFile:     sessionFile,
+		busy:            true,
+		compacting:      true,
+		compactCommand:  command,
+		status:          claudeCompactingStatus,
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	session.finishClaudeTurn(nil, nil, nil)
+
+	completion := <-command.done
+	if completion.err != nil {
+		t.Fatalf("compaction completion error = %v", completion.err)
+	}
+	if !completion.result.Compacted {
+		t.Fatalf("compaction result = %#v, want compacted boundary", completion.result)
+	}
+	notice := claudeCompactionNotice(claudeCompactMetadata{PreTokens: 738407, Trigger: "manual"})
+	count := 0
+	for _, entry := range session.Snapshot().Entries {
+		if entry.Kind == TranscriptSystem && entry.Text == notice {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("compaction notice count = %d, want 1: %#v", count, session.Snapshot().Entries)
+	}
+	if session.Snapshot().LastSystemNotice != notice {
+		t.Fatalf("LastSystemNotice = %q, want %q", session.Snapshot().LastSystemNotice, notice)
+	}
+}
+
 func TestClaudeCompactExitReportsUnresolvedBackgroundTask(t *testing.T) {
 	command := &claudeCompactCommand{done: make(chan claudeCompactCompletion, 1)}
 	session := &claudeCodeSession{

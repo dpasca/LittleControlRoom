@@ -129,6 +129,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		Started:                  s.started,
 		Busy:                     s.busy,
 		BusyExternal:             s.busyExternal,
+		Compacting:               s.compacting,
 		BusySince:                s.busySince,
 		LastBusyActivityAt:       s.lastBusyActivityAt,
 		Closed:                   s.closed,

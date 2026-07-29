@@ -105,7 +105,10 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	}
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseReconciling:
-		if codexStatusIsCompacting(snapshot.Status) {
+		if codexSnapshotIsCompacting(snapshot) {
+			if !snapshot.BusySince.IsZero() {
+				return "Compacting conversation " + formatRunningDuration(now.Sub(snapshot.BusySince))
+			}
 			return "Compacting conversation"
 		}
 		return "Rechecking turn; /reconnect if stuck"

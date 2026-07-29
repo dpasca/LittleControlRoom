@@ -27,8 +27,10 @@ func (s *appServerSession) Compact() error {
 		s.mu.Unlock()
 		return fmt.Errorf("no active thread to compact")
 	}
-	s.touchLocked()
+	now := time.Now()
+	s.lastActivityAt = now
 	s.compacting = true
+	s.busySince = now
 	s.status = "Compacting conversation history..."
 	s.mu.Unlock()
 	s.notify()
@@ -42,6 +44,9 @@ func (s *appServerSession) Compact() error {
 	if err != nil {
 		s.mu.Lock()
 		s.compacting = false
+		if !s.busy {
+			s.busySince = time.Time{}
+		}
 		s.mu.Unlock()
 		s.appendSystemError(err)
 		return err

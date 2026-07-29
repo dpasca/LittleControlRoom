@@ -134,7 +134,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Closing embedded " + label + " session..."
 			return m, m.closeVisibleCodexCmd()
 		}
-		if snapshot.Phase == codexapp.SessionPhaseReconciling && codexStatusIsCompacting(snapshot.Status) {
+		if snapshot.Phase == codexapp.SessionPhaseReconciling && codexSnapshotIsCompacting(snapshot) {
 			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Alt+Up."
 			return m, nil
 		}
@@ -151,7 +151,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
-			if codexStatusIsCompacting(snapshot.Status) {
+			if codexSnapshotIsCompacting(snapshot) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, nil
 			}
@@ -443,7 +443,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
-			if codexStatusIsCompacting(snapshot.Status) {
+			if codexSnapshotIsCompacting(snapshot) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, batchCmds(focusCmd, refreshCmd)
 			}
