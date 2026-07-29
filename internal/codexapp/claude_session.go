@@ -50,6 +50,7 @@ const (
 	claudePIDStatusBusy                 = "busy"
 	claudePIDStatusIdle                 = "idle"
 	claudePIDStatusShell                = "shell"
+	claudeDisableBackgroundTasksEnv     = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
 )
 
 type claudeCodeSession struct {
@@ -1871,6 +1872,7 @@ func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, m
 	cmd.Dir = projectPath
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderClaudeCode, policy)
+	applyEmbeddedClaudeProcessEnvironment(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1889,6 +1891,17 @@ func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, m
 	}
 
 	return cmd, stdin, stdout, stderr, nil
+}
+
+func applyEmbeddedClaudeProcessEnvironment(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	base := cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	cmd.Env = withEnvOverride(base, claudeDisableBackgroundTasksEnv, "1")
 }
 
 func claudeTurnArgs(resumeID, model, reasoning, permissionMode string) []string {
