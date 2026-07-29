@@ -43,6 +43,8 @@ type fakeCodexSession struct {
 	goalSetObjective      string
 	goalSetBudget         *int64
 	compactCalls          int
+	compactInstructions   []string
+	compactResult         codexapp.CompactionResult
 	reviewCalls           int
 	interrupted           bool
 	refreshCalls          int
@@ -264,6 +266,14 @@ func (s *fakeCodexSession) Compact() error {
 		return s.compactFn(s)
 	}
 	return nil
+}
+
+func (s *fakeCodexSession) CompactWithInstructions(instructions string) (codexapp.CompactionResult, error) {
+	s.compactInstructions = append(s.compactInstructions, instructions)
+	if err := s.Compact(); err != nil {
+		return codexapp.CompactionResult{}, err
+	}
+	return s.compactResult, nil
 }
 
 func (s *fakeCodexSession) Review() error {

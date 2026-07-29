@@ -347,6 +347,9 @@ type TokenUsageSnapshot struct {
 	Last               TokenUsageBreakdown
 	Total              TokenUsageBreakdown
 	ModelContextWindow int64
+	// ContextTokens is the provider-reported current context occupancy when it
+	// differs from the generic input-plus-visible-output estimate.
+	ContextTokens int64
 }
 
 type TokenUsageBreakdown struct {
@@ -384,6 +387,9 @@ func (b TokenUsageBreakdown) EstimatedContextTokens() int64 {
 func (u *TokenUsageSnapshot) EstimatedContextTokens() int64 {
 	if u == nil {
 		return 0
+	}
+	if u.ContextTokens > 0 {
+		return u.ContextTokens
 	}
 	if used := u.Last.EstimatedContextTokens(); used > 0 {
 		return used
@@ -565,6 +571,19 @@ type Snapshot struct {
 	TokenUsage                  *TokenUsageSnapshot
 	UsageWindows                []UsageWindowSnapshot
 	Goal                        *ThreadGoal
+}
+
+type CompactionResult struct {
+	Compacted bool
+	Message   string
+	PreTokens int64
+	Trigger   string
+}
+
+// InstructionCompactor is implemented by providers that support optional
+// focus instructions and can report whether a compaction actually occurred.
+type InstructionCompactor interface {
+	CompactWithInstructions(instructions string) (CompactionResult, error)
 }
 
 type Session interface {

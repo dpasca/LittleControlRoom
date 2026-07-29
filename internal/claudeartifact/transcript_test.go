@@ -112,3 +112,24 @@ func TestConversationTrackerRejectsNonHumanOrigin(t *testing.T) {
 		t.Fatal("SDK-submitted prompt should be conversational")
 	}
 }
+
+func TestConversationTrackerRejectsCompactSummary(t *testing.T) {
+	var tracker ConversationTracker
+
+	if tracker.Observe(TranscriptEntry{
+		Type:             "user",
+		UUID:             "compact-summary",
+		IsCompactSummary: true,
+	}) {
+		t.Fatal("provider-generated compact summary should not be conversational")
+	}
+	if !tracker.Observe(TranscriptEntry{
+		Type:         "user",
+		UUID:         "next-prompt",
+		ParentUUID:   "compact-summary",
+		PromptSource: "typed",
+		OriginKind:   "human",
+	}) {
+		t.Fatal("human prompt after compact summary should be conversational")
+	}
+}

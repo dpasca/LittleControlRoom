@@ -5,12 +5,13 @@ import "strings"
 // TranscriptEntry carries the structured fields needed to distinguish
 // conversational user input from Claude Code's generated user-role records.
 type TranscriptEntry struct {
-	Type         string
-	UUID         string
-	ParentUUID   string
-	IsMeta       bool
-	PromptSource string
-	OriginKind   string
+	Type             string
+	UUID             string
+	ParentUUID       string
+	IsMeta           bool
+	IsCompactSummary bool
+	PromptSource     string
+	OriginKind       string
 }
 
 // ConversationTracker follows Claude Code's ordered JSONL event stream.
@@ -47,7 +48,7 @@ func (t *ConversationTracker) Observe(entry TranscriptEntry) bool {
 	generated := false
 	conversational := false
 	switch {
-	case entry.IsMeta:
+	case entry.IsMeta, entry.IsCompactSummary:
 		generated = true
 	case originKind != "" && !strings.EqualFold(originKind, "human"):
 		generated = true

@@ -1,6 +1,6 @@
 # Claude Code Footprint Discovery
 
-Date observed: 2026-03-31 (Asia/Tokyo)
+Date observed: 2026-03-31; context/compaction fields re-verified 2026-07-29 (Asia/Tokyo)
 Host: macOS user-home environment
 
 This document summarizes observed Claude Code on-disk artifacts and the detector assumptions Little Control Room currently relies on.
@@ -48,7 +48,20 @@ Useful stable fields include:
 - `origin.kind`
 - `uuid` / `parentUuid`
 - `isMeta`
+- `isCompactSummary`
 - `promptSource`
+
+Assistant records also expose `message.usage` counters:
+
+- `input_tokens`
+- `cache_creation_input_tokens`
+- `cache_read_input_tokens`
+- `output_tokens`
+
+For context occupancy, Claude's current input is the sum of the first three
+input/cache counters. The streamed `result.modelUsage` object supplies the
+model's `contextWindow`; that runtime result is not assumed to be present in
+the saved session JSONL.
 
 The encoded project directory name under `~/.claude/projects` is derived from the project path, but project association should still come from session metadata such as `cwd`.
 
@@ -74,6 +87,13 @@ Local slash commands are one observed example:
 - actual submitted prompts identify their source with `origin.kind == "human"`
   or, when no non-human origin is present, a non-empty `promptSource` such as
   `typed` or `sdk`
+
+Compaction is another example. Claude emits a structured `system` event with
+`subtype == "compact_boundary"` and compaction metadata including `pre_tokens`
+and `trigger`, then persists the generated summary as a user-role record with
+`isCompactSummary == true`. The summary is model context, not a new human turn.
+Context usage from before the boundary is stale and should remain unknown until
+the next assistant usage record.
 
 Transcript readers should follow those structured fields and event ancestry.
 They should not identify local commands by matching the XML-shaped text stored
@@ -126,7 +146,8 @@ Recommended filesystem-first approach:
    - temp `claude-*` task outputs under `/tmp`, `/private/tmp`, and `os.TempDir()`
 5. Treat a trailing ordinary `user` prompt as the start of a new unfinished turn until Claude answers it.
 6. Ignore provider-generated user-role chains when deriving conversational turns
-   or visible transcript entries.
+   or visible transcript entries, including records marked
+   `isCompactSummary == true`.
 7. Use live PID metadata only as a fallback when structured transcript state is missing or already incomplete; do not override an explicitly completed turn just because the CLI process is still alive. For an externally owned session, separate process ownership from turn activity using the PID file's structured `status`.
 8. Invalidate parser caches when either the parent session JSONL mtime or auxiliary artifact mtimes change, preserving sub-second precision so same-second Claude writes do not get stuck behind stale cached parses.
 

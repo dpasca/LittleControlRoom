@@ -337,12 +337,13 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 
 		ts := entry.parsedTimestamp()
 		conversationalUser := conversationTracker.Observe(claudeartifact.TranscriptEntry{
-			Type:         entry.Type,
-			UUID:         entry.UUID,
-			ParentUUID:   entry.ParentUUID,
-			IsMeta:       entry.IsMeta,
-			PromptSource: entry.PromptSource,
-			OriginKind:   entry.Origin.Kind,
+			Type:             entry.Type,
+			UUID:             entry.UUID,
+			ParentUUID:       entry.ParentUUID,
+			IsMeta:           entry.IsMeta,
+			IsCompactSummary: entry.IsCompactSummary,
+			PromptSource:     entry.PromptSource,
+			OriginKind:       entry.Origin.Kind,
 		})
 		switch entry.Type {
 		case "assistant":
@@ -427,16 +428,17 @@ func (s *claudeTurnState) set(ts time.Time, completed bool) {
 }
 
 type claudeSessionEntry struct {
-	Type         string `json:"type"`
-	SessionID    string `json:"sessionId"`
-	CWD          string `json:"cwd"`
-	Timestamp    string `json:"timestamp"`
-	Subtype      string `json:"subtype"`
-	IsMeta       bool   `json:"isMeta"`
-	UUID         string `json:"uuid"`
-	ParentUUID   string `json:"parentUuid"`
-	PromptSource string `json:"promptSource"`
-	Origin       struct {
+	Type             string `json:"type"`
+	SessionID        string `json:"sessionId"`
+	CWD              string `json:"cwd"`
+	Timestamp        string `json:"timestamp"`
+	Subtype          string `json:"subtype"`
+	IsMeta           bool   `json:"isMeta"`
+	IsCompactSummary bool   `json:"isCompactSummary"`
+	UUID             string `json:"uuid"`
+	ParentUUID       string `json:"parentUuid"`
+	PromptSource     string `json:"promptSource"`
+	Origin           struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 	Operation string `json:"operation"`
@@ -722,16 +724,17 @@ func readTranscriptFrom(r io.Reader) ([]model.ClaudeCodeTranscriptEntry, error) 
 
 func parseTranscriptLine(line string, conversationTracker *claudeartifact.ConversationTracker) (model.ClaudeCodeTranscriptEntry, bool) {
 	var raw struct {
-		Type         string `json:"type"`
-		Subtype      string `json:"subtype"`
-		IsMeta       bool   `json:"isMeta"`
-		UUID         string `json:"uuid"`
-		ParentUUID   string `json:"parentUuid"`
-		PromptSource string `json:"promptSource"`
-		Timestamp    string `json:"timestamp"`
-		SessionID    string `json:"sessionId"`
-		CWD          string `json:"cwd"`
-		Origin       struct {
+		Type             string `json:"type"`
+		Subtype          string `json:"subtype"`
+		IsMeta           bool   `json:"isMeta"`
+		IsCompactSummary bool   `json:"isCompactSummary"`
+		UUID             string `json:"uuid"`
+		ParentUUID       string `json:"parentUuid"`
+		PromptSource     string `json:"promptSource"`
+		Timestamp        string `json:"timestamp"`
+		SessionID        string `json:"sessionId"`
+		CWD              string `json:"cwd"`
+		Origin           struct {
 			Kind string `json:"kind"`
 		} `json:"origin"`
 		Message struct {
@@ -746,19 +749,20 @@ func parseTranscriptLine(line string, conversationTracker *claudeartifact.Conver
 	conversationalUser := true
 	if conversationTracker != nil {
 		conversationalUser = conversationTracker.Observe(claudeartifact.TranscriptEntry{
-			Type:         raw.Type,
-			UUID:         raw.UUID,
-			ParentUUID:   raw.ParentUUID,
-			IsMeta:       raw.IsMeta,
-			PromptSource: raw.PromptSource,
-			OriginKind:   raw.Origin.Kind,
+			Type:             raw.Type,
+			UUID:             raw.UUID,
+			ParentUUID:       raw.ParentUUID,
+			IsMeta:           raw.IsMeta,
+			IsCompactSummary: raw.IsCompactSummary,
+			PromptSource:     raw.PromptSource,
+			OriginKind:       raw.Origin.Kind,
 		})
 	}
 
 	// Skip metadata, progress updates, file-history snapshots, and system
 	// lifecycle entries. ConversationTracker also excludes non-meta user-role
 	// records generated as descendants of Claude Code local commands.
-	if raw.IsMeta {
+	if raw.IsMeta || raw.IsCompactSummary {
 		return model.ClaudeCodeTranscriptEntry{}, false
 	}
 

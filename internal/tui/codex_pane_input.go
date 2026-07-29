@@ -258,6 +258,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if snapshot.Closed && (inv.Kind == codexslash.KindModel ||
 				inv.Kind == codexslash.KindStatus ||
 				inv.Kind == codexslash.KindShowStatus ||
+				inv.Kind == codexslash.KindContext ||
 				inv.Kind == codexslash.KindCompact ||
 				inv.Kind == codexslash.KindReview ||
 				inv.Kind == codexslash.KindGoal ||
@@ -291,7 +292,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.openCodexModelPickerLoading()
 				m.status = "Loading embedded " + label + " models..."
 				return m, m.openCodexModelPickerCmd()
-			case codexslash.KindStatus, codexslash.KindShowStatus:
+			case codexslash.KindStatus, codexslash.KindShowStatus, codexslash.KindContext:
 				m.setCodexLCAgentStatusVisible(snapshot.ProjectPath, true)
 				m.status = "Reading embedded " + label + " status..."
 				return m, m.showVisibleCodexStatusCmd()
@@ -322,7 +323,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			case codexslash.KindCompact:
 				m.status = "Starting embedded " + label + " conversation compaction..."
-				return m, m.compactVisibleCodexSessionCmd()
+				return m, m.compactVisibleCodexSessionCmd(inv.CompactInstructions)
 			case codexslash.KindReview:
 				m.status = "Starting embedded " + label + " review..."
 				return m, m.reviewVisibleCodexSessionCmd()

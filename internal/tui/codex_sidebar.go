@@ -1450,7 +1450,7 @@ func embeddedSidebarVisionStatusSummary(snapshot codexapp.Snapshot) (string, lip
 }
 
 func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {
-	if snapshot.TokenUsage == nil || snapshot.TokenUsage.ModelContextWindow <= 0 {
+	if snapshot.TokenUsage == nil {
 		return ""
 	}
 	used := snapshot.TokenUsage.EstimatedContextTokens()
@@ -1459,6 +1459,10 @@ func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {
 	}
 	if used == 0 {
 		return ""
+	}
+	if snapshot.TokenUsage.ModelContextWindow <= 0 {
+		value := fmt.Sprintf("%s used", uistyle.FormatTokenCount(used))
+		return embeddedSidebarFieldRow("Context", value, detailValueStyle, width)
 	}
 	usedPercent := int(float64(used)*100/float64(snapshot.TokenUsage.ModelContextWindow) + 0.5)
 	if usedPercent < 0 {

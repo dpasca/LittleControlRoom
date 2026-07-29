@@ -108,6 +108,67 @@ func TestParseSessionFileIgnoresLocalCommandsAfterCompletedTurn(t *testing.T) {
 	}
 }
 
+func TestParseSessionFileIgnoresCompactSummaryAsHumanTurn(t *testing.T) {
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	ts := time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
+	writeJSONLines(t, sessionFile, []map[string]any{
+		{
+			"type":         "user",
+			"uuid":         "prompt",
+			"promptSource": "typed",
+			"origin":       map[string]any{"kind": "human"},
+			"timestamp":    ts.Format(time.RFC3339Nano),
+			"message":      map[string]any{"role": "user", "content": "finish the task"},
+		},
+		{
+			"type":       "assistant",
+			"uuid":       "answer",
+			"parentUuid": "prompt",
+			"timestamp":  ts.Add(time.Second).Format(time.RFC3339Nano),
+			"message": map[string]any{
+				"role":        "assistant",
+				"stop_reason": "end_turn",
+				"content":     []map[string]any{{"type": "text", "text": "Done."}},
+			},
+		},
+		{
+			"type":      "system",
+			"subtype":   "compact_boundary",
+			"timestamp": ts.Add(2 * time.Second).Format(time.RFC3339Nano),
+		},
+		{
+			"type":             "user",
+			"uuid":             "compact-summary",
+			"isCompactSummary": true,
+			"timestamp":        ts.Add(3 * time.Second).Format(time.RFC3339Nano),
+			"message":          map[string]any{"role": "user", "content": "Generated compact summary."},
+		},
+	})
+
+	result, err := parseSessionFile(sessionFile, ts.Add(3*time.Second), time.Time{})
+	if err != nil {
+		t.Fatalf("parseSessionFile() error = %v", err)
+	}
+	if !result.turnKnown || !result.turnDone {
+		t.Fatalf("turn state = known %v done %v, want compact summary excluded from human turns", result.turnKnown, result.turnDone)
+	}
+
+	file, err := os.Open(sessionFile)
+	if err != nil {
+		t.Fatalf("open transcript: %v", err)
+	}
+	defer file.Close()
+	entries, err := readTranscriptFrom(file)
+	if err != nil {
+		t.Fatalf("readTranscriptFrom() error = %v", err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Text, "Generated compact summary") {
+			t.Fatalf("compact summary leaked into visible transcript: %#v", entry)
+		}
+	}
+}
+
 func TestDetectFindsSessionFromJSONL(t *testing.T) {
 	t.Parallel()
 

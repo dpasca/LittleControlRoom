@@ -197,6 +197,24 @@ func TestTokenUsageSnapshotEstimatedContextFallsBackWhenLastTurnMissing(t *testi
 	}
 }
 
+func TestTokenUsageSnapshotPrefersProviderReportedContextTokens(t *testing.T) {
+	usage := &TokenUsageSnapshot{
+		Last: TokenUsageBreakdown{
+			InputTokens:  100,
+			OutputTokens: 20,
+		},
+		ContextTokens:      650914,
+		ModelContextWindow: 1000000,
+	}
+
+	if got, want := usage.EstimatedContextTokens(), int64(650914); got != want {
+		t.Fatalf("EstimatedContextTokens() = %d, want %d", got, want)
+	}
+	if got, want := usage.ContextLeftPercent(), 35; got != want {
+		t.Fatalf("ContextLeftPercent() = %d, want %d", got, want)
+	}
+}
+
 func TestManagerOpenReusesExistingSessionAndSubmitsPrompt(t *testing.T) {
 	var created []*fakeSession
 
