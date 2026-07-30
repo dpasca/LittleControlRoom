@@ -221,3 +221,10 @@ cleanup across those warnings. Cleanup rechecks every directory and only calls
 non-recursive file removal for `.DS_Store`, followed by non-recursive removal of
 the now-empty directory. A symlink, an empty folder, or any additional entry
 causes that folder to be kept untouched.
+
+The same guard handles a Finder race during normal removal. If
+`git worktree remove` unregisters the checkout but reports an error because its
+final directory deletion encountered a newly created `.DS_Store`, LCR verifies
+that the path is no longer registered and that the sole remaining entry is one
+regular `.DS_Store` before finishing cleanup. A still-registered worktree or any
+other residue preserves the original Git failure and remains untouched.
