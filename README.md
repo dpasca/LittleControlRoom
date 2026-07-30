@@ -148,30 +148,6 @@ lcroom tui
 
 </details>
 
-## Local Mobile Preview
-
-The monitor-first mobile client starts with the main TUI by default and shares its live store, service configuration, and update events:
-
-```bash
-lcroom tui
-```
-
-Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and active/recent engineer transcripts. The portrait dashboard follows the main TUI's familiar project-first scan pattern: each compact row keeps the project name and summary prominent, with narrow assessment, agent, and flag columns beside it. TUI-hosted dashboards also include a live engineer-channel rack for jumping directly into working, waiting, stalled, or input-needed sessions. Live transcript revisions arrive over a dedicated event stream and update individual entries in place, with periodic refresh retained only as a connection fallback. Transcript views render Markdown, offer `Conversation` and `All activity` monitoring modes, and preserve live-follow state while you read older entries. Live channels always show their composer state: mobile session messages are off by default, with an explanation that points to `Session messages` in Mobile settings; enabling that setting unlocks the draft-preserving composer for the current live channel. Recorded sessions, approvals, interrupts, model changes, and session creation remain read-only. The stable top-right indicator advertises `/mobile` and, when space permits, its `LAN`, `RESTART`, `SETUP`, `OFF`, or `ERR` state. `RESTART` means the saved mobile listener setup differs from the running listener. Run `/mobile` for the full access panel: current listener, detected private LAN address, usable phone URL, pairing code, phone-control state, and any saved setup waiting for restart. Press Enter there to jump to the authoritative Mobile setup fields. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line and the Mobile panel.
-
-Use the Mobile card in `/setup` or the Mobile section in `/settings` to disable TUI auto-start, opt into `Session messages`, and choose `This computer only`, `Phones on this LAN`, or `Custom address`. The message permission applies immediately after saving. LAN mode is recommended for phone use; it derives the technical listener `0.0.0.0:<port>` and shows the detected phone-ready URL separately. Local mode derives `127.0.0.1:<port>`. Listener changes apply on the next LCR launch, while Custom address preserves direct `host:port` control for advanced setups.
-
-Pass an explicit LAN address for a one-run override, for example `lcroom tui --listen 192.168.0.6:7777`. An explicit `--listen` also starts the mobile client for that run when saved auto-start is disabled. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the phone-ready URL and current six-digit code, then enter it on the phone. Press `c` in that panel to copy the phone URL. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
-
-`lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It prints the LAN pairing code at startup. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
-
-Pairing authenticates the browser but does not encrypt plain HTTP traffic. Keep direct LAN exposure on a trusted network; transport encryption or a private overlay network is still required against local traffic interception.
-
-<p align="center">
-  <a href="docs/screenshots/setup.png">
-    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, Chat, and optional LCAgent details" width="850">
-  </a>
-</p>
-
 ## Background AI Backends
 
 LCR separates embedded session providers from the backend used for background work such as summaries, classification, commit help, and TODO worktree suggestions.
@@ -409,6 +385,30 @@ make release-snapshot
 checksums, and confirms that every archive contains `lcroom`, `lcagent`,
 `README.md`, and `LICENSE`. Snapshot archives under `dist/` are for local
 verification only, not public distribution.
+
+## Local Mobile Preview
+
+The monitor-first mobile client starts with the main TUI by default and shares its live store, service configuration, and update events:
+
+```bash
+lcroom tui
+```
+
+Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and active/recent engineer transcripts. The portrait dashboard follows the main TUI's familiar project-first scan pattern: each compact row keeps the project name and summary prominent, with narrow assessment, agent, and flag columns beside it. TUI-hosted dashboards also include a live engineer-channel rack for jumping directly into working, waiting, stalled, or input-needed sessions. Live transcript revisions arrive over a dedicated event stream and update individual entries in place, with periodic refresh retained only as a connection fallback. Transcript views render Markdown, offer `Conversation` and `All activity` monitoring modes, and preserve live-follow state while you read older entries. Live channels always show their composer state: mobile session messages are off by default, with an explanation that points to `Session messages` in Mobile settings; enabling that setting unlocks the draft-preserving composer for the current live channel. Recorded sessions, approvals, interrupts, model changes, and session creation remain read-only. The stable top-right indicator advertises `/mobile` and, when space permits, its `LAN`, `RESTART`, `SETUP`, `OFF`, or `ERR` state. `RESTART` means the saved mobile listener setup differs from the running listener. Run `/mobile` for the full access panel: current listener, detected private LAN address, usable phone URL, pairing code, phone-control state, and any saved setup waiting for restart. Press Enter there to jump to the authoritative Mobile setup fields. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line and the Mobile panel.
+
+Use the Mobile card in `/setup` or the Mobile section in `/settings` to disable TUI auto-start, opt into `Session messages`, and choose `This computer only`, `Phones on this LAN`, or `Custom address`. The message permission applies immediately after saving. LAN mode is recommended for phone use; it derives the technical listener `0.0.0.0:<port>` and shows the detected phone-ready URL separately. Local mode derives `127.0.0.1:<port>`. Listener changes apply on the next LCR launch, while Custom address preserves direct `host:port` control for advanced setups.
+
+Pass an explicit LAN address for a one-run override, for example `lcroom tui --listen 192.168.0.6:7777`. An explicit `--listen` also starts the mobile client for that run when saved auto-start is disabled. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the phone-ready URL and current six-digit code, then enter it on the phone. Press `c` in that panel to copy the phone URL. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
+
+`lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It prints the LAN pairing code at startup. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
+
+Pairing authenticates the browser but does not encrypt plain HTTP traffic. Keep direct LAN exposure on a trusted network; transport encryption or a private overlay network is still required against local traffic interception.
+
+<p align="center">
+  <a href="docs/screenshots/setup.png">
+    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, Chat, and optional LCAgent details" width="850">
+  </a>
+</p>
 
 ## Notes
 
