@@ -1234,7 +1234,7 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, orpha
 		parts = append(parts, fmt.Sprintf("%d linked", linked))
 	}
 	if orphaned > 0 {
-		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
+		parts = append(parts, orphanedCheckoutCountLabel(orphaned))
 	}
 	if pendingIntegration > 0 {
 		parts = append(parts, fmt.Sprintf("%d to integrate", pendingIntegration))
@@ -1245,6 +1245,28 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, orpha
 		parts = append(parts, fmt.Sprintf("%d dirty", dirty))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func orphanedCheckoutCountLabel(count int) string {
+	if count == 1 {
+		return "1 orphaned checkout"
+	}
+	return fmt.Sprintf("%d orphaned checkouts", count)
+}
+
+func projectListAssessmentWithWorktreeBadge(assessment, badge string, prioritize bool) string {
+	assessment = strings.TrimSpace(assessment)
+	badge = strings.TrimSpace(badge)
+	switch {
+	case badge == "":
+		return assessment
+	case assessment == "" || assessment == "-":
+		return badge
+	case prioritize:
+		return badge + "  " + assessment
+	default:
+		return assessment + "  " + badge
+	}
 }
 
 func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, pendingIntegration, orphaned int) string {
@@ -1266,7 +1288,7 @@ func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, pendin
 		parts = append(parts, "root only")
 	}
 	if orphaned > 0 {
-		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
+		parts = append(parts, orphanedCheckoutCountLabel(orphaned))
 	}
 	if pendingIntegration > 0 {
 		parts = append(parts, fmt.Sprintf("%d pending integration", pendingIntegration))
@@ -1315,6 +1337,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	}
 	if row.Kind == projectListRowWorktree && m.canRemoveWorktree(project) {
 		actions = append(actions, footerHideAction("x", "remove"))
+	}
+	if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
+		actions = append(actions, footerHideAction("x", "cleanup"))
 	}
 	return actions
 }

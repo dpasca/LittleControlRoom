@@ -58,6 +58,38 @@ func TestRenderFooterOmitsLaneToggleForRepoFamily(t *testing.T) {
 	}
 }
 
+func TestRenderFooterShowsCleanupHintForOrphanedCheckout(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{{
+			Name:             "repo",
+			Path:             rootPath,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+		}},
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			rootPath: {{
+				Name:             "repo--stale-lane",
+				Path:             "/tmp/repo--stale-lane",
+				PresentOnDisk:    true,
+				Forgotten:        true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+			}},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "x cleanup") {
+		t.Fatalf("renderFooter() should advertise orphaned-checkout cleanup on the repository root, got %q", rendered)
+	}
+}
+
 func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"

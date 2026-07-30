@@ -1126,11 +1126,7 @@ func (m Model) renderProjectList(width, height int) string {
 					summaryStyle = detailWarningStyle
 				}
 				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedPendingIntegrationCount, orphanedCount); badge != "" {
-					if assessmentText == "-" {
-						assessmentText = badge
-					} else {
-						assessmentText += "  " + badge
-					}
+					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, orphanedCount > 0)
 				}
 			}
 		case projectListRowWorktree:
@@ -1165,11 +1161,7 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 			if projectIsWorktreeRoot(p) {
 				if badge := worktreeLinkedBadgeSummary(0, 0, 0, 0, orphanedCount); badge != "" {
-					if assessmentText == "-" {
-						assessmentText = badge
-					} else {
-						assessmentText += "  " + badge
-					}
+					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, orphanedCount > 0)
 				}
 			}
 		}

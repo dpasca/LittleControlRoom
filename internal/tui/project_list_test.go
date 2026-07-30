@@ -902,8 +902,11 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		WorktreeRootPath: "/tmp/repo",
 		WorktreeKind:     model.WorktreeKindMain,
 	}, 0)
-	if !strings.Contains(orphanedIndicator, "~") {
-		t.Fatalf("orphaned linked checkout should use a distinct warning marker on the root row, got %q", orphanedIndicator)
+	if !strings.Contains(orphanedIndicator, "!") {
+		t.Fatalf("orphaned linked checkout should use the standard warning marker on the root row, got %q", orphanedIndicator)
+	}
+	if strings.Contains(orphanedIndicator, "~") {
+		t.Fatalf("orphaned linked checkout should not use the unexplained '~' marker, got %q", orphanedIndicator)
 	}
 
 	// No warning → space

@@ -2087,8 +2087,17 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 	if !strings.Contains(lines[2], "Keep root summary") {
 		t.Fatalf("renderProjectList() should keep the root summary text, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "[1 orphaned]") {
+	if !strings.Contains(lines[2], "[1 orphaned checkout]") {
 		t.Fatalf("renderProjectList() should show an orphaned-checkout badge on the root row, got %q", lines[2])
+	}
+	if strings.Index(lines[2], "[1 orphaned checkout]") > strings.Index(lines[2], "Keep root summary") {
+		t.Fatalf("renderProjectList() should put the orphaned-checkout warning before the summary so it survives narrow layouts, got %q", lines[2])
+	}
+
+	narrowRendered := ansi.Strip(m.renderProjectList(80, 8))
+	narrowLines := strings.Split(narrowRendered, "\n")
+	if len(narrowLines) != 3 || !strings.Contains(narrowLines[2], "orphan") {
+		t.Fatalf("renderProjectList() should keep the orphaned-checkout explanation visible in a narrow layout, got %q", narrowRendered)
 	}
 }
 
