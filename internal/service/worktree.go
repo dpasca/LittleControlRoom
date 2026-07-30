@@ -1248,15 +1248,13 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		allowSubmoduleForceFallback = true
 	}
 	if !residualDirectoryRemoved {
-		if err := gitWorktreeRemove(ctx, rootPath, projectPath, force); err != nil {
-			if !(allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(err)) {
-				if !staleLinkedWorktree {
-					return err
-				}
-			} else if err := gitWorktreeRemove(ctx, rootPath, projectPath, true); err != nil {
-				if !staleLinkedWorktree {
-					return err
-				}
+		removeErr := gitWorktreeRemove(ctx, rootPath, projectPath, force)
+		if removeErr != nil && allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(removeErr) {
+			removeErr = gitWorktreeRemove(ctx, rootPath, projectPath, true)
+		}
+		if removeErr != nil {
+			if err := s.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, kind, projectPath, removeErr); err != nil {
+				return err
 			}
 		}
 	}
@@ -1300,6 +1298,35 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		Type:        string(events.ActionApplied),
 		Payload:     "remove_worktree",
 	})
+	return nil
+}
+
+func (s *Service) finishSafeWorktreeRemovalAfterGitError(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string, removeErr error) error {
+	if removeErr == nil {
+		return nil
+	}
+	if !s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath) {
+		return removeErr
+	}
+	if _, err := os.Lstat(projectPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errors.Join(removeErr, fmt.Errorf("inspect partially removed worktree path %s: %w", projectPath, err))
+	}
+	onlyDSStore, err := directoryContainsOnlyRegularDSStore(projectPath)
+	if err != nil {
+		return errors.Join(removeErr, fmt.Errorf("inspect partially removed worktree residue %s: %w", projectPath, err))
+	}
+	if !onlyDSStore {
+		return errors.Join(
+			removeErr,
+			fmt.Errorf("Git no longer registers %s, but its remaining path is not a directory containing only one regular .DS_Store; Little Control Room left it untouched", projectPath),
+		)
+	}
+	if err := removeDSStoreOnlyDirectory(projectPath); err != nil {
+		return errors.Join(removeErr, fmt.Errorf("clear .DS_Store created during worktree removal: %w", err))
+	}
 	return nil
 }
 

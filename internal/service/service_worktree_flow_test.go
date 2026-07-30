@@ -974,6 +974,150 @@ func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	if err := os.WriteFile(filepath.Join(projectPath, ".gitignore"), []byte(".DS_Store\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", ".gitignore")
+	runGit(t, projectPath, "git", "commit", "-m", "ignore Finder metadata")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Remove a worktree while Finder metadata exists",
+		"feat/finder-metadata-removal",
+		"feat-finder-metadata-removal",
+	)
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, ".DS_Store"), []byte("finder metadata"), 0o644); err != nil {
+		t.Fatalf("write worktree .DS_Store: %v", err)
+	}
+	status, err := scanner.ReadGitRepoStatus(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("ReadGitRepoStatus() error = %v", err)
+	}
+	if status.Dirty {
+		t.Fatalf("ignored .DS_Store unexpectedly made worktree dirty: %#v", status)
+	}
+
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+	if _, err := os.Lstat(result.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree path still exists after safe residual cleanup: %v", err)
+	}
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 1)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after removal error = %v", err)
+	}
+	if detail.Summary.PresentOnDisk || !detail.Summary.Forgotten {
+		t.Fatalf("removed worktree state = %#v, want missing and forgotten", detail.Summary)
+	}
+}
+
+func TestFinishSafeWorktreeRemovalAfterGitErrorRequiresUnregisteredDSStoreOnlyResidue(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	removeErr := errors.New("git worktree remove failed")
+
+	t.Run("clears safe residue", func(t *testing.T) {
+		root := t.TempDir()
+		rootPath := filepath.Join(root, "repo")
+		residualPath := filepath.Join(root, "repo--finder-race")
+		if err := os.MkdirAll(residualPath, 0o755); err != nil {
+			t.Fatalf("mkdir residual path: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(residualPath, ".DS_Store"), []byte("finder metadata"), 0o644); err != nil {
+			t.Fatalf("write residual .DS_Store: %v", err)
+		}
+
+		svc := &Service{
+			gitWorktreeListReader: func(context.Context, string) ([]scanner.GitWorktree, error) {
+				return []scanner.GitWorktree{{Path: rootPath}}, nil
+			},
+		}
+		if err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, residualPath, removeErr); err != nil {
+			t.Fatalf("finishSafeWorktreeRemovalAfterGitError() error = %v", err)
+		}
+		if _, err := os.Lstat(residualPath); !os.IsNotExist(err) {
+			t.Fatalf("safe residual path still exists: %v", err)
+		}
+	})
+
+	t.Run("keeps registered worktree", func(t *testing.T) {
+		root := t.TempDir()
+		rootPath := filepath.Join(root, "repo")
+		worktreePath := filepath.Join(root, "repo--still-registered")
+		if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+			t.Fatalf("mkdir worktree path: %v", err)
+		}
+		dsStorePath := filepath.Join(worktreePath, ".DS_Store")
+		if err := os.WriteFile(dsStorePath, []byte("finder metadata"), 0o644); err != nil {
+			t.Fatalf("write worktree .DS_Store: %v", err)
+		}
+
+		svc := &Service{
+			gitWorktreeListReader: func(context.Context, string) ([]scanner.GitWorktree, error) {
+				return []scanner.GitWorktree{{Path: rootPath}, {Path: worktreePath}}, nil
+			},
+		}
+		err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, worktreePath, removeErr)
+		if !errors.Is(err, removeErr) {
+			t.Fatalf("finishSafeWorktreeRemovalAfterGitError() error = %v, want original removal error", err)
+		}
+		if content, err := os.ReadFile(dsStorePath); err != nil || string(content) != "finder metadata" {
+			t.Fatalf("registered worktree .DS_Store = %q, %v; want untouched", content, err)
+		}
+	})
+
+	t.Run("keeps residue containing project files", func(t *testing.T) {
+		root := t.TempDir()
+		rootPath := filepath.Join(root, "repo")
+		residualPath := filepath.Join(root, "repo--project-files")
+		if err := os.MkdirAll(residualPath, 0o755); err != nil {
+			t.Fatalf("mkdir residual path: %v", err)
+		}
+		importantPath := filepath.Join(residualPath, "important.txt")
+		if err := os.WriteFile(importantPath, []byte("keep me"), 0o644); err != nil {
+			t.Fatalf("write important file: %v", err)
+		}
+
+		svc := &Service{
+			gitWorktreeListReader: func(context.Context, string) ([]scanner.GitWorktree, error) {
+				return []scanner.GitWorktree{{Path: rootPath}}, nil
+			},
+		}
+		err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, residualPath, removeErr)
+		if !errors.Is(err, removeErr) || !strings.Contains(err.Error(), "left it untouched") {
+			t.Fatalf("finishSafeWorktreeRemovalAfterGitError() error = %v, want guarded original error", err)
+		}
+		if content, err := os.ReadFile(importantPath); err != nil || string(content) != "keep me" {
+			t.Fatalf("important file = %q, %v; want untouched", content, err)
+		}
+	})
+}
+
 func TestCleanupResidualWorktreeDirectoriesDeletesOnlyDSStoreOnlyFolders(t *testing.T) {
 	t.Parallel()
 
