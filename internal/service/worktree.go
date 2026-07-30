@@ -77,6 +77,12 @@ type CleanupResidualWorktreeDirectoriesResult struct {
 	KeptPaths    []string
 }
 
+type OrphanedWorktreeDirectory struct {
+	Summary         model.ProjectSummary
+	DSStoreOnly     bool
+	InspectionError string
+}
+
 func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktreeRequest) (CreateTodoWorktreeResult, error) {
 	if s == nil || s.store == nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("service unavailable")
@@ -1337,6 +1343,32 @@ func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPa
 		result.RemovedPaths = append(result.RemovedPaths, path)
 	}
 	return result, nil
+}
+
+func (s *Service) ListOrphanedWorktreeDirectories(ctx context.Context) (map[string]OrphanedWorktreeDirectory, error) {
+	if s == nil || s.store == nil {
+		return nil, fmt.Errorf("service unavailable")
+	}
+	orphaned, err := s.store.GetOrphanedWorktreeSummaryMap(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list orphaned worktrees: %w", err)
+	}
+	directories := make(map[string]OrphanedWorktreeDirectory, len(orphaned))
+	for path, summary := range orphaned {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		onlyDSStore, inspectErr := directoryContainsOnlyRegularDSStore(path)
+		directory := OrphanedWorktreeDirectory{
+			Summary:     summary,
+			DSStoreOnly: onlyDSStore,
+		}
+		if inspectErr != nil {
+			directory.InspectionError = inspectErr.Error()
+		}
+		directories[path] = directory
+	}
+	return directories, nil
 }
 
 func directoryContainsOnlyRegularDSStore(path string) (bool, error) {

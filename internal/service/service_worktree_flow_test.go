@@ -1024,6 +1024,17 @@ func TestCleanupResidualWorktreeDirectoriesDeletesOnlyDSStoreOnlyFolders(t *test
 		}
 	}
 
+	directories, err := svc.ListOrphanedWorktreeDirectories(ctx)
+	if err != nil {
+		t.Fatalf("ListOrphanedWorktreeDirectories() error = %v", err)
+	}
+	if directory := directories[safePath]; !directory.DSStoreOnly || directory.InspectionError != "" {
+		t.Fatalf("safe residual directory = %#v, want .DS_Store-only", directory)
+	}
+	if directory := directories[keptPath]; directory.DSStoreOnly || directory.InspectionError != "" {
+		t.Fatalf("non-empty orphaned directory = %#v, want not cleanup-safe", directory)
+	}
+
 	result, err := svc.CleanupResidualWorktreeDirectories(ctx, projectPath)
 	if err != nil {
 		t.Fatalf("CleanupResidualWorktreeDirectories() error = %v", err)

@@ -54,6 +54,10 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowPendingWorktree {
 				return m.openTodoPendingLaunchDialogForSelection(todoPendingLaunchDialogFocusOK)
 			}
+			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowOrphaned {
+				m.status = orphanedWorktreeListSummary(row.OrphanedDSStoreOnly)
+				return m, nil
+			}
 			project, ok := m.selectedProject()
 			if !ok {
 				m.status = "No project selected"

@@ -1120,13 +1120,13 @@ func (m Model) renderProjectList(width, height int) string {
 		pendingLaunch, pendingLaunchRow := m.todoPendingLaunchForProjectPath(p.Path)
 		switch rowMeta.Kind {
 		case projectListRowRepo:
-			if rowMeta.LinkedCount > 0 {
+			if rowMeta.LinkedCount > 0 || orphanedCount > 0 {
 				if rowMeta.LinkedPendingIntegrationCount > 0 {
 					nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 					summaryStyle = detailWarningStyle
 				}
 				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedPendingIntegrationCount, orphanedCount); badge != "" {
-					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, orphanedCount > 0)
+					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, false)
 				}
 			}
 		case projectListRowWorktree:
@@ -1136,6 +1136,14 @@ func (m Model) renderProjectList(width, height int) string {
 				nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 				summaryStyle = detailWarningStyle
 			}
+		case projectListRowOrphaned:
+			namePrefix = "  ↳ "
+			nameLabel = projectWorktreeLabel(p)
+			statusText = "orphaned"
+			assessmentText = orphanedWorktreeListSummary(rowMeta.OrphanedDSStoreOnly)
+			statusStyle = detailWarningStyle
+			summaryStyle = detailWarningStyle
+			nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 		case projectListRowPendingWorktree:
 			frame := ""
 			if len(spinnerFrames) > 0 {

@@ -2074,6 +2074,9 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 				RepoBranch:       "todo/stale-lane",
 			}},
 		},
+		orphanedDSStoreOnlyByPath: map[string]bool{
+			"/tmp/repo--stale-lane": true,
+		},
 		sortMode:   sortByAttention,
 		visibility: visibilityAllFolders,
 	}
@@ -2081,8 +2084,8 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("renderProjectList() expected tabs, header, and one root row, got %q", rendered)
+	if len(lines) != 4 {
+		t.Fatalf("renderProjectList() expected tabs, header, root, and orphaned worktree rows, got %q", rendered)
 	}
 	if !strings.Contains(lines[2], "Keep root summary") {
 		t.Fatalf("renderProjectList() should keep the root summary text, got %q", lines[2])
@@ -2090,14 +2093,19 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 	if !strings.Contains(lines[2], "[1 orphaned checkout]") {
 		t.Fatalf("renderProjectList() should show an orphaned-checkout badge on the root row, got %q", lines[2])
 	}
-	if strings.Index(lines[2], "[1 orphaned checkout]") > strings.Index(lines[2], "Keep root summary") {
-		t.Fatalf("renderProjectList() should put the orphaned-checkout warning before the summary so it survives narrow layouts, got %q", lines[2])
+	if !strings.Contains(lines[3], "↳ todo/stale-lane") {
+		t.Fatalf("renderProjectList() should show the orphaned checkout as its own worktree row, got %q", lines[3])
+	}
+	for _, want := range []string{"Empty orphaned worktree", "/remove to clear"} {
+		if !strings.Contains(lines[3], want) {
+			t.Fatalf("orphaned worktree row missing summary %q in %q", want, lines[3])
+		}
 	}
 
 	narrowRendered := ansi.Strip(m.renderProjectList(80, 8))
 	narrowLines := strings.Split(narrowRendered, "\n")
-	if len(narrowLines) != 3 || !strings.Contains(narrowLines[2], "orphan") {
-		t.Fatalf("renderProjectList() should keep the orphaned-checkout explanation visible in a narrow layout, got %q", narrowRendered)
+	if len(narrowLines) != 4 || !strings.Contains(narrowLines[3], "Empty") {
+		t.Fatalf("renderProjectList() should start the orphaned worktree's narrow summary with a plain-language explanation, got %q", narrowRendered)
 	}
 }
 

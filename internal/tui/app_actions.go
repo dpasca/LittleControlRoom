@@ -331,6 +331,15 @@ func (m *Model) removeProjectSummary(projectPath string) {
 	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
 	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
 	m.projects = removeProjectSummaryFromSlice(m.projects, path)
+	for rootPath, family := range m.orphanedWorktreesByRoot {
+		family = removeProjectSummaryFromSlice(family, path)
+		if len(family) == 0 {
+			delete(m.orphanedWorktreesByRoot, rootPath)
+			continue
+		}
+		m.orphanedWorktreesByRoot[rootPath] = family
+	}
+	delete(m.orphanedDSStoreOnlyByPath, path)
 }
 
 func removeProjectSummaryFromSlice(projects []model.ProjectSummary, cleanPath string) []model.ProjectSummary {
@@ -395,6 +404,10 @@ func (m Model) orphanedWorktreeFamily(rootPath string) []model.ProjectSummary {
 
 func (m Model) orphanedWorktreeCount(rootPath string) int {
 	return len(m.orphanedWorktreeFamily(rootPath))
+}
+
+func (m Model) orphanedWorktreeContainsOnlyDSStore(projectPath string) bool {
+	return m.orphanedDSStoreOnlyByPath[normalizeProjectPath(projectPath)]
 }
 
 func (m *Model) markProjectSessionSeenLocal(projectPath string, seenAt time.Time) {
@@ -1105,8 +1118,10 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 	if model.NormalizeProjectKind(project.Kind) == model.ProjectKindAgentTask {
 		return m, m.openAgentTaskActionConfirmForSelection()
 	}
-	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
-		return m, m.openWorktreeRemoveConfirmForSelection()
+	if row, project, ok := m.selectedProjectRow(); ok && project.WorktreeKind == model.WorktreeKindLinked {
+		if row.Kind == projectListRowWorktree || row.Kind == projectListRowOrphaned {
+			return m, m.openWorktreeRemoveConfirmForSelection()
+		}
 	}
 	if !project.PresentOnDisk {
 		return m, m.openProjectRemoveConfirmForSelection()
@@ -1205,7 +1220,7 @@ func (m Model) openHideActionForSelection() (tea.Model, tea.Cmd) {
 		return m, m.openScratchTaskActionConfirmForSelection()
 	}
 	if row, project, ok := m.selectedProjectRow(); ok {
-		if row.Kind == projectListRowWorktree && project.WorktreeKind == model.WorktreeKindLinked {
+		if (row.Kind == projectListRowWorktree || row.Kind == projectListRowOrphaned) && project.WorktreeKind == model.WorktreeKindLinked {
 			return m, m.openWorktreeRemoveConfirmForSelection()
 		}
 		if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {

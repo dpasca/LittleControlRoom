@@ -34,6 +34,7 @@ type projectsMsg struct {
 	categories                []model.ProjectCategory
 	openAgentTasks            []model.AgentTask
 	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
+	orphanedDSStoreOnlyByPath map[string]bool
 	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
 	excludeProjectPatterns    []string
 	err                       error
@@ -659,12 +660,20 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			}
 			return projectsMsg{err: err}
 		}
-		orphanedWorktrees, err := m.svc.Store().GetOrphanedWorktreeSummaryMap(ctx)
+		orphanedDirectories, err := m.svc.ListOrphanedWorktreeDirectories(ctx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 			}
 			return projectsMsg{err: err}
+		}
+		orphanedWorktrees := make(map[string]model.ProjectSummary, len(orphanedDirectories))
+		orphanedDSStoreOnlyByPath := make(map[string]bool, len(orphanedDirectories))
+		for path, directory := range orphanedDirectories {
+			orphanedWorktrees[path] = directory.Summary
+			if directory.DSStoreOnly {
+				orphanedDSStoreOnlyByPath[normalizeProjectPath(path)] = true
+			}
 		}
 		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
 		if errors.Is(agentTaskErr, context.DeadlineExceeded) {
@@ -686,6 +695,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			categories:                categories,
 			openAgentTasks:            openAgentTasks,
 			orphanedWorktreesByRoot:   buildOrphanedWorktreeMap(orphanedWorktrees),
+			orphanedDSStoreOnlyByPath: orphanedDSStoreOnlyByPath,
 			repositoryIntegrityByRoot: integrityStates,
 			excludeProjectPatterns:    patterns,
 			filterErr:                 filterErr,

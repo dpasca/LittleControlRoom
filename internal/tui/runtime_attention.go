@@ -256,6 +256,9 @@ func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinner
 	if projectHasSubmoduleAttention(project) {
 		return detailWarningStyle.Render("!")
 	}
+	if projectIsOrphanedWorktree(project) {
+		return detailWarningStyle.Render("!")
+	}
 	if worktreeHasPendingIntegration(project) {
 		return detailWarningStyle.Render("M")
 	}
