@@ -2766,6 +2766,61 @@ func TestCodexArtifactPickerListsViewedImageToolTargets(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerUsesClaudeFileToolsAndIgnoresBashInputs(t *testing.T) {
+	projectPath := t.TempDir()
+	readPaths := []string{
+		filepath.Join(projectPath, "v1_head_f200.png"),
+		filepath.Join(projectPath, "v1_head_f900.png"),
+	}
+	commandInput := filepath.Join(projectPath, "v1_f900.ppm")
+	productPath := filepath.Join(projectPath, "v1_zoom.png")
+	command := "printf '[input](" + commandInput + ")' >/dev/null && magick " +
+		commandInput + " -crop 130x140+735+255 " + productPath
+	entries := []codexapp.TranscriptEntry{
+		{
+			Kind:     codexapp.TranscriptTool,
+			Text:     "Read: " + readPaths[0],
+			ToolName: "Read",
+			ToolPath: readPaths[0],
+		},
+		{
+			Kind:     codexapp.TranscriptTool,
+			Text:     "Read: " + readPaths[1],
+			ToolName: "Read",
+			ToolPath: readPaths[1],
+		},
+		{
+			Kind:     codexapp.TranscriptTool,
+			Text:     "Bash: " + command,
+			ToolName: "Bash",
+		},
+		{
+			Kind:        codexapp.TranscriptCommand,
+			Text:        "$ " + command + "\n" + productPath,
+			CommandText: command,
+		},
+	}
+
+	targets, _, _, complete := scanCodexArtifactLinksChunk(projectPath, entries, 0, 0)
+	if !complete {
+		t.Fatalf("Claude artifact scan should complete in one chunk")
+	}
+	wantPaths := []string{readPaths[0], readPaths[1], productPath}
+	if len(targets) != len(wantPaths) {
+		t.Fatalf("Claude artifact targets = %#v, want %d", targets, len(wantPaths))
+	}
+	for i, wantPath := range wantPaths {
+		if targets[i].Path != wantPath {
+			t.Fatalf("Claude artifact target %d = %#v, want path %q", i, targets[i], wantPath)
+		}
+	}
+	for _, target := range targets {
+		if target.Path == commandInput {
+			t.Fatalf("Bash input path should not appear in the artifact picker: %#v", targets)
+		}
+	}
+}
+
 func TestCodexArtifactPickerUsesExpandedDialogAndPreview(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "large-preview.png")
 	imageBytes := mustTestPNG(color.RGBA{R: 40, G: 180, B: 220, A: 255})

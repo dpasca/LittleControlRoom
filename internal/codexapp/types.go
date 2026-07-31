@@ -104,6 +104,9 @@ type TranscriptEntry struct {
 	Kind           TranscriptKind
 	Text           string
 	DisplayText    string // optional; if set, used for rendering instead of Text
+	ToolName       string // optional structured tool name supplied by the provider
+	ToolPath       string // optional structured local path supplied to a file tool
+	CommandText    string // optional command input, kept separate from its rendered result
 	GeneratedImage *GeneratedImageArtifact
 }
 

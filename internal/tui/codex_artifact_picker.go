@@ -448,6 +448,9 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 			if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
 				entryTargets = append(entryTargets, target)
 			}
+			if target, ok := codexFileToolOpenTarget(entry, projectPath); ok {
+				entryTargets = append(entryTargets, target)
+			}
 			targets = append(targets, locateCodexArtifactOpenTargets(entryTargets, entryIndex)...)
 		}
 		text := codexFullTranscriptEntryLinkScanText(entry)
@@ -1176,6 +1179,9 @@ func codexOpenTargetsFromTranscriptEntryForBlockModeInProject(entry codexapp.Tra
 	if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
 		return []codexArtifactOpenTarget{target}
 	}
+	if target, ok := codexFileToolOpenTarget(entry, projectPath); ok {
+		return []codexArtifactOpenTarget{target}
+	}
 	text, ok := codexTranscriptEntryLinkScanText(entry, blockMode)
 	if !ok {
 		return nil
@@ -1193,6 +1199,9 @@ func codexOpenTargetsFromTranscriptEntryFullInProject(entry codexapp.TranscriptE
 		targets = append(targets, target)
 	}
 	if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
+		targets = append(targets, target)
+	}
+	if target, ok := codexFileToolOpenTarget(entry, projectPath); ok {
 		targets = append(targets, target)
 	}
 	if text := codexFullTranscriptEntryLinkScanText(entry); strings.TrimSpace(text) != "" {
@@ -1249,13 +1258,70 @@ func codexViewedImageOpenTarget(entry codexapp.TranscriptEntry, projectPath stri
 	}, true
 }
 
+func codexFileToolOpenTarget(entry codexapp.TranscriptEntry, projectPath string) (codexArtifactOpenTarget, bool) {
+	if entry.Kind != codexapp.TranscriptTool {
+		return codexArtifactOpenTarget{}, false
+	}
+	rawPath := strings.TrimSpace(entry.ToolPath)
+	if rawPath == "" || strings.ContainsAny(rawPath, "\r\n") {
+		return codexArtifactOpenTarget{}, false
+	}
+	localPath, resolution, ok := codexLocalLinkTextForProjectResolution(rawPath, projectPath)
+	if !ok {
+		return codexArtifactOpenTarget{}, false
+	}
+	path, kind, ok := codexLocalArtifactOpenTarget("", localPath)
+	if !ok {
+		path, _ = codexLocalOpenPath(localPath)
+		if strings.TrimSpace(path) == "" || codexArtifactPathIsFilesystemRoot(path) {
+			return codexArtifactOpenTarget{}, false
+		}
+		kind = codexLocalLinkKind(path, localPath)
+	}
+	label := strings.TrimSpace(entry.ToolName)
+	if label == "" {
+		label = filepath.Base(path)
+	}
+	return codexArtifactOpenTarget{
+		Kind:                    kind,
+		Label:                   label,
+		Path:                    path,
+		implicitProjectRelative: resolution.implicitProjectRelative,
+	}, true
+}
+
 func codexFullTranscriptEntryLinkScanText(entry codexapp.TranscriptEntry) string {
 	if entry.Kind == codexapp.TranscriptUser {
 		if displayText := strings.TrimSpace(entry.DisplayText); displayText != "" {
 			return displayText
 		}
 	}
+	if entry.Kind == codexapp.TranscriptTool && strings.TrimSpace(entry.ToolName) != "" {
+		return ""
+	}
+	if entry.Kind == codexapp.TranscriptCommand {
+		return codexCommandResultLinkScanText(entry)
+	}
 	return entry.Text
+}
+
+func codexCommandResultLinkScanText(entry codexapp.TranscriptEntry) string {
+	text := entry.Text
+	command := strings.TrimSpace(entry.CommandText)
+	if command != "" {
+		prefix := "$ " + command
+		if strings.HasPrefix(text, prefix) {
+			return strings.TrimLeft(strings.TrimPrefix(text, prefix), "\r\n")
+		}
+	}
+	if firstLineEnd := strings.IndexByte(text, '\n'); firstLineEnd >= 0 &&
+		strings.HasPrefix(strings.TrimSpace(text[:firstLineEnd]), "$ ") {
+		return text[firstLineEnd+1:]
+	}
+	if strings.HasPrefix(strings.TrimSpace(text), "$ ") {
+		return ""
+	}
+	return text
 }
 
 func codexTranscriptEntryLinkScanText(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode) (string, bool) {

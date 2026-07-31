@@ -1004,6 +1004,9 @@ func codexTranscriptEntryEqual(left, right codexapp.TranscriptEntry) bool {
 		left.Kind == right.Kind &&
 		left.Text == right.Text &&
 		left.DisplayText == right.DisplayText &&
+		left.ToolName == right.ToolName &&
+		left.ToolPath == right.ToolPath &&
+		left.CommandText == right.CommandText &&
 		codexGeneratedImageArtifactsEqual(left.GeneratedImage, right.GeneratedImage)
 }
 

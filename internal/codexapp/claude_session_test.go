@@ -72,6 +72,9 @@ func TestClaudeStdoutLineBuildsToolAndCommandEntries(t *testing.T) {
 	if session.entries[0].Text != "Bash: npm test" {
 		t.Fatalf("tool_use entry text = %q, want Bash summary", session.entries[0].Text)
 	}
+	if session.entries[0].ToolName != "Bash" || session.entries[0].ToolPath != "" {
+		t.Fatalf("tool_use entry metadata = %#v, want Bash without a file path", session.entries[0])
+	}
 	if got := session.Snapshot().ReasoningEffort; got != "high" {
 		t.Fatalf("reasoning effort after assistant event = %q, want high", got)
 	}
@@ -85,6 +88,9 @@ func TestClaudeStdoutLineBuildsToolAndCommandEntries(t *testing.T) {
 	}
 	if !strings.Contains(session.entries[1].Text, "$ npm test") || !strings.Contains(session.entries[1].Text, "tests passed") {
 		t.Fatalf("tool_result entry text = %q, want command output", session.entries[1].Text)
+	}
+	if session.entries[1].CommandText != "npm test" {
+		t.Fatalf("tool_result command metadata = %q, want npm test", session.entries[1].CommandText)
 	}
 }
 
@@ -277,6 +283,45 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	}
 	if !strings.Contains(userEntries[0].Text, "$ make test") || !strings.Contains(userEntries[0].Text, "tests passed") {
 		t.Fatalf("user result text = %q, want reconstructed command output", userEntries[0].Text)
+	}
+}
+
+func TestParseCCLineEntriesPreservesFileToolAndCommandMetadata(t *testing.T) {
+	toolCalls := make(map[string]claudeToolCall)
+	toolResults := make(map[string]struct{})
+	var conversationTracker claudeartifact.ConversationTracker
+
+	assistantEntries, _, _, _ := parseCCLineEntries(
+		`{"type":"assistant","uuid":"msg_1","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_read","name":"Read","input":{"file_path":"/tmp/tv_shots/v1_head_f200.png"}},{"type":"tool_use","id":"toolu_bash","name":"Bash","input":{"command":"magick /tmp/tv_shots/source.ppm /tmp/tv_shots/v1_zoom.png"}}]}}`,
+		toolCalls,
+		toolResults,
+		&conversationTracker,
+	)
+	if len(assistantEntries) != 2 {
+		t.Fatalf("assistant entry count = %d, want 2", len(assistantEntries))
+	}
+	if got := assistantEntries[0]; got.Kind != TranscriptTool ||
+		got.ToolName != "Read" ||
+		got.ToolPath != "/tmp/tv_shots/v1_head_f200.png" {
+		t.Fatalf("read entry metadata = %#v", got)
+	}
+	if got := assistantEntries[1]; got.Kind != TranscriptTool ||
+		got.ToolName != "Bash" ||
+		got.ToolPath != "" {
+		t.Fatalf("bash entry metadata = %#v", got)
+	}
+
+	userEntries, _, _, _ := parseCCLineEntries(
+		`{"type":"user","uuid":"msg_2","parentUuid":"msg_1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash","content":"/tmp/tv_shots/v1_zoom.png"}]}}`,
+		toolCalls,
+		toolResults,
+		&conversationTracker,
+	)
+	if len(userEntries) != 1 {
+		t.Fatalf("user entry count = %d, want 1", len(userEntries))
+	}
+	if got, want := userEntries[0].CommandText, "magick /tmp/tv_shots/source.ppm /tmp/tv_shots/v1_zoom.png"; got != want {
+		t.Fatalf("command metadata = %q, want %q", got, want)
 	}
 }
 
