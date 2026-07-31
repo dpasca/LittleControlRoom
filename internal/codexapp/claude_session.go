@@ -1382,6 +1382,7 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 			})
 		case "tool_use":
 			summary, command := summarizeClaudeToolUse(block.Name, block.Input)
+			toolPath := claudeFileToolPath(block.Name, block.Input)
 			key := "tool:" + block.ID + ":" + block.Name + ":" + summary
 			if _, ok := seen[key]; ok {
 				continue
@@ -1392,9 +1393,11 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 				text = block.Name + ": " + summary
 			}
 			s.appendEntryLocked(TranscriptEntry{
-				ItemID: msg.ID,
-				Kind:   TranscriptTool,
-				Text:   text,
+				ItemID:   msg.ID,
+				Kind:     TranscriptTool,
+				Text:     text,
+				ToolName: strings.TrimSpace(block.Name),
+				ToolPath: toolPath,
 			})
 			if block.ID != "" {
 				s.toolCalls[block.ID] = claudeToolCall{
@@ -1525,8 +1528,9 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 			text = "$ " + command + "\n" + text
 		}
 		s.appendEntryLocked(TranscriptEntry{
-			Kind: TranscriptCommand,
-			Text: text,
+			Kind:        TranscriptCommand,
+			Text:        text,
+			CommandText: command,
 		})
 	}
 }
@@ -2136,6 +2140,19 @@ func summarizeClaudeToolUse(name string, input json.RawMessage) (summary string,
 	}
 }
 
+func claudeFileToolPath(name string, input json.RawMessage) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "read", "edit", "write":
+	default:
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(ccExtractString(fields, "file_path"))
+}
+
 func flattenClaudeToolResultContent(content any) string {
 	switch v := content.(type) {
 	case string:
@@ -2334,14 +2351,17 @@ func extractCCAssistantEntries(content json.RawMessage, itemID string, toolCalls
 			}
 		case "tool_use":
 			summary, command := summarizeClaudeToolUse(b.Name, b.Input)
+			toolPath := claudeFileToolPath(b.Name, b.Input)
 			text := b.Name
 			if summary != "" {
 				text = b.Name + ": " + summary
 			}
 			entries = append(entries, TranscriptEntry{
-				ItemID: itemID,
-				Kind:   TranscriptTool,
-				Text:   text,
+				ItemID:   itemID,
+				Kind:     TranscriptTool,
+				Text:     text,
+				ToolName: strings.TrimSpace(b.Name),
+				ToolPath: toolPath,
 			})
 			if b.ID != "" && toolCalls != nil {
 				toolCalls[b.ID] = claudeToolCall{
@@ -2415,8 +2435,9 @@ func extractCCUserEntries(
 			result = "$ " + command + "\n" + result
 		}
 		entries = append(entries, TranscriptEntry{
-			Kind: TranscriptCommand,
-			Text: result,
+			Kind:        TranscriptCommand,
+			Text:        result,
+			CommandText: command,
 		})
 	}
 	return entries
