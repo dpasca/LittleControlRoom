@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -789,6 +790,50 @@ func TestRefreshBusyElsewhereCmdRechecksVisibleSession(t *testing.T) {
 	}
 	if session.snapshot.BusyExternal {
 		t.Fatalf("session should no longer be busy externally after refresh")
+	}
+}
+
+func TestRefreshBusyElsewhereCmdReportsTranscriptRefreshFailure(t *testing.T) {
+	refreshErr := errors.New("Claude transcript unavailable")
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:      true,
+			Busy:         true,
+			BusyExternal: true,
+			ThreadID:     "thread-demo",
+		},
+		refreshBusyFn: func(*fakeCodexSession) error {
+			return refreshErr
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": session.snapshot,
+		},
+	}
+	cmd := m.refreshBusyElsewhereCmd("/tmp/demo")
+	if cmd == nil {
+		t.Fatal("refreshBusyElsewhereCmd() should return a refresh command")
+	}
+	raw := cmd()
+	msg, ok := raw.(codexActionMsg)
+	if !ok {
+		t.Fatalf("refresh command returned %T, want codexActionMsg", raw)
+	}
+	if !errors.Is(msg.err, refreshErr) {
+		t.Fatalf("codexActionMsg error = %v, want %v", msg.err, refreshErr)
 	}
 }
 

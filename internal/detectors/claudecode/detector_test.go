@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/scanner"
 )
 
@@ -179,7 +180,7 @@ func TestDetectFindsSessionFromJSONL(t *testing.T) {
 	}
 
 	claudeHome := filepath.Join(root, ".claude")
-	encodedPath := encodeCCProjectPath(projectPath)
+	encodedPath := claudeartifact.ProjectDirectoryName(projectPath)
 	projectDir := filepath.Join(claudeHome, "projects", encodedPath)
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -399,7 +400,7 @@ func TestDetectActiveSessionDoesNotOverrideCompletedTurn(t *testing.T) {
 	}
 
 	claudeHome := filepath.Join(root, ".claude")
-	encodedPath := encodeCCProjectPath(projectPath)
+	encodedPath := claudeartifact.ProjectDirectoryName(projectPath)
 	projectDir := filepath.Join(claudeHome, "projects", encodedPath)
 	sessionsDir := filepath.Join(claudeHome, "sessions")
 	for _, dir := range []string{projectDir, sessionsDir} {
@@ -488,7 +489,7 @@ func TestDetectActiveSessionWithoutCWDDoesNotOverrideCompletedTurn(t *testing.T)
 	}
 
 	claudeHome := filepath.Join(root, ".claude")
-	encodedPath := encodeCCProjectPath(projectPath)
+	encodedPath := claudeartifact.ProjectDirectoryName(projectPath)
 	projectDir := filepath.Join(claudeHome, "projects", encodedPath)
 	sessionsDir := filepath.Join(claudeHome, "sessions")
 	for _, dir := range []string{projectDir, sessionsDir} {
@@ -596,24 +597,6 @@ func TestDetectUsesSessionFileNameWhenEntriesOmitSessionID(t *testing.T) {
 	}
 	if got := entry.Sessions[0].SessionID; got != "claude_code:"+sessionID {
 		t.Fatalf("SessionID = %q, want %q from the session filename", got, "claude_code:"+sessionID)
-	}
-}
-
-func TestEncodeCCProjectPath(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"/Users/davide/dev/repos/Foo", "-Users-davide-dev-repos-Foo"},
-		{"/tmp/test", "-tmp-test"},
-	}
-	for _, tt := range tests {
-		got := encodeCCProjectPath(tt.input)
-		if got != tt.want {
-			t.Errorf("encodeCCProjectPath(%q) = %q, want %q", tt.input, got, tt.want)
-		}
 	}
 }
 
@@ -1178,7 +1161,7 @@ func TestClaudeTaskRootCandidatesIncludePrivateTmpFallback(t *testing.T) {
 
 func createClaudeProjectDirs(t *testing.T, claudeHome, projectPath, sessionID string) (sessionFile string, encodedPath string) {
 	t.Helper()
-	encodedPath = encodeCCProjectPath(projectPath)
+	encodedPath = claudeartifact.ProjectDirectoryName(projectPath)
 	projectDir := filepath.Join(claudeHome, "projects", encodedPath)
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatal(err)

@@ -1382,7 +1382,9 @@ func (m Model) refreshBusyElsewhereCmd(projectPath string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		_ = refresher.RefreshBusyElsewhere()
+		if err := refresher.RefreshBusyElsewhere(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
 		return codexUpdateMsg{projectPath: projectPath}
 	}
 }

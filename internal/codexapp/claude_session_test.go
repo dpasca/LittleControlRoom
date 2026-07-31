@@ -237,6 +237,37 @@ func TestClaudeLoadTranscriptRestoresUsageAndHidesCompactSummary(t *testing.T) {
 	}
 }
 
+func TestClaudeSessionFilePathUsesClaudeProjectDirectorySanitization(t *testing.T) {
+	t.Parallel()
+
+	got := claudeSessionFilePath(
+		"/tmp/claude-home",
+		"/Users/davide/dev/repos/demo_tviking--improve-techno-viking-model",
+		"session-123",
+	)
+	want := filepath.Join(
+		"/tmp/claude-home",
+		"projects",
+		"-Users-davide-dev-repos-demo-tviking--improve-techno-viking-model",
+		"session-123.jsonl",
+	)
+	if got != want {
+		t.Fatalf("claudeSessionFilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeLoadTranscriptReportsMissingSessionFile(t *testing.T) {
+	t.Parallel()
+
+	session := &claudeCodeSession{
+		sessionFile: filepath.Join(t.TempDir(), "missing-session.jsonl"),
+	}
+	err := session.loadTranscriptLocked()
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("loadTranscriptLocked() error = %v, want missing-file error", err)
+	}
+}
+
 func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	toolCalls := make(map[string]claudeToolCall)
 	toolResults := make(map[string]struct{})

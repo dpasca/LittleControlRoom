@@ -579,14 +579,6 @@ func dedupeArtifacts(a *model.DetectorProjectActivity) {
 	a.Artifacts = out
 }
 
-// encodeCCProjectPath converts an absolute path to the directory name format
-// used by Claude Code under ~/.claude/projects/. For example,
-// "/Users/davide/dev/repos/Foo" becomes "-Users-davide-dev-repos-Foo".
-func encodeCCProjectPath(projectPath string) string {
-	cleaned := filepath.Clean(projectPath)
-	return strings.ReplaceAll(cleaned, "/", "-")
-}
-
 // SessionFileForProject returns the most recently modified Claude Code session
 // JSONL file for the given project path, along with its session ID.
 // This is used by the Claude Code session viewer and embedded Claude resume path.

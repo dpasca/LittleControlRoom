@@ -274,7 +274,10 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 
 	s.mu.Lock()
-	s.loadTranscriptLocked()
+	if err := s.loadTranscriptLocked(); err != nil {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("load Claude Code session transcript: %w", err)
+	}
 	s.refreshActiveLocked()
 	if !s.busy && !s.externalTurnActive {
 		s.markBackgroundTasksUnresolvedLocked()
@@ -593,7 +596,9 @@ func (s *claudeCodeSession) ShowStatus() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.loadTranscriptLocked()
+	if err := s.loadTranscriptLocked(); err != nil && !s.canUseStreamedTranscriptLocked(err) {
+		return fmt.Errorf("load Claude Code session transcript: %w", err)
+	}
 	s.refreshActiveLocked()
 	if !s.busy && !s.externalTurnActive {
 		s.markBackgroundTasksUnresolvedLocked()
@@ -694,7 +699,10 @@ func (s *claudeCodeSession) CompactWithInstructions(instructions string) (Compac
 	}
 
 	s.mu.Lock()
-	s.loadTranscriptLocked()
+	if err := s.loadTranscriptLocked(); err != nil && !s.canUseStreamedTranscriptLocked(err) {
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("load Claude Code session transcript: %w", err)
+	}
 	s.refreshActiveLocked()
 	switch {
 	case s.closed:
@@ -978,7 +986,9 @@ func (s *claudeCodeSession) WaitClosed(timeout time.Duration) bool {
 func (s *claudeCodeSession) RefreshBusyElsewhere() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.loadTranscriptLocked()
+	if err := s.loadTranscriptLocked(); err != nil && !s.canUseStreamedTranscriptLocked(err) {
+		return fmt.Errorf("refresh Claude Code session transcript: %w", err)
+	}
 	s.refreshActiveLocked()
 	if !s.busy && !s.externalTurnActive {
 		s.markBackgroundTasksUnresolvedLocked()
@@ -1037,7 +1047,10 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	if s.sessionID != "" {
 		s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, s.sessionID)
 	}
-	s.loadTranscriptLocked()
+	transcriptErr := s.loadTranscriptLocked()
+	if s.canUseStreamedTranscriptLocked(transcriptErr) {
+		transcriptErr = nil
+	}
 	s.refreshActiveLocked()
 	pendingBackgroundTasks := len(s.backgroundTasks)
 	if interrupted {
@@ -1053,6 +1066,9 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 
 	if compactCommand != nil {
 		result, compactErr := claudeCompactionCompletion(compactCommand, waitErr, stdoutErr, stderrErr)
+		if compactErr == nil && transcriptErr != nil {
+			compactErr = fmt.Errorf("reload Claude Code session transcript: %w", transcriptErr)
+		}
 		if compactErr == nil && pendingBackgroundTasks > 0 {
 			result = CompactionResult{}
 			compactErr = errors.New(claudeBackgroundTaskUnresolved)
@@ -1093,6 +1109,8 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code output: %v", stdoutErr))
 		case stderrErr != nil:
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code stderr: %v", stderrErr))
+		case transcriptErr != nil:
+			s.appendSystemErrorLocked(fmt.Sprintf("Could not reload Claude Code session transcript: %v", transcriptErr))
 		case pendingBackgroundTasks > 0:
 			s.appendSystemErrorLocked(claudeBackgroundTaskUnresolved)
 		default:
@@ -1726,7 +1744,7 @@ func (s *claudeCodeSession) closeClosedCh() {
 
 func (s *claudeCodeSession) findLatestSession() (path string, sessionID string, ok bool) {
 	projectsDir := filepath.Join(s.claudeHome, "projects")
-	encodedPath := encodeCCProjectPath(s.projectPath)
+	encodedPath := claudeartifact.ProjectDirectoryName(s.projectPath)
 	projectDir := filepath.Join(projectsDir, encodedPath)
 
 	entries, err := os.ReadDir(projectDir)
@@ -1758,22 +1776,22 @@ func (s *claudeCodeSession) findLatestSession() (path string, sessionID string, 
 	return bestPath, bestID, true
 }
 
-func (s *claudeCodeSession) loadTranscriptLocked() {
+func (s *claudeCodeSession) loadTranscriptLocked() error {
 	if strings.TrimSpace(s.sessionFile) == "" {
-		return
+		return nil
 	}
 	file, err := os.Open(s.sessionFile)
 	if err != nil {
-		return
+		return err
 	}
 	defer file.Close()
 
 	stat, err := file.Stat()
 	if err != nil {
-		return
+		return err
 	}
 	if stat.Size() == s.lastFileSize {
-		return
+		return nil
 	}
 
 	sc := bufio.NewScanner(file)
@@ -1817,6 +1835,9 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 			}
 		}
 	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
 
 	s.entries = entries
 	s.backgroundTasks = backgroundTasks
@@ -1848,6 +1869,16 @@ func (s *claudeCodeSession) loadTranscriptLocked() {
 	if len(entries) > 0 {
 		s.lastActivityAt = stat.ModTime()
 	}
+	return nil
+}
+
+// Claude's stream-json output can arrive before its on-disk transcript is
+// materialized. Keep that live transcript usable during the short gap, while
+// still surfacing a missing or unreadable persisted transcript on cold resume.
+func (s *claudeCodeSession) canUseStreamedTranscriptLocked(err error) bool {
+	return errors.Is(err, os.ErrNotExist) &&
+		s.lastFileSize == 0 &&
+		len(s.entries) > 0
 }
 
 func (s *claudeCodeSession) refreshActiveLocked() {
@@ -2061,7 +2092,7 @@ func claudeSessionFilePath(claudeHome, projectPath, sessionID string) string {
 	if strings.TrimSpace(sessionID) == "" {
 		return ""
 	}
-	return filepath.Join(claudeHome, "projects", encodeCCProjectPath(projectPath), sessionID+".jsonl")
+	return filepath.Join(claudeHome, "projects", claudeartifact.ProjectDirectoryName(projectPath), sessionID+".jsonl")
 }
 
 func claudePermissionModeForPreset(preset codexcli.Preset) (mode string, notice string) {
@@ -2412,9 +2443,4 @@ func ccExtractString(fields map[string]json.RawMessage, key string) string {
 		return ""
 	}
 	return s
-}
-
-func encodeCCProjectPath(projectPath string) string {
-	cleaned := filepath.Clean(projectPath)
-	return strings.ReplaceAll(cleaned, "/", "-")
 }
