@@ -1336,7 +1336,24 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 		actions = append(actions, footerNavAction("/remove", "remove"))
 	}
 	if project.RepoConflict && width >= 80 {
-		actions = append(actions, footerPrimaryAction("/resolve", "resolve"))
+		showResolve := true
+		resolveLabel := "resolve"
+		if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok {
+			switch resolver.Phase {
+			case mergeConflictResolverNeedsAttention:
+				// Continuing the saved conversation is the primary recovery path.
+				if resolver.inspectableOnProjectOpen() {
+					showResolve = false
+				} else {
+					resolveLabel = "retry"
+				}
+			case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+				resolveLabel = "retry"
+			}
+		}
+		if showResolve {
+			actions = append(actions, footerPrimaryAction("/resolve", resolveLabel))
+		}
 	}
 	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && width >= 80 {
 		actions = append(actions, footerPrimaryAction("I", "integrity"))

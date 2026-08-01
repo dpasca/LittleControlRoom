@@ -1086,13 +1086,163 @@ func TestBackgroundResolverCompletionAndAttentionAreSurfaced(t *testing.T) {
 	for _, want := range []string{
 		"Resolver needs attention",
 		"paused for input",
-		"Open resolver session session1",
-		"/sessions",
+		"press Enter to open resolver session session1",
+		"exact session ID",
 		"finish or close",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("resolver attention notice missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestEnterOpensExactFailedResolverSessionInsteadOfLatestProjectSession(t *testing.T) {
+	projectPath := "/tmp/resolve-inspect"
+	resolverSessionID := "resolver-thread-12345678"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:    req.Provider.Normalized(),
+				ProjectPath: req.ProjectPath,
+				ThreadID:    req.ResumeID,
+				Started:     true,
+				Status:      req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	project := model.ProjectSummary{
+		Path:                projectPath,
+		Name:                "resolve-inspect",
+		PresentOnDisk:       true,
+		RepoConflict:        true,
+		LatestSessionID:     "ordinary-thread",
+		LatestSessionFormat: "opencode_jsonl",
+	}
+	m := Model{
+		codexManager: manager,
+		projects:     []model.ProjectSummary{project},
+		selected:     0,
+		focusedPane:  focusProjects,
+		codexInput:   newCodexTextarea(),
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			projectPath: {
+				OwnerProjectPath:   projectPath,
+				SessionProjectPath: projectPath,
+				Provider:           codexapp.ProviderCodex,
+				Phase:              mergeConflictResolverFailed,
+				SessionID:          resolverSessionID,
+				Detail:             "connection dropped",
+			},
+		},
+	}
+
+	if label := m.currentEmbeddedLaunchLabel(); label != "resolver" {
+		t.Fatalf("currentEmbeddedLaunchLabel() = %q, want resolver", label)
+	}
+	if footer := ansi.Strip(m.renderFooter(160)); !strings.Contains(footer, "Enter resolver") || !strings.Contains(footer, "/resolve retry") {
+		t.Fatalf("resolver failure footer should distinguish inspect from retry: %q", footer)
+	}
+	if topStatus := ansi.Strip(m.renderTopStatusLine(180)); !strings.Contains(topStatus, "Enter inspect") || !strings.Contains(topStatus, "/resolve retry") {
+		t.Fatalf("resolver failure top status should advertise inspect and retry: %q", topStatus)
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("Enter on failed resolver returned no open command")
+	}
+	if !strings.Contains(got.status, "Opening Codex resolver session resolver") {
+		t.Fatalf("status = %q, want resolver open notice", got.status)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	foundOpened := false
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			foundOpened = true
+			break
+		}
+	}
+	if !foundOpened || opened.err != nil {
+		t.Fatalf("open command messages = %#v, want successful codexSessionOpenedMsg", msgs)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want one exact resolver resume", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderCodex || requests[0].ResumeID != resolverSessionID {
+		t.Fatalf("resolver request = %#v, want Codex session %q", requests[0], resolverSessionID)
+	}
+	if requests[0].ResumeID == project.LatestSessionID {
+		t.Fatalf("resolver inspection resumed ordinary latest session %q", project.LatestSessionID)
+	}
+}
+
+func TestEnterDoesNotReplaceActiveForegroundTurnToInspectResolver(t *testing.T) {
+	projectPath := "/tmp/resolve-inspect-blocked"
+	created := 0
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		created++
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:     req.Provider.Normalized(),
+				ProjectPath:  req.ProjectPath,
+				ThreadID:     req.ResumeID,
+				Started:      true,
+				Busy:         true,
+				ActiveTurnID: "turn-active",
+			},
+		}, nil
+	})
+	foreground, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderOpenCode,
+		ResumeID:    "ordinary-active-thread",
+	})
+	if err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	project := model.ProjectSummary{Path: projectPath, Name: "resolve-inspect-blocked", PresentOnDisk: true, RepoConflict: true}
+	m := Model{
+		codexManager: manager,
+		projects:     []model.ProjectSummary{project},
+		selected:     0,
+		focusedPane:  focusProjects,
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			projectPath: {
+				OwnerProjectPath:   projectPath,
+				SessionProjectPath: projectPath,
+				Provider:           codexapp.ProviderCodex,
+				Phase:              mergeConflictResolverFailed,
+				SessionID:          "resolver-thread-blocked",
+			},
+		},
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("Enter should not replace an active foreground turn")
+	}
+	if got.attentionDialog == nil || got.attentionDialog.Title != "Resolver inspection blocked" {
+		t.Fatalf("attention dialog = %#v, want resolver inspection blocker", got.attentionDialog)
+	}
+	if !strings.Contains(got.attentionDialog.Message, "resolver session resolver") || !strings.Contains(got.attentionDialog.Hint, "press Enter") {
+		t.Fatalf("resolver blocker should explain the exact next step: %#v", got.attentionDialog)
+	}
+	if created != 1 {
+		t.Fatalf("created sessions = %d, want only the original foreground session", created)
+	}
+	if foreground.Snapshot().Closed {
+		t.Fatal("resolver inspection closed the active foreground session")
+	}
+	if current, ok := manager.Session(projectPath); !ok || current != foreground {
+		t.Fatalf("foreground session = (%#v, %v), want original session preserved", current, ok)
 	}
 }
 

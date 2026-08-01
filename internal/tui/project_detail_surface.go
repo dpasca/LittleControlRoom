@@ -472,13 +472,13 @@ func (m Model) repoConflictDetailText(project model.ProjectSummary) string {
 		case mergeConflictResolverChecking:
 			return "The background resolver finished and Little Control Room is refreshing this " + location + "'s Git status."
 		case mergeConflictResolverNeedsAttention:
-			return "The background resolver paused for input. Open its saved session from /sessions to continue."
+			return "The background resolver paused for input. Press Enter to open its exact saved session and continue."
 		case mergeConflictResolverRefreshFailed:
-			return "The background resolver finished, but Little Control Room could not refresh this " + location + "'s Git status. Review the Resolver field before deciding whether to retry."
+			return "The background resolver finished, but Little Control Room could not refresh this " + location + "'s Git status. Press Enter to inspect its saved session before deciding whether to retry."
 		case mergeConflictResolverFailed:
-			return "The background resolver failed. Review the Resolver field and its saved session before retrying /resolve."
+			return "The background resolver failed. Press Enter to inspect its exact saved session, or run /resolve to retry."
 		case mergeConflictResolverConflictsRemain:
-			return "The background resolver finished, but Git still reports unmerged files in this " + location + ". Review its saved session or run /resolve to retry."
+			return "The background resolver finished, but Git still reports unmerged files in this " + location + ". Press Enter to inspect its saved session or run /resolve to retry."
 		}
 	}
 	return "Unmerged files are present in this " + location + ". Use /resolve to start a background conflict resolver, or resolve/abort the in-progress Git operation manually."

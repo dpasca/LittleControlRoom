@@ -85,6 +85,26 @@ func (state mergeConflictResolverState) active() bool {
 	return state.Phase == mergeConflictResolverStarting || state.Phase == mergeConflictResolverRunning
 }
 
+// inspectableOnProjectOpen reports whether the resolver outcome should take
+// precedence over the project's ordinary latest session when the user presses
+// Enter. Successful and still-running resolvers leave the normal project-open
+// behavior alone; terminal outcomes that need review open their exact saved
+// resolver conversation when one was created.
+func (state mergeConflictResolverState) inspectableOnProjectOpen() bool {
+	if strings.TrimSpace(state.SessionID) == "" {
+		return false
+	}
+	switch state.Phase {
+	case mergeConflictResolverNeedsAttention,
+		mergeConflictResolverFailed,
+		mergeConflictResolverRefreshFailed,
+		mergeConflictResolverConflictsRemain:
+		return true
+	default:
+		return false
+	}
+}
+
 func (state mergeConflictResolverState) provider() codexapp.Provider {
 	provider := state.Provider.Normalized()
 	if provider == "" {
@@ -207,7 +227,7 @@ func (state mergeConflictResolverState) detailText(now time.Time) string {
 			text += " · " + detail
 		}
 		if sessionSuffix != "" {
-			text += sessionSuffix + " · open it from /sessions"
+			text += sessionSuffix + " · press Enter to continue"
 		}
 		return text
 	case mergeConflictResolverFailed:
@@ -215,15 +235,27 @@ func (state mergeConflictResolverState) detailText(now time.Time) string {
 		if detail := strings.TrimSpace(state.Detail); detail != "" {
 			text += " · " + detail
 		}
-		return text + sessionSuffix
+		text += sessionSuffix
+		if sessionSuffix != "" {
+			text += " · press Enter to inspect; run /resolve to retry"
+		}
+		return text
 	case mergeConflictResolverRefreshFailed:
 		text := providerLabel + " resolver finished, but Little Control Room could not refresh Git status"
 		if detail := strings.TrimSpace(state.Detail); detail != "" {
 			text += " · " + detail
 		}
-		return text + sessionSuffix
+		text += sessionSuffix
+		if sessionSuffix != "" {
+			text += " · press Enter to inspect"
+		}
+		return text
 	case mergeConflictResolverConflictsRemain:
-		return providerLabel + " resolver finished, but Git still reports unmerged files" + sessionSuffix + " · run /resolve to retry"
+		text := providerLabel + " resolver finished, but Git still reports unmerged files" + sessionSuffix
+		if sessionSuffix != "" {
+			return text + " · press Enter to inspect or run /resolve to retry"
+		}
+		return text + " · run /resolve to retry"
 	case mergeConflictResolverResolved:
 		return providerLabel + " resolver finished and Git no longer reports unmerged files" + sessionSuffix
 	default:
@@ -467,6 +499,79 @@ func (m Model) resolveMergeConflictsForSelection() (tea.Model, tea.Cmd) {
 	m.err = nil
 	m.status = "Choose the conflict resolver agent. Enter launches; Esc cancels."
 	return m, nil
+}
+
+// inspectMergeConflictResolverForProject opens a terminal resolver's exact
+// saved conversation. The resolver ran in a parallel manager lane, so choosing
+// the project's ordinary latest session is not sufficient to identify it.
+func (m Model) inspectMergeConflictResolverForProject(project model.ProjectSummary) (tea.Model, tea.Cmd, bool) {
+	resolver, ok := m.mergeConflictResolverForProject(project.Path)
+	if !ok || !resolver.inspectableOnProjectOpen() {
+		return m, nil, false
+	}
+
+	sessionID := strings.TrimSpace(resolver.SessionID)
+	sessionProjectPath := normalizeProjectPath(resolver.SessionProjectPath)
+	if sessionProjectPath == "" {
+		sessionProjectPath = normalizeProjectPath(project.Path)
+	}
+	if sessionProjectPath == "" {
+		m.status = "Resolver session path unavailable; run /resolve to retry"
+		return m, nil, true
+	}
+	if pending := m.codexPendingOpen; pending != nil && normalizeProjectPath(pending.projectPath) == sessionProjectPath {
+		if revealed, ok := m.revealPendingEmbeddedOpen(sessionProjectPath); ok {
+			revealed.status = "An embedded session is still opening for this project; wait for it to finish before switching to the resolver"
+			return revealed, nil, true
+		}
+	}
+
+	provider := resolver.provider()
+	if session, exists := m.codexSession(sessionProjectPath); exists {
+		snapshot, found := session.TrySnapshot()
+		if !found {
+			snapshot, found = m.codexCachedSnapshot(sessionProjectPath)
+		}
+		if !found {
+			m.status = "Current embedded session state is still loading; wait, then press Enter again to inspect the resolver"
+			return m, nil, true
+		}
+		if !snapshot.Closed {
+			currentProvider := embeddedProvider(snapshot)
+			currentSessionID := strings.TrimSpace(snapshot.ThreadID)
+			if currentProvider == provider && currentSessionID == sessionID {
+				status := "Resolver session " + shortID(sessionID) + " reopened. Alt+Up hides it."
+				updated, cmd := m.showCodexProject(sessionProjectPath, status)
+				return updated, cmd, true
+			}
+			if embeddedSessionBlocksProviderSwitch(snapshot) {
+				primaryLabel := ""
+				primaryProvider := codexapp.Provider("")
+				if normalizeProjectPath(project.Path) == sessionProjectPath {
+					primaryProvider = currentProvider
+					primaryLabel = "Open current " + currentProvider.Label()
+				}
+				m.showAttentionDialog(attentionDialogState{
+					Title:           "Resolver inspection blocked",
+					ProjectName:     projectNameForPicker(project, project.Path),
+					ProjectPath:     project.Path,
+					Message:         "This project already has an active embedded " + currentProvider.Label() + " session. Little Control Room will not replace its active turn with resolver session " + shortID(sessionID) + ".",
+					Hint:            "Finish or close the current session, then press Enter on the project again to inspect the saved resolver conversation.",
+					PrimaryLabel:    primaryLabel,
+					PrimaryProvider: primaryProvider,
+				})
+				return m, nil, true
+			}
+		}
+	}
+
+	m.ensureCodexRuntime()
+	updated, cmd := m.resumeEmbeddedSession(sessionProjectPath, provider, sessionID)
+	if next, ok := updated.(Model); ok && cmd != nil {
+		next.status = "Opening " + provider.Label() + " resolver session " + shortID(sessionID) + "..."
+		updated = next
+	}
+	return updated, cmd, true
 }
 
 func (m Model) updateMergeConflictResolverProviderDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -924,9 +1029,9 @@ func (m Model) applyMergeConflictResolverUpdateMsg(msg mergeConflictResolverUpda
 	}
 	sessionID := shortID(msg.snapshot.ThreadID)
 	if msg.snapshot.PendingApproval != nil || msg.snapshot.PendingToolInput != nil || msg.snapshot.PendingElicitation != nil {
-		action := "Open the resolver from /sessions and continue it."
+		action := "Select this project and press Enter to open the resolver and continue it."
 		if sessionID != "" {
-			action = "Open resolver session " + sessionID + " from /sessions and continue it."
+			action = "Select this project and press Enter to open resolver session " + sessionID + " and continue it."
 		}
 		m.status = "Background conflict resolver needs attention"
 		m.openActionNoticeDialog(
@@ -934,7 +1039,7 @@ func (m Model) applyMergeConflictResolverUpdateMsg(msg mergeConflictResolverUpda
 			projectName,
 			"The background "+provider.Label()+" resolver paused for input and was detached safely.",
 			action,
-			"Its conversation is preserved in the normal session history. If another engineer session is open for this project, finish or close that session before reopening the resolver.",
+			"Its conversation is preserved under the resolver's exact session ID. If another engineer turn is active for this project, finish or close that turn before reopening the resolver.",
 		)
 		return m, batchCmds(waitCmd, m.refreshProjectStatusCmd(ownerProjectPath))
 	}

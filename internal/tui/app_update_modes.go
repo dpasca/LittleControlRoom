@@ -63,6 +63,9 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "No project selected"
 				return m, nil
 			}
+			if updated, cmd, handled := m.inspectMergeConflictResolverForProject(project); handled {
+				return updated, cmd
+			}
 			return m.launchEmbeddedForSelection(m.preferredEmbeddedProviderForProject(project), false, "")
 		}
 		if m.focusedPane == focusRuntime {

@@ -1738,6 +1738,9 @@ func explicitEmbeddedProvider(provider codexapp.Provider) codexapp.Provider {
 
 func (m Model) currentEmbeddedLaunchLabel() string {
 	if project, ok := m.selectedProject(); ok {
+		if resolver, exists := m.mergeConflictResolverForProject(project.Path); exists && resolver.inspectableOnProjectOpen() {
+			return "resolver"
+		}
 		return m.preferredEmbeddedProviderForProject(project).Label()
 	}
 	return codexapp.ProviderCodex.Label()

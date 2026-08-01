@@ -497,13 +497,25 @@ func (m Model) renderTopStatusLine(width int) string {
 				statusParts = append(statusParts, topStatusResolverBadgeStyle.Render("CHECKING GIT"))
 			case mergeConflictResolverNeedsAttention:
 				statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("RESOLVER WAITING"))
-				statusParts = append(statusParts, detailWarningStyle.Render("background resolver needs input; see project detail"))
+				message := "resolver needs input; use /resolve to retry"
+				if resolver.inspectableOnProjectOpen() {
+					message = "press Enter to continue the saved resolver"
+				}
+				statusParts = append(statusParts, detailWarningStyle.Render(message))
 			case mergeConflictResolverRefreshFailed:
 				statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("GIT STATUS UNKNOWN"))
-				statusParts = append(statusParts, detailWarningStyle.Render(resolver.summary(m.currentTime())))
+				message := resolver.summary(m.currentTime())
+				if resolver.inspectableOnProjectOpen() {
+					message = "Enter inspect · " + message
+				}
+				statusParts = append(statusParts, detailWarningStyle.Render(message))
 			case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
 				statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("RESOLVER BLOCKED"))
-				statusParts = append(statusParts, detailConflictStyle.Render(resolver.summary(m.currentTime())))
+				message := "use /resolve to retry · " + resolver.summary(m.currentTime())
+				if resolver.inspectableOnProjectOpen() {
+					message = "Enter inspect · /resolve retry · " + resolver.summary(m.currentTime())
+				}
+				statusParts = append(statusParts, detailConflictStyle.Render(message))
 			case mergeConflictResolverResolved:
 				statusParts = append(statusParts, topStatusResolverBadgeStyle.Render("RESOLVED"))
 			}

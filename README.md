@@ -210,7 +210,7 @@ Repo and runtime actions:
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
 - `/pull`: Pull the selected project's branch.
-- `/resolve`: Choose an agent, then resolve selected repo merge conflicts in a separate background engineer session. The last confirmed resolver choice is preselected next time and remains independent of ordinary agent launches. Progress stays visible on the project row, followed by a fresh Git-status check after the agent verifies and commits the resolution or reports a blocker.
+- `/resolve`: Choose an agent, then resolve selected repo merge conflicts in a separate background engineer session. The last confirmed resolver choice is preselected next time and remains independent of ordinary agent launches. Progress stays visible on the project row, followed by a fresh Git-status check after the agent verifies and commits the resolution or reports a blocker. If the resolver needs input, fails, or leaves conflicts behind, Enter on that project opens the exact saved resolver conversation for inspection; run `/resolve` again to retry in a fresh background session.
 - `/integrity` (`I`): Inspect a repository-root branch mismatch, hand it to a fresh engineer, acknowledge it, update the expected branch, or apply a conservative linked-worktree repair.
 - `/wt restore` (`/wt undelete`): List Codex sessions whose recorded LCR worktree is gone, recreate the original checkout when Git evidence makes that safe, and resume the selected conversation.
 - `/wt update`, `/wt merge`, `/wt remove`, `/wt prune`: Update, integrate, remove, or prune linked worktrees in the selected repository family.
