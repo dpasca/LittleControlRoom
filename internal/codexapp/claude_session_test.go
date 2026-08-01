@@ -573,6 +573,64 @@ func TestClaudeLoadTranscriptKeepsToolEntriesStructuredOnRefresh(t *testing.T) {
 	}
 }
 
+func TestClaudeLoadTranscriptPresentsServerAPIErrorAsRecoverableInterruption(t *testing.T) {
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"user","uuid":"msg_user","message":{"role":"user","content":[{"type":"text","text":"let's pause for a few"}]}}`,
+		`{"type":"assistant","uuid":"msg_error","error":"server_error","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Unable to connect to API (ENOTFOUND)"}]}}`,
+		`{"type":"last-prompt","lastPrompt":"let's pause for a few"}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+	if err := session.loadTranscriptLocked(); err != nil {
+		t.Fatalf("loadTranscriptLocked() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if len(snapshot.Entries) != 2 {
+		t.Fatalf("entries = %#v, want saved user prompt and provider interruption", snapshot.Entries)
+	}
+	got := snapshot.Entries[1]
+	if got.Kind != TranscriptStatus {
+		t.Fatalf("API error kind = %q, want %q", got.Kind, TranscriptStatus)
+	}
+	if got.Text != "API Error: Unable to connect to API (ENOTFOUND)" {
+		t.Fatalf("raw API error = %q, want diagnostic preserved", got.Text)
+	}
+	if got.DisplayText != claudeRecoverableAPIErrorNotice {
+		t.Fatalf("API error display text = %q, want %q", got.DisplayText, claudeRecoverableAPIErrorNotice)
+	}
+	if !strings.Contains(snapshot.Transcript, claudeRecoverableAPIErrorNotice) {
+		t.Fatalf("transcript = %q, want recoverable interruption notice", snapshot.Transcript)
+	}
+	if strings.Contains(snapshot.Transcript, "ENOTFOUND") {
+		t.Fatalf("transcript = %q, raw provider failure should not be the user-facing text", snapshot.Transcript)
+	}
+}
+
+func TestClaudeAPIErrorClassificationKeepsActionableFailuresAsErrors(t *testing.T) {
+	var conversationTracker claudeartifact.ConversationTracker
+	entries, _, _, _ := parseCCLineEntries(
+		`{"type":"assistant","uuid":"msg_limit","error":"rate_limit","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit"}]}}`,
+		make(map[string]claudeToolCall),
+		make(map[string]struct{}),
+		&conversationTracker,
+	)
+	if len(entries) != 1 || entries[0].Kind != TranscriptError {
+		t.Fatalf("entries = %#v, want actionable API failure rendered as an error", entries)
+	}
+	if entries[0].Text != "You've hit your session limit" || entries[0].DisplayText != "" {
+		t.Fatalf("rate-limit entry = %#v, want provider guidance unchanged", entries[0])
+	}
+}
+
 func TestClaudeLoadTranscriptRestoresLatestReasoningEffort(t *testing.T) {
 	dir := t.TempDir()
 	sessionFile := filepath.Join(dir, "session.jsonl")

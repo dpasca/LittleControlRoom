@@ -1291,6 +1291,73 @@ func TestVisibleCodexSlashGoalSetRunsLocally(t *testing.T) {
 	}
 }
 
+func TestVisibleClaudeSlashPauseInterruptsLocallyWithoutSubmittingPrompt(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderClaudeCode,
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			Status:   "Claude Code is thinking...",
+			ThreadID: "session_demo",
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/pause")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("enter should run the local /pause command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /pause, got %q", got.codexInput.Value())
+	}
+	if got.status != "Pausing embedded Claude Code turn locally..." {
+		t.Fatalf("status = %q, want local pause notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/pause returned error = %v", action.err)
+	}
+	if action.status != "Interrupt sent to Claude Code" {
+		t.Fatalf("action status = %q, want Claude interrupt confirmation", action.status)
+	}
+	if !session.interrupted {
+		t.Fatal("/pause should interrupt the active Claude turn")
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("/pause should not submit a model prompt, submissions = %#v", session.submissions)
+	}
+}
+
 func TestVisibleCodexSlashGoalStopRunsLocallyWhileBusy(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

@@ -259,6 +259,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				inv.Kind == codexslash.KindStatus ||
 				inv.Kind == codexslash.KindShowStatus ||
 				inv.Kind == codexslash.KindContext ||
+				inv.Kind == codexslash.KindPause ||
 				inv.Kind == codexslash.KindCompact ||
 				inv.Kind == codexslash.KindReview ||
 				inv.Kind == codexslash.KindGoal ||
@@ -285,6 +286,27 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "Reconnecting embedded " + label + " session..."
 				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.reconnectVisibleCodexSessionCmd()
+			case codexslash.KindPause:
+				switch {
+				case snapshot.BusyExternal:
+					m.status = "This " + label + " session is active in another process and cannot be paused here."
+					return m, nil
+				case codexSnapshotGoalPausesOnPrompt(snapshot):
+					m.status = "This " + label + " session has an active goal; use /goal pause to pause both the turn and goal."
+					return m, nil
+				case codexSnapshotCanInterruptActiveTurn(snapshot):
+					m.status = "Pausing embedded " + label + " turn locally..."
+					return m, m.interruptVisibleCodexCmd()
+				case snapshot.Phase == codexapp.SessionPhaseStalled && snapshot.Busy && strings.TrimSpace(snapshot.ActiveTurnID) != "":
+					m.status = "Pausing stuck embedded " + label + " turn locally..."
+					return m, m.interruptVisibleCodexCmd()
+				case snapshot.Busy:
+					m.status = label + " is already finishing and cannot accept another local interrupt."
+					return m, nil
+				default:
+					m.status = label + " has no active turn to pause."
+					return m, nil
+				}
 			case codexslash.KindModel:
 				if embeddedProvider(snapshot).Normalized() == codexapp.ProviderLCAgent {
 					return m.openEmbeddedLCAgentModelPicker()

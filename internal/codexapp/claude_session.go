@@ -33,6 +33,7 @@ const (
 	claudeFreshReadyStatus              = "Fresh embedded Claude Code session ready. Send a prompt to start it."
 	claudeSupportStatus                 = "Embedded Claude Code session ready"
 	claudeInterruptNotice               = "Interrupted embedded Claude Code turn."
+	claudeRecoverableAPIErrorNotice     = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
 	claudeCompactingStatus              = "Claude Code is compacting conversation history..."
 	claudeApprovalUnsupported           = "Embedded Claude Code approval responses are not supported yet"
 	claudeToolInputUnsupported          = "Embedded Claude Code tool-input responses are not supported yet"
@@ -2242,6 +2243,8 @@ func parseCCLineEntries(
 		PromptSource      string                `json:"promptSource"`
 		Effort            string                `json:"effort"`
 		Model             string                `json:"model"`
+		Error             string                `json:"error"`
+		IsAPIErrorMessage bool                  `json:"isApiErrorMessage"`
 		CompactMetadata   claudeCompactMetadata `json:"compact_metadata"`
 		CompactMetadataV2 claudeCompactMetadata `json:"compactMetadata"`
 		Origin            struct {
@@ -2295,7 +2298,11 @@ func parseCCLineEntries(
 		return extractCCUserEntries(raw.Message.Content, raw.UUID, includeUserText, toolCalls, toolResults), raw.Type, reasoningEffort, state
 
 	case "assistant":
-		return extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls), raw.Type, reasoningEffort, state
+		entries := extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls)
+		if raw.IsAPIErrorMessage {
+			entries = classifyClaudeAPIErrorEntries(entries, raw.Error)
+		}
+		return entries, raw.Type, reasoningEffort, state
 
 	case "progress":
 		return nil, raw.Type, reasoningEffort, state
@@ -2310,6 +2317,27 @@ func parseCCLineEntries(
 	default:
 		return nil, raw.Type, reasoningEffort, state
 	}
+}
+
+func classifyClaudeAPIErrorEntries(entries []TranscriptEntry, errorType string) []TranscriptEntry {
+	// Claude persists provider failures as synthetic assistant messages. Use its
+	// structured error type instead of interpreting the displayed prose, and
+	// retain that prose in Text for diagnostics while DisplayText carries the
+	// calmer recovery guidance shown in the embedded pane.
+	kind := TranscriptError
+	displayText := ""
+	if strings.EqualFold(strings.TrimSpace(errorType), "server_error") {
+		kind = TranscriptStatus
+		displayText = claudeRecoverableAPIErrorNotice
+	}
+	for i := range entries {
+		if entries[i].Kind != TranscriptAgent {
+			continue
+		}
+		entries[i].Kind = kind
+		entries[i].DisplayText = displayText
+	}
+	return entries
 }
 
 type claudeParsedLineState struct {

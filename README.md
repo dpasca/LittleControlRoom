@@ -254,6 +254,7 @@ Embedded providers expose LCR's local command subset, not every slash command fr
 - `/sessions [session-id]`: Open this project's session-history picker or jump to a saved session.
 - `/resume [session-id]` and `/session [session-id]`: Aliases for `/sessions`.
 - `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
+- `/pause` (alias: `/suspend`): Interrupt the active turn locally without sending another model request. Use this when you need to stop immediately or are about to go offline.
 - `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR. LCAgent uses the same provider → model → reasoning flow as TODO launch; press `r` on the provider step to expand complete recent provider/model/reasoning choices.
 - `/status`: Show the current provider/session status, including context usage when the provider reports it. In the embedded Session sidebar, Claude keeps deduplicated token totals across compaction and shows Claude.ai five-hour/weekly usage when subscription credentials are active.
 - `/context`: Show the same status report with an explicit context-oriented command.

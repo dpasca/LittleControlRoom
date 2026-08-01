@@ -17,6 +17,7 @@ const (
 	KindShowStatus  Kind = "show-status"
 	KindModel       Kind = "model"
 	KindReconnect   Kind = "reconnect"
+	KindPause       Kind = "pause"
 	KindCompact     Kind = "compact"
 	KindContext     Kind = "context"
 	KindReview      Kind = "review"
@@ -65,6 +66,8 @@ var specs = []Spec{
 	{Name: "show-status", Usage: "/show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
+	{Name: "pause", Usage: "/pause", Summary: "Interrupt the active turn locally without sending another model request"},
+	{Name: "suspend", Usage: "/suspend", Summary: "Alias for /pause", Hidden: true},
 	{Name: "compact", Usage: "/compact [instructions]", Summary: "Compact conversation history, optionally preserving a specific focus"},
 	{Name: "context", Usage: "/context", Summary: "Show current context use and the model context window"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
@@ -139,6 +142,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/reconnect",
 			Display: "/reconnect",
 			Summary: "Restart the embedded provider helper and reconnect to the current session",
+		}}
+	case "pause", "suspend":
+		return []Suggestion{{
+			Insert:  "/pause",
+			Display: "/pause",
+			Summary: "Interrupt the active turn locally without sending another model request",
 		}}
 	case "compact":
 		return []Suggestion{{
@@ -358,6 +367,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindReconnect,
 			Canonical: "/reconnect",
+		}, nil
+	case "pause", "suspend":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /%s", strings.ToLower(name))
+		}
+		return Invocation{
+			Kind:      KindPause,
+			Canonical: "/pause",
 		}, nil
 	case "compact":
 		instructions := strings.TrimSpace(rawArgs)

@@ -33,6 +33,20 @@ func TestSuggestionsIncludeReconnectCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludePauseCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/pause" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /pause: %#v", suggestions)
+	}
+}
+
 func TestSuggestionsIncludeReviewCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
@@ -177,6 +191,21 @@ func TestParseReconnectCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/reconnect" {
 		t.Fatalf("Parse(/reconnect) canonical = %q, want /reconnect", inv.Canonical)
+	}
+}
+
+func TestParsePauseCommandAndSuspendAlias(t *testing.T) {
+	for _, command := range []string{"/pause", "/suspend"} {
+		inv, err := Parse(command)
+		if err != nil {
+			t.Fatalf("Parse(%s) error = %v", command, err)
+		}
+		if inv.Kind != KindPause {
+			t.Fatalf("Parse(%s) kind = %q, want %q", command, inv.Kind, KindPause)
+		}
+		if inv.Canonical != "/pause" {
+			t.Fatalf("Parse(%s) canonical = %q, want /pause", command, inv.Canonical)
+		}
 	}
 }
 
