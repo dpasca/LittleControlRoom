@@ -696,25 +696,39 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 		t.Fatalf("GetAgentTask() error = %v", err)
 	}
 	idleSnapshot := codexapp.Snapshot{
-		Provider:       codexapp.ProviderCodex,
-		ProjectPath:    task.WorkspacePath,
-		ThreadID:       "thread-agent-1",
-		Started:        true,
-		Status:         "Codex turn completed",
-		LastActivityAt: now,
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        task.WorkspacePath,
+		ThreadID:           "thread-agent-1",
+		Started:            true,
+		Status:             "Codex turn completed",
+		LastActivityAt:     now,
+		TranscriptRevision: 2,
 		Entries: []codexapp.TranscriptEntry{{
 			Kind: codexapp.TranscriptAgent,
 			Text: "No stale roguellm dev server is running now. Checked:\n```text\nport 8127: no listener\n```\nThe server is fully stopped.",
 		}},
 	}
-	session := &fakeCodexSession{projectPath: task.WorkspacePath, snapshot: idleSnapshot}
+	staleIdleSnapshot := idleSnapshot
+	staleIdleSnapshot.LastActivityAt = now.Add(-time.Minute)
+	staleIdleSnapshot.TranscriptRevision = 1
+	staleIdleSnapshot.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "The stop command completed successfully. I’m now doing the requested independent verification.",
+	}}
+	session := &fakeCodexSession{
+		projectPath: task.WorkspacePath,
+		snapshot:    idleSnapshot,
+		trySnapshotFn: func(_ *fakeCodexSession) (codexapp.Snapshot, bool) {
+			return staleIdleSnapshot, true
+		},
+	}
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return session, nil
 	})
 	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: task.WorkspacePath, Provider: codexapp.ProviderCodex}); err != nil {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
-	prevSnapshot := idleSnapshot
+	prevSnapshot := staleIdleSnapshot
 	prevSnapshot.Busy = true
 	prevSnapshot.BusySince = now.Add(-2 * time.Minute)
 	prevSnapshot.ActiveTurnID = "turn-live"
@@ -746,6 +760,9 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	}
 	if completed.Status != model.AgentTaskStatusWaiting {
 		t.Fatalf("agent task status = %s, want waiting", completed.Status)
+	}
+	if !strings.Contains(completed.Summary, "No stale roguellm dev server is running now") || strings.Contains(completed.Summary, "now doing the requested independent verification") {
+		t.Fatalf("agent task summary = %q, want the final report instead of the earlier progress update", completed.Summary)
 	}
 	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)

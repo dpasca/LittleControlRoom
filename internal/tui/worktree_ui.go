@@ -1533,7 +1533,8 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && width >= 80 {
 		actions = append(actions, footerPrimaryAction("I", "integrity"))
 	}
-	if _, ok := m.worktreeMergeRecoveryTaskForProjectPath(project.Path); ok {
+	recoveryTask, hasRecoveryTask := m.worktreeMergeRecoveryTaskForProjectPath(project.Path)
+	if hasRecoveryTask {
 		actions = append(actions, footerPrimaryAction("e", "recovery"))
 	}
 	if row.Kind == projectListRowPendingWorktree {
@@ -1547,6 +1548,8 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 		label := "merge"
 		if project.RepoDirty {
 			label = "commit+merge"
+		} else if hasRecoveryTask && model.NormalizeAgentTaskStatus(recoveryTask.Status) == model.AgentTaskStatusWaiting {
+			label = "retry merge"
 		}
 		actions = append(actions, footerPrimaryAction("M", label))
 	}

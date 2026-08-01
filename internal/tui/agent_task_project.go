@@ -232,7 +232,11 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 		lines = append(lines, renderWrappedDetailField("Resources", detailValueStyle, width, resources))
 	}
 	if taskSessionIDForProvider(task, codexProviderFromSessionSource(agentTaskDisplaySource(task))) != "" {
-		lines = append(lines, detailMutedStyle.Render("Press Enter to open the tracked engineer session."))
+		if agentTaskHasCapability(task, "worktree.merge.recover") && model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
+			lines = append(lines, detailMutedStyle.Render("Engineer returned. Press Enter to inspect the result; then select the linked worktree and press M to retry merge-back."))
+		} else {
+			lines = append(lines, detailMutedStyle.Render("Press Enter to open the tracked engineer session."))
+		}
 	} else {
 		lines = append(lines, detailMutedStyle.Render("Press Enter to start an engineer session for this task."))
 	}

@@ -163,11 +163,12 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 			if pushErr != nil {
 				return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, pushErr)
 			}
-			if err := pushSubmodule(ctx, repoPath, pushPlan); err != nil {
-				return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, err)
+			pushedPlan, pushErr := pushSubmodule(ctx, repoPath, pushPlan)
+			if pushErr != nil {
+				return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushedPlan, publishCtx, pushErr)
 			}
 			hash, _ := gitHeadShort(ctx, repoPath)
-			resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, PushedOnly: true, Branch: pushPlan.Branch})
+			resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, PushedOnly: true, Branch: pushedPlan.Branch})
 		}
 		return resolved, nil
 	}
@@ -195,11 +196,12 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 	if err != nil {
 		return nil, err
 	}
-	if err := pushSubmodule(ctx, repoPath, pushPlan); err != nil {
-		return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, err)
+	pushedPlan, pushErr := pushSubmodule(ctx, repoPath, pushPlan)
+	if pushErr != nil {
+		return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushedPlan, publishCtx, pushErr)
 	}
 
-	resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, Branch: pushPlan.Branch})
+	resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, Branch: pushedPlan.Branch})
 	return resolved, nil
 }
 
@@ -277,15 +279,44 @@ func (s *Service) ensureSubmodulePushPlan(ctx context.Context, repoPath, display
 	return submodulePushPlan{SetUpstream: true, Branch: branch, Remote: "origin"}, nil
 }
 
-func pushSubmodule(ctx context.Context, repoPath string, plan submodulePushPlan) error {
+func pushSubmodule(ctx context.Context, repoPath string, plan submodulePushPlan) (submodulePushPlan, error) {
 	if plan.SetUpstream {
 		remote := strings.TrimSpace(plan.Remote)
 		if remote == "" {
 			remote = "origin"
 		}
-		return gitops.PushSetUpstream(ctx, repoPath, remote)
+		err := gitops.PushSetUpstream(ctx, repoPath, remote)
+		if err == nil {
+			return plan, nil
+		}
+		branch := cleanResolvedBranchName(plan.Branch)
+		if !strings.HasPrefix(branch, "lcroom/") || !gitops.IsPushRejectedNeedsPull(err) {
+			return plan, err
+		}
+		head, headErr := gitHeadShort(ctx, repoPath)
+		if headErr != nil {
+			return plan, fmt.Errorf("choose a collision-free branch after %s was rejected: %w", branch, headErr)
+		}
+		baseFallback := branch + "-" + sanitizeBranchComponent(head)
+		fallbackPlan := plan
+		for attempt := 0; attempt < 5; attempt++ {
+			fallbackBranch := baseFallback
+			if attempt > 0 {
+				fallbackBranch = fmt.Sprintf("%s-%d", baseFallback, attempt+1)
+			}
+			fallbackPlan.Branch = fallbackBranch
+			fallbackErr := gitops.PushSetUpstreamToBranch(ctx, repoPath, remote, fallbackBranch)
+			if fallbackErr == nil {
+				return fallbackPlan, nil
+			}
+			if !gitops.IsPushRejectedNeedsPull(fallbackErr) {
+				return fallbackPlan, fmt.Errorf("publish collision-free LCR submodule branch %s after %s was rejected: %w", fallbackBranch, branch, fallbackErr)
+			}
+			err = fallbackErr
+		}
+		return fallbackPlan, fmt.Errorf("could not find a collision-free remote branch after %s was rejected: %w", branch, err)
 	}
-	return gitops.Push(ctx, repoPath)
+	return plan, gitops.Push(ctx, repoPath)
 }
 
 func (s *Service) submodulePublishBlockedError(ctx context.Context, repoPath, displayPath string, status scanner.GitRepoStatus, plan submodulePushPlan, publishCtx submodulePublishContext, cause error) SubmodulePublishBlockedError {

@@ -551,14 +551,22 @@ func (m Model) bossEngineerCompletionNoticeCmd(projectPath string, snapshot code
 func freshEngineerCompletionSnapshot(projectPath string, snapshot codexapp.Snapshot, session codexapp.Session) codexapp.Snapshot {
 	projectPath = strings.TrimSpace(projectPath)
 	snapshot = snapshotWithCompletionProjectPath(projectPath, snapshot)
-	if latestEngineerTranscriptOutput(snapshot) != "" || session == nil {
+	if session == nil {
 		return snapshot
 	}
 	fresh := snapshotWithCompletionProjectPath(projectPath, session.Snapshot())
-	if latestEngineerTranscriptOutput(fresh) != "" {
+	if fresh.TranscriptRevision > snapshot.TranscriptRevision || len(fresh.Entries) > len(snapshot.Entries) {
 		return fresh
 	}
-	if len(fresh.Entries) > len(snapshot.Entries) || fresh.TranscriptRevision > snapshot.TranscriptRevision {
+	snapshotOutput := latestEngineerTranscriptOutput(snapshot)
+	freshOutput := latestEngineerTranscriptOutput(fresh)
+	if snapshotOutput == "" && freshOutput != "" {
+		return fresh
+	}
+	if fresh.TranscriptRevision == snapshot.TranscriptRevision &&
+		len(fresh.Entries) == len(snapshot.Entries) &&
+		freshOutput != "" &&
+		freshOutput != snapshotOutput {
 		return fresh
 	}
 	return snapshot

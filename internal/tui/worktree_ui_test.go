@@ -3290,6 +3290,7 @@ func TestWorktreeMergeRecoveryCanReopenFromLinkedProjectWhenTaskRowIsHidden(t *t
 	m := Model{
 		nowFn:          func() time.Time { return now },
 		projects:       []model.ProjectSummary{project},
+		projectRows:    []projectListRow{{Kind: projectListRowWorktree, ProjectPath: worktreePath, RootPath: rootPath}},
 		allProjects:    []model.ProjectSummary{project},
 		openAgentTasks: []model.AgentTask{task},
 		selected:       0,
@@ -3303,14 +3304,22 @@ func TestWorktreeMergeRecoveryCanReopenFromLinkedProjectWhenTaskRowIsHidden(t *t
 		t.Fatal("test setup should keep the generated task row out of the current project list")
 	}
 	detail := strings.Join(strings.Fields(ansi.Strip(m.renderDetailContent(110))), " ")
-	for _, want := range []string{"Merge recovery", task.Title, "ready for review", "press e to reopen engineer"} {
+	for _, want := range []string{"Merge recovery", task.Title, "engineer returned", "press e to inspect the result", "press M to retry merge-back"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("worktree detail missing %q in %q", want, detail)
 		}
 	}
 	footer := ansi.Strip(m.renderFooter(160))
-	if !strings.Contains(footer, "e recovery") {
-		t.Fatalf("worktree footer missing recovery reopen action: %q", footer)
+	for _, want := range []string{"e recovery", "M retry merge"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("worktree footer missing %q: %q", want, footer)
+		}
+	}
+	taskDetail := strings.Join(strings.Fields(ansi.Strip(m.renderAgentTaskDetailContent(task, 110))), " ")
+	for _, want := range []string{"Engineer returned", "Press Enter to inspect", "press M to retry merge-back"} {
+		if !strings.Contains(taskDetail, want) {
+			t.Fatalf("recovery task detail missing %q in %q", want, taskDetail)
+		}
 	}
 
 	updated, _ := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})

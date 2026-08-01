@@ -2608,6 +2608,144 @@ func TestMergeWorktreeBackPublishesDetachedNestedSubmoduleCommitBeforeMerge(t *t
 	}
 }
 
+func TestMergeWorktreeBackUsesCollisionFreeBranchForDivergentLCRSubmoduleRef(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	rootSubmodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	remotePath := filepath.Join(submoduleRootPath, "origin.git")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Merge detached submodule with a generated branch collision", "feat/submodule-branch-collision", "feat-submodule-branch-collision")
+	worktreeSubmodulePath := filepath.Join(result.WorktreePath, "assets_src")
+	if err := os.WriteFile(filepath.Join(worktreeSubmodulePath, "README.md"), []byte("hello\nintended linked-worktree update\n"), 0o644); err != nil {
+		t.Fatalf("write intended submodule update: %v", err)
+	}
+	runGit(t, worktreeSubmodulePath, "git", "add", "README.md")
+	runGit(t, worktreeSubmodulePath, "git", "commit", "-m", "intended linked-worktree update")
+	intendedHead := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "HEAD"))
+	intendedShortHead := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "--short", "HEAD"))
+	runGit(t, result.WorktreePath, "git", "add", "assets_src")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "record intended submodule pointer")
+
+	targetBranch := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "--abbrev-ref", "HEAD"))
+	collidingBranch := submoduleResolutionBranchName(targetBranch, "assets_src", intendedShortHead)
+	collisionClonePath := filepath.Join(root, "collision-clone")
+	runGit(t, root, "git", "clone", remotePath, collisionClonePath)
+	runGit(t, collisionClonePath, "git", "switch", "-c", collidingBranch)
+	if err := os.WriteFile(filepath.Join(collisionClonePath, "REMOTE_ONLY.txt"), []byte("preserve this divergent remote work\n"), 0o644); err != nil {
+		t.Fatalf("write divergent remote update: %v", err)
+	}
+	runGit(t, collisionClonePath, "git", "add", "REMOTE_ONLY.txt")
+	runGit(t, collisionClonePath, "git", "commit", "-m", "divergent remote update")
+	collisionHead := strings.TrimSpace(gitOutput(t, collisionClonePath, "git", "rev-parse", "HEAD"))
+	runGit(t, collisionClonePath, "git", "push", "-u", "origin", collidingBranch)
+
+	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("MergeWorktreeBack() error = %v", err)
+	}
+	if mergeResult.RootProjectPath != projectPath {
+		t.Fatalf("merge root path = %q, want %q", mergeResult.RootProjectPath, projectPath)
+	}
+
+	remoteCollisionHead := strings.TrimSpace(gitOutput(t, remotePath, "git", "rev-parse", "refs/heads/"+collidingBranch))
+	if remoteCollisionHead != collisionHead {
+		t.Fatalf("colliding remote branch changed = %s, want preserved %s", remoteCollisionHead, collisionHead)
+	}
+	fallbackBranch := collidingBranch + "-" + intendedShortHead
+	remoteFallbackHead := strings.TrimSpace(gitOutput(t, remotePath, "git", "rev-parse", "refs/heads/"+fallbackBranch))
+	if remoteFallbackHead != intendedHead {
+		t.Fatalf("fallback remote branch head = %s, want intended %s", remoteFallbackHead, intendedHead)
+	}
+	upstream := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"))
+	if upstream != "origin/"+fallbackBranch {
+		t.Fatalf("submodule upstream = %q, want %q", upstream, "origin/"+fallbackBranch)
+	}
+	rootGitlink := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD:assets_src"))
+	if rootGitlink != intendedHead {
+		t.Fatalf("root gitlink after merge = %s, want intended %s", rootGitlink, intendedHead)
+	}
+	rootSubmoduleHead := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "HEAD"))
+	if rootSubmoduleHead != intendedHead {
+		t.Fatalf("root submodule checkout after merge = %s, want intended %s", rootSubmoduleHead, intendedHead)
+	}
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read root git status after collision-safe merge-back: %v", err)
+	}
+	if rootStatus.Dirty {
+		t.Fatalf("root repo should be clean after collision-safe merge-back, got %#v", rootStatus)
+	}
+}
+
+func TestPushSubmoduleDoesNotForkNonLCRBranchOnCollision(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	seedPath := filepath.Join(root, "seed")
+	localPath := filepath.Join(root, "local")
+	collisionPath := filepath.Join(root, "collision")
+	initBareGitRepo(t, remotePath)
+	initGitRepo(t, seedPath)
+	runGit(t, seedPath, "git", "remote", "add", "origin", remotePath)
+	runGit(t, seedPath, "git", "push", "-u", "origin", "master")
+	runGit(t, root, "git", "clone", remotePath, localPath)
+	runGit(t, root, "git", "clone", remotePath, collisionPath)
+
+	const branch = "user/topic"
+	runGit(t, localPath, "git", "switch", "-c", branch)
+	if err := os.WriteFile(filepath.Join(localPath, "LOCAL_ONLY.txt"), []byte("local work\n"), 0o644); err != nil {
+		t.Fatalf("write local branch update: %v", err)
+	}
+	runGit(t, localPath, "git", "add", "LOCAL_ONLY.txt")
+	runGit(t, localPath, "git", "commit", "-m", "local topic work")
+
+	runGit(t, collisionPath, "git", "switch", "-c", branch)
+	if err := os.WriteFile(filepath.Join(collisionPath, "REMOTE_ONLY.txt"), []byte("remote work\n"), 0o644); err != nil {
+		t.Fatalf("write remote branch update: %v", err)
+	}
+	runGit(t, collisionPath, "git", "add", "REMOTE_ONLY.txt")
+	runGit(t, collisionPath, "git", "commit", "-m", "remote topic work")
+	collisionHead := strings.TrimSpace(gitOutput(t, collisionPath, "git", "rev-parse", "HEAD"))
+	runGit(t, collisionPath, "git", "push", "-u", "origin", branch)
+
+	plan := submodulePushPlan{SetUpstream: true, Branch: branch, Remote: "origin"}
+	result, err := pushSubmodule(ctx, localPath, plan)
+	if err == nil {
+		t.Fatal("pushSubmodule() error = nil, want non-LCR branch collision to remain blocked")
+	}
+	if result.Branch != branch {
+		t.Fatalf("push plan branch = %q, want original user branch %q", result.Branch, branch)
+	}
+	remoteCollisionHead := strings.TrimSpace(gitOutput(t, remotePath, "git", "rev-parse", "refs/heads/"+branch))
+	if remoteCollisionHead != collisionHead {
+		t.Fatalf("remote user branch changed = %s, want preserved %s", remoteCollisionHead, collisionHead)
+	}
+	remoteBranches := gitOutput(t, remotePath, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads")
+	if strings.Contains(remoteBranches, branch+"-") {
+		t.Fatalf("non-LCR collision unexpectedly created a fallback branch: %q", remoteBranches)
+	}
+}
+
 func TestMergeWorktreeBackReportsBlockedSubmodulePublishBeforeRootMerge(t *testing.T) {
 	t.Parallel()
 

@@ -194,6 +194,18 @@ func Push(ctx context.Context, path string) error {
 }
 
 func PushSetUpstream(ctx context.Context, path, remote string) error {
+	return pushSetUpstream(ctx, path, remote, "")
+}
+
+func PushSetUpstreamToBranch(ctx context.Context, path, remote, branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return errors.New("push upstream branch is required")
+	}
+	return pushSetUpstream(ctx, path, remote, "refs/heads/"+branch)
+}
+
+func pushSetUpstream(ctx context.Context, path, remote, remoteRef string) error {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
 		remote = "origin"
@@ -201,7 +213,11 @@ func PushSetUpstream(ctx context.Context, path, remote string) error {
 	pushCtx, cancel, appliedTimeout := withDefaultTimeout(ctx, defaultPushTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(pushCtx, "git", "-C", path, "push", "-u", remote, "HEAD")
+	refspec := "HEAD"
+	if remoteRef = strings.TrimSpace(remoteRef); remoteRef != "" {
+		refspec += ":" + remoteRef
+	}
+	cmd := exec.CommandContext(pushCtx, "git", "-C", path, "push", "-u", remote, refspec)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if timeoutErr := commandTimeoutError("push", path, pushCtx, appliedTimeout, out); timeoutErr != nil {
 			return timeoutErr
