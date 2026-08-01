@@ -1176,7 +1176,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenPreviousThreadReopensFirst(t 
 		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
 	}
 	if opened.err != nil {
-		t.Fatalf("/codex-new returned error = %v", opened.err)
+		t.Fatalf("/new-codex returned error = %v", opened.err)
 	}
 	if opened.status != "Fresh embedded Codex session 019dddd4 opened. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want normal opened status after retry", opened.status)
@@ -1243,7 +1243,7 @@ func TestLaunchCodexForSelectionForceNewRetriesWhenCodexRejectsFreshThread(t *te
 		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
 	}
 	if opened.err != nil {
-		t.Fatalf("/codex-new returned error = %v", opened.err)
+		t.Fatalf("/new-codex returned error = %v", opened.err)
 	}
 	if opened.status != "Prompt sent to fresh embedded Codex session 019fresh. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
@@ -1320,7 +1320,7 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeRejectsFreshSessio
 		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
 	}
 	if opened.err != nil {
-		t.Fatalf("/opencode-new returned error = %v", opened.err)
+		t.Fatalf("/new-opencode returned error = %v", opened.err)
 	}
 	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after retry", opened.status)
@@ -1413,7 +1413,7 @@ func TestLaunchOpenCodeForSelectionForceNewRetriesWhenOpenCodeReturnsKnownReused
 		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
 	}
 	if opened.err != nil {
-		t.Fatalf("/opencode-new returned error = %v", opened.err)
+		t.Fatalf("/new-opencode returned error = %v", opened.err)
 	}
 	if opened.status != "Prompt sent to fresh embedded OpenCode session ses_fres. Alt+Up hides it." {
 		t.Fatalf("opened.status = %q, want prompt-sent status after stale-session retry", opened.status)
@@ -1482,7 +1482,7 @@ func TestLaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly
 		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
 	}
 	if opened.err != nil {
-		t.Fatalf("/codex-new returned error = %v", opened.err)
+		t.Fatalf("/new-codex returned error = %v", opened.err)
 	}
 	wantStatus := "Could not start a fresh embedded Codex session because session 019cccc3 is already active in another process. Showing that session read-only instead."
 	if opened.status != wantStatus {

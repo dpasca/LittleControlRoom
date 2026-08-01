@@ -696,8 +696,8 @@ func TestParse(t *testing.T) {
 				if inv.Prompt != "summarize the repo" {
 					t.Fatalf("prompt = %q, want Codex prompt", inv.Prompt)
 				}
-				if inv.Canonical != "/codex-new summarize the repo" {
-					t.Fatalf("canonical = %q, want canonical codex-new form", inv.Canonical)
+				if inv.Canonical != "/new-codex summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-codex form", inv.Canonical)
 				}
 			},
 		},
@@ -723,8 +723,8 @@ func TestParse(t *testing.T) {
 				if inv.Prompt != "summarize the repo" {
 					t.Fatalf("prompt = %q, want Claude prompt", inv.Prompt)
 				}
-				if inv.Canonical != "/claude-new summarize the repo" {
-					t.Fatalf("canonical = %q, want canonical claude-new form", inv.Canonical)
+				if inv.Canonical != "/new-claude summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-claude form", inv.Canonical)
 				}
 			},
 		},
@@ -750,8 +750,8 @@ func TestParse(t *testing.T) {
 				if inv.Prompt != "summarize the repo" {
 					t.Fatalf("prompt = %q, want OpenCode prompt", inv.Prompt)
 				}
-				if inv.Canonical != "/opencode-new summarize the repo" {
-					t.Fatalf("canonical = %q, want canonical opencode-new form", inv.Canonical)
+				if inv.Canonical != "/new-opencode summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-opencode form", inv.Canonical)
 				}
 			},
 		},
@@ -777,8 +777,56 @@ func TestParse(t *testing.T) {
 				if inv.Prompt != "summarize the repo" {
 					t.Fatalf("prompt = %q, want LCAgent prompt", inv.Prompt)
 				}
-				if inv.Canonical != "/lcagent-new summarize the repo" {
-					t.Fatalf("canonical = %q, want canonical lcagent-new form", inv.Canonical)
+				if inv.Canonical != "/new-lcagent summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-lcagent form", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "legacy codex-new name still parses",
+			raw:  "/codex-new summarize the repo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindCodexNew {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindCodexNew)
+				}
+				if inv.Canonical != "/new-codex summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-codex form", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "legacy claude-new name still parses",
+			raw:  "/claude-new summarize the repo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClaudeNew {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindClaudeNew)
+				}
+				if inv.Canonical != "/new-claude summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-claude form", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "legacy opencode-new name still parses",
+			raw:  "/opencode-new summarize the repo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindOpenCodeNew {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindOpenCodeNew)
+				}
+				if inv.Canonical != "/new-opencode summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-opencode form", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "legacy lcagent-new name still parses",
+			raw:  "/lcagent-new summarize the repo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindLCAgentNew {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindLCAgentNew)
+				}
+				if inv.Canonical != "/new-lcagent summarize the repo" {
+					t.Fatalf("canonical = %q, want canonical new-lcagent form", inv.Canonical)
 				}
 			},
 		},
@@ -1248,34 +1296,28 @@ func TestSuggestionsIncludeResolveCommand(t *testing.T) {
 
 func TestSuggestionsIncludeCodexCommands(t *testing.T) {
 	got := Suggestions("/cod")
-	if len(got) < 2 {
-		t.Fatalf("Suggestions(/cod) len = %d, want at least 2", len(got))
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/cod) returned none")
 	}
 	if got[0].Insert != "/codex" {
 		t.Fatalf("first /cod suggestion = %q, want /codex", got[0].Insert)
-	}
-	if got[1].Insert != "/codex-new" {
-		t.Fatalf("second /cod suggestion = %q, want /codex-new", got[1].Insert)
 	}
 }
 
 func TestSuggestionsIncludeClaudeCommands(t *testing.T) {
 	got := Suggestions("/cla")
-	if len(got) < 2 {
-		t.Fatalf("Suggestions(/cla) len = %d, want at least 2", len(got))
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/cla) returned none")
 	}
 	if got[0].Insert != "/claude" {
 		t.Fatalf("first /cla suggestion = %q, want /claude", got[0].Insert)
-	}
-	if got[1].Insert != "/claude-new" {
-		t.Fatalf("second /cla suggestion = %q, want /claude-new", got[1].Insert)
 	}
 }
 
 func TestSuggestionsIncludeOpenCodeCommands(t *testing.T) {
 	got := Suggestions("/open")
-	if len(got) < 3 {
-		t.Fatalf("Suggestions(/open) len = %d, want at least 3", len(got))
+	if len(got) < 2 {
+		t.Fatalf("Suggestions(/open) len = %d, want at least 2", len(got))
 	}
 	if got[0].Insert != "/open" {
 		t.Fatalf("first /open suggestion = %q, want /open", got[0].Insert)
@@ -1283,8 +1325,27 @@ func TestSuggestionsIncludeOpenCodeCommands(t *testing.T) {
 	if got[1].Insert != "/opencode" {
 		t.Fatalf("second /open suggestion = %q, want /opencode", got[1].Insert)
 	}
-	if got[2].Insert != "/opencode-new" {
-		t.Fatalf("third /open suggestion = %q, want /opencode-new", got[2].Insert)
+}
+
+// The /new- prefix is the discovery path for every "start something fresh"
+// command, including the provider sessions renamed from the old *-new form.
+func TestSuggestionsGroupNewCommands(t *testing.T) {
+	got := Suggestions("/new-")
+	inserts := make(map[string]bool, len(got))
+	for _, s := range got {
+		inserts[s.Insert] = true
+	}
+	for _, want := range []string{
+		"/new-project",
+		"/new-task",
+		"/new-codex",
+		"/new-claude",
+		"/new-opencode",
+		"/new-lcagent",
+	} {
+		if !inserts[want] {
+			t.Fatalf("Suggestions(/new-) missing %q, got %v", want, inserts)
+		}
 	}
 }
 
@@ -1300,14 +1361,11 @@ func TestSuggestionsIncludeTerminalCommand(t *testing.T) {
 
 func TestSuggestionsIncludeLCAgentCommands(t *testing.T) {
 	got := Suggestions("/lca")
-	if len(got) < 2 {
-		t.Fatalf("Suggestions(/lca) len = %d, want at least 2", len(got))
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/lca) returned none")
 	}
 	if got[0].Insert != "/lcagent" {
 		t.Fatalf("first /lca suggestion = %q, want /lcagent", got[0].Insert)
-	}
-	if got[1].Insert != "/lcagent-new" {
-		t.Fatalf("second /lca suggestion = %q, want /lcagent-new", got[1].Insert)
 	}
 }
 

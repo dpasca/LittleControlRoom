@@ -344,7 +344,7 @@ func commandRelatedTopics(surface Surface, name string) []string {
 	switch surface {
 	case SurfaceMainTUI:
 		switch strings.TrimSpace(name) {
-		case "codex", "codex-new", "opencode", "opencode-new", "claude", "claude-new", "lcagent", "lcagent-new":
+		case "codex", "new-codex", "opencode", "new-opencode", "claude", "new-claude", "lcagent", "new-lcagent":
 			return []string{CommandTopicID(SurfaceEmbeddedEngineer, "new"), CommandTopicID(SurfaceEmbeddedEngineer, "sessions")}
 		}
 	case SurfaceEmbeddedEngineer:

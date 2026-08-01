@@ -1158,7 +1158,7 @@ func TestVisibleCodexBrowserPanelShowsReconnectHintForChangedBrowserSettings(t *
 	for _, want := range []string{
 		"Session browser setting: Only when needed.",
 		"Current browser setting: Always show.",
-		"Use /reconnect to reopen this thread with the current browser behavior, or /codex-new for a fresh session.",
+		"Use /reconnect to reopen this thread with the current browser behavior, or /new-codex for a fresh session.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderCodexBrowserPanel() missing %q: %q", want, rendered)
@@ -1166,7 +1166,7 @@ func TestVisibleCodexBrowserPanelShowsReconnectHintForChangedBrowserSettings(t *
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
-	for _, want := range []string{"/reconnect apply browser", "/codex-new fresh"} {
+	for _, want := range []string{"/reconnect apply browser", "/new-codex fresh"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("renderCodexFooter() missing %q for browser policy mismatch: %q", want, footer)
 		}
@@ -1212,7 +1212,7 @@ func TestVisibleCodexBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached
 	for _, want := range []string{
 		"Managed browser controls are not attached to this session yet.",
 		"Current browser setting: Only when needed.",
-		"Use /reconnect to reopen this thread with the current browser behavior, or /codex-new for a fresh session.",
+		"Use /reconnect to reopen this thread with the current browser behavior, or /new-codex for a fresh session.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderCodexBrowserPanel() missing %q: %q", want, rendered)
@@ -1312,7 +1312,7 @@ func TestVisibleOpenCodeBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttac
 	for _, want := range []string{
 		"Managed browser controls are not attached to this session yet.",
 		"Current browser setting: Only when needed.",
-		"Use /reconnect to reopen this thread with the current browser behavior, or /opencode-new for a fresh session.",
+		"Use /reconnect to reopen this thread with the current browser behavior, or /new-opencode for a fresh session.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderCodexBrowserPanel() missing %q for OpenCode: %q", want, rendered)
@@ -1320,7 +1320,7 @@ func TestVisibleOpenCodeBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttac
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
-	for _, want := range []string{"/reconnect apply browser", "/opencode-new fresh"} {
+	for _, want := range []string{"/reconnect apply browser", "/new-opencode fresh"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("renderCodexFooter() missing %q for OpenCode browser policy mismatch: %q", want, footer)
 		}

@@ -13,7 +13,7 @@ For the forward-looking Codex-parity tracker, see
 ## Current State
 
 LCAgent is an experimental, LCR-native coding-agent harness. It is usable from
-the TUI through `/lcagent` and `/lcagent-new`, and it emits local JSONL session
+the TUI through `/lcagent` and `/new-lcagent`, and it emits local JSONL session
 artifacts that LCR can scan and replay.
 
 Implemented pieces:
