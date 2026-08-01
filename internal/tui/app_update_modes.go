@@ -194,6 +194,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openScratchTaskActionConfirmForSelection()
 	case "t":
 		return m, m.openTodoDialogForSelection()
+	case "e":
+		return m.openWorktreeMergeRecoveryEngineerForSelection()
 	case "M":
 		return m, m.openWorktreeMergeConfirmForSelection()
 	case "I":

@@ -3060,6 +3060,10 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	}
 	defer st.Close()
 	svc := service.New(cfg, st, events.NewBus(), nil)
+	category, err := svc.CreateProjectCategory(ctx, "Client work")
+	if err != nil {
+		t.Fatalf("create project category: %v", err)
+	}
 
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -3101,6 +3105,8 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	project := model.ProjectSummary{
 		Name:                 confirm.ProjectName,
 		Path:                 childPath,
+		CategoryID:           category.ID,
+		CategoryName:         category.Name,
 		PresentOnDisk:        true,
 		WorktreeRootPath:     rootPath,
 		WorktreeKind:         model.WorktreeKindLinked,
@@ -3113,6 +3119,9 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	m.loading = false
 	m.allProjects = []model.ProjectSummary{project}
 	m.projects = []model.ProjectSummary{project}
+	m.projectCategories = []model.ProjectCategory{category}
+	m.archiveMode = projectArchiveCategory
+	m.selectedCategoryID = category.ID
 	m.worktreeMergeConfirm = confirm
 
 	updated, chooserCmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -3140,6 +3149,12 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	}
 	if created.Task.ID == "" || created.Task.WorkspacePath == "" {
 		t.Fatalf("created task = %#v, want persisted task workspace", created.Task)
+	}
+	if created.CategoryErr != nil {
+		t.Fatalf("assign recovery task category: %v", created.CategoryErr)
+	}
+	if created.Task.CategoryID != category.ID || created.Task.CategoryName != category.Name {
+		t.Fatalf("created task category = %q/%q, want %q/%q", created.Task.CategoryID, created.Task.CategoryName, category.ID, category.Name)
 	}
 	capabilities := map[string]bool{}
 	for _, capability := range created.Task.Capabilities {
@@ -3172,7 +3187,13 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	if _, ok := got.agentTaskForProjectPath(created.Task.WorkspacePath); !ok {
 		t.Fatalf("recovery task workspace %q missing from local agent tasks", created.Task.WorkspacePath)
 	}
-	_ = collectCmdMsgs(launchCmd)
+	if selected, ok := got.selectedProject(); !ok || selected.Path != created.Task.WorkspacePath {
+		t.Fatalf("selected project after handoff = %#v, want visible recovery task", selected)
+	}
+	for _, launchMsg := range collectCmdMsgs(launchCmd) {
+		updated, _ = got.Update(launchMsg)
+		got = updated.(Model)
+	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -3203,6 +3224,99 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 		if !strings.Contains(request.Prompt, want) {
 			t.Fatalf("recovery launch prompt missing %q:\n%s", want, request.Prompt)
 		}
+	}
+	if got.codexVisibleProject != created.Task.WorkspacePath {
+		t.Fatalf("visible engineer path = %q, want recovery task workspace", got.codexVisibleProject)
+	}
+	hidden, _ := got.hideCodexSession()
+	got = hidden.(Model)
+	if selected, ok := got.selectedProject(); !ok || selected.Path != created.Task.WorkspacePath {
+		t.Fatalf("selected project after hiding engineer = %#v, want recovery task row", selected)
+	}
+	reopened, _ := got.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = reopened.(Model)
+	if got.codexVisibleProject != created.Task.WorkspacePath {
+		t.Fatalf("reopened engineer path = %q, want recovery task workspace", got.codexVisibleProject)
+	}
+}
+
+func TestWorktreeMergeRecoveryCanReopenFromLinkedProjectWhenTaskRowIsHidden(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--feat-submodule"
+	task := model.AgentTask{
+		ID:            "agt_merge_recovery",
+		Title:         "Recover submodule merge for repo--feat-submodule",
+		Status:        model.AgentTaskStatusWaiting,
+		Provider:      model.SessionSourceCodex,
+		SessionID:     "thread-merge-recovery",
+		WorkspacePath: "/tmp/lcroom-agent-task-merge-recovery",
+		LastTouchedAt: now,
+		Capabilities:  []string{"worktree.merge.recover", "git.submodule.publish"},
+		Resources: []model.AgentTaskResource{
+			{Kind: model.AgentTaskResourceProject, ProjectPath: worktreePath},
+			{Kind: model.AgentTaskResourceProject, ProjectPath: rootPath},
+			{Kind: model.AgentTaskResourceEngineerSession, Provider: model.SessionSourceCodex, SessionID: "thread-merge-recovery"},
+		},
+	}
+	project := model.ProjectSummary{
+		Name:                 "repo--feat-submodule",
+		Path:                 worktreePath,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		RepoBranch:           "feat/submodule",
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:    codexapp.ProviderCodex,
+				ProjectPath: req.ProjectPath,
+				ThreadID:    "thread-merge-recovery",
+				Started:     true,
+				Status:      "Recovery ready for review",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: task.WorkspacePath,
+		Provider:    codexapp.ProviderCodex,
+		ResumeID:    task.SessionID,
+	}); err != nil {
+		t.Fatalf("seed recovery engineer session: %v", err)
+	}
+	m := Model{
+		nowFn:          func() time.Time { return now },
+		projects:       []model.ProjectSummary{project},
+		allProjects:    []model.ProjectSummary{project},
+		openAgentTasks: []model.AgentTask{task},
+		selected:       0,
+		focusedPane:    focusProjects,
+		codexManager:   manager,
+		width:          160,
+		height:         30,
+	}
+
+	if m.indexByPath(task.WorkspacePath) >= 0 {
+		t.Fatal("test setup should keep the generated task row out of the current project list")
+	}
+	detail := strings.Join(strings.Fields(ansi.Strip(m.renderDetailContent(110))), " ")
+	for _, want := range []string{"Merge recovery", task.Title, "ready for review", "press e to reopen engineer"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("worktree detail missing %q in %q", want, detail)
+		}
+	}
+	footer := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(footer, "e recovery") {
+		t.Fatalf("worktree footer missing recovery reopen action: %q", footer)
+	}
+
+	updated, _ := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	got := updated.(Model)
+	if got.codexVisibleProject != task.WorkspacePath {
+		t.Fatalf("reopened engineer path = %q, want %q", got.codexVisibleProject, task.WorkspacePath)
 	}
 }
 

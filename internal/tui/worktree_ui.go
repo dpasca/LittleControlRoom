@@ -162,11 +162,12 @@ type worktreeMergeConfirmState struct {
 }
 
 type worktreeMergeRecoveryTaskMsg struct {
-	Confirm  worktreeMergeConfirmState
-	Blocker  service.SubmodulePublishBlockedError
-	Task     model.AgentTask
-	Provider codexapp.Provider
-	Err      error
+	Confirm     worktreeMergeConfirmState
+	Blocker     service.SubmodulePublishBlockedError
+	Task        model.AgentTask
+	Provider    codexapp.Provider
+	CategoryErr error
+	Err         error
 }
 
 type worktreeMergeRecoveryDialogState struct {
@@ -749,6 +750,18 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 			Capabilities: []string{"worktree.merge.recover", "git.submodule.publish"},
 			Resources:    resources,
 		})
+		if err == nil {
+			if source, ok := m.projectSummaryByPath(worktreePath); ok && strings.TrimSpace(source.CategoryName) != "" {
+				category, categoryErr := m.svc.MoveAgentTaskToCategory(ctx, task.ID, source.CategoryName)
+				if categoryErr != nil {
+					msg.CategoryErr = timeoutActionError(categoryErr, tuiQuickActionTimeout, "assigning the merge recovery task category")
+				} else {
+					task.CategoryID = strings.TrimSpace(category.ID)
+					task.CategoryName = strings.TrimSpace(category.Name)
+					task.CategoryPrivate = category.Private
+				}
+			}
+		}
 		msg.Task = task
 		msg.Err = timeoutActionError(err, tuiQuickActionTimeout, "creating the merge recovery engineer task")
 		return msg
@@ -769,8 +782,14 @@ func (m Model) applyWorktreeMergeRecoveryTaskMsg(msg worktreeMergeRecoveryTaskMs
 		m.reportError("Merge recovery task failed", msg.Err, msg.Confirm.ProjectPath)
 		return m, nil
 	}
+	if msg.CategoryErr != nil {
+		m.appendErrorLogEntry("Merge recovery task category assignment failed", msg.CategoryErr, msg.Confirm.ProjectPath)
+	}
 
 	m.upsertOpenAgentTask(msg.Task)
+	if m.indexByPath(msg.Task.WorkspacePath) >= 0 {
+		m.focusProjectPath(msg.Task.WorkspacePath)
+	}
 	project, err := projectSummaryForAgentTask(msg.Task)
 	if err != nil {
 		m.reportError("Merge recovery engineer task failed", err, msg.Confirm.ProjectPath)
@@ -798,6 +817,77 @@ func (m Model) applyWorktreeMergeRecoveryTaskMsg(msg worktreeMergeRecoveryTaskMs
 		return m, nil
 	}
 	return m, m.agentTaskLaunchTrackingCmd(msg.Task, cmd, bossAgentTaskHandoffStatus(msg.Task))
+}
+
+func (m Model) worktreeMergeRecoveryTaskForProjectPath(projectPath string) (model.AgentTask, bool) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return model.AgentTask{}, false
+	}
+	var newest model.AgentTask
+	found := false
+	for _, task := range m.openAgentTasks {
+		if !agentTaskIsOpen(task) || !agentTaskHasCapability(task, "worktree.merge.recover") {
+			continue
+		}
+		linked := false
+		for _, resource := range task.Resources {
+			if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceProject {
+				continue
+			}
+			if normalizeProjectPath(resource.ProjectPath) == projectPath {
+				linked = true
+				break
+			}
+		}
+		if !linked {
+			continue
+		}
+		if !found || agentTaskLastActivity(task).After(agentTaskLastActivity(newest)) {
+			newest = task
+			found = true
+		}
+	}
+	return newest, found
+}
+
+func agentTaskHasCapability(task model.AgentTask, capability string) bool {
+	capability = strings.TrimSpace(capability)
+	if capability == "" {
+		return false
+	}
+	for _, candidate := range task.Capabilities {
+		if strings.TrimSpace(candidate) == capability {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) openWorktreeMergeRecoveryEngineerForSelection() (tea.Model, tea.Cmd) {
+	selected, ok := m.selectedProject()
+	if !ok {
+		m.status = "No project selected"
+		return m, nil
+	}
+	task, ok := m.worktreeMergeRecoveryTaskForProjectPath(selected.Path)
+	if !ok {
+		m.status = "No merge recovery engineer is linked to this project"
+		return m, nil
+	}
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		m.reportError("Merge recovery engineer unavailable", err, selected.Path)
+		return m, nil
+	}
+	provider := codexProviderFromSessionSource(agentTaskDisplaySource(task))
+	if snapshot, live := m.liveAgentTaskSnapshot(task); live {
+		provider = embeddedProvider(snapshot)
+	}
+	if provider == "" {
+		provider = m.preferredEmbeddedProviderForProject(project)
+	}
+	return m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{reveal: true})
 }
 
 func worktreeMergeStatusText(result service.MergeWorktreeBackResult) string {
@@ -1442,6 +1532,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	}
 	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && width >= 80 {
 		actions = append(actions, footerPrimaryAction("I", "integrity"))
+	}
+	if _, ok := m.worktreeMergeRecoveryTaskForProjectPath(project.Path); ok {
+		actions = append(actions, footerPrimaryAction("e", "recovery"))
 	}
 	if row.Kind == projectListRowPendingWorktree {
 		actions = append(actions, footerPrimaryAction("Enter", "status"), footerHideAction("x", "abort"))

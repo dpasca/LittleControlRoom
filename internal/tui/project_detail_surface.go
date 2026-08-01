@@ -142,6 +142,16 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 		surface.Field("Merge back", mergeBackText, mergeBackTone)
 		surface.RenderedField("Integration status", worktreeIntegrationStatusDetailText(p), worktreeIntegrationStatusDetailTone(p), worktreeIntegrationStatusDetailValue(p))
 	}
+	if task, ok := m.worktreeMergeRecoveryTaskForProjectPath(p.Path); ok {
+		status := "in progress"
+		tone := projectDetailToneValue
+		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
+			status = "ready for review"
+			tone = projectDetailToneWarning
+		}
+		title := firstNonEmptyTrimmed(task.Title, task.ID, "recovery task")
+		surface.WrappedField("Merge recovery", fmt.Sprintf("%s · %s · press e to reopen engineer", title, status), tone)
+	}
 
 	rootPath := projectWorktreeRootPath(p)
 	family := m.worktreeFamily(rootPath)
