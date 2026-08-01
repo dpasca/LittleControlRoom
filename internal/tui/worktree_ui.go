@@ -169,6 +169,13 @@ type worktreeMergeRecoveryTaskMsg struct {
 	Err      error
 }
 
+type worktreeMergeRecoveryDialogState struct {
+	Confirm    worktreeMergeConfirmState
+	Blocker    service.SubmodulePublishBlockedError
+	Provider   codexapp.Provider
+	Submitting bool
+}
+
 type worktreeMergeReadinessState struct {
 	HardBlockReason string
 	SourceDirty     bool
@@ -588,6 +595,75 @@ func (m Model) worktreeMergeRecoveryProvider(confirm worktreeMergeConfirmState) 
 	return codexapp.ProviderCodex
 }
 
+func (m *Model) openWorktreeMergeRecoveryDialog(confirm worktreeMergeConfirmState, blocker service.SubmodulePublishBlockedError) {
+	m.worktreeMergeRecoveryDialog = &worktreeMergeRecoveryDialogState{
+		Confirm:  confirm,
+		Blocker:  blocker,
+		Provider: m.worktreeMergeRecoveryProvider(confirm),
+	}
+	m.status = "Choose an engineer and model for merge recovery"
+}
+
+func (m *Model) cycleWorktreeMergeRecoveryProvider(delta int) {
+	dialog := m.worktreeMergeRecoveryDialog
+	if dialog == nil || delta == 0 {
+		return
+	}
+	options := embeddedLaunchProviderOptions()
+	current := explicitEmbeddedProvider(dialog.Provider)
+	index := 0
+	for i, provider := range options {
+		if provider == current {
+			index = i
+			break
+		}
+	}
+	index = (index + delta + len(options)) % len(options)
+	dialog.Provider = options[index]
+}
+
+func (m *Model) openWorktreeMergeRecoveryModelPickerCmd() tea.Cmd {
+	dialog := m.worktreeMergeRecoveryDialog
+	if dialog == nil {
+		return nil
+	}
+	provider := explicitEmbeddedProvider(dialog.Provider)
+	dialog.Provider = provider
+	m.openCodexModelPickerLoadingForProvider(codexModelPickerTargetWorktreeRecovery, provider)
+	m.status = "Loading " + provider.Label() + " models for merge recovery..."
+	return m.openPrelaunchCodexModelPickerCmd(provider, codexModelPickerTargetWorktreeRecovery)
+}
+
+func (m Model) updateWorktreeMergeRecoveryDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	dialog := m.worktreeMergeRecoveryDialog
+	if dialog == nil {
+		return m, nil
+	}
+	if dialog.Submitting {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.worktreeMergeRecoveryDialog = nil
+		m.status = "Merge recovery handoff canceled"
+		return m, nil
+	case "down", "j":
+		m.cycleWorktreeMergeRecoveryProvider(1)
+		return m, nil
+	case "up", "k":
+		m.cycleWorktreeMergeRecoveryProvider(-1)
+		return m, nil
+	case "m":
+		return m, m.openWorktreeMergeRecoveryModelPickerCmd()
+	case "enter":
+		dialog.Submitting = true
+		provider := explicitEmbeddedProvider(dialog.Provider)
+		m.status = "Creating merge recovery engineer task..."
+		return m, m.createWorktreeMergeRecoveryTaskCmd(dialog.Confirm, dialog.Blocker, provider)
+	}
+	return m, nil
+}
+
 func worktreeMergeRecoveryTaskTitle(confirm worktreeMergeConfirmState, blocker service.SubmodulePublishBlockedError) string {
 	projectBase := ""
 	if projectPath := strings.TrimSpace(confirm.ProjectPath); projectPath != "" {
@@ -680,6 +756,10 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 }
 
 func (m Model) applyWorktreeMergeRecoveryTaskMsg(msg worktreeMergeRecoveryTaskMsg) (tea.Model, tea.Cmd) {
+	if dialog := m.worktreeMergeRecoveryDialog; dialog != nil &&
+		normalizeProjectPath(dialog.Confirm.ProjectPath) == normalizeProjectPath(msg.Confirm.ProjectPath) {
+		dialog.Submitting = false
+	}
 	if confirm := m.worktreeMergeConfirm; confirm != nil &&
 		normalizeProjectPath(confirm.ProjectPath) == normalizeProjectPath(msg.Confirm.ProjectPath) {
 		confirm.Busy = false
@@ -696,13 +776,18 @@ func (m Model) applyWorktreeMergeRecoveryTaskMsg(msg worktreeMergeRecoveryTaskMs
 		m.reportError("Merge recovery engineer task failed", err, msg.Confirm.ProjectPath)
 		return m, nil
 	}
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(msg.Task, worktreeMergeRecoveryEngineerPrompt(msg.Confirm, msg.Blocker))
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(
+		msg.Task,
+		worktreeMergeRecoveryEngineerPrompt(msg.Confirm, msg.Blocker),
+		agentTaskPromptOptions{OmitReportContract: true},
+	)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, msg.Provider, embeddedLaunchOptions{
 		forceNew: true,
 		prompt:   prompt,
 		reveal:   true,
 	})
 	m = normalizeUpdateModel(updated)
+	m.worktreeMergeRecoveryDialog = nil
 	m.worktreeMergeConfirm = nil
 	m.worktreePostMerge = nil
 	m.worktreeRemoveConfirm = nil
@@ -1792,12 +1877,8 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			return m, nil
 		}
 		if confirm.Selected == worktreeMergeConfirmRecoveryIndex(confirm) && confirm.PublishBlocker != nil {
-			confirm.Busy = true
-			confirm.BusyMessage = "Creating a separate engineer task to repair the merge blocker."
-			m.status = "Creating merge recovery engineer task..."
-			blocker := *confirm.PublishBlocker
-			provider := m.worktreeMergeRecoveryProvider(*confirm)
-			return m, m.createWorktreeMergeRecoveryTaskCmd(*confirm, blocker, provider)
+			m.openWorktreeMergeRecoveryDialog(*confirm, *confirm.PublishBlocker)
+			return m, nil
 		}
 		if confirm.Selected == worktreeMergeConfirmKeepIndex(confirm) {
 			m.worktreeMergeConfirm = nil
@@ -2642,6 +2723,44 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	panel := renderDialogPanel(panelW, panelInnerW, content)
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderWorktreeMergeRecoveryOverlay(body string, bodyW, bodyH int) string {
+	dialog := m.worktreeMergeRecoveryDialog
+	if dialog == nil {
+		return body
+	}
+	panelW := min(bodyW, min(max(68, bodyW-10), 100))
+	panelInnerW := max(24, panelW-4)
+	provider := explicitEmbeddedProvider(dialog.Provider)
+	settings := m.currentSettingsBaseline()
+	lines := []string{
+		renderDialogHeader("Ask Engineer", dialog.Confirm.ProjectName, dialog.Confirm.BranchName, panelInnerW),
+	}
+	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, panelInnerW, "Start a separate tracked repair task for this submodule merge blocker. The root checkout stays unchanged while it works.")...)
+	lines = append(lines, "", detailSectionStyle.Render("Agent"))
+	for _, option := range embeddedLaunchProviderOptions() {
+		label := m.todoCopyProviderButtonLabel(dialog.Confirm.ProjectPath, option, settings)
+		lines = append(lines, fitStyledWidth(renderDialogButton(label, provider == option), panelInnerW))
+	}
+	lines = append(lines, detailField("Model", detailValueStyle.Render(m.embeddedModelLabelForProject(dialog.Confirm.ProjectPath, provider))))
+	if statusLine := m.todoCopyProviderStatusLine(provider, settings); statusLine != "" {
+		lines = append(lines, detailField("Agent status", statusLine))
+	}
+	enterLabel := "launch"
+	if dialog.Submitting {
+		enterLabel = todoDialogWaitingLabel(m.spinnerFrame)
+	}
+	lines = append(lines, "", renderHelpPanelActionRow(
+		renderDialogAction("Enter", enterLabel, commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("m", "model", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("↑↓/j/k", "agent", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
+	))
+	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
+	left := max(0, (bodyW-panelW)/2)
+	top := max(0, (bodyH-lipgloss.Height(panel))/3)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 

@@ -79,7 +79,7 @@ When `/wt update` advances a parent linked worktree, LCR updates an existing nes
 
 If a clean linked worktree already records a detached nested submodule commit that is not reachable from a remote branch or tag, merge-back publishes that commit on an LCR-owned submodule branch before merging the parent worktree. This keeps the root checkout's post-merge submodule sync from failing on a locally-created gitlink commit.
 
-If the submodule remote rejects that publication, merge-back stops before changing the root checkout and reports a submodule publish blocker. The blocker dialog offers a separate tracked engineer repair task with the full Git failure and merge context; that task is instructed to preserve the linked worktree and leave the root checkout unchanged for a later merge-back retry. You can also push the submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote before retrying manually.
+If the submodule remote rejects that publication, merge-back stops before changing the root checkout and reports a submodule publish blocker. The blocker dialog offers a separate tracked engineer repair task with the full Git failure and merge context; before launching it, you can choose the engineer plus its model and reasoning preference. The task is instructed to preserve the linked worktree and leave the root checkout unchanged for a later merge-back retry. You can also push the submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote before retrying manually.
 
 ## Merge-Back Gitlink Conflicts
 

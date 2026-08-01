@@ -26,9 +26,14 @@ const (
 type codexModelPickerTarget string
 
 const (
-	codexModelPickerTargetLeader  codexModelPickerTarget = ""
-	codexModelPickerTargetNewTask codexModelPickerTarget = "new_task"
+	codexModelPickerTargetLeader           codexModelPickerTarget = ""
+	codexModelPickerTargetNewTask          codexModelPickerTarget = "new_task"
+	codexModelPickerTargetWorktreeRecovery codexModelPickerTarget = "worktree_recovery"
 )
+
+func (target codexModelPickerTarget) prelaunch() bool {
+	return target == codexModelPickerTargetNewTask || target == codexModelPickerTargetWorktreeRecovery
+}
 
 type codexModelPickerState struct {
 	Models                []codexapp.ModelOption
@@ -338,8 +343,13 @@ func (m Model) codexModelPickerProvider() codexapp.Provider {
 
 func (m Model) codexModelPickerTitleLabel() string {
 	provider := m.codexModelPickerProvider()
-	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetNewTask {
-		return "New Task / " + provider.Label()
+	if state := m.codexModelPicker; state != nil {
+		switch state.Target {
+		case codexModelPickerTargetNewTask:
+			return "New Task / " + provider.Label()
+		case codexModelPickerTargetWorktreeRecovery:
+			return "Merge Recovery / " + provider.Label()
+		}
 	}
 	return provider.Label()
 }
@@ -400,7 +410,7 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	desiredModel := ""
 	desiredModelProvider := ""
 	desiredReasoning := ""
-	if state.Target == codexModelPickerTargetNewTask {
+	if state.Target.prelaunch() {
 		if pref, ok := m.embeddedModelPreference(m.codexModelPickerProvider()); ok {
 			desiredModel = pref.Model
 			desiredModelProvider = pref.ModelProvider
@@ -1017,8 +1027,13 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
 		}
 	}
-	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetNewTask {
-		return m.applyNewTaskModelPickerSelection(modelOption, effort)
+	if state := m.codexModelPicker; state != nil {
+		switch state.Target {
+		case codexModelPickerTargetNewTask:
+			return m.applyNewTaskModelPickerSelection(modelOption, effort)
+		case codexModelPickerTargetWorktreeRecovery:
+			return m.applyWorktreeMergeRecoveryModelPickerSelection(modelOption, effort)
+		}
 	}
 	modelName := strings.TrimSpace(modelOption.Model)
 	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
@@ -1126,24 +1141,37 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 
 func (m Model) applyNewTaskModelPickerSelection(modelOption codexapp.ModelOption, effort string) (tea.Model, tea.Cmd) {
 	provider := m.codexModelPickerProvider()
+	if dialog := m.newTaskDialog; dialog != nil {
+		dialog.Provider = provider
+		dialog.ProviderDefaultLabel = ""
+	}
+	return m.applyPrelaunchModelPickerSelection(modelOption, effort, "New Task")
+}
+
+func (m Model) applyWorktreeMergeRecoveryModelPickerSelection(modelOption codexapp.ModelOption, effort string) (tea.Model, tea.Cmd) {
+	provider := m.codexModelPickerProvider()
+	if dialog := m.worktreeMergeRecoveryDialog; dialog != nil {
+		dialog.Provider = provider
+	}
+	return m.applyPrelaunchModelPickerSelection(modelOption, effort, "Merge recovery")
+}
+
+func (m Model) applyPrelaunchModelPickerSelection(modelOption codexapp.ModelOption, effort, launchLabel string) (tea.Model, tea.Cmd) {
+	provider := m.codexModelPickerProvider()
 	modelName := strings.TrimSpace(modelOption.Model)
 	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
 	if provider == codexapp.ProviderLCAgent && modelName != "" && modelProvider != "" && !m.lcagentModelProviderReady(modelProvider) {
 		return m.openCodexLCAgentProviderSetup(modelOption, effort)
 	}
-	if dialog := m.newTaskDialog; dialog != nil {
-		dialog.Provider = provider
-		dialog.ProviderDefaultLabel = ""
-	}
 	m.closeCodexModelPicker("")
 	if modelName == "" {
 		m.clearEmbeddedModelPreference(provider)
-		m.status = "New Task will use the " + provider.Label() + " default model"
+		m.status = launchLabel + " will use the " + provider.Label() + " default model"
 		return m, m.saveEmbeddedModelPreferencesCmd()
 	}
 	m.rememberEmbeddedModelPreference(provider, modelName, effort, modelProvider)
 	m.recordRecentModel(provider, modelName, modelProvider)
-	m.status = "New Task " + provider.Label() + " model set to " + modelName
+	m.status = launchLabel + " " + provider.Label() + " model set to " + modelName
 	if effort != "" {
 		m.status += " with " + effort + " reasoning"
 	}
@@ -1192,7 +1220,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		return strings.Join(header, "\n")
 	}
 
-	if state != nil && state.Target == codexModelPickerTargetNewTask {
+	if state != nil && state.Target.prelaunch() {
 		current := m.embeddedModelLabelForProject("", m.codexModelPickerProvider())
 		if current != "" {
 			header = append(header, detailValueStyle.Render("Current preference: "+current))

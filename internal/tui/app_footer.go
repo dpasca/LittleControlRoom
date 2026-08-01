@@ -219,6 +219,13 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, "Restore worktree: ↑↓ choose, Enter restore and resume, Esc cancel", supplementSegments...)
 	}
+	if m.worktreeMergeRecoveryDialog != nil {
+		label := "Merge recovery: ↑↓/j/k choose agent, m model, Enter launch, Esc back"
+		if m.worktreeMergeRecoveryDialog.Submitting {
+			label = "Merge recovery: creating tracked engineer task..."
+		}
+		return m.renderModalFooter(width, label, supplementSegments...)
+	}
 	if m.worktreeMergeConfirm != nil {
 		if m.worktreeMergeConfirm.Busy {
 			return m.renderModalFooter(width, "Merge worktree: waiting for actions to finish", supplementSegments...)

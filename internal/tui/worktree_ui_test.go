@@ -2858,6 +2858,75 @@ func TestWorktreeMergeRecoveryPromptPreservesRootAndIncludesDiagnosticContext(t 
 	}
 }
 
+func TestWorktreeMergeRecoveryDialogChoosesModelBeforeLaunch(t *testing.T) {
+	models := []codexapp.ModelOption{
+		{Model: "default", IsDefault: true},
+		{
+			Model: "gpt-recovery",
+			SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+				{ReasoningEffort: "medium"},
+				{ReasoningEffort: "high"},
+			},
+			DefaultReasoningEffort: "medium",
+		},
+	}
+	m := Model{
+		ctx: context.Background(),
+		worktreeMergeRecoveryDialog: &worktreeMergeRecoveryDialogState{
+			Confirm: worktreeMergeConfirmState{
+				ProjectPath: "/tmp/repo--feat-submodule",
+				ProjectName: "repo--feat-submodule",
+				BranchName:  "feat/submodule",
+			},
+			Provider: codexapp.ProviderCodex,
+		},
+	}
+
+	updated, cmd := m.updateWorktreeMergeRecoveryDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("m should load recovery model choices")
+	}
+	if got.codexModelPicker == nil || !got.codexModelPicker.Loading || got.codexModelPicker.Target != codexModelPickerTargetWorktreeRecovery {
+		t.Fatalf("picker after m = %#v, want loading merge-recovery picker", got.codexModelPicker)
+	}
+	listMsg, ok := cmd().(codexModelListMsg)
+	if !ok {
+		t.Fatalf("model picker command returned unexpected message type")
+	}
+	if listMsg.target != codexModelPickerTargetWorktreeRecovery || listMsg.provider != codexapp.ProviderCodex {
+		t.Fatalf("model list scope = (%q, %q), want merge recovery Codex", listMsg.target, listMsg.provider)
+	}
+	listMsg.models = models
+	listMsg.err = nil
+	updated, _ = got.applyCodexModelListMsg(listMsg)
+	got = updated.(Model)
+	if got.codexModelPicker == nil || got.codexModelPicker.Loading {
+		t.Fatalf("recovery picker should be loaded, got %#v", got.codexModelPicker)
+	}
+	got.codexModelPicker.Focus = codexModelPickerFocusModels
+	got.setCodexModelPickerModel(models[1], "high")
+	updated, saveCmd := got.applyCodexModelPickerSelection()
+	got = updated.(Model)
+	if got.codexModelPicker != nil {
+		t.Fatal("picker should close after choosing a recovery model")
+	}
+	if got.worktreeMergeRecoveryDialog == nil {
+		t.Fatal("recovery launch dialog should remain open after choosing a model")
+	}
+	pref, ok := got.embeddedModelPreference(codexapp.ProviderCodex)
+	if !ok || pref.Model != "gpt-recovery" || pref.Reasoning != "high" {
+		t.Fatalf("embedded preference = %#v (ok=%v), want gpt-recovery/high", pref, ok)
+	}
+	rendered := ansi.Strip(got.renderWorktreeMergeRecoveryOverlay("", 100, 24))
+	if !strings.Contains(rendered, "gpt-recovery, high") {
+		t.Fatalf("rendered recovery dialog = %q, want selected model label", rendered)
+	}
+	if saveCmd == nil {
+		t.Fatal("choosing a recovery model should persist the preference")
+	}
+}
+
 func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-submodule"
@@ -2898,20 +2967,33 @@ func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testin
 
 	updated, cmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatal("Ask Engineer should create the recovery task asynchronously")
+	if cmd != nil {
+		t.Fatal("Ask Engineer should open launch choices before creating the recovery task")
 	}
-	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
-		t.Fatalf("recovery dialog = %#v, want busy while the task is created", got.worktreeMergeConfirm)
+	if got.worktreeMergeRecoveryDialog == nil || got.worktreeMergeRecoveryDialog.Submitting {
+		t.Fatalf("recovery launch dialog = %#v, want editable launch choices", got.worktreeMergeRecoveryDialog)
+	}
+	if got.status != "Choose an engineer and model for merge recovery" {
+		t.Fatalf("status = %q, want recovery launch choice status", got.status)
+	}
+	rendered := ansi.Strip(got.renderWorktreeMergeRecoveryOverlay("", 100, 24))
+	for _, want := range []string{"Ask Engineer", "Agent", "Model", "m  model", "checkout stays unchanged"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("recovery launch dialog missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, cmd = got.updateWorktreeMergeRecoveryDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("confirming recovery launch choices should create the task asynchronously")
+	}
+	if got.worktreeMergeRecoveryDialog == nil || !got.worktreeMergeRecoveryDialog.Submitting {
+		t.Fatalf("recovery launch dialog = %#v, want submitting while the task is created", got.worktreeMergeRecoveryDialog)
 	}
 	if got.status != "Creating merge recovery engineer task..." {
 		t.Fatalf("status = %q, want recovery creation status", got.status)
 	}
-	renderedBusy := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(renderedBusy, "Starting automatic recovery") || strings.Contains(renderedBusy, "Merge in progress") {
-		t.Fatalf("busy recovery dialog has misleading progress copy: %q", renderedBusy)
-	}
-
 	created, ok := cmd().(worktreeMergeRecoveryTaskMsg)
 	if !ok {
 		t.Fatalf("recovery command returned unexpected message type")
@@ -2924,8 +3006,8 @@ func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testin
 	if followup != nil {
 		t.Fatal("failed recovery task creation should not launch an engineer")
 	}
-	if got.worktreeMergeConfirm == nil || got.worktreeMergeConfirm.Busy {
-		t.Fatalf("failed recovery should leave the original dialog available, got %#v", got.worktreeMergeConfirm)
+	if got.worktreeMergeConfirm == nil || got.worktreeMergeRecoveryDialog == nil || got.worktreeMergeRecoveryDialog.Submitting {
+		t.Fatalf("failed recovery should leave both dialogs available, merge=%#v launch=%#v", got.worktreeMergeConfirm, got.worktreeMergeRecoveryDialog)
 	}
 	if got.status != "Merge recovery task failed (use /errors)" {
 		t.Fatalf("status = %q, want logged recovery task failure", got.status)
@@ -2945,15 +3027,19 @@ func TestWorktreeMergeRecoveryBusyStateSurvivesOutstandingStatusRefresh(t *testi
 			ProjectPath:    childPath,
 			ErrorMessage:   blocker.Error(),
 			PublishBlocker: &blocker,
-			Busy:           true,
-			BusyMessage:    "Creating a separate engineer task to repair the merge blocker.",
+		},
+		worktreeMergeRecoveryDialog: &worktreeMergeRecoveryDialogState{
+			Confirm:    worktreeMergeConfirmState{ProjectPath: childPath},
+			Blocker:    blocker,
+			Provider:   codexapp.ProviderCodex,
+			Submitting: true,
 		},
 	}
 
 	updated, _ := m.Update(projectStatusRefreshedMsg{projectPath: childPath})
 	got := updated.(Model)
-	if got.worktreeMergeConfirm == nil || !got.worktreeMergeConfirm.Busy {
-		t.Fatalf("status refresh unlocked recovery submission: %#v", got.worktreeMergeConfirm)
+	if got.worktreeMergeRecoveryDialog == nil || !got.worktreeMergeRecoveryDialog.Submitting {
+		t.Fatalf("status refresh unlocked recovery submission: %#v", got.worktreeMergeRecoveryDialog)
 	}
 	if got.status != "Creating merge recovery engineer task..." {
 		t.Fatalf("status refresh replaced recovery status with %q", got.status)
@@ -3029,8 +3115,19 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	m.projects = []model.ProjectSummary{project}
 	m.worktreeMergeConfirm = confirm
 
-	updated, createCmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, chooserCmd := m.updateWorktreeMergeConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
+	if chooserCmd != nil || got.worktreeMergeRecoveryDialog == nil {
+		t.Fatalf("Ask Engineer should open launch choices first, cmd=%v dialog=%#v", chooserCmd, got.worktreeMergeRecoveryDialog)
+	}
+	updated, _ = got.updateWorktreeMergeRecoveryDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.worktreeMergeRecoveryDialog.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("selected recovery provider = %q, want OpenCode", got.worktreeMergeRecoveryDialog.Provider)
+	}
+	got.rememberEmbeddedModelPreference(codexapp.ProviderOpenCode, "openai/gpt-recovery", "high")
+	updated, createCmd := got.updateWorktreeMergeRecoveryDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
 	if createCmd == nil {
 		t.Fatal("Ask Engineer should schedule tracked task creation")
 	}
@@ -3069,6 +3166,9 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	if got.worktreeMergeConfirm != nil {
 		t.Fatal("successful recovery handoff should close the merge dialog")
 	}
+	if got.worktreeMergeRecoveryDialog != nil {
+		t.Fatal("successful recovery handoff should close the launch choices")
+	}
 	if _, ok := got.agentTaskForProjectPath(created.Task.WorkspacePath); !ok {
 		t.Fatalf("recovery task workspace %q missing from local agent tasks", created.Task.WorkspacePath)
 	}
@@ -3079,6 +3179,18 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	request := requests[0]
 	if !request.ForceNew || request.ProjectPath != created.Task.WorkspacePath {
 		t.Fatalf("launch request = %#v, want fresh recovery task workspace", request)
+	}
+	if request.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("launch request provider = %q, want selected OpenCode", request.Provider)
+	}
+	if request.PendingModel != "openai/gpt-recovery" || request.PendingReasoning != "high" {
+		t.Fatalf("launch request model = %q/%q, want selected openai/gpt-recovery/high", request.PendingModel, request.PendingReasoning)
+	}
+	if strings.Contains(request.Prompt, "for Chat to summarize") {
+		t.Fatalf("recovery launch prompt retained obsolete Chat reporting copy:\n%s", request.Prompt)
+	}
+	if strings.Contains(request.Prompt, "Report contract:") {
+		t.Fatalf("recovery launch prompt retained the generic report preamble:\n%s", request.Prompt)
 	}
 	for _, want := range []string{
 		"Resolve the submodule publication blocker",

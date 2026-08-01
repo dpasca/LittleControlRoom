@@ -102,29 +102,30 @@ type Model struct {
 	claudeAPIKeyWarning             *claudeAPIKeyWarningDialogState
 	claudeAPIKeyWarningAcknowledged bool
 
-	todoDialog                *todoDialogState
-	todoEditor                *todoEditorState
-	todoDeleteConfirm         *todoDeleteConfirmState
-	scratchTaskAction         *scratchTaskActionConfirmState
-	agentTaskAction           *agentTaskActionConfirmState
-	projectRemoveConfirm      *projectRemoveConfirmState
-	externalStopConfirm       *externalProcessStopConfirmState
-	todoLaunchDrafts          map[string]todoLaunchDraftState
-	todoPendingSave           *todoPendingSaveState
-	todoPendingLaunch         *todoPendingLaunchState
-	todoCopyDialog            *todoCopyDialogState
-	todoWorktreeEditor        *todoWorktreeEditorState
-	todoExistingWorktree      *todoExistingWorktreeDialogState
-	todoPendingLaunchDialog   *todoPendingLaunchDialogState
-	todoModelPickerReturn     *todoModelPickerReturnState
-	todoModelPickerLaunch     *todoModelPickerLaunchState
-	worktreeMergeConfirm      *worktreeMergeConfirmState
-	worktreePostMerge         *worktreePostMergeState
-	worktreeRemoveConfirm     *worktreeRemoveConfirmState
-	worktreeRestore           *worktreeRestoreDialogState
-	repositoryIntegrityDialog *repositoryIntegrityDialogState
-	attentionDialog           *attentionDialogState
-	suspendedTurnDialog       *suspendedTurnResumeDialogState
+	todoDialog                  *todoDialogState
+	todoEditor                  *todoEditorState
+	todoDeleteConfirm           *todoDeleteConfirmState
+	scratchTaskAction           *scratchTaskActionConfirmState
+	agentTaskAction             *agentTaskActionConfirmState
+	projectRemoveConfirm        *projectRemoveConfirmState
+	externalStopConfirm         *externalProcessStopConfirmState
+	todoLaunchDrafts            map[string]todoLaunchDraftState
+	todoPendingSave             *todoPendingSaveState
+	todoPendingLaunch           *todoPendingLaunchState
+	todoCopyDialog              *todoCopyDialogState
+	todoWorktreeEditor          *todoWorktreeEditorState
+	todoExistingWorktree        *todoExistingWorktreeDialogState
+	todoPendingLaunchDialog     *todoPendingLaunchDialogState
+	todoModelPickerReturn       *todoModelPickerReturnState
+	todoModelPickerLaunch       *todoModelPickerLaunchState
+	worktreeMergeConfirm        *worktreeMergeConfirmState
+	worktreeMergeRecoveryDialog *worktreeMergeRecoveryDialogState
+	worktreePostMerge           *worktreePostMergeState
+	worktreeRemoveConfirm       *worktreeRemoveConfirmState
+	worktreeRestore             *worktreeRestoreDialogState
+	repositoryIntegrityDialog   *repositoryIntegrityDialogState
+	attentionDialog             *attentionDialogState
+	suspendedTurnDialog         *suspendedTurnResumeDialogState
 
 	commandMode                         bool
 	commandInput                        textinput.Model
@@ -1659,6 +1660,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.worktreeRestore != nil {
 			return m.updateWorktreeRestoreMode(msg)
+		}
+		if m.worktreeMergeRecoveryDialog != nil {
+			return m.updateWorktreeMergeRecoveryDialogMode(msg)
 		}
 		if m.worktreeMergeConfirm != nil {
 			return m.updateWorktreeMergeConfirmMode(msg)

@@ -349,9 +349,9 @@ func (m *Model) scratchTaskRenameRefreshCmd(projectPath string, renamed bool, er
 
 func (m Model) applyCodexModelListMsg(msg codexModelListMsg) (tea.Model, tea.Cmd) {
 	result := msg.statusSummary()
-	if msg.target == codexModelPickerTargetNewTask {
+	if msg.target.prelaunch() {
 		stale := m.codexModelPicker == nil ||
-			m.codexModelPicker.Target != codexModelPickerTargetNewTask ||
+			m.codexModelPicker.Target != msg.target ||
 			m.codexModelPicker.Provider.Normalized() != msg.provider.Normalized()
 		if stale {
 			if result == "" {

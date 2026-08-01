@@ -112,6 +112,9 @@ func (m Model) View() string {
 			return m.renderCodexArtifactPickerOverlay(body, width, height)
 		}
 		if m.codexModelPickerVisible() {
+			if m.worktreeMergeRecoveryDialog != nil {
+				body = m.renderWorktreeMergeRecoveryOverlay(body, width, height)
+			}
 			body = m.renderCodexModelPickerOverlay(body, width, height)
 			if m.codexLCAgentProviderSetup != nil {
 				body = m.renderCodexLCAgentProviderSetupOverlay(body, width, height)
@@ -186,6 +189,9 @@ func (m Model) View() string {
 	} else if m.codexModelPickerVisible() {
 		if m.newTaskDialog != nil {
 			body = m.renderNewTaskOverlay(body, layout.width, layout.height)
+		}
+		if m.worktreeMergeRecoveryDialog != nil {
+			body = m.renderWorktreeMergeRecoveryOverlay(body, layout.width, layout.height)
 		}
 		body = m.renderCodexModelPickerOverlay(body, layout.width, layout.height)
 		if m.codexLCAgentProviderSetup != nil {
@@ -326,6 +332,9 @@ func (m Model) View() string {
 	}
 	if m.worktreeMergeConfirm != nil {
 		body = m.renderWorktreeMergeConfirmOverlay(body, layout.width, layout.height)
+	}
+	if m.worktreeMergeRecoveryDialog != nil {
+		body = m.renderWorktreeMergeRecoveryOverlay(body, layout.width, layout.height)
 	}
 	if m.worktreePostMerge != nil {
 		body = m.renderWorktreePostMergeOverlay(body, layout.width, layout.height)
