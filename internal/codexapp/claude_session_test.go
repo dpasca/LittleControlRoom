@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,6 +149,45 @@ func TestClaudeStreamUsagePopulatesContextSnapshot(t *testing.T) {
 	}
 }
 
+func TestClaudeUsageTotalsDeduplicateMessagesAndSurviveCompaction(t *testing.T) {
+	session := &claudeCodeSession{
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	first := `{"type":"assistant","uuid":"outer-1","message":{"id":"msg_1","model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"First block."}],"usage":{"input_tokens":14,"cache_creation_input_tokens":500,"cache_read_input_tokens":1500,"output_tokens":42}}}`
+	session.handleClaudeStdoutLine(first)
+	// Claude persists one AssistantMessage per content block. Those records share
+	// an API message ID and repeat the same per-message usage.
+	session.handleClaudeStdoutLine(`{"type":"assistant","uuid":"outer-2","message":{"id":"msg_1","model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"Second block."}],"usage":{"input_tokens":14,"cache_creation_input_tokens":500,"cache_read_input_tokens":1500,"output_tokens":42}}}`)
+
+	snapshot := session.Snapshot()
+	if got, want := snapshot.TokenUsage.Total.InputTokens, int64(2014); got != want {
+		t.Fatalf("deduplicated total input = %d, want %d", got, want)
+	}
+	if got, want := snapshot.TokenUsage.Total.OutputTokens, int64(42); got != want {
+		t.Fatalf("deduplicated total output = %d, want %d", got, want)
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":2014}}`)
+	if session.Snapshot().TokenUsage != nil {
+		t.Fatal("current context usage should be unavailable immediately after compaction")
+	}
+	session.handleClaudeStdoutLine(`{"type":"assistant","uuid":"outer-3","message":{"id":"msg_2","model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"After compact."}],"usage":{"input_tokens":12,"cache_creation_input_tokens":30,"cache_read_input_tokens":1000,"output_tokens":10}}}`)
+
+	snapshot = session.Snapshot()
+	if got, want := snapshot.TokenUsage.ContextTokens, int64(1042); got != want {
+		t.Fatalf("post-compact context = %d, want %d", got, want)
+	}
+	if got, want := snapshot.TokenUsage.Total.InputTokens, int64(3056); got != want {
+		t.Fatalf("post-compact total input = %d, want %d", got, want)
+	}
+	if got, want := snapshot.TokenUsage.Total.OutputTokens, int64(52); got != want {
+		t.Fatalf("post-compact total output = %d, want %d", got, want)
+	}
+}
+
 func TestClaudeCompactBoundaryClearsStaleUsage(t *testing.T) {
 	command := &claudeCompactCommand{done: make(chan claudeCompactCompletion, 1)}
 	session := &claudeCodeSession{
@@ -240,6 +280,60 @@ func TestClaudeLoadTranscriptRestoresUsageAndHidesCompactSummary(t *testing.T) {
 		if strings.Contains(entry.Text, "generated compact summary") {
 			t.Fatalf("compact summary leaked into transcript: %#v", entry)
 		}
+	}
+}
+
+func TestClaudeLoadTranscriptAggregatesUniqueMessagesAcrossCompaction(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","uuid":"before-a","message":{"id":"msg_before","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"Part one."}],"usage":{"input_tokens":10,"cache_creation_input_tokens":600,"cache_read_input_tokens":50,"output_tokens":20}}}`,
+		`{"type":"assistant","uuid":"before-b","message":{"id":"msg_before","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"Part two."}],"usage":{"input_tokens":10,"cache_creation_input_tokens":600,"cache_read_input_tokens":50,"output_tokens":20}}}`,
+		`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","pre_tokens":660}}`,
+		`{"type":"assistant","uuid":"after","message":{"id":"msg_after","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"New context."}],"usage":{"input_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":200,"output_tokens":7}}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+	if err := session.loadTranscriptLocked(); err != nil {
+		t.Fatalf("loadTranscriptLocked() error = %v", err)
+	}
+	if session.tokenUsage == nil {
+		t.Fatal("tokenUsage = nil, want post-compact usage")
+	}
+	if got, want := session.tokenUsage.ContextTokens, int64(305); got != want {
+		t.Fatalf("current context = %d, want %d", got, want)
+	}
+	if got, want := session.tokenUsage.Total.InputTokens, int64(965); got != want {
+		t.Fatalf("cumulative input = %d, want %d", got, want)
+	}
+	if got, want := session.tokenUsage.Total.OutputTokens, int64(27); got != want {
+		t.Fatalf("cumulative output = %d, want %d", got, want)
+	}
+}
+
+func TestClaudeRateLimitEventsPopulateUsageWindows(t *testing.T) {
+	session := &claudeCodeSession{}
+	fiveHourReset := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC).Unix()
+	weeklyReset := time.Date(2026, 8, 7, 13, 0, 0, 0, time.UTC).Unix()
+	session.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.17,"resetsAt":%d}}`, fiveHourReset))
+	session.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day","utilization":0.03,"resetsAt":%d}}`, weeklyReset))
+
+	windows := session.Snapshot().UsageWindows
+	if len(windows) != 2 {
+		t.Fatalf("UsageWindows = %#v, want five-hour and weekly windows", windows)
+	}
+	if windows[0].Window != "5h" || windows[0].LeftPercent != 83 || !windows[0].ResetsAt.Equal(time.Unix(fiveHourReset, 0)) {
+		t.Fatalf("five-hour window = %#v", windows[0])
+	}
+	if windows[1].Window != "weekly" || windows[1].LeftPercent != 97 || !windows[1].ResetsAt.Equal(time.Unix(weeklyReset, 0)) {
+		t.Fatalf("weekly window = %#v", windows[1])
 	}
 }
 
