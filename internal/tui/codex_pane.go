@@ -265,13 +265,13 @@ func (m Model) currentEmbeddedProviderLabel() string {
 func embeddedNewCommand(provider codexapp.Provider) string {
 	switch provider.Normalized() {
 	case codexapp.ProviderOpenCode:
-		return "/opencode-new"
+		return "/new-opencode"
 	case codexapp.ProviderClaudeCode:
-		return "/claude-new"
+		return "/new-claude"
 	case codexapp.ProviderLCAgent:
-		return "/lcagent-new"
+		return "/new-lcagent"
 	default:
-		return "/codex-new"
+		return "/new-codex"
 	}
 }
 

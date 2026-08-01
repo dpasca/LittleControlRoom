@@ -184,13 +184,13 @@ var specs = []Spec{
 	{Name: "resolve", Usage: "/resolve", Summary: "Resolve merge conflicts in the background with project-row progress"},
 	{Name: "integrity", Usage: "/integrity", Summary: "Inspect a displaced repository root and choose a safe response"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
-	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
+	{Name: "new-codex", Usage: "/new-codex [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "claude", Usage: "/claude [prompt]", Summary: "Resume the selected project's latest Claude Code session, or start a new one"},
-	{Name: "claude-new", Usage: "/claude-new [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
+	{Name: "new-claude", Usage: "/new-claude [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
-	{Name: "opencode-new", Usage: "/opencode-new [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
+	{Name: "new-opencode", Usage: "/new-opencode [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
 	{Name: "lcagent", Usage: "/lcagent [prompt]", Summary: "Resume the selected project's latest experimental LCAgent session, or start a new one"},
-	{Name: "lcagent-new", Usage: "/lcagent-new [prompt]", Summary: "Start a fresh experimental LCAgent session in the selected project"},
+	{Name: "new-lcagent", Usage: "/new-lcagent [prompt]", Summary: "Start a fresh experimental LCAgent session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
 	{Name: "wt", Usage: "/wt restore|update|merge|remove|prune", Summary: "Manage or restore worktrees in the selected repository family"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
@@ -659,11 +659,11 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("codex", rawArgs),
 		}, nil
-	case "codex-new", "codex-start":
+	case "new-codex", "codex-new", "codex-start":
 		return Invocation{
 			Kind:      KindCodexNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: slashcmd.CanonicalCommand("codex-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("new-codex", rawArgs),
 		}, nil
 	case "claude":
 		return Invocation{
@@ -671,11 +671,11 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("claude", rawArgs),
 		}, nil
-	case "claude-new", "cc-start":
+	case "new-claude", "claude-new", "cc-start":
 		return Invocation{
 			Kind:      KindClaudeNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: slashcmd.CanonicalCommand("claude-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("new-claude", rawArgs),
 		}, nil
 	case "opencode":
 		return Invocation{
@@ -683,11 +683,11 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("opencode", rawArgs),
 		}, nil
-	case "opencode-new", "oc-start":
+	case "new-opencode", "opencode-new", "oc-start":
 		return Invocation{
 			Kind:      KindOpenCodeNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: slashcmd.CanonicalCommand("opencode-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("new-opencode", rawArgs),
 		}, nil
 	case "lcagent":
 		return Invocation{
@@ -695,11 +695,11 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("lcagent", rawArgs),
 		}, nil
-	case "lcagent-new", "lca-start":
+	case "new-lcagent", "lcagent-new", "lca-start":
 		return Invocation{
 			Kind:      KindLCAgentNew,
 			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: slashcmd.CanonicalCommand("lcagent-new", rawArgs),
+			Canonical: slashcmd.CanonicalCommand("new-lcagent", rawArgs),
 		}, nil
 	case "snooze":
 		switch strings.ToLower(strings.TrimSpace(rawArgs)) {

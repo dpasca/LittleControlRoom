@@ -449,16 +449,16 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/diff`
 - `/codex`
 - `/codex continue from the last breakpoint`
-- `/codex-new sketch a plan for this repo`
+- `/new-codex sketch a plan for this repo`
 - `/claude`
 - `/claude continue from the last breakpoint`
-- `/claude-new sketch a plan for this repo`
+- `/new-claude sketch a plan for this repo`
 - `/opencode`
 - `/opencode continue from the last breakpoint`
-- `/opencode-new sketch a plan for this repo`
+- `/new-opencode sketch a plan for this repo`
 - `/lcagent`
 - `/lcagent continue with the next small step`
-- `/lcagent-new inspect and patch the failing check`
+- `/new-lcagent inspect and patch the failing check`
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`
@@ -527,13 +527,14 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/ports` opens a port-focused inspector for tracked project listeners, including managed runtimes, external listeners, orphaned PID 1 listeners, and detected conflicts. Press `s` on an external project-local listener to open a stop confirmation.
 - `/stop` stops the selected project's managed runtime when one is running.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
-- `/codex-new` always starts a fresh Codex session.
+- `/new-codex` always starts a fresh Codex session.
 - `/claude` resumes the selected project's latest known Claude Code session when available, otherwise it starts a new one.
-- `/claude-new` always starts a fresh Claude Code session.
+- `/new-claude` always starts a fresh Claude Code session.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
-- `/opencode-new` always starts a fresh OpenCode session.
+- `/new-opencode` always starts a fresh OpenCode session.
 - `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
-- `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-permission commands, a Medium shortcut for the current run, `/permissions` to explain or change session permissions, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
+- `/new-lcagent` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-permission commands, a Medium shortcut for the current run, `/permissions` to explain or change session permissions, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
+- The fresh-session commands were previously named `/codex-new`, `/claude-new`, `/opencode-new`, and `/lcagent-new`. Those names still work as hidden aliases, alongside `/codex-start`, `/cc-start`, `/oc-start`, and `/lca-start`; only the `/new-*` form is listed in help and completion, where it groups with `/new-project` and `/new-task`.
 - While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/model`, `/status`, `/context`, `/permissions`, `/compact [instructions]`, `/review`, and `/chat`. `/context` opens the provider status report with current context usage when available. Project commands `/run`, `/start`, `/restart`, `/run-edit`, `/stop`, and `/commit [message]` are also available and always target the project shown in the embedded pane. Run-command, external-stop, and commit-preview dialogs render over the live session; `/runtime` hides the session and focuses that project's runtime pane. Embedded providers expose LCR's local command subset, not every native slash command from the provider CLI.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/sessions` with no session ID opens a picker for saved sessions from the current project and provider; `/sessions <session-id>` jumps straight to that session.
