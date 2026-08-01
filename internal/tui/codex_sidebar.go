@@ -964,9 +964,20 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 }
 
 func embeddedSidebarUsageWindowSummary(snapshot codexapp.Snapshot, now time.Time) string {
-	windows := embeddedSidebarCodexUsageWindows(snapshot)
+	windows := embeddedSidebarUsageWindows(snapshot)
 	if len(windows) == 0 {
 		return ""
+	}
+	if len(windows) > 1 {
+		parts := make([]string, 0, len(windows))
+		for _, window := range windows {
+			label := compactEmbeddedUsageWindowLabel(window.Window)
+			if label == "" {
+				label = "window"
+			}
+			parts = append(parts, fmt.Sprintf("%s %d%%", label, window.LeftPercent))
+		}
+		return strings.Join(parts, " · ") + " left"
 	}
 	window := windows[0]
 	parts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
@@ -983,11 +994,15 @@ func embeddedSidebarUsageWindowSummary(snapshot codexapp.Snapshot, now time.Time
 }
 
 func embeddedSidebarUsageWindowStyle(snapshot codexapp.Snapshot) lipgloss.Style {
-	windows := embeddedSidebarCodexUsageWindows(snapshot)
+	windows := embeddedSidebarUsageWindows(snapshot)
 	if len(windows) == 0 {
 		return detailValueStyle
 	}
-	switch left := windows[0].LeftPercent; {
+	left := windows[0].LeftPercent
+	for _, window := range windows[1:] {
+		left = min(left, window.LeftPercent)
+	}
+	switch {
 	case left <= 10:
 		return detailDangerStyle
 	case left <= 25:
@@ -998,7 +1013,7 @@ func embeddedSidebarUsageWindowStyle(snapshot codexapp.Snapshot) lipgloss.Style 
 }
 
 func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int) []string {
-	windows := embeddedSidebarCodexUsageWindows(snapshot)
+	windows := embeddedSidebarUsageWindows(snapshot)
 	if len(windows) == 0 {
 		return nil
 	}
@@ -1027,16 +1042,21 @@ func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int)
 	return rows
 }
 
-func embeddedSidebarCodexUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWindowSnapshot {
-	if snapshot.Provider != "" && snapshot.Provider != codexapp.ProviderCodex {
+func embeddedSidebarUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWindowSnapshot {
+	provider := snapshot.Provider.Normalized()
+	if provider != "" && provider != codexapp.ProviderCodex && provider != codexapp.ProviderClaudeCode {
 		return nil
 	}
 	if len(snapshot.UsageWindows) == 0 {
 		return nil
 	}
+	preferredLimit := "Codex"
+	if provider == codexapp.ProviderClaudeCode {
+		preferredLimit = "Claude"
+	}
 	windows := make([]codexapp.UsageWindowSnapshot, 0, len(snapshot.UsageWindows))
 	for _, window := range snapshot.UsageWindows {
-		if strings.TrimSpace(window.Limit) != "" && !strings.EqualFold(strings.TrimSpace(window.Limit), "Codex") {
+		if strings.TrimSpace(window.Limit) != "" && !strings.EqualFold(strings.TrimSpace(window.Limit), preferredLimit) {
 			continue
 		}
 		windows = append(windows, window)
@@ -1045,6 +1065,15 @@ func embeddedSidebarCodexUsageWindows(snapshot codexapp.Snapshot) []codexapp.Usa
 		windows = append(windows, snapshot.UsageWindows...)
 	}
 	return windows
+}
+
+func compactEmbeddedUsageWindowLabel(label string) string {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "weekly", "7d", "7 day", "7-day":
+		return "week"
+	default:
+		return strings.TrimSpace(label)
+	}
 }
 
 func embeddedSidebarUsageWindowCredit(window codexapp.UsageWindowSnapshot) string {

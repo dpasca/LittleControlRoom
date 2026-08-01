@@ -399,6 +399,37 @@ func TestEmbeddedSidebarUsageSummaryPrefersOrdinaryCodexAccountLimit(t *testing.
 	}
 }
 
+func TestEmbeddedSidebarShowsClaudeFiveHourAndWeeklyLimits(t *testing.T) {
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.Local)
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode,
+		UsageWindows: []codexapp.UsageWindowSnapshot{
+			{
+				Limit:       "Claude",
+				Window:      "5h",
+				LeftPercent: 83,
+				ResetsAt:    now.Add(2 * time.Hour),
+			},
+			{
+				Limit:       "Claude",
+				Window:      "weekly",
+				LeftPercent: 97,
+				ResetsAt:    now.Add(6 * 24 * time.Hour),
+			},
+		},
+	}
+
+	if got, want := embeddedSidebarUsageWindowSummary(snapshot, now), "5h 83% · week 97% left"; got != want {
+		t.Fatalf("usage summary = %q, want %q", got, want)
+	}
+	detail := ansi.Strip(strings.Join(embeddedSidebarUsageWindowDetailRows(snapshot, 48), "\n"))
+	for _, want := range []string{"5h limit", "83% left", "weekly limit", "97% left"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("Claude usage detail missing %q:\n%s", want, detail)
+		}
+	}
+}
+
 func TestEmbeddedSidebarBrowserHintHighlightsCtrlO(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)

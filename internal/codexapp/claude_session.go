@@ -19,6 +19,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeartifact"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/projectrun"
 )
@@ -84,7 +85,13 @@ type claudeCodeSession struct {
 	model              string
 	reasoningEffort    string
 	tokenUsage         *TokenUsageSnapshot
+	tokenUsageTracker  claudeTokenUsageTracker
 	modelContextWindow int64
+	planUsageReader    claudePlanUsageReader
+	usageWindows       []UsageWindowSnapshot
+	usageRefreshAt     time.Time
+	usageRefreshActive bool
+	usageRefreshQueued bool
 	pendingModel       string
 	pendingReasoning   string
 	status             string
@@ -186,6 +193,7 @@ type claudeStreamEnvelope struct {
 	StopReason        string                      `json:"stop_reason"`
 	LastMessage       string                      `json:"last_message"`
 	ModelUsage        map[string]claudeModelUsage `json:"modelUsage"`
+	RateLimitInfo     claudeRateLimitInfo         `json:"rate_limit_info"`
 	CompactMetadata   claudeCompactMetadata       `json:"compact_metadata"`
 	CompactMetadataV2 claudeCompactMetadata       `json:"compactMetadata"`
 }
@@ -247,6 +255,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		runtimeMCPPrompt: runtimeMCPPrompt,
 		safetySettings:   safetySettings,
 		claudeHome:       claudeHome,
+		planUsageReader:  claudecli.NewPlanUsageReader(),
 		pendingModel:     concreteClaudeModel(req.PendingModel),
 		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
 		status:           claudeSupportStatus,
@@ -284,6 +293,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 	s.updateStatusLocked()
 	s.mu.Unlock()
+	s.scheduleClaudePlanUsageRefresh(true)
 
 	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
 		if err := s.SubmitInput(initialInput); err != nil {
@@ -300,11 +310,12 @@ func (s *claudeCodeSession) ProjectPath() string {
 
 func (s *claudeCodeSession) Snapshot() Snapshot {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	entries, transcript := s.exportedTranscriptLocked()
 	snapshot := s.stateSnapshotLocked()
 	snapshot.Entries = entries
 	snapshot.Transcript = transcript
+	s.mu.Unlock()
+	s.scheduleClaudePlanUsageRefresh(false)
 	return snapshot
 }
 
@@ -312,26 +323,31 @@ func (s *claudeCodeSession) TrySnapshot() (Snapshot, bool) {
 	if !s.mu.TryLock() {
 		return Snapshot{}, false
 	}
-	defer s.mu.Unlock()
 	entries, transcript := s.exportedTranscriptLocked()
 	snapshot := s.stateSnapshotLocked()
 	snapshot.Entries = entries
 	snapshot.Transcript = transcript
+	s.mu.Unlock()
+	s.scheduleClaudePlanUsageRefresh(false)
 	return snapshot, true
 }
 
 func (s *claudeCodeSession) StateSnapshot() Snapshot {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stateSnapshotLocked()
+	snapshot := s.stateSnapshotLocked()
+	s.mu.Unlock()
+	s.scheduleClaudePlanUsageRefresh(false)
+	return snapshot
 }
 
 func (s *claudeCodeSession) TryStateSnapshot() (Snapshot, bool) {
 	if !s.mu.TryLock() {
 		return Snapshot{}, false
 	}
-	defer s.mu.Unlock()
-	return s.stateSnapshotLocked(), true
+	snapshot := s.stateSnapshotLocked()
+	s.mu.Unlock()
+	s.scheduleClaudePlanUsageRefresh(false)
+	return snapshot, true
 }
 
 func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
@@ -358,6 +374,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		PendingModel:       concreteClaudeModel(s.pendingModel),
 		PendingReasoning:   s.pendingReasoning,
 		TokenUsage:         cloneTokenUsageSnapshot(s.tokenUsage),
+		UsageWindows:       cloneUsageWindowSnapshots(s.usageWindows),
 		BackgroundTasks:    s.backgroundTaskSnapshotsLocked(),
 	}
 }
@@ -1238,6 +1255,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	}
 
 	var stdinToClose io.WriteCloser
+	refreshPlanUsage := false
 	s.mu.Lock()
 	backgroundTaskStateChanged := s.observeClaudeBackgroundTaskEventsLocked(line, time.Now())
 
@@ -1282,10 +1300,13 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.handleClaudeCompactBoundaryLocked(claudeCompactMetadataFromEnvelope(env))
 		}
 	case "assistant":
-		s.handleClaudeAssistantLocked(env.Message)
+		s.handleClaudeAssistantLocked(env.Message, env.UUID)
 	case "user":
 		s.handleClaudeUserLocked(env.Message)
+	case "rate_limit_event":
+		s.applyClaudeRateLimitInfoLocked(env.RateLimitInfo)
 	case "result":
+		refreshPlanUsage = true
 		interruptedResult := s.interruptPending
 		if interruptedResult {
 			s.interruptPending = false
@@ -1327,10 +1348,13 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	if stdinToClose != nil {
 		_ = stdinToClose.Close()
 	}
+	if refreshPlanUsage {
+		s.scheduleClaudePlanUsageRefresh(true)
+	}
 	s.notifyAsync()
 }
 
-func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
+func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string) {
 	var msg claudeStreamMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
@@ -1339,10 +1363,10 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 		s.model = model
 		s.pendingModel = ""
 	}
-	s.applyClaudeUsageLocked(msg.Usage)
 	if msg.ID == "" {
-		msg.ID = fmt.Sprintf("assistant-%d", len(s.entries))
+		msg.ID = firstNonEmptyTrimmed(envelopeUUID, fmt.Sprintf("assistant-%d", len(s.entries)))
 	}
+	s.applyClaudeUsageLocked(msg.ID, msg.Usage)
 	seen := s.assistantBlocks[msg.ID]
 	if seen == nil {
 		seen = make(map[string]struct{})
@@ -1417,12 +1441,12 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage) {
 	}
 }
 
-func (s *claudeCodeSession) applyClaudeUsageLocked(usage claudeTokenUsage) {
+func (s *claudeCodeSession) applyClaudeUsageLocked(messageID string, usage claudeTokenUsage) {
 	snapshot := claudeTokenUsageSnapshot(usage, s.modelContextWindow)
 	if snapshot == nil {
 		return
 	}
-	s.tokenUsage = snapshot
+	s.tokenUsage = s.tokenUsageTracker.observe(messageID, snapshot.Last, s.modelContextWindow)
 }
 
 func claudeTokenUsageSnapshot(usage claudeTokenUsage, contextWindow int64) *TokenUsageSnapshot {
@@ -1811,6 +1835,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	latestReasoningEffort := ""
 	latestModel := ""
 	var latestUsage *TokenUsageSnapshot
+	usageTracker := claudeTokenUsageTracker{}
 	sawTokenState := false
 	for sc.Scan() {
 		line := sc.Text()
@@ -1827,7 +1852,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 			latestModel = parsedState.model
 		}
 		if parsedState.usage != nil {
-			latestUsage = parsedState.usage
+			latestUsage = usageTracker.observe(parsedState.usageID, parsedState.usage.Last, 0)
 			sawTokenState = true
 		}
 		if parsedState.compactBoundary {
@@ -1858,6 +1883,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 			s.tokenUsage.ModelContextWindow = s.modelContextWindow
 		}
 	}
+	s.tokenUsageTracker = usageTracker
 	s.invalidateTranscriptCacheLocked()
 	s.lastFileSize = stat.Size()
 
@@ -2222,6 +2248,7 @@ func parseCCLineEntries(
 			Kind string `json:"kind"`
 		} `json:"origin"`
 		Message struct {
+			ID      string           `json:"id"`
 			Role    string           `json:"role"`
 			Content json.RawMessage  `json:"content"`
 			Model   string           `json:"model"`
@@ -2237,6 +2264,7 @@ func parseCCLineEntries(
 	}
 	if raw.Type == "assistant" {
 		state.usage = claudeTokenUsageSnapshot(raw.Message.Usage, 0)
+		state.usageID = firstNonEmptyTrimmed(raw.Message.ID, raw.UUID)
 	}
 	if raw.Type == "system" && raw.Subtype == "compact_boundary" {
 		state.compactBoundary = true
@@ -2287,6 +2315,7 @@ func parseCCLineEntries(
 type claudeParsedLineState struct {
 	model           string
 	usage           *TokenUsageSnapshot
+	usageID         string
 	compactBoundary bool
 	compactMetadata claudeCompactMetadata
 }

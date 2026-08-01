@@ -59,6 +59,13 @@ Assistant records also expose `message.usage` counters:
 - `cache_read_input_tokens`
 - `output_tokens`
 
+Usage is per API message, not a cumulative session counter. Claude can persist
+multiple assistant records for different content blocks from the same API
+response; those records share `message.id` and repeat the same usage object.
+Session totals must therefore deduplicate by `message.id` before adding the
+counters. The newest unique message remains the current-context/last-call
+sample, while the deduplicated sum is the session total.
+
 For context occupancy, Claude's current input is the sum of the first three
 input/cache counters. The streamed `result.modelUsage` object supplies the
 model's `contextWindow`; that runtime result is not assumed to be present in
@@ -94,7 +101,18 @@ Compaction is another example. Claude emits a structured `system` event with
 and `trigger`, then persists the generated summary as a user-role record with
 `isCompactSummary == true`. The summary is model context, not a new human turn.
 Context usage from before the boundary is stale and should remain unknown until
-the next assistant usage record.
+the next assistant usage record. Compaction does not reset historical session
+totals: keep the deduplicated accumulator, clear only the current-context
+sample, and combine the next post-compaction message with the earlier total.
+
+Claude Code's stream-JSON/Agent SDK can also emit `rate_limit_event` records
+with `rate_limit_info` for a changed five-hour, weekly, or model-specific limit.
+Those events report utilization as a fraction and a Unix reset timestamp. They
+are useful live updates but may describe only the limit whose state changed;
+the authenticated claude.ai usage response remains the complete account
+snapshot for the ordinary five-hour and seven-day windows. Treat account usage
+as optional: it is absent for API-key/cloud billing and failures must not block
+session rendering or input.
 
 Transcript readers should follow those structured fields and event ancestry.
 They should not identify local commands by matching the XML-shaped text stored
