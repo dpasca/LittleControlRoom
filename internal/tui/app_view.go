@@ -585,6 +585,12 @@ func topStatusSeverityForMessage(status string, err error) topStatusSeverity {
 	if topStatusIsClipboardConfirmation(lowerStatus) {
 		return topStatusSeverityNormal
 	}
+	// A no-op merge is an actionable merge outcome, not a failure. Check it
+	// before generic failure wording because user-controlled branch names may
+	// themselves contain words such as "failed".
+	if strings.HasPrefix(lowerStatus, worktreeNothingToMergeText()) {
+		return topStatusSeverityWarning
+	}
 	switch {
 	case strings.Contains(lowerStatus, "failed"),
 		strings.Contains(lowerStatus, "merge conflict"),

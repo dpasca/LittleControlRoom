@@ -371,6 +371,17 @@ func TestRenderTopStatusLineKeepsRecoveryProgressNeutral(t *testing.T) {
 	}
 }
 
+func TestTopStatusTreatsNothingToMergeWithFailureWordInBranchAsWarning(t *testing.T) {
+	status := "Nothing to merge from ci/repair-failed-run into master. Linked TODO marked done. Worktree removed."
+
+	if got := topStatusSeverityForMessage(status, nil); got != topStatusSeverityWarning {
+		t.Fatalf("topStatusSeverityForMessage() = %v, want warning for successful no-op merge", got)
+	}
+	if got := topStatusSeverityForMessage(status, errors.New("cleanup failed")); got != topStatusSeverityDanger {
+		t.Fatalf("topStatusSeverityForMessage() with error = %v, want danger", got)
+	}
+}
+
 func TestRenderTopStatusLineKeepsClipboardConfirmationNeutral(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
