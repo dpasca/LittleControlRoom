@@ -2008,17 +2008,30 @@ func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, m
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdin.Close()
 		return nil, nil, nil, nil, err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, stderrWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
 		return nil, nil, nil, nil, err
 	}
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
+		_ = stderr.Close()
+		_ = stderrWriter.Close()
 		return nil, nil, nil, nil, err
 	}
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
 
 	return cmd, stdin, stdout, stderr, nil
 }
