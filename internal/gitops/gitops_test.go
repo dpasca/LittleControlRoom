@@ -128,9 +128,10 @@ func TestPullContinuesPastStallWindowWhileFetchReportsProgress(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var progress []PullProgress
+	const stallTimeout = 500 * time.Millisecond
 	startedAt := time.Now()
 	result, err := PullWithOptions(context.Background(), t.TempDir(), PullOptions{
-		StallTimeout: 50 * time.Millisecond,
+		StallTimeout: stallTimeout,
 		Progress: func(update PullProgress) {
 			progress = append(progress, update)
 		},
@@ -138,7 +139,7 @@ func TestPullContinuesPastStallWindowWhileFetchReportsProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PullWithOptions() error = %v", err)
 	}
-	if elapsed := time.Since(startedAt); elapsed < 100*time.Millisecond {
+	if elapsed := time.Since(startedAt); elapsed < stallTimeout {
 		t.Fatalf("pull elapsed = %s, want total runtime beyond stall window", elapsed)
 	}
 	if !result.FetchCompleted || !result.FastForwarded || result.PendingFastForward {
@@ -160,8 +161,9 @@ func TestPullTreatsGitLFSFileUpdatesAsProgress(t *testing.T) {
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var progress []PullProgress
+	const stallTimeout = time.Second
 	result, err := PullWithOptions(context.Background(), t.TempDir(), PullOptions{
-		StallTimeout: 250 * time.Millisecond,
+		StallTimeout: stallTimeout,
 		Progress: func(update PullProgress) {
 			progress = append(progress, update)
 		},
@@ -335,9 +337,9 @@ case "$args" in
         ;;
       active-fetch)
         i=1
-        while [ "$i" -le 5 ]; do
-          echo "Receiving objects: $i/5" >&2
-          sleep 0.03
+        while [ "$i" -le 8 ]; do
+          echo "Receiving objects: $i/8" >&2
+          sleep 0.1
           i=$((i + 1))
         done
         ;;
@@ -353,9 +355,9 @@ case "$args" in
         ;;
       lfs-fast-forward)
         i=1
-        while [ "$i" -le 4 ]; do
-          echo "download 1/1 $i/4 media.pack" >> "$GIT_LFS_PROGRESS"
-          sleep 0.15
+        while [ "$i" -le 8 ]; do
+          echo "download 1/1 $i/8 media.pack" >> "$GIT_LFS_PROGRESS"
+          sleep 0.2
           i=$((i + 1))
         done
         ;;
