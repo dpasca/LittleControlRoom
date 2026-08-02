@@ -73,6 +73,16 @@ func TestSettingsJSONRegistersExecFormBashPreToolUseHook(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatalf("unmarshal settings: %v", err)
 	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		t.Fatalf("unmarshal settings document: %v", err)
+	}
+	if _, ok := document["attribution"]; !ok {
+		t.Fatal("settings omitted attribution policy")
+	}
+	if got.Attribution.Commit != "" || got.Attribution.PR != "" {
+		t.Fatalf("attribution = %#v, want commit and PR attribution disabled", got.Attribution)
+	}
 	groups := got.Hooks["PreToolUse"]
 	if len(groups) != 1 || groups[0].Matcher != "Bash" || len(groups[0].Hooks) != 1 {
 		t.Fatalf("PreToolUse settings = %#v, want one Bash hook", groups)

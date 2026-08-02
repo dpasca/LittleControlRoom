@@ -15,6 +15,10 @@ func TestClaudeSafetyHookSettingsUsesLaunchExecutable(t *testing.T) {
 	}
 
 	var settings struct {
+		Attribution *struct {
+			Commit string `json:"commit"`
+			PR     string `json:"pr"`
+		} `json:"attribution"`
 		Hooks map[string][]struct {
 			Matcher string `json:"matcher"`
 			Hooks   []struct {
@@ -25,6 +29,9 @@ func TestClaudeSafetyHookSettingsUsesLaunchExecutable(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
 		t.Fatalf("unmarshal Claude safety settings: %v", err)
+	}
+	if settings.Attribution == nil || settings.Attribution.Commit != "" || settings.Attribution.PR != "" {
+		t.Fatalf("attribution = %#v, want commit and PR attribution disabled", settings.Attribution)
 	}
 	groups := settings.Hooks["PreToolUse"]
 	if len(groups) != 1 || groups[0].Matcher != "Bash" || len(groups[0].Hooks) != 1 {

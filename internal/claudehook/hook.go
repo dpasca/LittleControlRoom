@@ -18,7 +18,13 @@ const (
 )
 
 type settings struct {
-	Hooks map[string][]hookGroup `json:"hooks"`
+	Attribution attribution            `json:"attribution"`
+	Hooks       map[string][]hookGroup `json:"hooks"`
+}
+
+type attribution struct {
+	Commit string `json:"commit"`
+	PR     string `json:"pr"`
 }
 
 type hookGroup struct {
@@ -42,15 +48,16 @@ type preToolUseInput struct {
 	} `json:"tool_input"`
 }
 
-// SettingsJSON returns additive Claude Code settings for an LCR-owned Bash
-// PreToolUse hook. Exec-form args avoid passing the executable path through a
-// shell.
+// SettingsJSON returns additive Claude Code settings that disable automatic
+// commit and pull-request attribution and register an LCR-owned Bash PreToolUse
+// hook. Exec-form args avoid passing the executable path through a shell.
 func SettingsJSON(executablePath string) (string, error) {
 	executablePath = strings.TrimSpace(executablePath)
 	if executablePath == "" {
 		return "", fmt.Errorf("Little Control Room executable path is empty")
 	}
 	data, err := json.Marshal(settings{
+		Attribution: attribution{},
 		Hooks: map[string][]hookGroup{
 			"PreToolUse": {
 				{

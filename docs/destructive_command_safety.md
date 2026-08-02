@@ -91,6 +91,11 @@ through Claude's `--settings` option. Those settings register an LCR-owned
 the same running `lcroom` executable through a private CLI subcommand, avoiding
 shell interpretation of the executable path.
 
+The same per-process settings disable Claude Code's automatic commit and pull
+request attribution. Git commits made from an LCR-managed Claude session therefore
+retain the authorship supplied by the repository operator without an automatic
+Claude `Co-Authored-By` trailer.
+
 Claude sends the proposed Bash command to the hook as structured JSON before
 permission processing. The hook applies the shared structural parser in
 [`internal/commandguard/rm.go`](../internal/commandguard/rm.go). A direct `rm`
