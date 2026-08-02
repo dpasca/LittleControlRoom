@@ -51,11 +51,14 @@ TUI confirmation -> existing typed control executor -> durable result
 
 The isolated MCP process writes a `proposed` operation to SQLite. A background
 TUI relay claims one proposal at a time and changes it to
-`waiting_for_confirmation`. A TUI-owned modal shows the capability-specific
-target and effects over the operator's current surface, including an embedded
-Codex, OpenCode, or Claude Code pane. The modal does not open or depend on Help
-Chat. Only `Enter` moves the operation to `running`; cancellation and the final
-execution result are written back for the originating session to inspect.
+`waiting_for_confirmation`. Arrival raises a persistent agent-request notice
+without taking keyboard focus from the operator's current surface. The
+operator presses `Ctrl+G` to deliberately open a TUI-owned modal showing the
+capability-specific target and effects, including over an embedded Codex,
+OpenCode, or Claude Code pane. The modal does not open or depend on Help Chat.
+Only `Enter` after that explicit review transition moves the operation to
+`running`; cancellation and the final execution result are written back for
+the originating session to inspect.
 
 Follow-on host dialogs stay on that same surface. For example, confirming
 `git.prepare_commit` opens the normal commit preview over the embedded session

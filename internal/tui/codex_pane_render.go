@@ -137,7 +137,7 @@ func (m Model) renderCodexOpeningView(projectPath string) string {
 		fitFooterWidth(detail, max(24, width-4)),
 		fitFooterWidth("Type your draft now; press Enter after the session is ready to send it.", max(24, width-4)),
 	}, "\n"), width, bodyHeight, true)
-	footer := renderFooterLine(width, renderFooterStatus(spinner+" "+footerStatus))
+	footer := renderFooterLine(width, m.renderExternalControlPendingNotice(), renderFooterStatus(spinner+" "+footerStatus))
 	return strings.Join([]string{renderFooterLine(width, title), body, composer, footer}, "\n")
 }
 
@@ -743,6 +743,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = append([]footerAction{footerExitAction("/goal clear", "stop goal")}, actions...)
 	}
 	segments := []string{}
+	if notice := m.renderExternalControlPendingNotice(); notice != "" {
+		segments = append(segments, notice)
+	}
 	if composerStatus := m.renderCodexComposerFocusStatus(); composerStatus != "" {
 		segments = append(segments, composerStatus)
 	}

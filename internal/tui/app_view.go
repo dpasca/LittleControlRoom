@@ -75,7 +75,7 @@ func (m Model) View() string {
 		layout := m.bodyLayout()
 		header := m.renderTopStatusLine(layout.width)
 		body := m.renderDiffView(layout.width, layout.height)
-		if m.externalControlConfirmation != nil {
+		if m.externalControlReviewActive() {
 			body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
 		}
 		if m.claudeAPIKeyWarning != nil {
@@ -96,7 +96,7 @@ func (m Model) View() string {
 		if m.claudeAPIKeyWarning != nil {
 			return m.renderClaudeAPIKeyWarningOverlay(body, width, height)
 		}
-		if m.externalControlConfirmation != nil {
+		if m.externalControlReviewActive() {
 			return m.renderExternalControlConfirmationOverlay(body, width, height)
 		}
 		if m.actionNoticeDialog != nil {
@@ -360,7 +360,7 @@ func (m Model) View() string {
 	if m.actionNoticeDialog != nil {
 		body = m.renderActionNoticeDialogOverlay(body, layout.width, layout.height)
 	}
-	if m.externalControlConfirmation != nil {
+	if m.externalControlReviewActive() {
 		body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
 	}
 	if m.claudeAPIKeyWarning != nil {
@@ -482,8 +482,12 @@ func (m Model) renderTopStatusLine(width int) string {
 	mobileNotice := m.renderMobileServerStatusNotice()
 	prioritizeMobileStatus := mobileNotice != "" || strings.HasPrefix(rawStatus, "Mobile client ")
 	restartWarmupNotice := m.renderRestartWarmupNotice()
-	prioritizeTopStatus := prioritizeMobileStatus || restartWarmupNotice != ""
+	externalControlNotice := m.renderExternalControlPendingNotice()
+	prioritizeTopStatus := prioritizeMobileStatus || restartWarmupNotice != "" || externalControlNotice != ""
 	statusParts := make([]string, 0, 5)
+	if externalControlNotice != "" {
+		statusParts = append(statusParts, externalControlNotice)
+	}
 	if mobileNotice != "" {
 		statusParts = append(statusParts, mobileNotice)
 	}
