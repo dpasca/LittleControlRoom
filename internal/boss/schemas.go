@@ -130,6 +130,7 @@ func bossReadOnlyRouteSchema() map[string]any {
 		"project_path":       bossStringSchema("Exact project path for project-specific queries, or empty."),
 		"project_name":       bossStringSchema("Exact project name for project-specific queries, or empty."),
 		"session_id":         bossStringSchema("Exact session id for assessment/session queries, or empty."),
+		"todo_id":            bossIntegerSchema("Exact numeric project TODO ID for todo_report, or 0 when the query is not an ID lookup."),
 		"include_historical": bossBooleanSchema("Whether historical/archived records are needed."),
 		"limit":              bossIntegerSchema("Requested result limit, or 0 for default."),
 		"reason":             bossStringSchema("Short private reason for the route, or empty."),
@@ -143,6 +144,7 @@ func bossReadOnlyRouteSchema() map[string]any {
 		"project_path",
 		"project_name",
 		"session_id",
+		"todo_id",
 		"include_historical",
 		"limit",
 		"reason",
@@ -240,7 +242,7 @@ func bossActionSchema() map[string]any {
 			},
 			"todo_id": map[string]any{
 				"type":        "integer",
-				"description": "For engineer.send_prompt linked to an open project TODO, or todo.complete proposals, the exact TODO id. Use 0 when no TODO is linked.",
+				"description": "For todo_report queries, engineer.send_prompt linked to an open project TODO, or todo.complete proposals, the exact TODO id. Use 0 when no TODO is linked.",
 			},
 			"todo_evidence": map[string]any{
 				"type":        "string",

@@ -70,6 +70,73 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorFindsExactTodoByNumericID(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/alpha",
+			Name: "Alpha",
+		}},
+		todos: []model.TodoItem{{
+			ID:          1007,
+			ProjectPath: "/tmp/alpha",
+			Text:        "Show the selected TODO ID in the interface",
+		}},
+	}
+	executor := newQueryExecutor(store)
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:   bossActionTodoReport,
+		TodoID: 1007,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(todo_report by ID) error = %v", err)
+	}
+	for _, want := range []string{
+		"TODO report for #1007",
+		"status: open",
+		"project: Alpha",
+		"Show the selected TODO ID in the interface",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("exact TODO report missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
+func TestQueryExecutorExactTodoLookupRespectsPrivacyMode(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeBossStore{
+		projects: []model.ProjectSummary{{
+			Path:            "/tmp/private-alpha",
+			Name:            "Private Alpha",
+			CategoryPrivate: true,
+		}},
+		todos: []model.TodoItem{{
+			ID:          1007,
+			ProjectPath: "/tmp/private-alpha",
+			Text:        "Private TODO contents",
+		}},
+	}
+	executor := newQueryExecutor(store)
+	result, err := executor.Execute(context.Background(), bossAction{
+		Kind:   bossActionTodoReport,
+		TodoID: 1007,
+	}, StateSnapshot{}, ViewContext{PrivacyMode: true})
+	if err != nil {
+		t.Fatalf("Execute(private todo_report by ID) error = %v", err)
+	}
+	if !strings.Contains(result.Text, "no visible TODO found with ID #1007") {
+		t.Fatalf("private exact TODO report missing privacy-safe result:\n%s", result.Text)
+	}
+	for _, leaked := range []string{"Private Alpha", "/tmp/private-alpha", "Private TODO contents"} {
+		if strings.Contains(result.Text, leaked) {
+			t.Fatalf("private exact TODO report leaked %q:\n%s", leaked, result.Text)
+		}
+	}
+}
+
 func TestQueryExecutorReportsReflectionInventoryFacets(t *testing.T) {
 	t.Parallel()
 

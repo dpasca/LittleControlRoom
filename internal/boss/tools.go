@@ -111,6 +111,7 @@ type bossStoreReader interface {
 	ListProjects(ctx context.Context, includeHistorical bool) ([]model.ProjectSummary, error)
 	GetProjectSummary(ctx context.Context, projectPath string, includeHistorical bool) (model.ProjectSummary, error)
 	GetProjectDetail(ctx context.Context, path string, eventLimit int) (model.ProjectDetail, error)
+	GetTodo(ctx context.Context, todoID int64) (model.TodoItem, error)
 	ListSessionClassifications(ctx context.Context, projectPath, sessionID string) ([]model.SessionClassification, error)
 	GetSessionClassificationCounts(ctx context.Context, inScopeOnly bool) (map[model.SessionClassificationStatus]int, error)
 	SearchContext(ctx context.Context, req model.ContextSearchRequest) ([]model.ContextSearchResult, error)
@@ -1005,6 +1006,9 @@ func (e *QueryExecutor) sessionClassifications(ctx context.Context, action bossA
 }
 
 func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
+	if action.TodoID > 0 {
+		return e.todoReportByID(ctx, action.TodoID, view)
+	}
 	projects, err := e.store.ListProjects(ctx, action.IncludeHistorical)
 	if err != nil {
 		return bossToolResult{}, err
@@ -1061,6 +1065,53 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 		}
 	} else if hasTarget && err != nil {
 		lines = append(lines, "", "Target project TODO detail unavailable: "+err.Error())
+	}
+	return clippedToolResult(bossActionTodoReport, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) todoReportByID(ctx context.Context, todoID int64, view ViewContext) (bossToolResult, error) {
+	item, err := e.store.GetTodo(ctx, todoID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return clippedToolResult(bossActionTodoReport, fmt.Sprintf("TODO report: no TODO found with ID #%d.", todoID)), nil
+	}
+	if err != nil {
+		return bossToolResult{}, err
+	}
+
+	project, projectErr := e.store.GetProjectSummary(ctx, item.ProjectPath, true)
+	if view.PrivacyMode {
+		if projectErr != nil || bossProjectHiddenByPrivacy(project, view) {
+			return clippedToolResult(bossActionTodoReport, fmt.Sprintf("TODO report: no visible TODO found with ID #%d.", todoID)), nil
+		}
+	} else if projectErr != nil && !errors.Is(projectErr, sql.ErrNoRows) {
+		return bossToolResult{}, projectErr
+	}
+
+	projectName := ""
+	if projectErr == nil {
+		projectName = displayProjectName(project)
+	}
+	if strings.TrimSpace(projectName) == "" {
+		projectName = strings.TrimSpace(filepath.Base(item.ProjectPath))
+	}
+	status := "open"
+	if item.Done {
+		status = "completed"
+	}
+	lines := []string{
+		fmt.Sprintf("TODO report for #%d:", item.ID),
+		fmt.Sprintf("- status: %s", status),
+		fmt.Sprintf("- project: %s | path: %s", projectName, item.ProjectPath),
+		"- text: " + clipText(strings.TrimSpace(item.Text), 1200),
+	}
+	if label := todoBriefLabelFromItem(item); label != "" && label != strings.TrimSpace(item.Text) {
+		lines = append(lines, "- label: "+label)
+	}
+	if work := operationalTodoWorkState(todoBriefFromItem(item, projectName)); work != "" {
+		lines = append(lines, "- "+work)
+	}
+	if count := len(item.Attachments); count > 0 {
+		lines = append(lines, fmt.Sprintf("- attachments: %d", count))
 	}
 	return clippedToolResult(bossActionTodoReport, strings.Join(lines, "\n")), nil
 }

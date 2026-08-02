@@ -96,6 +96,7 @@ type fakeBossStore struct {
 	excerptErr      error
 	agentTasks      []model.AgentTask
 	goalRuns        []bossrun.GoalRecord
+	todos           []model.TodoItem
 }
 
 func (s *fakeBossStore) ListProjects(context.Context, bool) ([]model.ProjectSummary, error) {
@@ -116,6 +117,22 @@ func (s *fakeBossStore) GetProjectDetail(_ context.Context, path string, _ int) 
 		return detail, nil
 	}
 	return model.ProjectDetail{}, sql.ErrNoRows
+}
+
+func (s *fakeBossStore) GetTodo(_ context.Context, todoID int64) (model.TodoItem, error) {
+	for _, todo := range s.todos {
+		if todo.ID == todoID {
+			return todo, nil
+		}
+	}
+	for _, detail := range s.details {
+		for _, todo := range detail.Todos {
+			if todo.ID == todoID {
+				return todo, nil
+			}
+		}
+	}
+	return model.TodoItem{}, sql.ErrNoRows
 }
 
 func (s *fakeBossStore) ListSessionClassifications(context.Context, string, string) ([]model.SessionClassification, error) {
@@ -1497,6 +1514,31 @@ func TestHelpChatPromptsAvoidUnrequestedStatusReports(t *testing.T) {
 	directPrompt := bossAssistantSystemPromptForRequest(req)
 	if !strings.Contains(directPrompt, "When asked how you know a personal detail") {
 		t.Fatalf("direct help prompt missing personal context boundary:\n%s", directPrompt)
+	}
+}
+
+func TestReadOnlyTodoRouteCarriesExactNumericID(t *testing.T) {
+	t.Parallel()
+
+	route := bossReadOnlyRoute{
+		Kind:          bossActionTodoReport,
+		PlannerDomain: bossPlannerDomainInspection,
+		TodoID:        1007,
+	}
+	normalizeBossReadOnlyRoute(&route)
+	action, ok := bossActionFromReadOnlyRoute(route)
+	if !ok {
+		t.Fatalf("TODO read-only route should produce an action: %#v", route)
+	}
+	if action.Kind != bossActionTodoReport || action.TodoID != 1007 {
+		t.Fatalf("TODO read-only action = %#v, want todo_report for #1007", action)
+	}
+
+	prompt := bossReadOnlyRouterSystemPromptForRequest(AssistantRequest{HelpChat: true})
+	for _, want := range []string{"Use todo_report for project TODO questions", "put that number in todo_id", "no project target is required"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("Help Chat read-only router prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

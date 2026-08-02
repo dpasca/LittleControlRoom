@@ -62,7 +62,7 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 		m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 		initCmd = m.helpChatModel.ActivateCmd()
 	}
-	m.status = "Chat open. Ask a question, or press Esc/backtick to hide."
+	m.status = "Chat open. Drag transcript text to copy; ask a question, or press Esc/backtick to hide."
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
 		m.helpChatModel = normalizeBossModel(updated)
@@ -108,7 +108,7 @@ func (m Model) updateHelpChatModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateHelpChatModeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	geom := m.helpChatOverlayGeometry()
 	chatLeft := geom.left + 2
-	chatTop := geom.top + 2
+	chatTop := 1 + geom.top + 2 // app header + panel border + Chat header
 	if msg.X < chatLeft || msg.X >= chatLeft+geom.chatWidth || msg.Y < chatTop || msg.Y >= chatTop+geom.chatHeight {
 		return m, nil
 	}

@@ -2632,6 +2632,49 @@ func TestTodoDialogSelectedRowHasNoExtraLeadingSpace(t *testing.T) {
 	}
 }
 
+func TestTodoDialogHeaderShowsSelectedTodoID(t *testing.T) {
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{
+				{ID: 1007, ProjectPath: "/tmp/demo", Text: "First TODO"},
+				{ID: 2042, ProjectPath: "/tmp/demo", Text: "Second TODO"},
+			},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo", Selected: 0},
+		width:      100,
+		height:     24,
+	}
+
+	rendered := ansi.Strip(m.renderTodoDialogOverlay("", 100, 24))
+	header := todoDialogRenderedHeaderLine(rendered)
+	if !strings.Contains(header, "#1007") {
+		t.Fatalf("TODO dialog header should show selected ID #1007, got %q", header)
+	}
+	if strings.Contains(rendered, "#2042") {
+		t.Fatalf("TODO dialog should not show the unselected ID #2042, got %q", rendered)
+	}
+
+	m.moveTodoSelection(1)
+	rendered = ansi.Strip(m.renderTodoDialogOverlay("", 100, 24))
+	header = todoDialogRenderedHeaderLine(rendered)
+	if !strings.Contains(header, "#2042") {
+		t.Fatalf("TODO dialog header should update to selected ID #2042, got %q", header)
+	}
+	if strings.Contains(rendered, "#1007") {
+		t.Fatalf("TODO dialog should stop showing the previous selected ID #1007, got %q", rendered)
+	}
+}
+
+func todoDialogRenderedHeaderLine(rendered string) string {
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "TODO") && strings.Contains(line, "demo") {
+			return line
+		}
+	}
+	return ""
+}
+
 func TestTodoDialogShowsWorktreeSuggestionState(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)

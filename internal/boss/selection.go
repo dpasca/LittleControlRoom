@@ -168,24 +168,30 @@ func (m *Model) handleChatMouseSelection(msg tea.MouseMsg) (tea.Cmd, bool) {
 
 func (m *Model) chatMouseToContent(screenX, screenY int) (row, col int, ok bool) {
 	layout := m.layout()
+	contentLeft := bossPanelContentLeft
+	transcriptTop := bossChatTranscriptTop
+	if m.chatOnly {
+		contentLeft = 0
+		transcriptTop = 0
+	}
 	bodyY := screenY
 	if !m.embedded {
 		bodyY--
 	}
-	if bodyY < bossChatTranscriptTop || bodyY >= bossChatTranscriptTop+layout.transcriptHeight {
+	if bodyY < transcriptTop || bodyY >= transcriptTop+layout.transcriptHeight {
 		return 0, 0, false
 	}
 	if bodyY >= layout.topHeight {
 		return 0, 0, false
 	}
-	if screenX < bossPanelContentLeft || screenX >= bossPanelContentLeft+layout.chatInnerWidth {
+	if screenX < contentLeft || screenX >= contentLeft+layout.chatInnerWidth {
 		return 0, 0, false
 	}
-	contentRow := bodyY - bossChatTranscriptTop + m.chatViewport.YOffset
+	contentRow := bodyY - transcriptTop + m.chatViewport.YOffset
 	if contentRow >= m.chatViewport.TotalLineCount() {
 		return 0, 0, false
 	}
-	return contentRow, screenX - bossPanelContentLeft, true
+	return contentRow, screenX - contentLeft, true
 }
 
 func (m *Model) finalizeChatSelection() {

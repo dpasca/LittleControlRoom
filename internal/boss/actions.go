@@ -96,6 +96,9 @@ func normalizeBossReadOnlyRoute(route *bossReadOnlyRoute) {
 	route.ProjectPath = strings.TrimSpace(route.ProjectPath)
 	route.ProjectName = strings.TrimSpace(route.ProjectName)
 	route.SessionID = strings.TrimSpace(route.SessionID)
+	if route.TodoID < 0 {
+		route.TodoID = 0
+	}
 	route.Reason = strings.TrimSpace(route.Reason)
 }
 
@@ -112,6 +115,7 @@ func bossActionFromReadOnlyRoute(route bossReadOnlyRoute) (bossAction, bool) {
 		ProjectPath:       route.ProjectPath,
 		ProjectName:       route.ProjectName,
 		SessionID:         route.SessionID,
+		TodoID:            route.TodoID,
 		IncludeHistorical: route.IncludeHistorical,
 		Limit:             route.Limit,
 		Reason:            route.Reason,

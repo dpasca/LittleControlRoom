@@ -640,6 +640,7 @@ type bossReadOnlyRoute struct {
 	ProjectPath       string `json:"project_path"`
 	ProjectName       string `json:"project_name"`
 	SessionID         string `json:"session_id"`
+	TodoID            int64  `json:"todo_id"`
 	IncludeHistorical bool   `json:"include_historical"`
 	Limit             int    `json:"limit"`
 	Reason            string `json:"reason"`
@@ -1132,6 +1133,9 @@ func describeBossAction(action bossAction) string {
 	case bossActionReflectionReport:
 		return kind
 	case bossActionSessionClassifications, bossActionTodoReport:
+		if action.TodoID > 0 {
+			return fmt.Sprintf("%s #%d", kind, action.TodoID)
+		}
 		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.SessionID, action.Target)
 		if target != "" {
 			return kind + " " + clipText(target, 80)

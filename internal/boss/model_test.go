@@ -2026,6 +2026,9 @@ func TestEmbeddedHelpSupportsClipboardCopyAndPaste(t *testing.T) {
 	if cmd != nil || got.inputCopyDialog == nil {
 		t.Fatalf("Chat Alt+C should open the copy menu, cmd=%v dialog=%#v", cmd, got.inputCopyDialog)
 	}
+	if rendered := ansi.Strip(got.renderInputCopyDialogContent(72)); !strings.Contains(rendered, "drag across transcript text") {
+		t.Fatalf("Chat copy menu should explain precise transcript dragging, got %q", rendered)
+	}
 	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd != nil || copied != "copy this help question" {
@@ -3131,6 +3134,57 @@ func TestChatMouseSelectionCopiesOnlyTranscriptText(t *testing.T) {
 		if strings.Contains(copied, unwanted) {
 			t.Fatalf("copied selection should not include side panel text %q: %q", unwanted, copied)
 		}
+	}
+	if m.status != "Copied chat selection to clipboard" {
+		t.Fatalf("status = %q, want copy confirmation", m.status)
+	}
+}
+
+func TestHelpChatMouseSelectionUsesBorderlessTranscriptCoordinates(t *testing.T) {
+	prevWriter := clipboardTextWriter
+	var copied string
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	defer func() { clipboardTextWriter = prevWriter }()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 100
+	m.height = 24
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "alpha beta",
+	}}
+	m.syncLayout(true)
+
+	updated, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      len("Chat> "),
+		Y:      0,
+	})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonLeft,
+		X:      len("Chat> ") + len("alpha"),
+		Y:      0,
+	})
+	m = updated.(Model)
+	if rendered := m.renderCoreChat(m.layout()); !strings.Contains(rendered, bossSelectionHighlightStart) {
+		t.Fatalf("Help Chat first transcript row should render a drag highlight:\n%s", ansi.Strip(rendered))
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{
+		Action: tea.MouseActionRelease,
+		Button: tea.MouseButtonLeft,
+		X:      len("Chat> ") + len("alpha"),
+		Y:      0,
+	})
+	m = updated.(Model)
+	if copied != "alpha" {
+		t.Fatalf("Help Chat copied selection = %q, want %q", copied, "alpha")
 	}
 	if m.status != "Copied chat selection to clipboard" {
 		t.Fatalf("status = %q, want copy confirmation", m.status)

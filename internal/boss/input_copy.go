@@ -251,8 +251,10 @@ func (m Model) renderInputCopyDialogContent(width int) string {
 	if dialog == nil {
 		return ""
 	}
-	lines := []string{
-		bossMutedStyle.Render(fitLine("Choose what to put on the clipboard.", width)),
+	intro := "Choose input text or visible transcript output to copy."
+	lines := []string{bossMutedStyle.Render(fitLine(intro, width))}
+	if m.helpChat {
+		lines = append(lines, bossMutedStyle.Render(fitLine("Tip: drag across transcript text to copy an exact range.", width)))
 	}
 	buttons := make([]string, 0, len(inputcomposer.CopyChoices()))
 	for _, choice := range inputcomposer.CopyChoices() {

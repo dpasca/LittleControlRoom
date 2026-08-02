@@ -2046,6 +2046,9 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 		displayTotalCount = projectSummary.TotalTODOCount
 	}
 	title := detailSectionStyle.Render("TODO") + "  " + detailValueStyle.Render(dialog.ProjectName)
+	if selected, ok := m.selectedTodoItem(); ok && selected.ID > 0 {
+		title = renderLineWithRightSegment(title, detailLabelStyle.Render(fmt.Sprintf("#%d", selected.ID)), panelInnerW)
+	}
 	summary := detailMutedStyle.Render(fmt.Sprintf("%d open, %d total", displayOpenCount, displayTotalCount))
 	lines := []string{title, summary, ""}
 	if len(items) == 0 {

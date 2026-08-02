@@ -122,6 +122,17 @@ func TestHelpChatFooterOffersStopAndSteerWhileResponding(t *testing.T) {
 	help = normalizeBossModel(updated)
 }
 
+func TestOpeningHelpChatAdvertisesTranscriptDragCopy(t *testing.T) {
+	t.Parallel()
+
+	m := Model{width: 100, height: 24}
+	updated, _ := m.openHelpChatMode()
+	got := normalizeUpdateModel(updated)
+	if !strings.Contains(got.status, "Drag transcript text to copy") {
+		t.Fatalf("Chat open status should advertise transcript drag-copy, got %q", got.status)
+	}
+}
+
 func TestHelpChatFooterOffersCopyPasteAndSelectionControls(t *testing.T) {
 	t.Parallel()
 
@@ -166,6 +177,46 @@ func TestHelpChatFooterOffersCopyPasteAndSelectionControls(t *testing.T) {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("Chat selection footer missing %q: %q", want, footer)
 		}
+	}
+}
+
+func TestHelpChatOverlayMapsMouseToFirstTranscriptRow(t *testing.T) {
+	t.Parallel()
+
+	const (
+		width  = 112
+		height = 40
+	)
+	m := Model{width: width, height: height, helpChatMode: true}
+	m.helpChatModel = bossui.NewEmbeddedHelp(context.Background(), nil)
+	updated, _ := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
+	m.helpChatModel = normalizeBossModel(updated)
+	updated, _ = m.helpChatModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alpha beta")})
+	m.helpChatModel = normalizeBossModel(updated)
+	updated, _ = m.helpChatModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.helpChatModel = normalizeBossModel(updated)
+
+	geom := m.helpChatOverlayGeometry()
+	transcriptX := geom.left + 2 + len("You> ")
+	transcriptY := 1 + geom.top + 2
+	updatedMain, _ := m.updateHelpChatModeMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      transcriptX,
+		Y:      transcriptY,
+	})
+	m = normalizeUpdateModel(updatedMain)
+	updatedMain, _ = m.updateHelpChatModeMouse(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonLeft,
+		X:      transcriptX + len("alpha"),
+		Y:      transcriptY,
+	})
+	m = normalizeUpdateModel(updatedMain)
+
+	rendered := m.renderHelpChatOverlay(fitPaneContent("", width, height-2), width, height-2)
+	if !strings.Contains(rendered, "48;5;178") {
+		t.Fatalf("Help Chat overlay should highlight a drag on the first transcript row:\n%s", ansi.Strip(rendered))
 	}
 }
 
