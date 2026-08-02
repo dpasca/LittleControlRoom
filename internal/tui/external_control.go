@@ -38,7 +38,10 @@ type externalControlCancellationRecordedMsg struct {
 type externalControlConfirmationState struct {
 	operation control.Operation
 	preview   string
+	reviewing bool
 }
+
+const externalControlReviewKey = "ctrl+g"
 
 func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 	svc := m.svc
@@ -91,12 +94,41 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		operation: msg.operation,
 		preview:   preview,
 	}
-	m.status = "Confirm or cancel the embedded agent's control proposal"
+	m.status = "Agent request waiting; current input remains active until Ctrl+G opens review"
 	return m, nil
 }
 
-func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) externalControlReviewActive() bool {
+	return m.externalControlConfirmation != nil && m.externalControlConfirmation.reviewing
+}
+
+func (m Model) externalControlReviewWaiting() bool {
+	return m.externalControlConfirmation != nil && !m.externalControlConfirmation.reviewing
+}
+
+func (m Model) openExternalControlConfirmationReview() (tea.Model, tea.Cmd) {
 	if m.externalControlConfirmation == nil {
+		return m, nil
+	}
+	confirmation := *m.externalControlConfirmation
+	confirmation.reviewing = true
+	m.externalControlConfirmation = &confirmation
+	m.status = "Review the embedded agent's control proposal"
+	return m, nil
+}
+
+func (m Model) renderExternalControlPendingNotice() string {
+	if !m.externalControlReviewWaiting() {
+		return ""
+	}
+	return joinFooterSegments(
+		renderFooterAlert("Agent request waiting"),
+		renderFooterActionList(footerPrimaryAction("ctrl+g", "review")),
+	)
+}
+
+func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if !m.externalControlReviewActive() {
 		return m, nil
 	}
 	invocation := m.externalControlConfirmation.operation.Invocation
@@ -122,7 +154,7 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 }
 
 func (m Model) renderExternalControlConfirmationOverlay(body string, bodyW, bodyH int) string {
-	if m.externalControlConfirmation == nil {
+	if !m.externalControlReviewActive() {
 		return body
 	}
 	confirmation := m.externalControlConfirmation

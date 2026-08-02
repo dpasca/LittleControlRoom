@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	bossui "lcroom/internal/boss"
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/events"
@@ -16,7 +18,59 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestExternalControlProposalOpensTUIConfirmationAndRecordsCancellation(t *testing.T) {
+func TestExternalControlProposalEnterCannotConfirmBeforeExplicitReview(t *testing.T) {
+	operationID := "lcrop_tui_safe_enter"
+	args, err := json.Marshal(control.TodoAddInput{
+		RequestID:   operationID,
+		ProjectPath: t.TempDir(),
+		Text:        "Do not confirm from an in-flight Enter key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Model{
+		externalControlConfirmation: &externalControlConfirmationState{
+			operation: control.Operation{
+				ID:     operationID,
+				Status: control.OperationWaitingForConfirmation,
+				Invocation: control.Invocation{
+					RequestID:  operationID,
+					Capability: control.CapabilityTodoAdd,
+					Args:       args,
+				},
+			},
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := normalizeUpdateModel(updated)
+	if cmd != nil {
+		t.Fatal("Enter before explicit review queued a command")
+	}
+	if !got.externalControlReviewWaiting() {
+		t.Fatal("Enter before explicit review resolved the pending proposal")
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	got = normalizeUpdateModel(updated)
+	if cmd != nil || !got.externalControlReviewActive() {
+		t.Fatalf("Ctrl+G review transition = active %t, cmd %v", got.externalControlReviewActive(), cmd)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = normalizeUpdateModel(updated)
+	if cmd == nil {
+		t.Fatal("Enter after explicit review did not queue confirmation")
+	}
+	if got.externalControlConfirmation != nil {
+		t.Fatal("confirmed external proposal remained pending")
+	}
+	if _, ok := cmd().(bossui.ControlInvocationConfirmedMsg); !ok {
+		t.Fatal("confirmation command returned the wrong message type")
+	}
+}
+
+func TestExternalControlProposalWaitsForExplicitReviewAndRecordsCancellation(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "control.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -63,12 +117,47 @@ func TestExternalControlProposalOpensTUIConfirmationAndRecordsCancellation(t *te
 		t.Fatalf("external proposal opened Help Chat: mode=%t active=%t", got.helpChatMode, got.helpChatModelActive)
 	}
 	if got.externalControlConfirmation == nil {
-		t.Fatal("external proposal did not open the TUI-owned confirmation")
+		t.Fatal("external proposal did not create pending review state")
+	}
+	if !got.externalControlReviewWaiting() {
+		t.Fatal("external proposal should wait without taking keyboard focus")
 	}
 	rendered := got.View()
+	if !strings.Contains(rendered, "Agent request waiting") || !strings.Contains(rendered, "ctrl+g") {
+		t.Fatalf("rendered frame does not show the pending review notice: %q", rendered)
+	}
+	if strings.Contains(rendered, "Confirm Control Action") || strings.Contains(rendered, "Confirm the external proposal path") {
+		t.Fatalf("external proposal took focus before explicit review: %q", rendered)
+	}
+
+	updated, ordinaryCmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = normalizeUpdateModel(updated)
+	if ordinaryCmd != nil {
+		t.Fatal("Esc before explicit review should stay with the underlying surface")
+	}
+	if !got.externalControlReviewWaiting() {
+		t.Fatal("Esc before explicit review canceled or opened the pending proposal")
+	}
+	stored, err := st.GetControlOperation(ctx, operationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != control.OperationWaitingForConfirmation {
+		t.Fatalf("stored status before review = %q, want waiting_for_confirmation", stored.Status)
+	}
+
+	updated, reviewCmd := got.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	got = normalizeUpdateModel(updated)
+	if reviewCmd != nil {
+		t.Fatal("opening external proposal review should not run a command")
+	}
+	if !got.externalControlReviewActive() {
+		t.Fatal("Ctrl+G did not deliberately open external proposal review")
+	}
+	rendered = got.View()
 	if !strings.Contains(rendered, "Confirm Control Action") ||
 		!strings.Contains(rendered, "Confirm the external proposal path") {
-		t.Fatalf("rendered frame does not show TUI confirmation: %q", rendered)
+		t.Fatalf("rendered frame does not show explicitly opened confirmation: %q", rendered)
 	}
 
 	updated, cancelCmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -85,7 +174,7 @@ func TestExternalControlProposalOpensTUIConfirmationAndRecordsCancellation(t *te
 	recorded := recordCmd()
 	updated, _ = got.Update(recorded)
 	got = normalizeUpdateModel(updated)
-	stored, err := st.GetControlOperation(ctx, operationID)
+	stored, err = st.GetControlOperation(ctx, operationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +217,13 @@ func TestExternalControlProposalOverlaysVisibleEmbeddedSession(t *testing.T) {
 	projectPath := t.TempDir()
 	m := New(ctx, svc)
 	m.codexVisibleProject = projectPath
+	m.codexSnapshots[projectPath] = codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderClaudeCode,
+		Started:     true,
+		Status:      "Claude Code session ready",
+	}
+	m.codexInput.Focus()
 	m.width = 120
 	m.height = 40
 
@@ -174,12 +270,28 @@ func TestExternalControlProposalOverlaysVisibleEmbeddedSession(t *testing.T) {
 		t.Fatalf("external proposal opened Help Chat over embedded session: mode=%t active=%t", got.helpChatMode, got.helpChatModelActive)
 	}
 	if got.externalControlConfirmation == nil {
-		t.Fatal("external proposal did not create TUI-owned confirmation")
+		t.Fatal("external proposal did not create pending review state")
 	}
 	rendered := got.View()
+	if !strings.Contains(rendered, "Agent request waiting") || strings.Contains(rendered, "Confirm Control Action") {
+		t.Fatalf("pending proposal should notify without overlaying the embedded session: %q", rendered)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	got = normalizeUpdateModel(updated)
+	if got.codexInput.Value() != "x" {
+		t.Fatalf("typed key was intercepted by delayed confirmation, composer = %q", got.codexInput.Value())
+	}
+	if !got.externalControlReviewWaiting() {
+		t.Fatal("ordinary composer input resolved the pending external proposal")
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	got = normalizeUpdateModel(updated)
+	rendered = got.View()
 	if !strings.Contains(rendered, "Confirm Control Action") ||
 		!strings.Contains(rendered, "Confirm above the embedded session") {
-		t.Fatalf("rendered frame does not show external confirmation: %q", rendered)
+		t.Fatalf("rendered frame does not show explicitly opened external confirmation: %q", rendered)
 	}
 }
 

@@ -1397,9 +1397,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key, ok := msg.(tea.KeyMsg); ok && m.externalControlConfirmation != nil {
-		return m.updateExternalControlConfirmationMode(key)
+		if m.externalControlReviewActive() {
+			return m.updateExternalControlConfirmationMode(key)
+		}
+		if key.String() == externalControlReviewKey {
+			return m.openExternalControlConfirmationReview()
+		}
 	}
-	if _, ok := msg.(tea.MouseMsg); ok && m.externalControlConfirmation != nil {
+	if _, ok := msg.(tea.MouseMsg); ok && m.externalControlReviewActive() {
 		return m, nil
 	}
 	if msg, ok := msg.(bossTrackedTodoLoadedMsg); ok {
