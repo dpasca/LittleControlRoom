@@ -25,6 +25,8 @@ MOCKUP_OUTPUT_DIR ?= /tmp/lcroom-mockups
 CRASH_LOG_DIR ?= $(DATA_DIR)/crash-dumps
 DEMO_RECORDING_DIR ?= $(DATA_DIR)/demo-recordings
 DEMO_RECORDING_PATH ?=
+PREVIEW_DOC ?= README.md
+PREVIEW_OUTPUT ?= /tmp/lcroom-markdown-preview.html
 PARALLEL_DATA_DIR ?= /tmp/lcroom-parallel-$(shell id -un)
 PARALLEL_DB ?= $(PARALLEL_DATA_DIR)/little-control-room.sqlite
 PARALLEL_CONFIG ?= $(PARALLEL_DATA_DIR)/config.toml
@@ -39,7 +41,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups build-week-demo tui tui-record tui-parallel tui-parallel-clean serve
+.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups readme-preview build-week-demo tui tui-record tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -73,6 +75,7 @@ help:
 	@echo "  make release-snapshot - preflight, build, and verify local release archives"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
+	@echo "  make readme-preview  - render a Markdown file to HTML and open it (needs pandoc)"
 	@echo "  make build-week-demo - run an isolated OpenAI-only recording profile"
 	@echo "  make tui             - run TUI dashboard"
 	@echo "  make tui-record      - run TUI from source and save a compact demo recording"
@@ -95,6 +98,8 @@ help:
 	@echo "  SCREENSHOT_CONFIG=$(SCREENSHOT_CONFIG)"
 	@echo "  SCREENSHOT_OUTPUT_DIR=$(SCREENSHOT_OUTPUT_DIR)"
 	@echo "  MOCKUP_OUTPUT_DIR=$(MOCKUP_OUTPUT_DIR)"
+	@echo "  PREVIEW_DOC=$(PREVIEW_DOC)"
+	@echo "  PREVIEW_OUTPUT=$(PREVIEW_OUTPUT)"
 	@echo "  CRASH_LOG_DIR=$(CRASH_LOG_DIR)"
 	@echo "  DEMO_RECORDING_DIR=$(DEMO_RECORDING_DIR)"
 	@echo "  DEMO_RECORDING_PATH=$(DEMO_RECORDING_PATH)"
@@ -202,6 +207,9 @@ screenshots:
 
 mockups:
 	$(GO) run ./cmd/$(APP) mockups --output-dir "$(MOCKUP_OUTPUT_DIR)"
+
+readme-preview:
+	./scripts/preview-markdown.sh "$(PREVIEW_DOC)" "$(PREVIEW_OUTPUT)"
 
 build-week-demo:
 	./scripts/run-build-week-demo.sh

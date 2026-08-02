@@ -24,9 +24,12 @@ Provider artifact and detector-footprint notes live in:
 - `lcroom scope` shows the effective include and exclude scope for this run
 - `lcroom serve` explicitly starts the standalone read-only REST and WebSocket server even when TUI mobile auto-start is disabled; it uses the saved address unless `--listen <host:port>` overrides it
 
-For LAN mobile access, use the Mobile card in `/setup` or the Mobile section in `/settings`, choose `Phones on this LAN`, and restart LCR. This friendly mode derives the technical `0.0.0.0:<port>` listener; `This computer only` derives `127.0.0.1:<port>`, while `Custom address` preserves direct `host:port` control. The top-right `/mobile` badge adds `LAN`, `RESTART`, `SETUP`, `OFF`, or `ERR` when space permits; `RESTART` means the saved listener setup differs from the running listener. `/mobile` opens a status panel with the active listener, detected private IPv4 addresses, phone-ready URL, pairing code, phone-control state, and saved next-launch setup. Press Enter to open the existing Mobile setup drilldown or `c` to copy a reachable phone URL. The portrait mobile dashboard mirrors the main TUI's project-first scan pattern with compact project/summary, assessment, agent, and flag columns. The TUI-hosted dashboard reports visible live engineer channels and links directly to their Markdown-rendered transcripts; live revisions use a dedicated event stream with incremental entry updates, while periodic detail refresh remains a fallback when that connection is unavailable. Transcript mode can show conversation alone or all command, tool, plan, reasoning, and status activity. `mobile_input_enabled` is false by default. A live channel still shows a disabled composer with directions to Mobile settings; enabling the setting unlocks that composer so it can send, steer, or queue through the shared provider-neutral session manager. Recorded sessions and higher-authority controls remain read-only. A successful pairing stores a 30-day HTTP-only browser cookie signed by `mobile-auth.key` beside the active database. Loopback listeners do not require pairing. Pairing does not add TLS, so direct HTTP exposure should remain on a trusted LAN.
+Mobile access, pairing, address modes, and the `/mobile` panel are documented in
+[Mobile Preview](mobile.md). Detail worth repeating here: `mobile_input_enabled`
+is false by default, a live channel's composer unlocks only when that setting is
+on, and pairing adds no TLS, so direct HTTP exposure should stay on a trusted LAN.
 
-`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
+`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or a direct API backend such as OpenAI, OpenRouter, DeepSeek, Moonshot, or Xiaomi. The TUI will open `/setup` automatically until you pick one.
 
 Official GitHub release builds perform a throttled stable-release check when the TUI starts. The check runs at most once every 24 hours and caches GitHub's ETag and latest release metadata under `~/.little-control-room/updates/`. When an update exists, the top bar shows bright `/update <version>` text. `/update` requires an explicit `Update & restart` confirmation before downloading anything. Installation verifies the GitHub SHA-256 digests and `checksums.txt`, verifies Apple Developer signatures on macOS, stages both `lcroom` and `lcagent`, replaces them with rollback protection, journals active embedded turns, releases the database runtime lease, and restarts the same command. Source builds and non-GitHub distributions skip automatic checks. `LCR_DISABLE_UPDATE_CHECKS=true` disables automatic checks while preserving explicit `/update` checks.
 
@@ -387,7 +390,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
 - `f` open the temporary project-name filter dialog
-- `a` switch between the Active and Archived project-list tabs
+- `a` cycle the project-list tabs: Main, any custom categories, and Archived
 - `o` toggle sort mode between `recent activity` (the default, minute-grouped with alphabetical ties) and `attention`
 - `p` pin toggle
 - `I` inspect a repository-root branch mismatch for any selected member of the repository family
@@ -419,73 +422,120 @@ While the diff screen is visible:
 
 The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
-- `/chat`
-- `/refresh`
-- `/update`
-- `/sort attention`
-- `/sort recent`
-- `/non-ai-folders on`
-- `/non-ai-folders off`
-- `/tab`
-- `/tab active`
-- `/tab archived`
-- `/setup`
-- `/settings`
-- `/filter`
-- `/filter clear`
-- `/new-project [--assistant codex|opencode|claude|lcagent]`
-- `/clone-project [--assistant codex|opencode|claude|lcagent]`
-- `/new-task [--assistant codex|opencode|claude|lcagent] [request]`
-- `/task-actions`
-- `/open`
-- `/run`
-- `/start`
-- `/run pnpm dev`
-- `/restart`
-- `/run-edit`
-- `/runtime`
-- `/ports`
-- `/stop`
-- `/diff`
-- `/codex`
-- `/codex continue from the last breakpoint`
-- `/new-codex sketch a plan for this repo`
-- `/claude`
-- `/claude continue from the last breakpoint`
-- `/new-claude sketch a plan for this repo`
-- `/opencode`
-- `/opencode continue from the last breakpoint`
-- `/new-opencode sketch a plan for this repo`
-- `/lcagent`
-- `/lcagent continue with the next small step`
-- `/new-lcagent inspect and patch the failing check`
-- `/commit`
-- `/commit tighten git status parsing`
-- `/push`
-- `/pull`
-- `/integrity`
-- `/wt restore` (`/wt undelete`)
-- `/wt update`
-- `/wt merge`
-- `/wt remove`
-- `/wt prune`
-- `/pin`
-- `/read`
-- `/read all`
-- `/unread`
-- `/snooze [duration|off]`
-- `/unsnooze`
-- `/clear-snooze`
-- `/sessions toggle`
-- `/events off`
-- `/focus detail`
-- `/focus runtime`
-- `/ignore`
-- `/ignored`
-- `/archive`
-- `/unarchive`
-- `/remove`
-- `/quit`
+### Sessions and projects
+
+- `/chat` (alias `/help`): Open Chat over the dashboard. Backtick is the shortcut; it prompts for setup when the Chat backend is not configured yet.
+- `/codex [prompt]`, `/claude [prompt]`, `/opencode [prompt]`, `/lcagent [prompt]`: Resume the selected project's latest session for that provider, or start one.
+- `/new-codex [prompt]`, `/new-claude [prompt]`, `/new-opencode [prompt]`, `/new-lcagent [prompt]`: Start a fresh embedded session.
+- `/todo` (`t`): Open the selected project's TODO list. Add items, toggle done, and start a fresh embedded session from any item.
+- `/new-project [--assistant codex|opencode|claude|lcagent]`: Create a project folder, or use path suggestions / paste an existing project path to add it directly. The dialog also chooses which assistant `Enter` opens first for the new item, defaulting to the last embedded provider you used when available.
+- `/clone-project [--assistant …]`: Clone an HTTPS, SSH, or local Git repository into a selected parent folder and add it as a project. The repository name becomes the folder name; an existing destination is avoided with `-2`, `-3`, and later suffixes. Also reachable from the tab-focusable **Clone a Git repository…** action in `/new-project`.
+- `/new-task [--assistant …] [request]`: Create a scratch task folder under the default task root. Optional request text seeds the temporary task name.
+- `/task-actions`: Open archive/delete actions for the selected scratch task.
+- `/open`: Open the selected project's folder in the system browser.
+- `/terminal`: Open a system terminal in the selected project's folder.
+- `/refresh`: Rescan projects and retry failed assessments.
+
+### Git
+
+- `/diff`: Open the full-screen git diff.
+- `/commit [message]`: Preview a commit for the selected project. `Alt+Enter` also pushes when available.
+- `/push`, `/pull`: Push or pull the selected project's branch.
+- `/resolve`: Choose an agent, then resolve selected repo merge conflicts in a separate background engineer session. The last confirmed resolver choice is preselected next time and stays independent of ordinary agent launches. Progress stays visible on the project row, followed by a fresh Git-status check after the agent verifies and commits the resolution or reports a blocker. If the resolver needs input, fails, or leaves conflicts behind, `Enter` on that project opens the exact saved resolver conversation; run `/resolve` again to retry in a fresh background session.
+- `/integrity` (`I`): Inspect a repository-root branch mismatch, hand it to a fresh engineer, acknowledge it, update the expected branch, or apply a conservative linked-worktree repair.
+- `/wt restore` (`/wt undelete`): List Codex sessions whose recorded LCR worktree is gone, recreate the original checkout when Git evidence makes that safe, and resume the selected conversation.
+- `/wt update`, `/wt merge`, `/wt remove`, `/wt prune`: Update, integrate, remove, or prune linked worktrees in the selected repository family.
+
+### Runtimes, ports, and processes
+
+- `/run [command]` (alias `/start`): Start the selected project's managed runtime.
+- `/restart`: Restart the selected project's managed runtime.
+- `/run-edit`: Edit the saved runtime command.
+- `/runtime`: Focus the runtime pane.
+- `/stop`: Stop the selected project's managed runtime.
+- `/ports`: Inspect project-local TCP listeners, see which project owns each port, and confirm-stop external ones.
+- `/cpu`: Inspect top CPU processes, including ones orphaned under PID 1.
+
+### Organization and display
+
+- `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
+- `/settings`: Full preferences: Getting Started, Providers & Models, LCAgent, Project Scope, Mobile, Browser, and Advanced.
+- `/mobile`: Open the mobile access panel with the current listener, detected LAN phone URL, pairing code, and a direct jump to Mobile setup.
+- `/filter [text|clear]` (`f`): Temporarily narrow the whole dashboard to matching project names.
+- `/sort <attention|recent>` (`o`): Change project and agent-task ordering. Recent activity is the default; it groups activity by minute and orders ties alphabetically.
+- `/tab [main|archived|toggle|category]` (`a`): Switch between the Main, custom category, and Archived project-list tabs.
+- `/category create|remove|move|clear [name]`: Create categories, or move the selected item between category tabs.
+- `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.
+- `/focus <list|detail|runtime>`: Move focus between panes.
+- `/pin` (`p`): Toggle pin on the selected project.
+- `/read [all]`: Mark the selected project, or all visible projects, as read.
+- `/unread`: Mark the selected project's latest completed assessment as unread.
+- `/snooze [duration|off]`, `/unsnooze` (alias `/clear-snooze`): Snooze the selected project, or clear it.
+- `/sessions <on|off|toggle>`: Show or hide the Sessions section.
+- `/events <on|off|toggle>`: Show or hide Recent events.
+- `/archive`: Move the selected regular project to the Archived tab, or archive the selected scratch task out of the active task list.
+- `/unarchive`: Move the selected archived project back to Main when it is in scope.
+- `/ignore`: Hide the selected project's exact name.
+- `/ignored`: Review ignored names and paths, then restore them.
+- `/remove` (aliases `/delete`, `/forget`): Confirm, then make the selected item go away safely. For regular projects, hides only the selected path.
+- `/privacy on|off|toggle|settings`: Toggle demo privacy mode or open privacy settings.
+
+### Diagnostics and maintenance
+
+- `/ai`: Internal AI stats dialog, including observed output speed in tokens per second and Ollama context metadata when exposed.
+- `/perf`: Internal responsiveness and wait tracker.
+- `/errors`: Recent error log.
+- `/skills`: Review Codex skills and local duplicates that may be stale.
+- `/repair-terminal` (`Ctrl+L`): Reinitialize alternate-screen, cursor, mouse, and bracketed-paste modes after external terminal-state corruption.
+- `/update`: Check for a newer stable GitHub release and, after explicit confirmation, verify, install, and restart into it.
+- `/quit`: Quit the TUI.
+
+### Inside an embedded Codex, Claude Code, or OpenCode pane
+
+Embedded providers expose LCR's local command subset, not every slash command
+from the native provider CLIs. Use the standalone provider CLI when you need a
+provider-native command that LCR has not wired into the pane yet. Project
+commands `/run`, `/start`, `/restart`, `/run-edit`, `/stop`, and `/commit` also
+work here and target the project shown in the pane.
+
+- `/new`: Start a fresh session for the current provider.
+- `/sessions [session-id]` (aliases `/resume`, `/session`): Open this project's session-history picker or jump to a saved session.
+- `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
+- `/pause` (alias `/suspend`): Interrupt the active turn locally without sending another model request. Use this when you need to stop immediately or are about to go offline.
+- `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR. LCAgent uses the same provider → model → reasoning flow as TODO launch; press `r` on the provider step to expand complete recent choices.
+- `/status`, `/context`: Show provider/session status, including context usage when the provider reports it. In the embedded Session sidebar, Claude keeps deduplicated token totals across compaction and shows Claude.ai five-hour/weekly usage when subscription credentials are active.
+- `/compact [instructions]`: Compact conversation history when supported. Embedded Claude Code forwards optional focus instructions to Claude's native compaction flow and reports whether a compaction boundary actually occurred.
+- `/review`: Ask embedded Codex to review uncommitted changes.
+- `/permissions [low|medium]`: LCAgent only. Explain or change the current session's next-turn autonomy.
+- `/chat`: Hide the embedded pane and open Chat over the main dashboard.
+
+### Inside Chat
+
+- `Enter`: Send a message or confirm a proposed action.
+- `Esc` or backtick: Hide Chat and return to the dashboard; in-flight replies keep running. When `/log` is open, `Esc` closes that window first.
+- `/new [prompt]`: Start a fresh Chat session, optionally with the first prompt.
+- `/log`: Open a separate scrollable window of recent AI engineer events.
+- `Ctrl+L`: Start a fresh empty Chat session.
+- `Alt+Enter`: Add a newline without sending.
+
+Chat sessions are saved as grep-friendly Markdown transcripts under the app data
+directory, for example `~/.little-control-room/help-chat-sessions/`. Recall
+searches those transcripts and still includes legacy `boss-sessions/` history.
+Launch, progress, completion, and failure receipts are saved as `Log` entries and
+shown in the separate `/log` window; they stay out of the visible conversation,
+Chat recall, and model context.
+
+Chat can inspect the current dashboard and project/task context, propose
+confirmable actions, delegate work, and report completions. Project-list
+organization stays separate from project work: a request to add an existing folder
+to a named category such as Private gets one confirmation that registers the
+folder if needed and assigns the category, without creating a TODO, worktree,
+engineer session, Git repository, or repository content. For work in an existing
+loaded project, the default confirmation creates a tracked TODO, prepares a
+dedicated worktree, and starts a fresh engineer there; press `q` in that
+confirmation to add the TODO without starting it. Work in a brand-new or existing
+untracked Git repository instead uses a repository-setup confirmation before the
+same tracked TODO, worktree, and engineer launch.
 
 ## Common Flags
 
