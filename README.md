@@ -1,10 +1,11 @@
 # Little Control Room
 
-Little Control Room (LCR) is a terminal control room I built for my own agent-heavy workflow across many repos.
+**One terminal window for every repo you have an agent working in.**
 
-I use it to keep Codex, OpenCode, and Claude Code sessions visible, jump back into work quickly, start fresh sessions from TODOs, review diffs, and ship changes without bouncing between tools. For background AI work, it can also route through local MLX or Ollama servers.
-
-It is also used internally, but this is not a commercial product. It is an opinionated open source tool that grew out of day-to-day use.
+Little Control Room (LCR) keeps your Codex, Claude Code, and OpenCode sessions in
+one dashboard: what is running, what is waiting on you, what is worth picking up
+next — with the TODOs, worktrees, diffs, commits, and dev servers around them in
+the same place.
 
 <p align="center">
   <a href="docs/screenshots/main-panel.png">
@@ -12,84 +13,65 @@ It is also used internally, but this is not a commercial product. It is an opini
   </a>
 </p>
 
-## Why I Built It
+> **LCR does not replace your coding agents.**
+> It drives the `codex`, `claude`, and `opencode` CLIs *you* already have
+> installed and gives them one shared interface, one project list, and one
+> workflow. The agents do the work; LCR is the room you run them from.
 
-- Too many repos and too many live agent sessions are hard to coordinate from separate terminals and tabs.
-- I wanted one terminal-first place to see what is active, what is worth revisiting, and what I can ship next.
-- I wanted TODOs, diffs, commit help, and embedded sessions to stay close to each other instead of being spread across several tools.
+This is an opinionated open source tool that grew out of my own daily use across
+many repos. It is used internally, but it is not a commercial product.
 
-## What It Helps With
+## What it does
 
-- Finding recent Codex, OpenCode, and Claude Code sessions across local projects
-- Seeing which projects are active, idle, or worth revisiting
-- Opening, resuming, or switching embedded Codex, OpenCode, or Claude Code sessions directly from the dashboard
-- Reopening Claude Code sessions that are already running in another terminal
-- Keeping common actions close at hand: refresh, pin, snooze, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
-- Optionally letting LCR-embedded Codex, OpenCode, Claude Code, and LCAgent sessions add duplicate-checked, repository-scoped TODOs when work is explicitly deferred
-- Letting embedded Codex, OpenCode, and Claude Code progressively discover typed LCR actions—including project creation—then queue them for explicit TUI confirmation without loading every action schema into the model context. See [Progressive Agent Control Surface](docs/agent_control_surface.md).
+- **Sees every repo at once.** Finds recent Codex, OpenCode, and Claude Code
+  sessions across your local projects and shows which ones are active, idle, or
+  worth revisiting.
+- **Resumes anything in one keypress.** Open, resume, or switch embedded sessions
+  from the list — including Claude Code sessions already running in another
+  terminal.
+- **Turns TODOs into agent work.** Each project has a TODO list; press `Enter` on
+  an item to spin up a dedicated worktree and start an agent on it.
+- **Keeps ports and stray processes under control.** Managed run commands, reuse
+  instead of duplicate servers, port-conflict detection, and orphaned-process
+  hunting.
+- **Ships without leaving.** Diff, commit, push, pull, and background merge
+  conflict resolution.
+- **Lets agents talk back to LCR.** An embedded MCP server lets Codex, Claude
+  Code, and OpenCode file TODOs and propose actions that you confirm in the TUI.
 
-## OpenAI Build Week 2026
-
-Little Control Room predates Build Week. Its multi-project dashboard, embedded
-agent sessions, TODO/worktree workflow, and private project categories were
-already part of my daily development environment. The Build Week submission is
-the substantial extension made between July 13 and July 21, 2026: a
-privacy-aware way to record that real workflow and turn a long working session
-into a concise, reviewable demo.
-
-The new work includes:
-
-- Rendered-frame terminal recording with seekable, delta-compressed chunks and
-  a non-destructive clip editor.
-- Capture-time privacy masking. When a private category or an embedded session
-  for a private project is visible, the recorder stores a fixed private-view
-  frame instead of the rendered content.
-- Smart timing that accelerates low-information screen churn, evens out pauses
-  during visible input, and briefly holds completed input before a large screen
-  transition.
-- A source-based `make tui-record` workflow and an isolated OpenAI Build Week
-  profile using GPT-5.6 for primary reasoning and GPT-5.6 Luna for background
-  inference.
-
-GPT-5.6 Sol in Codex helped implement and validate the recording, privacy, and
-smart-timing workflow. The final demo shows a real Codex session working on
-that implementation. Inside LCR, GPT-5.6 Luna handles lower-cost recurring work
-such as project reports, automatic summaries, classification, titles, commit
-assistance, and TODO/worktree suggestions. It was also used for the final
-automated privacy review of the demo; that review supplements, rather than
-replaces, a human full-resolution check.
-
-Evidence from the Submission Period:
-
-| Date | Build Week extension | Commit |
-| --- | --- | --- |
-| July 19 | Rendered-frame recording and editing system | [`c36095d`](https://github.com/dpasca/LittleControlRoom/commit/c36095d) |
-| July 20 | Source-based daily recording target | [`c531e7e`](https://github.com/dpasca/LittleControlRoom/commit/c531e7e) |
-| July 20 | Capture-time masking for private views | [`8f0ef68`](https://github.com/dpasca/LittleControlRoom/commit/8f0ef68) |
-| July 20 | Smart timing for demo playback | [`71396d9`](https://github.com/dpasca/LittleControlRoom/commit/71396d9) |
-| July 20 | Full-frame clearing for reliable terminal playback | [`25483f3`](https://github.com/dpasca/LittleControlRoom/commit/25483f3) |
-
-For judging, LCR supports macOS and Linux; Windows is not currently supported.
-The installer and release archives below provide the quickest no-rebuild path.
-To exercise the Build Week recording extension directly from this branch, use
-`make tui-record`. See [the Build Week demo notes](docs/build_week_demo.md) for
-the isolated profile, privacy boundary, storage paths, and editor behavior.
-
-## Quick Start
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | bash
 lcroom tui
 ```
 
-On first run, LCR opens `/setup` so you can pick a backend: Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key.
+The installer puts `lcroom` and `lcagent` in `~/.local/bin` and prints a PATH hint
+when needed. macOS and Linux are supported; Windows is not.
 
-The installer puts `lcroom` and `lcagent` in `~/.local/bin` and prints a PATH hint when needed.
+On first run, LCR opens `/setup` so you can pick a backend for its background
+work. Read the next section before you choose.
+
+### Give it a manager model
+
+LCR is constantly doing small background jobs: project summaries, session
+assessments, list titles, commit subjects, TODO and worktree suggestions. This is
+the **`Project reports`** card in `/setup`, and it is separate from the agents that
+write your code.
+
+You can point it at Codex, Claude Code, or OpenCode and it will work with zero
+extra setup or billing. But every one of those small jobs then goes through a full
+agent CLI, and the dashboard updates at that pace.
+
+**For the best experience, give it a cheap, fast API model instead.** Something
+like DeepSeek `deepseek-v4-flash` or OpenAI `gpt-5.6-luna` costs very little and
+makes the whole dashboard feel immediate. Available direct backends: OpenAI,
+OpenRouter, DeepSeek, Moonshot, Xiaomi — or MLX/Ollama if you want it fully local.
 
 <details>
 <summary>Manual download</summary>
 
-You can also download an archive directly from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases):
+Download an archive from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases):
 
 | Platform | Release asset |
 | --- | --- |
@@ -105,15 +87,12 @@ tar -xzf lcroom.tar.gz
 ./lcroom tui
 ```
 
-Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
+Archives include `lcroom` and the sibling `lcagent` helper binary used by the
+experimental embedded LCAgent provider. Move both to a directory on your `PATH`.
 
-Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, or other package managers yet.
+LCR is not published through Homebrew, apt, Snap, Flatpak, or Nix yet.
 
 </details>
-
-Official GitHub release builds check for a newer stable release when the TUI starts, at most once every 24 hours. A new version appears as bright `/update <version>` text in the top bar; run `/update` to review it. The updater does not download or install anything until you explicitly highlight `Update & restart` and confirm. It then verifies GitHub's SHA-256 asset digests and the published checksum file, also verifies the Apple Developer signatures on macOS, replaces `lcroom` and `lcagent` together with rollback protection, saves active engineer turns, and restarts the TUI using the new binary.
-
-Source/development builds do not contact GitHub for updates. Build metadata also keeps the updater out of package-manager-owned installations when those distributions arrive. Set `LCR_DISABLE_UPDATE_CHECKS=true` to disable the once-daily automatic check in an official GitHub build; `/update` remains available for an explicit manual check.
 
 <details>
 <summary>Build from source</summary>
@@ -121,63 +100,153 @@ Source/development builds do not contact GitHub for updates. Build metadata also
 Requires Go 1.25+.
 
 ```bash
-make build
+make build          # local binary
+make build-all      # lcroom + lcagent
+make build-check    # the same module check, vet, tests, and build CI runs
+make install        # install the CLI to your Go bin
 ./lcroom tui
-```
-
-To build both local binaries:
-
-```bash
-make build-all
-./lcroom tui
-```
-
-To run the same non-mutating module check, vet, tests, and local binary
-build used by CI:
-
-```bash
-make build-check
-```
-
-Or install the CLI to your Go bin:
-
-```bash
-make install
-lcroom tui
 ```
 
 </details>
 
-## Background AI Backends
+<details>
+<summary>Updating</summary>
 
-LCR separates embedded session providers from the backend used for background work such as summaries, classification, commit help, and TODO worktree suggestions.
+Official GitHub release builds check for a newer stable release at TUI start, at
+most once a day, and surface it as bright `/update <version>` text in the top bar.
+Nothing is downloaded until you highlight `Update & restart` and confirm; the
+updater then verifies SHA-256 digests and checksums, verifies Apple Developer
+signatures on macOS, replaces both binaries with rollback protection, saves active
+engineer turns, and restarts into the new version.
 
-- Embedded sessions today are Codex, OpenCode, and Claude Code.
-- Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
-- With direct OpenAI selected, Chat and the OpenAI LCAgent route default to GPT-5.6, while recurring summaries, classification, routing, titles, commit help, and TODO/worktree suggestions default to GPT-5.6 Luna. The setup status names the active project-report model so this split is inspectable.
-- Chat has its own `boss_chat_backend` compatibility setting, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/chat` offers to jump straight to the Chat setup card.
-- Claude Code usage follows the local `claude` CLI authentication mode. Current Anthropic docs say Pro/Max plan terminal usage counts against plan limits when Claude Code is authenticated with Claude credentials, while `ANTHROPIC_API_KEY` or explicit usage-credit continuation can bill separately at API rates.
-- MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native generate endpoint so thinking models can return usable JSON/text with thinking disabled.
-- Ollama thinking stays off by default for background automation and structured helper calls. When Chat uses Ollama, native `think: true` is on by default for answer text only; its setup panel includes a Chat Ollama thinking toggle if you want final-content-only responses.
+Source builds never contact GitHub. Set `LCR_DISABLE_UPDATE_CHECKS=true` to
+disable the daily check while keeping manual `/update`. See
+[Release Engineering](docs/release_engineering.md) for the full contract.
 
-For local inference, the practical setup is:
+</details>
 
-- Pick `MLX` or `Ollama` in `/setup`.
-- Leave the endpoint fields blank in `/settings` if you want the defaults.
-- Or edit the MLX/Ollama endpoint fields in `/settings` if your local server runs elsewhere.
+## The workflow
 
-Default local endpoints:
+The loop LCR is built around:
 
-- MLX: `http://127.0.0.1:8080/v1`
-- Ollama: `http://127.0.0.1:11434/v1`
+**1. Capture a TODO.** Press `t` on any project. TODOs are repository-scoped, so
+they follow the repo rather than the checkout you happen to be in.
 
-To smoke-test a local model against common LCR usage without touching any repo state, run:
+**2. Launch it into its own worktree.** Press `Enter` on a TODO item. The launcher
+defaults to a **dedicated worktree**: LCR creates the linked checkout, prepares it
+(inheriting the source project's run command and initializing submodules), and
+starts a fresh agent session there with the TODO as the prompt — so parallel tasks
+never fight over one working tree. Switch to `Here` if you want it in place. Pick
+the engineer — Codex, Claude Code, OpenCode, or the experimental LCAgent — and
+press `m` to change the model. Repos only need
+[`.lcroom/worktrees.toml`](docs/worktree_prep.md) if they want to customize or opt
+out of preparation.
+
+**3. Let it run; check back later.** `Esc` hides an embedded session while it keeps
+working. The project row shows progress. `Enter` reopens it.
+
+**4. Review and ship.** `/diff` for a full-screen diff with staging — including
+[before/after previews for changed images](docs/screenshots/diff-view-image.png) —
+`/commit` for a preview with AI-assisted commit subjects, then `/push`. `/pull`
+fast-forwards with live transfer progress on the project row and can be cancelled
+mid-flight with `/pull cancel`. `/resolve` hands merge conflicts to a background
+agent session.
+
+**5. Fold the work back.** `/wt update` merges the parent branch into a long-running
+worktree without touching the canonical checkout. `/wt merge`, `/wt remove`, and
+`/wt prune` handle the rest. `/wt restore` can rebuild an accidentally deleted
+worktree from Git evidence and resume the exact Codex conversation that was in it.
+
+| TODO list | Embedded session | Diff | Commit preview |
+| --- | --- | --- | --- |
+| [![TODO dialog](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png) | [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png) | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) |
+
+### Agents that can reach back into LCR
+
+Embedded sessions get an `lcr_runtime` MCP server. Through it, Codex, Claude Code,
+and OpenCode can file duplicate-checked, repository-scoped TODOs when work is
+explicitly deferred, inspect and start managed processes, and progressively
+discover typed LCR actions — including project creation — then queue them for
+explicit confirmation in the TUI. Schemas load on demand, so the full action
+catalog never has to sit in the model's context.
+
+See [Progressive Agent Control Surface](docs/agent_control_surface.md).
+
+## Ports and stray processes
+
+A normal problem when several repos are alive at once: two dev servers fighting
+over `:3000`, or a build tool that got orphaned three hours ago and is still
+burning a core.
+
+- **Managed run commands.** `/run` starts a project's saved command; the row gets
+  runtime and port badges. Starting a runtime that is already up **reuses** it
+  instead of launching a duplicate. `/restart`, `/stop`, and `/run-edit` do the
+  obvious things, and `/runtime` focuses the output pane.
+- **`/ports`** scans project-local TCP listeners, shows which project owns each
+  one, flags conflicts against another project's expected port, and lets you
+  confirm-stop external listeners LCR did not start.
+- **`/cpu`** lists the top CPU processes and calls out ones that have been
+  reparented to PID 1 while still consuming CPU or holding ports.
+
+The run-command editor completes package scripts, Make/Just targets, Go
+entrypoints, and project-local paths one directory at a time. Captured output can
+be copied with `c`, and **Add TODO** turns a failure into an editable TODO.
+
+[![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
+
+## Everyday keys
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` | Move through projects |
+| `Enter` | Open or resume the selected project's latest session |
+| `Esc` | Hide the embedded pane; the session keeps working |
+| `t` | TODO list for the selected project |
+| `f` | Filter the project list |
+| `a` | Cycle Main / category / Archived tabs |
+| `p` | Pin |
+| `/` | Command palette |
+| `` ` `` | Help Chat |
+
+Help Chat (`` ` `` or `/chat`) is an assistant over the dashboard. It can answer
+questions about your projects, propose confirmable actions, and delegate work to
+an engineer session. It needs its own backend, configured in the `Chat` card in
+`/setup`. Treat it as **experimental**: it works, but it has not been exercised
+much yet and its behavior may still change.
+
+The full command list, keys, flags, and config reference live in
+[`docs/reference.md`](docs/reference.md).
+
+## Backends and models
+
+LCR keeps two things separate:
+
+**Embedded session providers** — the agents that write code. Codex, OpenCode, and
+Claude Code, driven through their own CLIs and your own authentication. Plus the
+experimental LCAgent, an LCR-native one-shot worker with provider-backed tool
+calls.
+
+**Background inference** — the manager model described above, plus Chat, which has
+its own `boss_chat_backend` setting so interactive chat can use a different route
+than recurring summaries.
+
+Local inference works through MLX (`http://127.0.0.1:8080/v1`) and Ollama
+(`http://127.0.0.1:11434/v1`). Pick one in `/setup`, leave the endpoint fields in
+`/settings` blank for the defaults, or override them if your server runs
+elsewhere. Ollama thinking stays off for background automation and structured
+calls so models return usable JSON; Chat has its own thinking toggle.
+
+To check whether a local model is good enough before trusting it, without touching
+any repo state:
 
 ```bash
 lcroom model-eval --backend ollama --model gemma4:12b-mlx
 ```
 
-The check covers plain summary text, LCR session-assessment JSON, advice-follow-up classification, and commit-subject JSON. Passing and failing cases are both useful: local models may be good enough for commit help or free-form summaries while still failing stricter dashboard assessment schemas. The `/ai` dialog also reports observed output speed in tokens per second after successful calls, plus Ollama model context metadata when the server exposes it.
+It covers summary text, session-assessment JSON, advice classification, and
+commit-subject JSON. Partial passes are informative: a model can be fine for
+commit help and free-form summaries while still failing the stricter dashboard
+schemas.
 
 <p align="center">
   <a href="docs/screenshots/settings-local-backends.png">
@@ -185,237 +254,90 @@ The check covers plain summary text, LCR session-assessment JSON, advice-follow-
   </a>
 </p>
 
-## Slash Commands
+### Costs
 
-The main TUI command palette opens with `/`.
+MLX and Ollama are local, so they cost nothing. Codex, OpenCode, and Claude Code
+follow whatever plan or billing mode their own CLIs are using. With a cheap
+manager model and a few active projects, a full day is often around `$1` to `$2` —
+treat that as a rough guide, not a ledger.
 
-Main workflow:
+**Claude Code is the subtle one.** Anthropic currently says Claude Pro/Max include
+Claude Code terminal usage when authenticated with Claude credentials, but
+`ANTHROPIC_API_KEY` switches Claude Code to API billing, and usage-credit
+continuation after plan limits bills separately at API rates. Before starting an
+embedded Claude session, LCR pauses and warns if it inherited a non-empty
+`ANTHROPIC_API_KEY`; continuing acknowledges it for the rest of that run.
+Claude-backed background inference defaults to Haiku to keep usage lighter. See
+Anthropic's [plan billing](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan)
+and [cost](https://code.claude.com/docs/en/costs) docs.
 
-- `/chat`: Open Chat over the dashboard.
-- `/filter [text|clear]` (`f`): Temporarily narrow the whole dashboard to matching project names.
-- `/todo` (`t`): Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
-- `/open`: Open the selected project's folder in the system browser.
-- `/new-project [--assistant codex|opencode|claude|lcagent]`: Create a project folder, or use path suggestions/paste an existing project path to add it directly. The dialog also lets you choose which assistant `Enter` should open first for the new item, defaulting to the last embedded provider you used when available.
-- `/clone-project [--assistant codex|opencode|claude|lcagent]`: Clone an HTTPS, SSH, or local Git repository into a selected parent folder and add it as a project. The repository name becomes the folder name; an existing destination is avoided with `-2`, `-3`, and later suffixes. The same workflow is available from the tab-focusable **Clone a Git repository…** action in `/new-project`.
-- `/new-task [--assistant codex|opencode|claude|lcagent] [request]`: Create a scratch task folder under the default task root. Optional request text seeds the temporary task name, and the assistant flag preselects the first embedded provider for `Enter`; without a flag, the task picker defaults to the last embedded provider you used when available.
-- `/codex [prompt]`, `/opencode [prompt]`, `/claude [prompt]`, `/lcagent [prompt]`: Resume the latest session for that provider, or start one.
-- `/new-codex [prompt]`, `/new-opencode [prompt]`, `/new-claude [prompt]`, `/new-lcagent [prompt]`: Start a fresh embedded session.
-- `/refresh`: Rescan projects and retry failed assessments.
-- `/repair-terminal`: Reinitialize alternate-screen, cursor, mouse, and bracketed-paste modes after external terminal-state corruption. `Ctrl+L` is the immediate shortcut.
-- `/update`: Check for a newer stable GitHub release and, after explicit confirmation, verify, install, and restart into it.
+## Safety rails
 
-Repo and runtime actions:
+Agents with broad filesystem access make mistakes. LCR adds narrow seatbelts
+rather than pretending to be a sandbox:
 
-- `/diff`: Open the full-screen git diff.
-- `/commit [message]`: Preview a commit for the selected project.
-- `/push`: Push the selected project's branch.
-- `/pull`: Fetch and safely fast-forward the selected project's branch. The project row shows elapsed time and Git/Git LFS transfer progress; active transfers have no wall-clock deadline and stop only after 60 seconds without observable progress.
-- `/pull cancel`: Explicitly cancel the selected project's active pull. If its fetch already completed, LCR keeps the fetched remote-tracking state and reports whether the local fast-forward is still pending.
-- `/resolve`: Choose an agent, then resolve selected repo merge conflicts in a separate background engineer session. The last confirmed resolver choice is preselected next time and remains independent of ordinary agent launches. Progress stays visible on the project row, followed by a fresh Git-status check after the agent verifies and commits the resolution or reports a blocker. If the resolver needs input, fails, or leaves conflicts behind, Enter on that project opens the exact saved resolver conversation for inspection; run `/resolve` again to retry in a fresh background session.
-- `/integrity` (`I`): Inspect a repository-root branch mismatch, hand it to a fresh engineer, acknowledge it, update the expected branch, or apply a conservative linked-worktree repair.
-- `/wt restore` (`/wt undelete`): List Codex sessions whose recorded LCR worktree is gone, recreate the original checkout when Git evidence makes that safe, and resume the selected conversation.
-- `/wt update`, `/wt merge`, `/wt remove`, `/wt prune`: Update, integrate, remove, or prune linked worktrees in the selected repository family.
-- `/run [command]`: Start the selected project's managed runtime.
-- `/start [command]`: Alias for `/run`.
-- `/restart`: Restart the selected project's managed runtime.
-- `/run-edit`: Edit the saved runtime command.
-- `/runtime`: Focus the runtime pane.
-- `/ports`: Inspect project-local TCP listeners and confirm-stop external ones.
-- `/stop`: Stop the selected project's managed runtime.
+- **Guarded `rm`.** Embedded Codex keeps its launch preset's access, including
+  YOLO, but its guarded `rm` only allows plain `rm -rf /tmp/<name>` when every
+  target resolves below `/tmp`. Embedded Claude Code uses an LCR-owned
+  `PreToolUse` hook to structurally deny direct `rm` even in `bypassPermissions`
+  mode. LCAgent denies it at every permission level. This stops the common
+  accidental command, not a determined one — keep your backups.
+  ([threat model](docs/destructive_command_safety.md))
+- **Repository root integrity.** LCR remembers the trusted root branch before
+  creating linked worktrees and warns if the canonical checkout later moves. `I`
+  or `/integrity` shows the evidence; automatic repair is only offered when it is
+  provably safe. ([details](docs/repository_root_integrity.md))
+- **Explicit confirmation.** Every action an agent proposes through the control
+  surface waits for you in the TUI.
+- **Conservative cleanup.** Orphaned worktree folders are only deleted when they
+  contain nothing but a single `.DS_Store`.
 
-Organization, display, and cleanup:
+## More
 
-- `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
-- `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Mobile, Browser, and Advanced.
-- `/mobile`: Open the mobile access panel with the current listener, detected LAN phone URL, pairing code, and a direct jump to Mobile setup.
-- `/sort <attention|recent>` (`o`): Change the project and agent-task ordering. Recent activity is the default; it groups activity by minute and orders ties alphabetically.
-- `/tab [active|archived|toggle]` (`a`): Switch the project list between Active and Archived tabs.
-- `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.
-- `/focus <list|detail|runtime>`: Move focus between panes.
-- `/pin` (`p`): Toggle pin on the selected project.
-- `/read [all]`: Mark the selected project, or all visible projects, as read.
-- `/unread`: Mark the selected project's latest completed assessment as unread.
-- `/snooze [duration|off]`: Snooze the selected project, or clear snooze with `off`.
-- `/unsnooze` (alias: `/clear-snooze`): Clear the selected project's snooze.
-- `/sessions <on|off|toggle>`: Show or hide the Sessions section.
-- `/events <on|off|toggle>`: Show or hide Recent events.
-- `/task-actions`: Open archive/delete actions for the selected scratch task.
-- `/archive`: Move the selected regular project to the Archived tab, or archive the selected scratch task out of the active task list.
-- `/unarchive`: Move the selected archived project back to Active when it is in scope.
-- `/ignore`: Hide the selected project's exact name.
-- `/ignored`: Review ignored names and paths, then restore them.
-- `/remove`: Confirm, then make the selected item go away safely. For regular projects, hides only the selected path. Aliases: `/delete`, `/forget`.
-- `/quit`: Quit the TUI.
+- **[Mobile Preview](docs/mobile.md)** — monitor running agents from your phone
+  over your LAN. Read-only by default, pairing required, still a preview.
+- **[Demo recording](docs/reference.md#demo-recordings)** — `lcroom demo record`
+  captures hours of TUI activity as compressed text frames instead of pixel video,
+  with a non-destructive clip editor and asciicast export. Private categories and
+  embedded sessions for private projects are masked at capture time.
+- **[Reference](docs/reference.md)** — every command, key, flag, and config option.
+- **[Release Engineering](docs/release_engineering.md)** — signing, CI, and tagging.
 
-Inside the embedded Codex, Claude Code, or OpenCode pane:
+Local state lives under `~/.little-control-room/`.
 
-Embedded providers expose LCR's local command subset, not every slash command from the native Codex, Claude Code, or OpenCode CLIs. Use the standalone provider CLI when you need a provider-native command that LCR has not wired into the pane yet.
+## OpenAI Build Week 2026
 
-- `/new`: Start a fresh session for the current provider.
-- `/sessions [session-id]`: Open this project's session-history picker or jump to a saved session.
-- `/resume [session-id]` and `/session [session-id]`: Aliases for `/sessions`.
-- `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
-- `/pause` (alias: `/suspend`): Interrupt the active turn locally without sending another model request. Use this when you need to stop immediately or are about to go offline.
-- `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR. LCAgent uses the same provider → model → reasoning flow as TODO launch; press `r` on the provider step to expand complete recent provider/model/reasoning choices.
-- `/status`: Show the current provider/session status, including context usage when the provider reports it. In the embedded Session sidebar, Claude keeps deduplicated token totals across compaction and shows Claude.ai five-hour/weekly usage when subscription credentials are active.
-- `/context`: Show the same status report with an explicit context-oriented command.
-- `/compact [instructions]`: Compact conversation history when supported. Embedded Claude Code forwards optional focus instructions to Claude's native compaction flow and reports whether a compaction boundary actually occurred.
-- `/review`: Ask embedded Codex to review uncommitted changes.
-- `/chat`: Hide the embedded pane and open Chat over the main dashboard.
+LCR predates Build Week: its multi-project dashboard, embedded agent sessions,
+TODO/worktree workflow, and private project categories were already part of my
+daily development environment. The Build Week submission is the extension built
+between July 13 and July 21, 2026 — a privacy-aware way to record that real
+workflow and turn a long working session into a concise, reviewable demo.
 
-Inside Chat:
+That work added rendered-frame terminal recording with seekable delta-compressed
+chunks and a non-destructive clip editor; capture-time privacy masking that stores
+a fixed private-view frame whenever a private category or an embedded session for
+a private project is on screen; smart timing that accelerates low-information
+screen churn and evens out pauses during visible input; and a source-based
+`make tui-record` workflow with an isolated profile using GPT-5.6 for primary
+reasoning and GPT-5.6 Luna for background inference.
 
-- `Enter`: Send a message or confirm a proposed action.
-- `Esc` or backtick: Hide Chat and return to the dashboard; in-flight replies keep running. When `/log` is open, `Esc` closes that window first.
-- `/new [prompt]`: Start a fresh Chat session, optionally with the first prompt.
-- `/log`: Open a separate scrollable window of recent AI engineer events.
-- `Ctrl+L`: Start a fresh empty Chat session.
-- `Alt+Enter`: Add a newline without sending.
+| Date | Build Week extension | Commit |
+| --- | --- | --- |
+| July 19 | Rendered-frame recording and editing system | [`c36095d`](https://github.com/dpasca/LittleControlRoom/commit/c36095d) |
+| July 20 | Source-based daily recording target | [`c531e7e`](https://github.com/dpasca/LittleControlRoom/commit/c531e7e) |
+| July 20 | Capture-time masking for private views | [`8f0ef68`](https://github.com/dpasca/LittleControlRoom/commit/8f0ef68) |
+| July 20 | Smart timing for demo playback | [`71396d9`](https://github.com/dpasca/LittleControlRoom/commit/71396d9) |
+| July 20 | Full-frame clearing for reliable terminal playback | [`25483f3`](https://github.com/dpasca/LittleControlRoom/commit/25483f3) |
 
-Chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/help-chat-sessions/`. Recall searches those transcripts and continues to include legacy `boss-sessions/` history. AI engineer launch, progress, completion, and failure receipts are saved as `Log` entries and shown in the separate `/log` window; they stay out of the visible Chat conversation, Chat recall, and model context. Chat can inspect the current dashboard and project/task context, propose confirmable actions, delegate work, and report completions without assigning human names to AI work sessions. Project-list organization stays separate from project work: a request to add an existing folder to a named category such as Private gets one confirmation that registers the folder if needed and assigns the category, without creating a TODO, worktree, engineer session, Git repository, or repository content. For work in an existing loaded project, the default confirmation creates a tracked TODO, prepares a dedicated worktree, and starts a fresh engineer there; press `q` in that confirmation to add the TODO without starting it. Work in a brand-new or existing untracked Git repository instead uses a repository-setup confirmation before the same tracked TODO, worktree, and engineer launch.
+GPT-5.6 Sol in Codex helped implement and validate the recording, privacy, and
+smart-timing workflow, and the final demo shows a real Codex session working on
+that implementation. GPT-5.6 Luna also ran the final automated privacy review of
+the demo; that review supplements, rather than replaces, a human full-resolution
+check.
 
-## Core Workflows
-
-1. Start the dashboard with `lcroom tui` or `./lcroom tui`.
-2. Move through projects with the arrow keys.
-3. Press `Enter` to open or resume the selected project's latest embedded provider. Fresh projects and scratch tasks use the assistant chosen in their create dialog, which defaults to the last embedded provider you used when available.
-4. Press `Esc` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
-5. Press `/` for commands, backtick or `/chat` for Chat, `f` to filter the project list instantly, or `a` to switch Active/Archived project tabs.
-
-Most day-to-day use falls into a few buckets:
-
-- **Run and monitor** — Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. The command editor visibly lists project-derived completions, including package scripts, Make/Just targets, and Go entrypoints. It also completes project-local paths one directory at a time: start typing a relative directory name (`./` is optional), use Up/Down to choose a match, and press `Tab` or `Enter` to enter a highlighted directory. `Tab` inserts a highlighted command or file, while `Enter` saves and optionally runs it. Paths used as command arguments can complete regular files too. Press `Tab` or `/runtime` from the dashboard when you want to work directly in the runtime pane. Captured output can be copied with `c` or **Copy output**; **Add TODO** opens an editable failure report for the repository-scoped project.
-
-  [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
-
-- **Resume agent work** — Use `/codex`, `/claude`, `/opencode`, or experimental `/lcagent` to pick up where you left off, and `/new-codex`, `/new-claude`, `/new-opencode`, or `/new-lcagent` when you want a fresh session. Inside the embedded pane, `/sessions`, `/resume`, `/session`, and `/reconnect` handle project-local session history or reattaching the helper. Project commands `/run`, `/start`, `/restart`, `/run-edit`, `/stop`, and `/commit [message]` remain available there and target the project shown in the embedded pane; run and commit dialogs open over the session. `/runtime` hides the session and focuses that project's runtime pane. LCAgent also supports `/permissions` to explain Off/Low/Medium and `/permissions medium` or `/permissions low` to change the current session's next-turn autonomy. Embedded providers do not mirror every native provider slash command; the pane exposes the LCR commands above plus each provider's wired capabilities. LCAgent is a one-shot LCR-native worker with provider-backed tool calls and structured local JSONL artifacts.
-
-  [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
-
-- **Tune LCAgent permissions** — In `/settings`, Low lets LCAgent edit workspace files and run read-only or recognized verification commands, then asks before broader commands. Medium lets it run workspace-contained commands without repeated approvals. When a Low run asks for command approval, press `a` to approve once or `A` to switch that LCAgent run to Medium.
-
-- **Keep broad access with a narrow deletion seatbelt** — LCR-managed embedded Codex sessions keep the selected launch preset's cross-directory access, including YOLO. Their guarded `rm` allows plain `rm -rf /tmp/<name>` only when every target's parent resolves below `/tmp`; other `rm` uses, absolute executables, and common wrapper forms remain blocked. Embedded Claude Code uses an LCR-owned `PreToolUse` hook to structurally inspect Bash commands and deny direct `rm` even in `bypassPermissions` mode. LCAgent denies direct `rm` through both bounded commands and managed-process launches at every permission level. This is protection against the common accidental command, not a complete deletion sandbox; targeted editing tools and other filesystem APIs still work, so backups remain important. See the [destructive-command safety design](docs/destructive_command_safety.md) for the threat model and known limits.
-
-- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the engineer (Codex, Claude Code, OpenCode, or experimental LCAgent). Press `m` to change the model. LCAgent chooses before launch through the same provider → model → reasoning flow as `/model`, with complete recent configurations available behind `r`; provider-native engineers load their model picker when the fresh session is ready so it can use that provider's live model list. New linked worktrees inherit the source project's saved run command and prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
-
-  [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
-
-- **Recover an accidentally deleted Codex worktree** — Select any row in the repository family and run `/wt restore` (or `/wt undelete`). LCR reads its retained worktree history together with Codex's global thread index, shows conversations whose recorded checkout no longer exists, and explains candidates it cannot safely rebuild. Restoring recreates the exact former path from the existing branch—or from the session's recorded Git commit when the branch itself was deleted—runs normal worktree preparation, restores the TODO link when available, and immediately resumes that Codex session. It will not overwrite an existing path, steal a branch checked out elsewhere, or bypass a locked or mismatched Git worktree registration. This reconstructs committed Git state; uncommitted files that existed only in the deleted checkout are not recoverable.
-
-- **Keep longer worktree tasks current** — Select a clean linked worktree and run `/wt update` to merge its recorded parent branch into the linked checkout without modifying the canonical checkout. The command does not fetch or pull remotes; `/wt merge`, `/wt remove`, and `/wt prune` retain their existing roles. Merge-back preserves an open embedded engineer session and defaults to keeping both its worktree and linked TODO, so you can continue the same session and merge again later; removing that checkout remains blocked until the session is closed. LCR also remembers the branch used to create a linked worktree and shows a project-summary warning if that checkout is later switched to another branch; it does not rename or repair the checkout automatically.
-
-- **Clean harmless worktree residues safely** — If Finder leaves a former worktree folder containing only one regular `.DS_Store` file, LCR keeps it grouped under the repository as an orphaned-checkout warning instead of showing it as a separate project. Select the repository root and use `x` or `/wt remove` to inspect all orphaned folders. If Finder creates that file while Git is removing a registered worktree, LCR verifies that Git registration is gone and finishes the same guarded cleanup automatically. LCR deletes only verified `.DS_Store`-only residues with one file deletion followed by one empty-directory deletion; folders containing any other entry are left untouched.
-
-- **Protect the canonical checkout without hard enforcement** — LCR remembers the trusted root branch before it creates linked worktrees and warns when the canonical checkout is later found on another branch. Press `I` or use `/integrity` for the evidence and response choices. The default action only acknowledges the exact state; a fresh engineer can investigate before requesting confirmation, and automatic repair is offered only when LCR can move the unexpected branch into a linked worktree without dirty state, conflicts, locks, active family sessions, or branch ambiguity. Embedded Codex turns also receive a warn-only workspace contract, and structured commands that cross from an assigned worktree into the canonical root are surfaced in the transcript. See [Repository Root Integrity](docs/repository_root_integrity.md) for behavior and limits.
-
-- **Review and organize** — Use `/diff` to inspect git changes, `/commit`, `/push`, and `/pull` when you are ready to sync or ship, and `/open` to jump to the project folder.
-
-  | Diff View | Commit Preview | Image Diff |
-  | --- | --- | --- |
-  | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
-
-- **Keep the list clean** — Use `a` or `/tab` to switch between Active and Archived project tabs, `/archive` and `/unarchive` to move regular projects between them, `f` or `/filter <text>` to narrow the project list, and `/pin` or `/snooze` to control attention. Archiving or unarchiving a repository root moves its linked worktrees with it. On scratch tasks, `/archive` moves the task into the scratch archive folder and out of the active task list. Use `/remove` when an item should go away by its safest matching action, `/ignore` for an exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, Chat, LCAgent, and mobile access through focused setup panels. Shared provider connection fields are reused inside those panels, so the same OpenAI/MLX/Ollama settings and LCAgent provider keys are edited from whichever feature needs them. Providers & Models stays compact: connection status plus global launch/display defaults. Project Scope controls include/exclude paths; category privacy is managed from `/category`. Mobile controls TUI auto-start, monitor-only or live-session message access, local or LAN reachability, port, and an optional advanced custom address. Browser sets the Playwright window policy. Advanced holds refresh thresholds and low-level tuning knobs. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
-
-For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
-
-## Record and edit demos
-
-LCR can capture hours of TUI activity as compressed text frames instead of
-pixel video, then let you mark non-destructive clips in a Bubble Tea editor:
-
-```sh
-lcroom demo record walkthrough.lcrdemo
-lcroom demo edit walkthrough.lcrdemo
-lcroom demo play walkthrough.lcrdemo --clip 1
-lcroom demo export walkthrough.lcrdemo --clip 1 --output walkthrough.cast
-```
-
-The `.lcrdemo` source uses independently seekable gzip chunks and line deltas;
-identical views are omitted, so unchanged idle time does not generate frames.
-Exports use the standard asciicast v3 format for `asciinema play` or `agg`.
-Optional smart timing smooths visible text-entry cadence, accelerates quiet
-screen churn, and pauses briefly before a large post-input transition without
-modifying the source recording.
-Raw key values and input events are not captured; visible text remains part of
-the recorded screen frames, and only coarse interaction timestamps are stored
-separately for navigation. Private category tabs and visible embedded sessions for private
-projects are replaced with a fixed mask before capture, but other visible
-terminal content can still be sensitive. See
-[Demo recordings](docs/reference.md#demo-recordings) for editor keys, storage
-behavior, and the direct `--demo-record` TUI flag.
-
-## Costs
-
-If Codex, OpenCode, Claude Code, MLX, or Ollama is available, LCR can use that local provider path for summaries, classification, commit help, and other background inference. MLX and Ollama run locally, so they do not create external API charges. Codex, OpenCode, and Claude Code follow whatever plan, key, or provider billing mode their own CLIs are using.
-
-Claude Code is the subtle one. LCR invokes the local `claude` CLI for both embedded Claude sessions and Claude-backed background inference. Anthropic currently says Claude Pro/Max include Claude Code terminal usage when authenticated with Claude credentials, but `ANTHROPIC_API_KEY` makes Claude Code use API billing instead, and usage-credit continuation after plan limits is billed separately at standard API rates. Before LCR starts an embedded Claude session—including a Claude `/resolve` lane—it pauses when it inherited a non-empty `ANTHROPIC_API_KEY` and warns that pay-as-you-go API charges may apply. Continuing acknowledges the warning for the rest of that LCR run; canceling leaves it active, and restarting LCR resets the acknowledgement. See Anthropic's [Claude Code plan billing](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan) and [Claude Code cost](https://code.claude.com/docs/en/costs) docs for the current rules. Claude-backed background inference defaults to Haiku to keep usage lighter.
-
-If you use an OpenAI API key for background analysis, LCR mainly spends tokens on summaries/classification and commit help. Chat can also use direct API inference through its separate `boss_chat_backend` compatibility setting; keep that in mind when reading cost estimates, since the project-analysis footer is not meant to be the full billing ledger for interactive chat.
-
-With a few active projects, a full day is often around `$1` to `$2`, but treat that as a rough guide. The OpenAI dashboard is the billing source of truth.
-
-Type `/setup` from the TUI or edit `~/.little-control-room/config.toml` to change the provider.
-
-## Release Engineering
-
-macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. The installer verifies published signatures locally; notarization acceptance is enforced during the GitHub release job.
-
-GoReleaser marks official archives with `distribution=github`; that build metadata is what enables the in-app updater. Future package-manager builds should set their own distribution value so update ownership remains with the package manager. Release archives must continue to contain both `lcroom` and `lcagent`, `checksums.txt`, and GitHub-provided SHA-256 asset digests because the updater refuses incomplete or unverifiable releases.
-
-Required GitHub secrets:
-
-- `MACOS_SIGN_P12`: base64 contents of a Developer ID Application `.p12` certificate, or a path when running GoReleaser locally
-- `MACOS_SIGN_PASSWORD`: password for the `.p12`
-- `MACOS_NOTARY_KEY`: base64 contents of the App Store Connect API `.p8` key, or a path when running locally
-- `MACOS_NOTARY_KEY_ID`: App Store Connect API key ID
-- `MACOS_NOTARY_ISSUER_ID`: App Store Connect issuer UUID
-
-Every push to `master` and every pull request now runs `make build-check` on
-both Linux and macOS, followed by the same cross-platform release snapshot
-build used locally. GoReleaser is pinned in `.tool-versions`; CI installs that
-exact version automatically.
-
-Before tagging a release, run:
-
-```bash
-make release-check
-make release-snapshot
-```
-
-`make release-snapshot` builds all four platform archives, verifies their
-checksums, and confirms that every archive contains `lcroom`, `lcagent`,
-`README.md`, and `LICENSE`. Snapshot archives under `dist/` are for local
-verification only, not public distribution.
-
-## Local Mobile Preview
-
-The monitor-first mobile client starts with the main TUI by default and shares its live store, service configuration, and update events:
-
-```bash
-lcroom tui
-```
-
-Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and active/recent engineer transcripts. The portrait dashboard follows the main TUI's familiar project-first scan pattern: each compact row keeps the project name and summary prominent, with narrow assessment, agent, and flag columns beside it. TUI-hosted dashboards also include a live engineer-channel rack for jumping directly into working, waiting, stalled, or input-needed sessions. Live transcript revisions arrive over a dedicated event stream and update individual entries in place, with periodic refresh retained only as a connection fallback. Transcript views render Markdown, offer `Conversation` and `All activity` monitoring modes, and preserve live-follow state while you read older entries. Live channels always show their composer state: mobile session messages are off by default, with an explanation that points to `Session messages` in Mobile settings; enabling that setting unlocks the draft-preserving composer for the current live channel. Recorded sessions, approvals, interrupts, model changes, and session creation remain read-only. The stable top-right indicator advertises `/mobile` and, when space permits, its `LAN`, `RESTART`, `SETUP`, `OFF`, or `ERR` state. `RESTART` means the saved mobile listener setup differs from the running listener. Run `/mobile` for the full access panel: current listener, detected private LAN address, usable phone URL, pairing code, phone-control state, and any saved setup waiting for restart. Press Enter there to jump to the authoritative Mobile setup fields. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line and the Mobile panel.
-
-Use the Mobile card in `/setup` or the Mobile section in `/settings` to disable TUI auto-start, opt into `Session messages`, and choose `This computer only`, `Phones on this LAN`, or `Custom address`. The message permission applies immediately after saving. LAN mode is recommended for phone use; it derives the technical listener `0.0.0.0:<port>` and shows the detected phone-ready URL separately. Local mode derives `127.0.0.1:<port>`. Listener changes apply on the next LCR launch, while Custom address preserves direct `host:port` control for advanced setups.
-
-Pass an explicit LAN address for a one-run override, for example `lcroom tui --listen 192.168.0.6:7777`. An explicit `--listen` also starts the mobile client for that run when saved auto-start is disabled. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the phone-ready URL and current six-digit code, then enter it on the phone. Press `c` in that panel to copy the phone URL. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
-
-`lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It prints the LAN pairing code at startup. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
-
-Pairing authenticates the browser but does not encrypt plain HTTP traffic. Keep direct LAN exposure on a trusted network; transport encryption or a private overlay network is still required against local traffic interception.
-
-<p align="center">
-  <a href="docs/screenshots/setup.png">
-    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, Chat, and optional LCAgent details" width="850">
-  </a>
-</p>
-
-## Notes
-
-- Local state lives under `~/.little-control-room/`.
-- For keys, slash commands, flags, and config details, see [`docs/reference.md`](docs/reference.md).
+To exercise the recording extension directly from this branch, use
+`make tui-record`. See [the Build Week demo notes](docs/build_week_demo.md) for the
+isolated profile, privacy boundary, storage paths, and editor behavior.
 
 ## Contacts
 
@@ -424,4 +346,6 @@ Pairing authenticates the browser but does not encrypt plain HTTP traffic. Keep 
 
 ## Contributing
 
-This is a utility that I constantly change to suit some specific needs. For this reason this is not a good candidate for external contributions, however, bug reports are welcome and anyone is free to fork and modify for their own use.
+This is a utility that I constantly change to suit specific needs, so it is not a
+good candidate for external contributions. Bug reports are welcome, and anyone is
+free to fork and modify for their own use.
