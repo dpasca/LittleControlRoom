@@ -85,10 +85,14 @@ type PushResult struct {
 }
 
 type PullResult struct {
-	ProjectPath string
-	Branch      string
-	Pulled      bool
-	Summary     string
+	ProjectPath        string
+	Branch             string
+	Upstream           string
+	Pulled             bool
+	FetchCompleted     bool
+	FastForwarded      bool
+	PendingFastForward bool
+	Summary            string
 }
 
 type NoChangesToCommitError struct {
@@ -686,8 +690,30 @@ func (s *Service) PullProject(ctx context.Context, projectPath string) (PullResu
 		return PullResult{}, fmt.Errorf("branch has diverged from upstream (+%d/-%d)", repoStatus.Ahead, repoStatus.Behind)
 	}
 
-	if err := gitops.Pull(ctx, projectPath); err != nil {
-		return PullResult{}, err
+	pullResult, err := gitops.PullWithOptions(ctx, projectPath, gitops.PullOptions{
+		Progress: func(progress gitops.PullProgress) {
+			s.bus.Publish(events.Event{
+				Type:        events.GitPullProgress,
+				At:          progress.At,
+				ProjectPath: projectPath,
+				Payload: map[string]string{
+					"phase":   string(progress.Phase),
+					"detail":  progress.Detail,
+					"elapsed": progress.Elapsed.Round(time.Millisecond).String(),
+				},
+			})
+		},
+	})
+	result.Upstream = pullResult.Upstream
+	result.FetchCompleted = pullResult.FetchCompleted
+	result.FastForwarded = pullResult.FastForwarded
+	result.PendingFastForward = pullResult.PendingFastForward
+	if err != nil {
+		result.Summary = pullIncompleteSummary(result)
+		if result.Summary != "" {
+			return result, fmt.Errorf("%w. %s", err, result.Summary)
+		}
+		return result, err
 	}
 	now := time.Now()
 	result.Pulled = true
@@ -699,6 +725,19 @@ func (s *Service) PullProject(ctx context.Context, projectPath string) (PullResu
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "git_pull"}})
 	_ = s.store.AddEvent(ctx, eventForPull(now, projectPath, branch))
 	return result, nil
+}
+
+func pullIncompleteSummary(result PullResult) string {
+	switch {
+	case result.PendingFastForward:
+		return "Fetch completed; the local fast-forward is still pending. Run /pull again to finish it."
+	case result.FetchCompleted && result.FastForwarded:
+		return "Fetch completed and the branch reached the fetched commit, but the working-tree update did not finish cleanly. Inspect the repository before retrying."
+	case result.FetchCompleted:
+		return "Fetch completed and its remote-tracking state was preserved; no local update was applied."
+	default:
+		return ""
+	}
 }
 
 func summarizeCommitFiles(changes []scanner.GitChange) []CommitFile {

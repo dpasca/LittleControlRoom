@@ -209,7 +209,8 @@ Repo and runtime actions:
 - `/diff`: Open the full-screen git diff.
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
-- `/pull`: Pull the selected project's branch.
+- `/pull`: Fetch and safely fast-forward the selected project's branch. The project row shows elapsed time and Git/Git LFS transfer progress; active transfers have no wall-clock deadline and stop only after 60 seconds without observable progress.
+- `/pull cancel`: Explicitly cancel the selected project's active pull. If its fetch already completed, LCR keeps the fetched remote-tracking state and reports whether the local fast-forward is still pending.
 - `/resolve`: Choose an agent, then resolve selected repo merge conflicts in a separate background engineer session. The last confirmed resolver choice is preselected next time and remains independent of ordinary agent launches. Progress stays visible on the project row, followed by a fresh Git-status check after the agent verifies and commits the resolution or reports a blocker. If the resolver needs input, fails, or leaves conflicts behind, Enter on that project opens the exact saved resolver conversation for inspection; run `/resolve` again to retry in a fresh background session.
 - `/integrity` (`I`): Inspect a repository-root branch mismatch, hand it to a fresh engineer, acknowledge it, update the expected branch, or apply a conservative linked-worktree repair.
 - `/wt restore` (`/wt undelete`): List Codex sessions whose recorded LCR worktree is gone, recreate the original checkout when Git evidence makes that safe, and resume the selected conversation.

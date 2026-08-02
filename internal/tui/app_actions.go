@@ -643,9 +643,25 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "No project selected"
 			return m, nil
 		}
+		if inv.Cancel {
+			if m.cancelPendingPull(p.Path) {
+				m.status = m.pendingGitSummary(p.Path)
+			} else {
+				m.status = "No pull is in progress for the selected project"
+			}
+			return m, nil
+		}
+		if op, pending := m.pendingGitOperation(p.Path); pending {
+			if op.Kind == pendingGitOperationPull {
+				m.status = m.pendingGitSummary(p.Path) + " · use /pull cancel to stop"
+			} else {
+				m.status = "Another Git action is already in progress for the selected project"
+			}
+			return m, nil
+		}
 		m.setPendingGitOperation(p.Path, pendingGitOperationPull, "Pulling...")
 		m.status = "Pulling..."
-		return m, m.pullCmd(p.Path)
+		return m, m.startPullCmd(p.Path)
 	case commands.KindResolve:
 		return m.resolveMergeConflictsForSelection()
 	case commands.KindIntegrity:
@@ -1650,24 +1666,55 @@ func (m Model) pushCmd(path string) tea.Cmd {
 }
 
 func (m Model) pullCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiGitActionTimeout)
-		defer cancel()
-		result, err := m.svc.PullProject(ctx, path)
-		err = timeoutActionError(err, tuiGitActionTimeout, "pulling the project")
-		if err != nil {
-			return actionMsg{projectPath: path, status: "Pull failed", clearPendingGitSummary: true, err: err}
-		}
-		status := result.Summary
-		if strings.TrimSpace(status) == "" {
-			status = "Pull complete"
-		}
-		refresh, refreshErr := m.refreshProjectStatusAfterGitAction(path)
-		if refreshErr != nil {
-			status = status + ". Repo status will refresh shortly."
-		}
-		return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, refresh: refresh, err: nil}
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	pullCtx, cancel := context.WithCancel(ctx)
+	return func() tea.Msg {
+		defer cancel()
+		return m.pullProjectMsg(pullCtx, path)
+	}
+}
+
+func (m *Model) startPullCmd(path string) tea.Cmd {
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	pullCtx, cancel := context.WithCancel(ctx)
+	m.setPendingPullCancel(path, cancel)
+	return func() tea.Msg {
+		defer cancel()
+		return m.pullProjectMsg(pullCtx, path)
+	}
+}
+
+func (m Model) pullProjectMsg(ctx context.Context, path string) tea.Msg {
+	result, err := m.svc.PullProject(ctx, path)
+	if err != nil {
+		refresh := projectInvalidationIntent{}
+		if result.FetchCompleted {
+			refresh, _ = m.refreshProjectStatusAfterGitAction(path)
+		}
+		if errors.Is(err, context.Canceled) {
+			status := "Pull canceled"
+			if strings.TrimSpace(result.Summary) != "" {
+				status += ". " + result.Summary
+			}
+			return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, finishPull: true, refresh: refresh}
+		}
+		return actionMsg{projectPath: path, status: "Pull failed", clearPendingGitSummary: true, finishPull: true, refresh: refresh, err: err}
+	}
+	status := result.Summary
+	if strings.TrimSpace(status) == "" {
+		status = "Pull complete"
+	}
+	refresh, refreshErr := m.refreshProjectStatusAfterGitAction(path)
+	if refreshErr != nil {
+		status = status + ". Repo status will refresh shortly."
+	}
+	return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, finishPull: true, refresh: refresh}
 }
 
 func (m Model) refreshProjectStatusAfterGitAction(path string) (projectInvalidationIntent, error) {

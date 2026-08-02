@@ -93,6 +93,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "cancel pull",
+			raw:  "/pull cancel",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindPull || !inv.Cancel {
+					t.Fatalf("pull cancel invocation = %#v", inv)
+				}
+				if inv.Canonical != "/pull cancel" {
+					t.Fatalf("canonical = %q, want /pull cancel", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "repository integrity",
 			raw:  "/integrity",
 			check: func(t *testing.T, inv Invocation) {

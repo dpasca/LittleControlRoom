@@ -90,19 +90,15 @@ func TestPullTimesOutHungGitProcess(t *testing.T) {
 		t.Skip("fake git timeout test uses a POSIX shell script")
 	}
 
-	oldTimeout := defaultPullTimeout
-	defaultPullTimeout = 50 * time.Millisecond
+	oldTimeout := defaultPullStallTimeout
+	defaultPullStallTimeout = 50 * time.Millisecond
 	defer func() {
-		defaultPullTimeout = oldTimeout
+		defaultPullStallTimeout = oldTimeout
 	}()
 
 	binDir := t.TempDir()
-	gitPath := filepath.Join(binDir, "git")
-	script := "#!/bin/sh\nsleep 1\n"
-	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake git: %v", err)
-	}
-
+	writePullTestGit(t, binDir)
+	t.Setenv("LCROOM_PULL_TEST_MODE", "stalled-fetch")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	err := Pull(context.Background(), t.TempDir())
@@ -112,8 +108,158 @@ func TestPullTimesOutHungGitProcess(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Pull() error = %v, want deadline exceeded", err)
 	}
-	if !strings.Contains(err.Error(), "timed out after 50ms") {
-		t.Fatalf("Pull() error = %q, want timeout text", err)
+	var stallErr *PullStallError
+	if !errors.As(err, &stallErr) || stallErr.Phase != PullPhaseFetch {
+		t.Fatalf("Pull() error = %v, want fetch stall error", err)
+	}
+	if !strings.Contains(err.Error(), "stalled after 50ms without progress") {
+		t.Fatalf("Pull() error = %q, want stall text", err)
+	}
+}
+
+func TestPullContinuesPastStallWindowWhileFetchReportsProgress(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git progress test uses a POSIX shell script")
+	}
+
+	binDir := t.TempDir()
+	writePullTestGit(t, binDir)
+	t.Setenv("LCROOM_PULL_TEST_MODE", "active-fetch")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var progress []PullProgress
+	startedAt := time.Now()
+	result, err := PullWithOptions(context.Background(), t.TempDir(), PullOptions{
+		StallTimeout: 50 * time.Millisecond,
+		Progress: func(update PullProgress) {
+			progress = append(progress, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PullWithOptions() error = %v", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < 100*time.Millisecond {
+		t.Fatalf("pull elapsed = %s, want total runtime beyond stall window", elapsed)
+	}
+	if !result.FetchCompleted || !result.FastForwarded || result.PendingFastForward {
+		t.Fatalf("PullWithOptions() result = %#v, want completed fast-forward", result)
+	}
+	if !pullTestProgressContains(progress, "Receiving objects") {
+		t.Fatalf("progress = %#v, want receiving-objects detail", progress)
+	}
+}
+
+func TestPullTreatsGitLFSFileUpdatesAsProgress(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Git LFS progress test uses a POSIX shell script")
+	}
+
+	binDir := t.TempDir()
+	writePullTestGit(t, binDir)
+	t.Setenv("LCROOM_PULL_TEST_MODE", "lfs-fast-forward")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var progress []PullProgress
+	result, err := PullWithOptions(context.Background(), t.TempDir(), PullOptions{
+		StallTimeout: 250 * time.Millisecond,
+		Progress: func(update PullProgress) {
+			progress = append(progress, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("PullWithOptions() error = %v", err)
+	}
+	if !result.FastForwarded {
+		t.Fatalf("PullWithOptions() result = %#v, want completed fast-forward", result)
+	}
+	if !pullTestProgressContains(progress, "media.pack") {
+		t.Fatalf("progress = %#v, want Git LFS media progress", progress)
+	}
+}
+
+func TestPullReportsPendingFastForwardWhenUpdateStallsAfterFetch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git stall test uses a POSIX shell script")
+	}
+
+	binDir := t.TempDir()
+	writePullTestGit(t, binDir)
+	t.Setenv("LCROOM_PULL_TEST_MODE", "stalled-fast-forward")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result, err := PullWithOptions(context.Background(), t.TempDir(), PullOptions{StallTimeout: 50 * time.Millisecond})
+	if err == nil {
+		t.Fatal("PullWithOptions() error = nil, want fast-forward stall")
+	}
+	var stallErr *PullStallError
+	if !errors.As(err, &stallErr) || stallErr.Phase != PullPhaseFastForward {
+		t.Fatalf("PullWithOptions() error = %v, want fast-forward stall", err)
+	}
+	if !result.FetchCompleted || !result.PendingFastForward || result.FastForwarded {
+		t.Fatalf("PullWithOptions() result = %#v, want fetched pending fast-forward", result)
+	}
+}
+
+func TestPullPreservesFetchWhenCallerDeadlineEndsBeforeFastForward(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git deadline test uses a POSIX shell script")
+	}
+
+	binDir := t.TempDir()
+	writePullTestGit(t, binDir)
+	t.Setenv("LCROOM_PULL_TEST_MODE", "fetched")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := PullWithOptions(ctx, t.TempDir(), PullOptions{
+		StallTimeout: time.Second,
+		Progress: func(update PullProgress) {
+			if update.Phase == PullPhaseFetch && update.Detail == "Fetch complete" {
+				cancel()
+			}
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("PullWithOptions() error = %v, want caller cancellation after fetch", err)
+	}
+	if !result.FetchCompleted {
+		t.Fatalf("PullWithOptions() result = %#v, want completed fetch preserved", result)
+	}
+	if !result.PendingFastForward {
+		t.Fatalf("PullWithOptions() result = %#v, want pending fast-forward identified", result)
+	}
+	if result.FastForwarded {
+		t.Fatalf("PullWithOptions() result = %#v, fast-forward should not run after cancellation", result)
+	}
+}
+
+func TestPullHonorsExplicitCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git cancellation test uses a POSIX shell script")
+	}
+
+	binDir := t.TempDir()
+	writePullTestGit(t, binDir)
+	t.Setenv("LCROOM_PULL_TEST_MODE", "cancel-fetch")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	repoPath := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		_, err := PullWithOptions(ctx, repoPath, PullOptions{StallTimeout: time.Second})
+		done <- err
+	}()
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	err := <-done
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("PullWithOptions() error = %v, want context canceled", err)
+	}
+	var stallErr *PullStallError
+	if errors.As(err, &stallErr) {
+		t.Fatalf("PullWithOptions() error = %v, should not report user cancellation as a stall", err)
 	}
 }
 
@@ -157,4 +303,81 @@ func assertGitIndexMissing(t *testing.T, repoPath string) {
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("stat %s: %v", indexPath, err)
 	}
+}
+
+func writePullTestGit(t *testing.T, binDir string) {
+	t.Helper()
+	script := `#!/bin/sh
+args="$*"
+case "$args" in
+  *"rev-parse --abbrev-ref --symbolic-full-name @{upstream}"*)
+    echo origin/master
+    ;;
+  *"rev-parse HEAD"*)
+    echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    ;;
+  *"rev-parse origin/master"*)
+    echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    ;;
+  *"merge-base --is-ancestor aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"*)
+    exit 0
+    ;;
+  *"fetch --progress"*)
+    case "$LCROOM_PULL_TEST_MODE" in
+      stalled-fetch)
+        while :; do :; done
+        ;;
+      cancel-fetch)
+        while :; do
+          echo "Receiving objects: still active" >&2
+          sleep 0.03
+        done
+        ;;
+      active-fetch)
+        i=1
+        while [ "$i" -le 5 ]; do
+          echo "Receiving objects: $i/5" >&2
+          sleep 0.03
+          i=$((i + 1))
+        done
+        ;;
+      *)
+        echo "Already up to date" >&2
+        ;;
+    esac
+    ;;
+  *"merge --ff-only --progress bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"*)
+    case "$LCROOM_PULL_TEST_MODE" in
+      stalled-fast-forward)
+        while :; do :; done
+        ;;
+      lfs-fast-forward)
+        i=1
+        while [ "$i" -le 4 ]; do
+          echo "download 1/1 $i/4 media.pack" >> "$GIT_LFS_PROGRESS"
+          sleep 0.15
+          i=$((i + 1))
+        done
+        ;;
+    esac
+    ;;
+  *)
+    echo "unexpected fake git invocation: $args" >&2
+    exit 2
+    ;;
+esac
+`
+	gitPath := filepath.Join(binDir, "git")
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+}
+
+func pullTestProgressContains(progress []PullProgress, needle string) bool {
+	for _, update := range progress {
+		if strings.Contains(update.Detail, needle) {
+			return true
+		}
+	}
+	return false
 }

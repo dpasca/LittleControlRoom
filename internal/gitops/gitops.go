@@ -13,7 +13,6 @@ import (
 
 // Push may run user-defined hooks, including release builds.
 var defaultPushTimeout = 5 * time.Minute
-var defaultPullTimeout = 90 * time.Second
 
 func ReadDiffStat(ctx context.Context, path string, cached bool) (string, error) {
 	args := []string{"-C", path, "diff"}
@@ -240,20 +239,6 @@ func IsPushRejectedNeedsPull(err error) bool {
 	return strings.Contains(text, "fetch first") ||
 		hasRemoteWorkHint ||
 		strings.Contains(text, "non-fast-forward")
-}
-
-func Pull(ctx context.Context, path string) error {
-	pullCtx, cancel, appliedTimeout := withDefaultTimeout(ctx, defaultPullTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(pullCtx, "git", "-C", path, "pull")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		if timeoutErr := commandTimeoutError("pull", path, pullCtx, appliedTimeout, out); timeoutErr != nil {
-			return timeoutErr
-		}
-		return fmt.Errorf("pull %s: %w: %s", path, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func commandTimeoutError(operation, path string, ctx context.Context, appliedTimeout time.Duration, out []byte) error {

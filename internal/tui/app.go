@@ -278,6 +278,7 @@ type Model struct {
 	embeddedSidebarDiffSeq        int64
 	embeddedSidebarDiffAutoAt     map[string]time.Time
 	pendingGitOperations          map[string]pendingGitOperation
+	pendingPullCancels            map[string]context.CancelFunc
 	codexPasteTokenSeq            int
 	codexClosedHandled            map[string]struct{}
 	codexSkipNextLiveRefresh      map[string]struct{}
@@ -399,6 +400,7 @@ type actionMsg struct {
 	selectPath             string
 	status                 string
 	clearPendingGitSummary bool
+	finishPull             bool
 	refresh                projectInvalidationIntent
 	err                    error
 }
@@ -697,8 +699,13 @@ const (
 )
 
 type pendingGitOperation struct {
-	Kind    pendingGitOperationKind
-	Summary string
+	Kind            pendingGitOperationKind
+	Summary         string
+	Phase           string
+	Progress        string
+	StartedAt       time.Time
+	CancelRequested bool
+	Finished        bool
 }
 
 type busMsg events.Event
@@ -797,6 +804,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		codexTranscriptRenderInFlight: make(map[codexTranscriptRenderKey]struct{}),
 		codexClosedHandled:            make(map[string]struct{}),
 		pendingGitOperations:          make(map[string]pendingGitOperation),
+		pendingPullCancels:            make(map[string]context.CancelFunc),
 		pendingGitSummaries:           make(map[string]string),
 		codexSnapshots:                make(map[string]codexapp.Snapshot),
 		mergeConflictResolvers:        make(map[string]mergeConflictResolverState),
@@ -916,7 +924,12 @@ func (m *Model) setPendingGitOperation(projectPath string, kind pendingGitOperat
 	if m.pendingGitOperations == nil {
 		m.pendingGitOperations = make(map[string]pendingGitOperation)
 	}
-	m.pendingGitOperations[projectPath] = pendingGitOperation{Kind: kind, Summary: summary}
+	op := pendingGitOperation{Kind: kind, Summary: summary}
+	if kind == pendingGitOperationPull {
+		op.StartedAt = m.currentTime()
+		op.Progress = "Starting fetch"
+	}
+	m.pendingGitOperations[projectPath] = op
 	if m.pendingGitSummaries == nil {
 		m.pendingGitSummaries = make(map[string]string)
 	}
@@ -934,6 +947,115 @@ func (m *Model) clearPendingGitSummary(projectPath string) {
 	if m.pendingGitOperations != nil {
 		delete(m.pendingGitOperations, projectPath)
 	}
+}
+
+func (m *Model) setPendingPullCancel(projectPath string, cancel context.CancelFunc) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || cancel == nil {
+		return
+	}
+	if m.pendingPullCancels == nil {
+		m.pendingPullCancels = make(map[string]context.CancelFunc)
+	}
+	m.pendingPullCancels[projectPath] = cancel
+}
+
+func (m *Model) finishPendingPull(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if op, ok := m.pendingGitOperations[projectPath]; ok && op.Kind == pendingGitOperationPull {
+		op.Finished = true
+		m.pendingGitOperations[projectPath] = op
+	}
+	if m.pendingPullCancels == nil {
+		return
+	}
+	if cancel := m.pendingPullCancels[projectPath]; cancel != nil {
+		cancel()
+	}
+	delete(m.pendingPullCancels, projectPath)
+}
+
+func (m *Model) cancelPendingPull(projectPath string) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	cancel := m.pendingPullCancels[projectPath]
+	if projectPath == "" || cancel == nil {
+		return false
+	}
+	op, ok := m.pendingGitOperations[projectPath]
+	if !ok || op.Kind != pendingGitOperationPull {
+		return false
+	}
+	if !op.CancelRequested {
+		op.CancelRequested = true
+		op.Progress = "Cancellation requested"
+		m.pendingGitOperations[projectPath] = op
+		m.refreshPendingPullSummary(projectPath, m.currentTime())
+		cancel()
+	}
+	return true
+}
+
+func (m *Model) applyPendingPullProgress(projectPath, phase, detail string, at time.Time, elapsed time.Duration) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	op, ok := m.pendingGitOperations[projectPath]
+	if !ok || op.Kind != pendingGitOperationPull || op.CancelRequested || op.Finished {
+		return false
+	}
+	if at.IsZero() {
+		at = m.currentTime()
+	}
+	if op.StartedAt.IsZero() {
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		op.StartedAt = at.Add(-elapsed)
+	}
+	op.Phase = strings.TrimSpace(phase)
+	if detail = strings.TrimSpace(detail); detail != "" {
+		op.Progress = detail
+	}
+	m.pendingGitOperations[projectPath] = op
+	m.refreshPendingPullSummary(projectPath, at)
+	return true
+}
+
+func (m *Model) refreshPendingPullSummaries(now time.Time) {
+	for projectPath, op := range m.pendingGitOperations {
+		if op.Kind == pendingGitOperationPull && !op.Finished {
+			m.refreshPendingPullSummary(projectPath, now)
+		}
+	}
+}
+
+func (m *Model) refreshPendingPullSummary(projectPath string, now time.Time) {
+	op, ok := m.pendingGitOperations[projectPath]
+	if !ok || op.Kind != pendingGitOperationPull {
+		return
+	}
+	if now.IsZero() {
+		now = m.currentTime()
+	}
+	elapsed := time.Duration(0)
+	if !op.StartedAt.IsZero() {
+		elapsed = now.Sub(op.StartedAt)
+	}
+	verb := "Pulling"
+	if op.CancelRequested {
+		verb = "Canceling pull"
+	}
+	summary := verb + " " + formatRunningDuration(elapsed)
+	if detail := strings.TrimSpace(op.Progress); detail != "" {
+		summary += " · " + detail
+	}
+	op.Summary = summary
+	m.pendingGitOperations[projectPath] = op
+	if m.pendingGitSummaries == nil {
+		m.pendingGitSummaries = make(map[string]string)
+	}
+	m.pendingGitSummaries[projectPath] = summary
 }
 
 func (m *Model) expirePendingGitSummaryOnRefresh(projectPath string) {
@@ -2210,6 +2332,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.gitStatusDialog = nil
 		m.commitApplying = false
 		m.commitPreviewRefreshing = false
+		if msg.finishPull {
+			m.finishPendingPull(msg.projectPath)
+		}
 		if msg.clearPendingGitSummary {
 			if msg.err != nil {
 				m.clearPendingGitSummary(msg.projectPath)
@@ -2223,6 +2348,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffView = nil
 		if msg.err != nil {
 			m.reportError("Action failed", msg.err, msg.projectPath)
+			if msg.refresh.kind != projectInvalidationNone {
+				return m, m.requestProjectInvalidationCmd(msg.refresh)
+			}
 			return m, nil
 		}
 		m.status = msg.status
@@ -2876,6 +3004,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.helpChatModel.RefreshCmd())
 		}
 		switch msg.Type {
+		case events.GitPullProgress:
+			elapsed, _ := time.ParseDuration(strings.TrimSpace(msg.Payload["elapsed"]))
+			if m.applyPendingPullProgress(msg.ProjectPath, msg.Payload["phase"], msg.Payload["detail"], msg.At, elapsed) {
+				if normalizeProjectPath(msg.ProjectPath) == m.currentSelectedProjectPath() {
+					m.status = m.pendingGitSummary(msg.ProjectPath)
+				}
+			}
+			return m, batchCmds(cmds...)
 		case events.ControlProposed:
 			operationID := strings.TrimSpace(msg.Payload["operation_id"])
 			if operationID == "" {
@@ -2930,11 +3066,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 		return m, batchCmds(cmds...)
 	case spinnerTickMsg:
-		m.recordUIStallFromSpinnerTick(m.currentTime())
+		now := m.currentTime()
+		m.recordUIStallFromSpinnerTick(now)
+		selectedPullPath := m.currentSelectedProjectPath()
+		previousPullStatus := m.pendingGitSummary(selectedPullPath)
+		m.refreshPendingPullSummaries(now)
+		if previousPullStatus != "" && m.status == previousPullStatus {
+			m.status = m.pendingGitSummary(selectedPullPath)
+		}
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
 		m.marqueeOffset += marqueeColumnsPerTick
 		m.refreshUsagePulse()
-		m.pruneTransientHighlights(m.currentTime())
+		m.pruneTransientHighlights(now)
 		refreshCmd := tea.Cmd(nil)
 		if m.spinnerFrame%runtimeSnapshotRefreshEveryTicks == 0 {
 			refreshCmd = m.requestRuntimeSnapshotsRefreshCmd()

@@ -1696,6 +1696,9 @@ func TestPullProjectPullsFreshRemoteChanges(t *testing.T) {
 	if !result.Pulled {
 		t.Fatalf("expected pull command to run, got %#v", result)
 	}
+	if !result.FetchCompleted || !result.FastForwarded || result.PendingFastForward {
+		t.Fatalf("expected fetched fast-forward result, got %#v", result)
+	}
 	if result.Summary != "Pull complete" {
 		t.Fatalf("summary = %q, want pull completion message", result.Summary)
 	}
@@ -1705,6 +1708,98 @@ func TestPullProjectPullsFreshRemoteChanges(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "remote") {
 		t.Fatalf("README content = %q, want pulled remote update", string(content))
+	}
+}
+
+func TestPullProjectKeepsFetchedStateWhenDirtyTreeBlocksFastForward(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	seedPath := filepath.Join(root, "seed")
+	projectPath := filepath.Join(root, "repo")
+	initBareGitRepo(t, remotePath)
+	initGitRepo(t, seedPath)
+	branch := strings.TrimSpace(gitOutput(t, seedPath, "git", "branch", "--show-current"))
+	runGit(t, seedPath, "git", "remote", "add", "origin", remotePath)
+	runGit(t, seedPath, "git", "push", "-u", "origin", branch)
+	runGit(t, root, "git", "clone", remotePath, projectPath)
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nlocal uncommitted edit\n"), 0o644); err != nil {
+		t.Fatalf("update local README.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\nremote committed edit\n"), 0o644); err != nil {
+		t.Fatalf("update seed README.md: %v", err)
+	}
+	runGit(t, seedPath, "git", "add", "README.md")
+	runGit(t, seedPath, "git", "commit", "-m", "remote update")
+	runGit(t, seedPath, "git", "push")
+	remoteHead := strings.TrimSpace(gitOutput(t, seedPath, "git", "rev-parse", "HEAD"))
+	localHead := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	result, err := svc.PullProject(ctx, projectPath)
+	if err == nil {
+		t.Fatal("PullProject() error = nil, want blocked local fast-forward")
+	}
+	if !result.FetchCompleted || !result.PendingFastForward || result.FastForwarded {
+		t.Fatalf("PullProject() result = %#v, want fetched pending fast-forward", result)
+	}
+	if !strings.Contains(err.Error(), "local fast-forward is still pending") || !strings.Contains(err.Error(), "Run /pull again") {
+		t.Fatalf("PullProject() error = %q, want clear pending fast-forward guidance", err)
+	}
+	if head := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD")); head != localHead {
+		t.Fatalf("local HEAD = %s, want unchanged %s", head, localHead)
+	}
+	if fetched := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "@{upstream}")); fetched != remoteHead {
+		t.Fatalf("fetched upstream = %s, want preserved remote commit %s", fetched, remoteHead)
+	}
+}
+
+func TestPullIncompleteSummaryPreservesFetchedState(t *testing.T) {
+	tests := []struct {
+		name   string
+		result PullResult
+		want   string
+	}{
+		{
+			name: "pending fast-forward",
+			result: PullResult{
+				FetchCompleted:     true,
+				PendingFastForward: true,
+			},
+			want: "local fast-forward is still pending",
+		},
+		{
+			name: "fetched without update",
+			result: PullResult{
+				FetchCompleted: true,
+			},
+			want: "remote-tracking state was preserved",
+		},
+		{
+			name: "branch reached fetched commit",
+			result: PullResult{
+				FetchCompleted: true,
+				FastForwarded:  true,
+			},
+			want: "branch reached the fetched commit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if summary := pullIncompleteSummary(tt.result); !strings.Contains(summary, tt.want) {
+				t.Fatalf("pullIncompleteSummary() = %q, want %q", summary, tt.want)
+			}
+		})
 	}
 }
 

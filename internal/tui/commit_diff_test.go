@@ -392,6 +392,113 @@ func TestDispatchCommandPullMarksPendingGitOperation(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("/pull should schedule async work")
 	}
+	if got.pendingPullCancels["/tmp/demo"] == nil {
+		t.Fatal("/pull should retain an explicit cancellation handle")
+	}
+}
+
+func TestPullProgressUpdatesElapsedProjectSummary(t *testing.T) {
+	startedAt := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	now := startedAt
+	m := Model{
+		projects:             []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo"}},
+		selected:             0,
+		pendingGitOperations: make(map[string]pendingGitOperation),
+		pendingGitSummaries:  make(map[string]string),
+		pendingPullCancels:   make(map[string]context.CancelFunc),
+		nowFn:                func() time.Time { return now },
+	}
+	m.setPendingGitOperation("/tmp/demo", pendingGitOperationPull, "Pulling...")
+	now = startedAt.Add(62*time.Second + 400*time.Millisecond)
+
+	updated, _ := m.Update(busMsg(events.Event{
+		Type:        events.GitPullProgress,
+		At:          now,
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"phase":   "fetch",
+			"detail":  "Receiving objects: 84% (840/1000), 1.2 GiB | 24 MiB/s",
+			"elapsed": "1m2.4s",
+		},
+	}))
+	got := updated.(Model)
+	summary := got.pendingGitSummary("/tmp/demo")
+	if !strings.Contains(summary, "Pulling 01:02") {
+		t.Fatalf("pending pull summary = %q, want elapsed time", summary)
+	}
+	if !strings.Contains(summary, "Receiving objects: 84%") || !strings.Contains(summary, "24 MiB/s") {
+		t.Fatalf("pending pull summary = %q, want useful transfer progress", summary)
+	}
+	if got.status != summary {
+		t.Fatalf("status = %q, want active pull summary %q", got.status, summary)
+	}
+
+	now = startedAt.Add(65 * time.Second)
+	updated, _ = got.Update(spinnerTickMsg{})
+	got = updated.(Model)
+	if summary = got.pendingGitSummary("/tmp/demo"); !strings.Contains(summary, "Pulling 01:05") {
+		t.Fatalf("pending pull summary after tick = %q, want live elapsed time", summary)
+	}
+}
+
+func TestDispatchPullCancelCancelsOnlyActiveSelectedPull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected:             0,
+		pendingGitOperations: make(map[string]pendingGitOperation),
+		pendingGitSummaries:  make(map[string]string),
+		pendingPullCancels: map[string]context.CancelFunc{
+			"/tmp/demo": cancel,
+		},
+	}
+	m.setPendingGitOperation("/tmp/demo", pendingGitOperationPull, "Pulling...")
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindPull, Cancel: true})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("/pull cancel should not start another command")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("/pull cancel did not cancel the active pull context")
+	}
+	if !strings.Contains(got.pendingGitSummary("/tmp/demo"), "Canceling pull") {
+		t.Fatalf("pending summary = %q, want cancellation state", got.pendingGitSummary("/tmp/demo"))
+	}
+}
+
+func TestCompletedPullIgnoresQueuedProgressEvents(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	m := Model{
+		projects:             []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo"}},
+		selected:             0,
+		pendingGitOperations: make(map[string]pendingGitOperation),
+		pendingGitSummaries:  make(map[string]string),
+		nowFn:                func() time.Time { return now },
+	}
+	m.setPendingGitOperation("/tmp/demo", pendingGitOperationPull, "Pulling...")
+	m.finishPendingPull("/tmp/demo")
+
+	updated, _ := m.Update(busMsg(events.Event{
+		Type:        events.GitPullProgress,
+		At:          now.Add(time.Second),
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"phase":   "fast_forward",
+			"detail":  "Fast-forward complete",
+			"elapsed": "1s",
+		},
+	}))
+	got := updated.(Model)
+	if summary := got.pendingGitSummary("/tmp/demo"); summary != "Pulling..." {
+		t.Fatalf("pending summary = %q, queued progress should not replace terminal status", summary)
+	}
 }
 
 func TestCommitPreviewDOpensDiffView(t *testing.T) {

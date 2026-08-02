@@ -142,6 +142,7 @@ type Invocation struct {
 	Assistant      string
 	All            bool
 	Clear          bool
+	Cancel         bool
 	Canonical      string
 }
 
@@ -180,7 +181,7 @@ var specs = []Spec{
 	{Name: "diff", Usage: "/diff", Summary: "Open a full-screen diff for the selected project"},
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit; Alt+Enter also pushes when available"},
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
-	{Name: "pull", Usage: "/pull", Summary: "Pull the selected project when its branch is behind"},
+	{Name: "pull", Usage: "/pull [cancel]", Summary: "Pull the selected project with progress, or cancel its active pull"},
 	{Name: "resolve", Usage: "/resolve", Summary: "Resolve merge conflicts in the background with project-row progress"},
 	{Name: "integrity", Usage: "/integrity", Summary: "Inspect a displaced repository root and choose a safe response"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
@@ -639,10 +640,14 @@ func Parse(input string) (Invocation, error) {
 		}
 		return Invocation{Kind: KindPush, Canonical: "/push"}, nil
 	case "pull":
-		if rawArgs != "" {
-			return Invocation{}, fmt.Errorf("usage: /pull")
+		switch rawArgs {
+		case "":
+			return Invocation{Kind: KindPull, Canonical: "/pull"}, nil
+		case "cancel":
+			return Invocation{Kind: KindPull, Cancel: true, Canonical: "/pull cancel"}, nil
+		default:
+			return Invocation{}, fmt.Errorf("usage: /pull [cancel]")
 		}
-		return Invocation{Kind: KindPull, Canonical: "/pull"}, nil
 	case "resolve":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /resolve")
