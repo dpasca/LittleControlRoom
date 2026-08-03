@@ -64,21 +64,22 @@ type codexUpdateAckMsg struct {
 }
 
 type codexActionMsg struct {
-	projectPath   string
-	perfOpID      int64
-	perfDuration  time.Duration
-	status        string
-	closed        bool
-	restoreDraft  codexDraft
-	provider      codexapp.Provider
-	model         string
-	modelProvider string
-	reasoning     string
-	awaitSettle   bool
-	refreshView   bool
-	renamedTask   bool
-	renameErr     error
-	err           error
+	projectPath    string
+	perfOpID       int64
+	perfDuration   time.Duration
+	status         string
+	closed         bool
+	closedSnapshot codexapp.Snapshot
+	restoreDraft   codexDraft
+	provider       codexapp.Provider
+	model          string
+	modelProvider  string
+	reasoning      string
+	awaitSettle    bool
+	refreshView    bool
+	renamedTask    bool
+	renameErr      error
+	err            error
 }
 
 type codexModelListMsg struct {
@@ -322,7 +323,8 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.closed {
 		m.cancelModelSettleLatency(msg.projectPath, "session closed")
-		delete(m.codexClosedHandled, msg.projectPath)
+		m.markCodexSessionClosedHandled(msg.projectPath)
+		m.markClosedEmbeddedSessionSettled(msg.projectPath, msg.closedSnapshot)
 		if m.codexVisibleProject == msg.projectPath {
 			m.codexVisibleProject = ""
 			m.codexInput.Blur()
@@ -332,7 +334,10 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 			m.codexHiddenProject = ""
 		}
 		refresh := invalidateProjectScan(m.visibleDetailPathForProject(msg.projectPath), false)
-		return m, m.markProjectSessionSeenWithRefresh(msg.projectPath, refresh)
+		return m, batchCmds(
+			m.recordEmbeddedSessionSettledCmd(msg.projectPath, msg.closedSnapshot),
+			m.markProjectSessionSeenWithRefresh(msg.projectPath, refresh),
+		)
 	}
 	return m, batchCmds(renameRefreshCmd, refreshCmd, transcriptRenderCmd, linkScanCmd)
 }
@@ -801,6 +806,63 @@ func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.S
 		latestTurnCompleted = false
 	}
 	return embeddedSessionActivityFromSnapshotWithTurnState(projectPath, snapshot, latestTurnKnown, latestTurnCompleted)
+}
+
+func (m *Model) markClosedEmbeddedSessionSettled(projectPath string, snapshot codexapp.Snapshot) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || strings.TrimSpace(snapshot.ThreadID) == "" {
+		return
+	}
+
+	changed := false
+	markSettled := func(project *model.ProjectSummary) {
+		if project == nil || !closedEmbeddedSnapshotMatchesProject(*project, projectPath, snapshot) {
+			return
+		}
+		if !project.LatestTurnStateKnown || !project.LatestTurnCompleted {
+			project.LatestTurnStateKnown = true
+			project.LatestTurnCompleted = true
+			changed = true
+		}
+	}
+	for i := range m.allProjects {
+		markSettled(&m.allProjects[i])
+	}
+	for i := range m.archivedProjects {
+		markSettled(&m.archivedProjects[i])
+	}
+	for i := range m.projects {
+		markSettled(&m.projects[i])
+	}
+	for rootPath, family := range m.orphanedWorktreesByRoot {
+		for i := range family {
+			markSettled(&family[i])
+		}
+		m.orphanedWorktreesByRoot[rootPath] = family
+	}
+	markSettled(&m.detail.Summary)
+	if changed {
+		m.invalidateProjectRenderIndexes()
+	}
+}
+
+func closedEmbeddedSnapshotMatchesProject(project model.ProjectSummary, projectPath string, snapshot codexapp.Snapshot) bool {
+	if normalizeProjectPath(project.Path) != projectPath {
+		return false
+	}
+	provider := embeddedProvider(snapshot)
+	source := modelSessionSourceFromCodexProvider(provider)
+	if source == model.SessionSourceUnknown {
+		return false
+	}
+	_, snapshotID, _ := model.NormalizeSessionIdentity(source, embeddedSessionFormat(provider), snapshot.ThreadID, "")
+	projectSource, projectID, _ := model.NormalizeSessionIdentity(
+		project.LatestSessionSource,
+		project.LatestSessionFormat,
+		project.LatestSessionID,
+		project.LatestRawSessionID,
+	)
+	return projectSource == source && projectID != "" && projectID == snapshotID
 }
 
 func embeddedSessionSettledActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {

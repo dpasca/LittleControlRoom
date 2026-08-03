@@ -697,6 +697,27 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	}
 }
 
+func TestClaudeListModelsDeduplicatesMatchingPendingAndCurrentModel(t *testing.T) {
+	session := &claudeCodeSession{
+		model:        "claude-fable-5",
+		pendingModel: "claude-fable-5",
+	}
+
+	models, err := session.ListModels()
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	count := 0
+	for _, option := range models {
+		if option.Model == "claude-fable-5" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("claude-fable-5 options = %d, want 1: %#v", count, models)
+	}
+}
+
 func TestClaudeReasoningEffortsIncludeXHigh(t *testing.T) {
 	efforts := claudeReasoningEffortOptions()
 	for _, effort := range efforts {

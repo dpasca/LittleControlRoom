@@ -797,7 +797,7 @@ func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 	extra := make([]ModelOption, 0, 2)
 	for _, model := range []string{s.pendingModel, s.model} {
 		model = concreteClaudeModel(model)
-		if model == "" || claudeModelOptionExists(models, model) {
+		if model == "" || claudeModelOptionExists(models, model) || claudeModelOptionExists(extra, model) {
 			continue
 		}
 		extra = append(extra, ModelOption{

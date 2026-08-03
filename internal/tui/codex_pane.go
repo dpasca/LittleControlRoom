@@ -2139,18 +2139,37 @@ func (m Model) closeVisibleCodexCmd() tea.Cmd {
 	projectPath := m.codexVisibleProject
 	manager := m.codexManager
 	label := "Codex"
+	closedSnapshot := codexapp.Snapshot{}
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
+		closedSnapshot = codexCloseStateSnapshot(snapshot)
 	}
 	return func() tea.Msg {
 		if err := manager.CloseProject(projectPath); err != nil {
 			return codexActionMsg{err: err}
 		}
 		return codexActionMsg{
-			projectPath: projectPath,
-			status:      "Embedded " + label + " session closed",
-			closed:      true,
+			projectPath:    projectPath,
+			status:         "Embedded " + label + " session closed",
+			closed:         true,
+			closedSnapshot: closedSnapshot,
 		}
+	}
+}
+
+func codexCloseStateSnapshot(snapshot codexapp.Snapshot) codexapp.Snapshot {
+	return codexapp.Snapshot{
+		Provider:             snapshot.Provider,
+		ProjectPath:          snapshot.ProjectPath,
+		ThreadID:             snapshot.ThreadID,
+		Started:              snapshot.Started,
+		Closed:               true,
+		LastActivityAt:       snapshot.LastActivityAt,
+		LastBusyActivityAt:   snapshot.LastBusyActivityAt,
+		BusySince:            snapshot.BusySince,
+		LatestTurnStartedAt:  snapshot.LatestTurnStartedAt,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
 	}
 }
 
