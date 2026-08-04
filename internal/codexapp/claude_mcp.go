@@ -17,60 +17,100 @@ type claudeMCPServer struct {
 	Args    []string `json:"args,omitempty"`
 }
 
-func claudeRuntimeMCPConfig(req LaunchRequest) (string, bool, error) {
-	executablePath, args, ok := runtimeMCPCommand(req)
-	if !ok {
-		return "", false, nil
+type claudeMCPOptions struct {
+	Config       string
+	Prompt       string
+	AllowedTools []string
+}
+
+func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
+	// Build both inline servers from one stable key even when this helper is
+	// called outside Manager.Open or the Claude session constructor.
+	ensureManagedPlaywrightSessionKey(&req)
+
+	servers := make(map[string]claudeMCPServer)
+	allowedTools := make([]string, 0, 8)
+	promptParts := make([]string, 0, 2)
+
+	playwrightEnabled := false
+	if executablePath, args, ok := managedPlaywrightMCPCommand(req); ok {
+		playwrightEnabled = true
+		servers["playwright"] = claudeMCPServer{
+			Type:    "stdio",
+			Command: executablePath,
+			Args:    append([]string(nil), args...),
+		}
+		allowedTools = append(allowedTools, claudePlaywrightMCPAllowedTools)
 	}
-	encoded, err := json.Marshal(claudeMCPConfig{
-		Servers: map[string]claudeMCPServer{
-			"lcr_runtime": {
-				Type:    "stdio",
-				Command: executablePath,
-				Args:    append([]string(nil), args...),
-			},
-		},
-	})
+
+	runtimeEnabled := false
+	if executablePath, args, ok := runtimeMCPCommand(req); ok {
+		runtimeEnabled = true
+		servers["lcr_runtime"] = claudeMCPServer{
+			Type:    "stdio",
+			Command: executablePath,
+			Args:    append([]string(nil), args...),
+		}
+		allowedTools = append(allowedTools,
+			claudeRuntimeMCPListControlsTool,
+			claudeRuntimeMCPDescribeControlTool,
+			claudeRuntimeMCPProposeControlTool,
+			claudeRuntimeMCPGetControlTool,
+		)
+		if req.TodoCaptureMode.Enabled() {
+			allowedTools = append(allowedTools, claudeRuntimeMCPListTODOsTool, claudeRuntimeMCPAddTODOTool)
+			promptParts = append(promptParts, strings.TrimSpace(todocapture.AgentInstructions(req.TodoCaptureMode)))
+		}
+	}
+
+	if playwrightEnabled && runtimeEnabled {
+		allowedTools = append(allowedTools, claudeRuntimeMCPBrowserAttentionTool)
+		promptParts = append(promptParts, strings.TrimSpace(managedBrowserTurnContextText))
+	}
+
+	if len(servers) == 0 {
+		return claudeMCPOptions{}, nil
+	}
+	encoded, err := json.Marshal(claudeMCPConfig{Servers: servers})
 	if err != nil {
-		return "", false, err
+		return claudeMCPOptions{}, err
 	}
-	return string(encoded), true, nil
+	compactPromptParts := make([]string, 0, len(promptParts))
+	for _, part := range promptParts {
+		if part = strings.TrimSpace(part); part != "" {
+			compactPromptParts = append(compactPromptParts, part)
+		}
+	}
+	return claudeMCPOptions{
+		Config:       string(encoded),
+		Prompt:       strings.Join(compactPromptParts, "\n\n"),
+		AllowedTools: allowedTools,
+	}, nil
 }
 
-func claudeRuntimeMCPLaunchOptions(req LaunchRequest) (config, prompt string, err error) {
-	config, ok, err := claudeRuntimeMCPConfig(req)
-	if err != nil || !ok {
-		return "", "", err
-	}
-	if req.TodoCaptureMode.Enabled() {
-		prompt = strings.TrimSpace(todocapture.AgentInstructions(req.TodoCaptureMode))
-	}
-	return config, prompt, nil
-}
-
-func claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt, safetySettings string) []string {
+func claudeTurnArgsWithMCP(resumeID, model, reasoning, permissionMode string, mcp claudeMCPOptions, safetySettings string) []string {
 	args := claudeTurnArgs(resumeID, model, reasoning, permissionMode)
 	safetySettings = strings.TrimSpace(safetySettings)
 	if safetySettings != "" {
 		args = append(args, "--settings", safetySettings)
 	}
-	runtimeMCPConfig = strings.TrimSpace(runtimeMCPConfig)
-	if runtimeMCPConfig == "" {
+	mcp.Config = strings.TrimSpace(mcp.Config)
+	if mcp.Config == "" {
 		return args
 	}
-	args = append(args, "--mcp-config", runtimeMCPConfig)
-	runtimeMCPPrompt = strings.TrimSpace(runtimeMCPPrompt)
-	if runtimeMCPPrompt != "" {
-		args = append(args, "--append-system-prompt", runtimeMCPPrompt)
+	args = append(args, "--mcp-config", mcp.Config)
+	mcp.Prompt = strings.TrimSpace(mcp.Prompt)
+	if mcp.Prompt != "" {
+		args = append(args, "--append-system-prompt", mcp.Prompt)
 	}
-	allowedTools := []string{
-		claudeRuntimeMCPListControlsTool,
-		claudeRuntimeMCPDescribeControlTool,
-		claudeRuntimeMCPProposeControlTool,
-		claudeRuntimeMCPGetControlTool,
+	allowedTools := make([]string, 0, len(mcp.AllowedTools))
+	for _, tool := range mcp.AllowedTools {
+		if tool = strings.TrimSpace(tool); tool != "" {
+			allowedTools = append(allowedTools, tool)
+		}
 	}
-	if runtimeMCPPrompt != "" {
-		allowedTools = append(allowedTools, claudeRuntimeMCPListTODOsTool, claudeRuntimeMCPAddTODOTool)
+	if len(allowedTools) == 0 {
+		return args
 	}
 	return append(args,
 		"--allowedTools",

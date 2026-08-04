@@ -387,7 +387,7 @@ func (n browserAttentionNotification) canOpenBrowser() bool {
 
 func managedBrowserFlowSupported(provider codexapp.Provider) bool {
 	switch provider.Normalized() {
-	case codexapp.ProviderCodex, codexapp.ProviderOpenCode, codexapp.ProviderLCAgent:
+	case codexapp.ProviderCodex, codexapp.ProviderOpenCode, codexapp.ProviderClaudeCode, codexapp.ProviderLCAgent:
 		return true
 	default:
 		return false

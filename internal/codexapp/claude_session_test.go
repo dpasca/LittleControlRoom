@@ -95,6 +95,134 @@ func TestClaudeStdoutLineBuildsToolAndCommandEntries(t *testing.T) {
 	}
 }
 
+func TestClaudeManagedPlaywrightActivityAndBrowserHandoff(t *testing.T) {
+	policy := browserctl.DefaultPolicy()
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		playwrightPolicy:         policy,
+		managedBrowserSessionKey: "claude-browser-session",
+		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		assistantBlocks:          make(map[string]map[string]struct{}),
+		toolCalls:                make(map[string]claudeToolCall),
+		toolResults:              make(map[string]struct{}),
+		mcpUsageItemIDs:          make(map[string]struct{}),
+		cmd:                      &exec.Cmd{},
+		stdin:                    stdin,
+		busy:                     true,
+		pendingSubmissions:       1,
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg_browser","role":"assistant","content":[{"type":"tool_use","id":"toolu_navigate","name":"mcp__playwright__browser_navigate","input":{"url":"https://example.com/login"}}]}}`)
+	snapshot := session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateActive; got != want {
+		t.Fatalf("BrowserActivity.State = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.SourceLabel(), "playwright/browser_navigate"; got != want {
+		t.Fatalf("BrowserActivity.SourceLabel() = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/login"; got != want {
+		t.Fatalf("CurrentBrowserPageURL from input = %q, want %q", got, want)
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_navigate","content":"### Page state\n- Page URL: https://example.com/mfa\n"}]}}`)
+	if got, want := session.Snapshot().CurrentBrowserPageURL, "https://example.com/mfa"; got != want {
+		t.Fatalf("CurrentBrowserPageURL from result = %q, want %q", got, want)
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg_attention","role":"assistant","content":[{"type":"tool_use","id":"toolu_attention","name":"mcp__lcr_runtime__request_browser_attention","input":{"message":"Complete MFA in the managed browser."}}]}}`)
+	session.handleClaudeStdoutLine(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_attention","content":"{\"success\":true}"}]}}`)
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"success","is_error":false,"result":"Browser handoff requested."}`)
+
+	snapshot = session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("BrowserActivity.State after handoff = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Complete MFA in the managed browser."; got != want {
+		t.Fatalf("BrowserActivity.AttentionMessage = %q, want %q", got, want)
+	}
+	if snapshot.Busy {
+		t.Fatal("browser handoff should leave Claude idle for the user's follow-up")
+	}
+	if stdin.closed || session.stdin == nil {
+		t.Fatal("browser handoff should keep Claude stdin and its MCP children alive")
+	}
+	if got, want := snapshot.ManagedBrowserSessionKey, "claude-browser-session"; got != want {
+		t.Fatalf("ManagedBrowserSessionKey = %q, want %q", got, want)
+	}
+	if got := claudeMCPUsageCalls(snapshot.MCPUsage, "playwright", "browser_navigate"); got != 1 {
+		t.Fatalf("Playwright MCP usage = %d, want 1", got)
+	}
+	if got := claudeMCPUsageCalls(snapshot.MCPUsage, "lcr_runtime", "request_browser_attention"); got != 1 {
+		t.Fatalf("runtime MCP usage = %d, want 1", got)
+	}
+
+	if err := session.Submit("MFA is complete."); err != nil {
+		t.Fatalf("Submit() after browser handoff error = %v", err)
+	}
+	snapshot = session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("BrowserActivity.State after follow-up = %q, want %q", got, want)
+	}
+	if !snapshot.Busy {
+		t.Fatal("follow-up should start another turn on the retained Claude process")
+	}
+	if len(stdin.writes) != 1 || strings.Contains(stdin.writes[0], "control_request") {
+		t.Fatalf("retained-process writes = %#v, want one user message without an interrupt", stdin.writes)
+	}
+}
+
+func TestClaudeFailedBrowserAttentionDoesNotCreateWait(t *testing.T) {
+	policy := browserctl.DefaultPolicy()
+	session := &claudeCodeSession{
+		playwrightPolicy:         policy,
+		managedBrowserSessionKey: "claude-browser-session",
+		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		assistantBlocks:          make(map[string]map[string]struct{}),
+		toolCalls:                make(map[string]claudeToolCall),
+		toolResults:              make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg_attention","role":"assistant","content":[{"type":"tool_use","id":"toolu_attention","name":"mcp__lcr_runtime__request_browser_attention","input":{"message":"Complete MFA."}}]}}`)
+	session.handleClaudeStdoutLine(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_attention","is_error":true,"content":"{\"success\":false,\"error\":\"browser unavailable\"}"}]}}`)
+
+	if got, want := session.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("BrowserActivity.State = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeBrowserHandoffPreventsInactivityClose(t *testing.T) {
+	policy := browserctl.DefaultPolicy()
+	session := &claudeCodeSession{
+		playwrightPolicy:      policy,
+		browserActivity:       browserctl.DefaultSessionActivity(policy),
+		browserHandoffPending: true,
+		lastActivityAt:        time.Now().Add(-time.Minute),
+		closedCh:              make(chan struct{}),
+	}
+	session.setClaudeBrowserHandoffWaitingLocked()
+
+	if err := session.CloseDueToInactivity(); err != nil {
+		t.Fatalf("CloseDueToInactivity() error = %v", err)
+	}
+	if session.Snapshot().Closed {
+		t.Fatal("browser handoff awaiting user input should prevent inactivity shutdown")
+	}
+}
+
+func claudeMCPUsageCalls(usage []MCPUsageSnapshot, serverName, toolName string) int {
+	for _, server := range usage {
+		if server.ServerName != serverName {
+			continue
+		}
+		for _, tool := range server.Tools {
+			if tool.Name == toolName {
+				return tool.Calls
+			}
+		}
+	}
+	return 0
+}
+
 func TestClaudeAssistantBlocksDeduplicateRepeatedEvents(t *testing.T) {
 	session := &claudeCodeSession{
 		assistantBlocks: make(map[string]map[string]struct{}),
@@ -1048,7 +1176,19 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		prompt = "Follow the shared LCR TODO capture policy."
 	)
 	const safetySettings = `{"hooks":{"PreToolUse":[]}}`
-	got := claudeTurnArgsWithRuntimeMCP("ses-demo", "sonnet", "high", "acceptEdits", config, prompt, safetySettings)
+	allowedTools := []string{
+		claudeRuntimeMCPListControlsTool,
+		claudeRuntimeMCPDescribeControlTool,
+		claudeRuntimeMCPProposeControlTool,
+		claudeRuntimeMCPGetControlTool,
+		claudeRuntimeMCPListTODOsTool,
+		claudeRuntimeMCPAddTODOTool,
+	}
+	got := claudeTurnArgsWithMCP("ses-demo", "sonnet", "high", "acceptEdits", claudeMCPOptions{
+		Config:       config,
+		Prompt:       prompt,
+		AllowedTools: allowedTools,
+	}, safetySettings)
 	want := []string{
 		"-p",
 		"--verbose",
@@ -1061,17 +1201,10 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		"--settings", safetySettings,
 		"--mcp-config", config,
 		"--append-system-prompt", prompt,
-		"--allowedTools", strings.Join([]string{
-			claudeRuntimeMCPListControlsTool,
-			claudeRuntimeMCPDescribeControlTool,
-			claudeRuntimeMCPProposeControlTool,
-			claudeRuntimeMCPGetControlTool,
-			claudeRuntimeMCPListTODOsTool,
-			claudeRuntimeMCPAddTODOTool,
-		}, ","),
+		"--allowedTools", strings.Join(allowedTools, ","),
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+		t.Fatalf("claudeTurnArgsWithMCP() = %#v, want %#v", got, want)
 	}
 	for _, arg := range got {
 		if arg == "--strict-mcp-config" {
@@ -1082,34 +1215,41 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 
 func TestClaudeTurnArgsOmitRuntimeMCPFlagsWithoutConfig(t *testing.T) {
 	const safetySettings = `{"hooks":{"PreToolUse":[]}}`
-	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", "  ", "ignored instructions", safetySettings)
+	got := claudeTurnArgsWithMCP("", "", "", "acceptEdits", claudeMCPOptions{
+		Config: "  ",
+		Prompt: "ignored instructions",
+	}, safetySettings)
 	want := append(claudeTurnArgs("", "", "", "acceptEdits"), "--settings", safetySettings)
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+		t.Fatalf("claudeTurnArgsWithMCP() = %#v, want %#v", got, want)
 	}
 }
 
 func TestClaudeTurnArgsKeepRuntimeMCPWithoutTODOPreapproval(t *testing.T) {
 	const config = `{"mcpServers":{"lcr_runtime":{"type":"stdio","command":"/tmp/lcroom"}}}`
 	const safetySettings = `{"hooks":{"PreToolUse":[]}}`
-	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", config, "", safetySettings)
+	allowedTools := []string{
+		claudeRuntimeMCPListControlsTool,
+		claudeRuntimeMCPDescribeControlTool,
+		claudeRuntimeMCPProposeControlTool,
+		claudeRuntimeMCPGetControlTool,
+	}
+	got := claudeTurnArgsWithMCP("", "", "", "acceptEdits", claudeMCPOptions{
+		Config:       config,
+		AllowedTools: allowedTools,
+	}, safetySettings)
 	want := append(
 		append(claudeTurnArgs("", "", "", "acceptEdits"), "--settings", safetySettings),
 		"--mcp-config", config,
-		"--allowedTools", strings.Join([]string{
-			claudeRuntimeMCPListControlsTool,
-			claudeRuntimeMCPDescribeControlTool,
-			claudeRuntimeMCPProposeControlTool,
-			claudeRuntimeMCPGetControlTool,
-		}, ","),
+		"--allowedTools", strings.Join(allowedTools, ","),
 	)
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+		t.Fatalf("claudeTurnArgsWithMCP() = %#v, want %#v", got, want)
 	}
 }
 
 func TestStartClaudeTurnFailsClosedWithoutSafetySettings(t *testing.T) {
-	_, _, _, _, err := startClaudeTurnWithRuntimeMCP(
+	_, _, _, _, err := startClaudeTurnWithMCP(
 		context.Background(),
 		t.TempDir(),
 		"",
@@ -1117,12 +1257,11 @@ func TestStartClaudeTurnFailsClosedWithoutSafetySettings(t *testing.T) {
 		"medium",
 		"bypassPermissions",
 		browserctl.Policy{},
-		"",
-		"",
+		claudeMCPOptions{},
 		"",
 	)
 	if err == nil || !strings.Contains(err.Error(), "safety-hook settings are required") {
-		t.Fatalf("startClaudeTurnWithRuntimeMCP() error = %v, want missing safety-hook rejection", err)
+		t.Fatalf("startClaudeTurnWithMCP() error = %v, want missing safety-hook rejection", err)
 	}
 }
 

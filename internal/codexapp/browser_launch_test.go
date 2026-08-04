@@ -200,6 +200,35 @@ func TestOpenCodePlaywrightMCPOverrideClassicBrowserBehavior(t *testing.T) {
 	}
 }
 
+func TestManagedPlaywrightMCPCommandSupportsClaudeCode(t *testing.T) {
+	req := LaunchRequest{
+		Provider:                 ProviderClaudeCode,
+		ProjectPath:              "/tmp/demo",
+		AppDataDir:               "/tmp/lcr-data",
+		CLIExecutablePath:        "/tmp/lcroom-test-bin",
+		ManagedBrowserSessionKey: "claude-browser-session",
+		PlaywrightPolicy:         browserctl.DefaultPolicy(),
+	}
+
+	executable, args, ok := managedPlaywrightMCPCommand(req)
+	if !ok {
+		t.Fatal("managedPlaywrightMCPCommand() ok = false, want Claude Code support")
+	}
+	if executable != "/tmp/lcroom-test-bin" {
+		t.Fatalf("managedPlaywrightMCPCommand() executable = %q, want LCR binary", executable)
+	}
+	for _, want := range []string{
+		"playwright-mcp",
+		"--provider", string(ProviderClaudeCode),
+		"--session-key", "claude-browser-session",
+		"--project-path", "/tmp/demo",
+	} {
+		if !containsString(args, want) {
+			t.Fatalf("managedPlaywrightMCPCommand() args = %#v, want %q", args, want)
+		}
+	}
+}
+
 func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 	manager := projectrun.NewManager()
 	defer func() { _ = manager.CloseAll() }()

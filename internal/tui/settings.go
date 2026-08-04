@@ -3360,8 +3360,8 @@ func browserProviderCapabilities() []settingsBrowserProviderCapability {
 		},
 		{
 			provider: codexapp.ProviderClaudeCode,
-			summary:  "Launch policy only. Approval, tool input, and elicitation replies are not wired yet.",
-			style:    detailMutedStyle,
+			summary:  "Managed Playwright plus browser handoff. General approval, tool input, and elicitation replies are not wired yet.",
+			style:    detailWarningStyle,
 		},
 	}
 }
