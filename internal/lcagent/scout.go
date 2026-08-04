@@ -94,9 +94,8 @@ func (e *ScoutUnavailableError) Error() string {
 	return fmt.Sprintf("repository Scout could not complete after %d route attempt(s): %s", len(e.Attempts), detail)
 }
 
-// ScoutService tries routes in order. An explicit LCAgent route can therefore
-// be first while inherited Chat/project-inference routes remain transparent
-// fallbacks.
+// ScoutService tries routes in caller-supplied order and records every failed
+// attempt so inherited and fallback inference choices remain transparent.
 type ScoutService struct {
 	Routes          []ScoutRoute
 	OnAttemptStart  func(ScoutRoute)
@@ -247,7 +246,7 @@ func ScoutRouteFromPreset(name string) (ScoutRoute, bool) {
 	}
 	return ScoutRoute{
 		Source:          "lcagent_override",
-		Description:     "explicit LCAgent " + preset.DisplayName + " route",
+		Description:     "configured LCAgent " + preset.DisplayName + " route",
 		Provider:        preset.Provider,
 		Model:           preset.Model,
 		ReasoningEffort: preset.ReasoningEffort,

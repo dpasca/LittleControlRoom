@@ -84,6 +84,20 @@ func bossReadOnlyRouteKindStrings() []string {
 	}
 }
 
+// The fast utility router deliberately cannot launch Repository Scout. Scout
+// needs a repository target grounded by the main planner, which can use
+// search_context before starting the slower model-backed inspection.
+func bossFastReadOnlyRouteKindStrings() []string {
+	kinds := make([]string, 0, len(bossReadOnlyRouteKindStrings())-1)
+	for _, kind := range bossReadOnlyRouteKindStrings() {
+		if kind == bossActionProjectScout {
+			continue
+		}
+		kinds = append(kinds, kind)
+	}
+	return kinds
+}
+
 func bossActionKindStrings() []string {
 	kinds := []string{bossActionAnswer}
 	for _, kind := range bossReadOnlyRouteKindStrings() {
@@ -112,7 +126,7 @@ func bossPlanStepKindStrings() []string {
 
 func bossReadOnlyRouteSchema() map[string]any {
 	return bossObjectSchema(map[string]any{
-		"kind": bossEnumStringSchema(bossReadOnlyRouteKindStrings(), ""),
+		"kind": bossEnumStringSchema(bossFastReadOnlyRouteKindStrings(), "Repository Scout is handled by the main planner after target resolution, so use pass with planner_domain=inspection for repository-file questions."),
 		"answer": map[string]any{
 			"type":        "string",
 			"description": "Short user-facing answer when kind is answer; otherwise empty.",
@@ -125,10 +139,10 @@ func bossReadOnlyRouteSchema() map[string]any {
 			[]string{"", "selected"},
 			"Use selected only when the user explicitly asks about the selected classic TUI project.",
 		),
-		"query":              bossStringSchema("The user's repository question for project_scout; search text for search_context/search_boss_sessions/help_reference; exact goal run id for goal_run_report when known; otherwise empty."),
+		"query":              bossStringSchema("Search text for search_context/search_boss_sessions/help_reference; exact goal run id for goal_run_report when known; otherwise empty. A repository question remains in the conversation when kind=pass delegates it to the main planner."),
 		"command":            bossStringSchema("For context_command, one exact ctx command; otherwise empty."),
 		"project_path":       bossStringSchema("Exact project path for project-specific queries, or empty."),
-		"project_name":       bossStringSchema("Exact project name for project-specific queries, or empty."),
+		"project_name":       bossStringSchema("Exact project name supplied by the user, or empty. Never expand an acronym, alias, or partial name into a similar loaded project name."),
 		"session_id":         bossStringSchema("Exact session id for assessment/session queries, or empty."),
 		"todo_id":            bossIntegerSchema("Exact numeric project TODO ID for todo_report, or 0 when the query is not an ID lookup."),
 		"include_historical": bossBooleanSchema("Whether historical/archived records are needed."),

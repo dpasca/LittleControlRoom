@@ -23,7 +23,11 @@ turns and for older or non-conforming structured responses.
 
 The fast router receives the compacted same-session Chat summary and recent
 conversation tail. It does not receive the current portfolio snapshot or TUI
-view. Those are available through read-only queries.
+view. Those are available through read-only queries. The fast router cannot
+launch `project_scout` directly: repository-file questions pass to the main
+planner, which resolves aliases or partial project names through current
+project evidence before inspecting one checkout. This keeps a conversational
+alias from being expanded into a plausible but unverified repository name.
 
 ## Scoped planner input
 
