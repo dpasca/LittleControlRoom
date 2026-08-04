@@ -2003,6 +2003,9 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			projectPath:            projectPath,
 			selectPath:             strings.TrimSpace(confirm.RootPath),
 			clearPendingGitSummary: true,
+			// MergeWorktreeBack persists the affected repository family before
+			// returning. Reload that state without scanning unrelated repositories.
+			refresh: invalidateProjectStructure(strings.TrimSpace(confirm.RootPath)),
 		}
 		if confirm.StopRuntime && confirm.RuntimeRunning {
 			if m.runtimeManager == nil {
@@ -2039,6 +2042,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 		}
 		if rootPath := strings.TrimSpace(result.RootProjectPath); rootPath != "" {
 			msg.selectPath = rootPath
+			msg.refresh = invalidateProjectStructure(rootPath)
 		}
 		status := worktreeMergeStatusText(result)
 		if (confirm.MarkTodoDone && confirm.HasLinkedTodo) || confirm.RemoveNow {

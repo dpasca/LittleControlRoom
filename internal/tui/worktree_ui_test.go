@@ -1554,6 +1554,9 @@ func TestWorktreeMergePlanStopsRuntimeBeforeRunningGitActions(t *testing.T) {
 	if action.err == nil || !strings.Contains(action.err.Error(), "service unavailable") {
 		t.Fatalf("merge plan should reach the service boundary after stopping the runtime, got %#v", action)
 	}
+	if action.refresh.kind != projectInvalidationProjectStructure || action.refresh.detailPath != "/tmp/repo" {
+		t.Fatalf("merge plan refresh = %#v, want targeted repository-family reload", action.refresh)
+	}
 	for _, stopped := range runtimeManager.SnapshotsForProject(projectPath) {
 		if stopped.Running {
 			t.Fatalf("all runtimes should be stopped before the merge action returns, got %+v", stopped)
@@ -2561,6 +2564,7 @@ func TestWorktreeActionMsgMergeCompletionDoesNotOpenFollowUpPrompt(t *testing.T)
 		projectPath: childPath,
 		selectPath:  rootPath,
 		status:      status,
+		refresh:     invalidateProjectStructure(rootPath),
 	})
 	got := updated.(Model)
 	if cmd == nil {
@@ -2574,6 +2578,12 @@ func TestWorktreeActionMsgMergeCompletionDoesNotOpenFollowUpPrompt(t *testing.T)
 	}
 	if got.status != status {
 		t.Fatalf("status = %q, want %q", got.status, status)
+	}
+	if got.scanInFlight {
+		t.Fatal("merge completion should not scan unrelated projects")
+	}
+	if !got.projectsReloadInFlight || !got.detailReloadInFlight[rootPath] {
+		t.Fatalf("merge completion refresh = projects %v, details %#v; want stored project-family reload", got.projectsReloadInFlight, got.detailReloadInFlight)
 	}
 }
 
@@ -2625,6 +2635,7 @@ func TestWorktreeActionMsgMergeCompletionPreservesCurrentWorktreeSelectionThroug
 		projectPath: mergingPath,
 		selectPath:  rootPath,
 		status:      "Merged feat/parallel-lane into master",
+		refresh:     invalidateProjectStructure(rootPath),
 	})
 	got := updated.(Model)
 	if cmd == nil {

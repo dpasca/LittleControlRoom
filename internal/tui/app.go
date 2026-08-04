@@ -554,6 +554,7 @@ type worktreeActionMsg struct {
 	selectPath             string
 	status                 string
 	clearPendingGitSummary bool
+	refresh                projectInvalidationIntent
 	offerPostMergeCleanup  bool
 	postMergeRootPath      string
 	postMergeSourceBranch  string
@@ -2829,7 +2830,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Selected:     defaultWorktreePostMergeSelection(msg.postMergeTodoID > 0),
 			}
 		}
-		return m, m.requestProjectInvalidationCmd(invalidateProjectScan(msg.selectPath, false))
+		refresh := msg.refresh
+		if refresh.kind == projectInvalidationNone {
+			refresh = invalidateProjectScan(msg.selectPath, false)
+		}
+		return m, m.requestProjectInvalidationCmd(refresh)
 	case settingsSavedMsg:
 		m.settingsSaving = false
 		m.err = nil

@@ -2059,6 +2059,12 @@ func TestWorktreeMergeStatusTreatsCherryPickedBranchAsMergedOnNonMasterParent(t 
 	if worktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
 		t.Fatalf("cherry-picked worktree should be marked merged, got %#v", worktreeDetail.Summary)
 	}
+	staleState := projectStateFromDetail(worktreeDetail)
+	staleState.WorktreeMergeStatus = model.WorktreeMergeStatusNotMerged
+	staleState.UpdatedAt = time.Now()
+	if err := st.UpsertProjectState(ctx, staleState); err != nil {
+		t.Fatalf("seed stale worktree merge status: %v", err)
+	}
 
 	rootHeadBefore := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
 	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
@@ -2071,6 +2077,13 @@ func TestWorktreeMergeStatusTreatsCherryPickedBranchAsMergedOnNonMasterParent(t 
 	rootHeadAfter := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
 	if rootHeadAfter != rootHeadBefore {
 		t.Fatalf("already-merged patch-equivalent worktree changed root HEAD from %s to %s", rootHeadBefore, rootHeadAfter)
+	}
+	refreshedWorktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after already-merged result error = %v", err)
+	}
+	if refreshedWorktreeDetail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+		t.Fatalf("already-merged result should refresh stored merge status, got %#v", refreshedWorktreeDetail.Summary)
 	}
 }
 

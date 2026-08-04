@@ -613,6 +613,9 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 	}
 	if alreadyMerged {
 		result.AlreadyMerged = true
+		if err := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath); err != nil {
+			return result, fmt.Errorf("refresh already-merged worktree family: %w", err)
+		}
 		return result, nil
 	}
 	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
