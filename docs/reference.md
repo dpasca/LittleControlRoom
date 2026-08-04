@@ -78,6 +78,9 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `playwright_default_browser_mode`
 - `playwright_login_mode`
 - `playwright_isolation_scope`
+- `playwright_state_retention`
+- `playwright_state_cleanup_interval`
+- `playwright_state_disk_ceiling_bytes`
 - `mobile_enabled`
 - `mobile_input_enabled`
 - `mobile_listen_address`
@@ -124,7 +127,28 @@ playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
+playwright_state_retention = "720h"
+playwright_state_cleanup_interval = "6h"
+playwright_state_disk_ceiling_bytes = 2147483648
 ```
+
+Managed Playwright state cleanup runs once when a long-lived `tui` or `serve`
+runtime starts and then every `playwright_state_cleanup_interval`. The defaults
+retain inactive session metadata, output, and profiles for 30 days and cap their
+combined logical size at 2 GiB. Cleanup removes age-expired inactive sessions
+first, then evicts the oldest remaining inactive state until it reaches the
+ceiling. A zero retention period disables age-based expiry; a zero ceiling
+disables size-based eviction. The cleanup interval must remain greater than
+zero.
+
+Live owner, MCP, or browser PIDs protect a session, and every profile referenced
+by a live session is protected with it. A live Chromium `SingletonLock` also
+protects a profile even when its session metadata is incomplete. Active state is
+never removed to force the ceiling, so a cleanup record can report the ceiling
+as temporarily unsatisfied. Each pass writes a JSONL result to
+`~/.little-control-room/browser/playwright/cleanup.log`; the log rotates at 1
+MiB and is outside the state-usage total. Changes to these three cleanup values
+take effect when the long-lived runtime restarts.
 
 ### Embedded engineer TODO capture
 
@@ -245,6 +269,9 @@ playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
+playwright_state_retention = "720h"
+playwright_state_cleanup_interval = "6h"
+playwright_state_disk_ceiling_bytes = 2147483648
 
 interval = "60s"
 active-threshold = "20m"
@@ -550,6 +577,9 @@ same tracked TODO, worktree, and engineer launch.
 - `--lcagent-path "~/bin/lcagent"`
 - `--lcagent-env-file "~/path/to/openrouter.env"`
 - `--lcagent-auto low`
+- `--playwright-state-retention 720h`
+- `--playwright-state-cleanup-interval 6h`
+- `--playwright-state-disk-ceiling-bytes 2147483648`
 - `--db "~/.little-control-room/little-control-room.sqlite"`
 - `--interval 60s`
 - `--active-threshold 20m`

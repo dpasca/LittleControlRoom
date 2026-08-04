@@ -81,6 +81,7 @@ func runPlaywrightMCP(args []string) int {
 		ProjectPath:             paths.ProjectPath,
 		LaunchMode:              paths.LaunchMode,
 		Policy:                  browserctl.PolicyFromEnv(),
+		OwnerPID:                os.Getpid(),
 		ProfileBackupPath:       preflight.ProfileBackupPath,
 		ProfileRecoveryReason:   preflight.RecoveryReason(),
 		ProfilePreflightWarning: preflight.CompatibilityWarning,
@@ -119,6 +120,7 @@ func runPlaywrightMCP(args []string) int {
 	cancel()
 
 	state.UpdatedAt = time.Now().UTC()
+	state.OwnerPID = 0
 	state.MCPPID = 0
 	_ = writeManagedPlaywrightState(paths, state)
 
@@ -264,6 +266,7 @@ func reconcileManagedPlaywrightBrowser(paths browserctl.ManagedPlaywrightPaths, 
 				ProjectPath: paths.ProjectPath,
 				LaunchMode:  paths.LaunchMode,
 				Policy:      browserctl.PolicyFromEnv(),
+				OwnerPID:    os.Getpid(),
 			}
 			if monitorState != nil && monitorState.hiddenByLCR {
 				state.Hidden = true

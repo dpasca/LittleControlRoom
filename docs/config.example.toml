@@ -76,6 +76,11 @@ playwright_management_mode = "managed"
 playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
+# Managed profiles, session metadata, and Playwright output are cleaned in the
+# background. Zero retention or ceiling disables that one eviction rule.
+playwright_state_retention = "720h"
+playwright_state_cleanup_interval = "6h"
+playwright_state_disk_ceiling_bytes = 2147483648
 
 # The TUI starts the mobile client by default on loopback. Use 0.0.0.0:7777 or
 # this computer's LAN IP for phone access; non-loopback listeners require pairing.

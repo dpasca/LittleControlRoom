@@ -87,6 +87,7 @@ type AppConfig struct {
 	CodexLaunchPreset         codexcli.Preset
 	ConflictResolverProvider  ConflictResolverProvider
 	PlaywrightPolicy          browserctl.Policy
+	PlaywrightCleanupPolicy   browserctl.ManagedPlaywrightCleanupPolicy
 	EngineerTodoCaptureMode   todocapture.CaptureMode
 	DataDir                   string
 	DBPath                    string
@@ -260,6 +261,9 @@ type fileConfig struct {
 	PlaywrightDefaultBrowser  *string                  `toml:"playwright_default_browser_mode"`
 	PlaywrightLoginMode       *string                  `toml:"playwright_login_mode"`
 	PlaywrightIsolationScope  *string                  `toml:"playwright_isolation_scope"`
+	PlaywrightStateRetention  string                   `toml:"playwright_state_retention"`
+	PlaywrightCleanupInterval string                   `toml:"playwright_state_cleanup_interval"`
+	PlaywrightDiskCeiling     *int64                   `toml:"playwright_state_disk_ceiling_bytes"`
 	EngineerTodoCaptureMode   *string                  `toml:"engineer_todo_capture_mode"`
 	ScanInterval              string                   `toml:"interval"`
 	ActiveThreshold           string                   `toml:"active-threshold"`
@@ -292,6 +296,7 @@ func Default() AppConfig {
 		CodexLaunchPreset:        codexcli.DefaultPreset(),
 		ConflictResolverProvider: ConflictResolverProviderCodex,
 		PlaywrightPolicy:         browserctl.DefaultPolicy(),
+		PlaywrightCleanupPolicy:  browserctl.DefaultManagedPlaywrightCleanupPolicy(),
 		EngineerTodoCaptureMode:  todocapture.ModeExplicit,
 		DataDir:                  dataDir,
 		DBPath:                   filepath.Join(dataDir, brand.DBFileName),
@@ -357,6 +362,9 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentWebSearchURL := fs.String("lcagent-web-search-url", cfg.LCAgentWebSearchURL, "LCAgent web search endpoint URL, used by SearXNG")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
 	conflictResolverProvider := fs.String("conflict-resolver-provider", string(cfg.ConflictResolverProvider), "Provider for /resolve conflict repair: codex, opencode, claude_code, or lcagent")
+	playwrightStateRetention := fs.Duration("playwright-state-retention", cfg.PlaywrightCleanupPolicy.RetentionPeriod, "Retention period for inactive managed Playwright state; 0 disables age-based expiry")
+	playwrightCleanupInterval := fs.Duration("playwright-state-cleanup-interval", cfg.PlaywrightCleanupPolicy.CleanupInterval, "Cleanup interval for managed Playwright state")
+	playwrightDiskCeiling := fs.Int64("playwright-state-disk-ceiling-bytes", cfg.PlaywrightCleanupPolicy.DiskUsageCeilingBytes, "Disk usage ceiling in bytes for managed Playwright state; 0 disables ceiling eviction")
 	engineerTodoCaptureMode := fs.String("engineer-todo-capture-mode", string(cfg.EngineerTodoCaptureMode), "Embedded engineer TODO capture: off, explicit_only, or explicit_and_clear_deferrals")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
@@ -474,6 +482,11 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.ConflictResolverProvider, err = ParseConflictResolverProvider(*conflictResolverProvider)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("conflict-resolver-provider: %w", err)
+	}
+	cfg.PlaywrightCleanupPolicy = browserctl.ManagedPlaywrightCleanupPolicy{
+		RetentionPeriod:       *playwrightStateRetention,
+		CleanupInterval:       *playwrightCleanupInterval,
+		DiskUsageCeilingBytes: *playwrightDiskCeiling,
 	}
 	cfg.EngineerTodoCaptureMode, err = todocapture.ParseCaptureMode(*engineerTodoCaptureMode)
 	if err != nil {
@@ -801,6 +814,15 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.PlaywrightPolicy.IsolationScope = value
 	}
+	if err := applyOptionalConfigDuration(&cfg.PlaywrightCleanupPolicy.RetentionPeriod, fc.PlaywrightStateRetention, "playwright_state_retention"); err != nil {
+		return err
+	}
+	if err := applyOptionalConfigDuration(&cfg.PlaywrightCleanupPolicy.CleanupInterval, fc.PlaywrightCleanupInterval, "playwright_state_cleanup_interval"); err != nil {
+		return err
+	}
+	if fc.PlaywrightDiskCeiling != nil {
+		cfg.PlaywrightCleanupPolicy.DiskUsageCeilingBytes = *fc.PlaywrightDiskCeiling
+	}
 	if fc.EngineerTodoCaptureMode != nil {
 		value, err := todocapture.ParseCaptureMode(*fc.EngineerTodoCaptureMode)
 		if err != nil {
@@ -858,6 +880,9 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	if err := cfg.PlaywrightPolicy.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.PlaywrightCleanupPolicy.Validate(); err != nil {
 		return err
 	}
 	if _, err := todocapture.ParseCaptureMode(string(cfg.EngineerTodoCaptureMode)); err != nil {

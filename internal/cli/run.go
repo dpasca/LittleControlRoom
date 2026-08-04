@@ -1065,6 +1065,7 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 		}
 	}()
 
+	startManagedPlaywrightStateCleanup(runCtx, svc.Config())
 	go svc.StartScheduler(runCtx)
 	go svc.StartSessionClassifier(runCtx)
 	go svc.StartTodoWorktreeSuggester(runCtx)
@@ -1328,6 +1329,7 @@ func allGoroutineStack() []byte {
 }
 
 func runServe(ctx context.Context, svc *service.Service, addr string) int {
+	startManagedPlaywrightStateCleanup(ctx, svc.Config())
 	if bus := svc.Bus(); bus != nil {
 		scanEvents, unsubscribe := bus.Subscribe(256)
 		defer unsubscribe()

@@ -50,6 +50,7 @@ type ManagedPlaywrightState struct {
 	ProjectPath             string            `json:"project_path"`
 	LaunchMode              ManagedLaunchMode `json:"launch_mode"`
 	Policy                  Policy            `json:"policy"`
+	OwnerPID                int               `json:"owner_pid,omitempty"`
 	MCPPID                  int               `json:"mcp_pid"`
 	BrowserPID              int               `json:"browser_pid"`
 	BrowserAppPath          string            `json:"browser_app_path"`
@@ -185,10 +186,15 @@ func ManagedPlaywrightPathsFor(dataDir, provider, projectPath, sessionKey, profi
 		LaunchMode:   mode.Normalize(),
 		CreatedAtUTC: time.Now().UTC(),
 	}
-	for _, dir := range []string{paths.SessionDir, paths.OutputDir, paths.ProfileDir} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return ManagedPlaywrightPaths{}, err
+	if err := withManagedPlaywrightCleanupLock(paths.DataDir, func() error {
+		for _, dir := range []string{paths.SessionDir, paths.OutputDir, paths.ProfileDir} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return ManagedPlaywrightPaths{}, err
 	}
 	return paths, nil
 }

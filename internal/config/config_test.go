@@ -65,6 +65,63 @@ func TestDefaultUsesManagedPlaywrightPolicy(t *testing.T) {
 	}
 }
 
+func TestDefaultUsesBoundedManagedPlaywrightStateRetention(t *testing.T) {
+	policy := Default().PlaywrightCleanupPolicy
+	if got, want := policy.RetentionPeriod, browserctl.DefaultManagedPlaywrightStateRetention; got != want {
+		t.Fatalf("default Playwright retention = %s, want %s", got, want)
+	}
+	if got, want := policy.CleanupInterval, browserctl.DefaultManagedPlaywrightStateCleanupInterval; got != want {
+		t.Fatalf("default Playwright cleanup interval = %s, want %s", got, want)
+	}
+	if got, want := policy.DiskUsageCeilingBytes, browserctl.DefaultManagedPlaywrightDiskUsageCeilingBytes; got != want {
+		t.Fatalf("default Playwright disk ceiling = %d, want %d", got, want)
+	}
+}
+
+func TestParseLoadsAndOverridesManagedPlaywrightCleanupPolicy(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	content := "playwright_state_retention = \"168h\"\n" +
+		"playwright_state_cleanup_interval = \"30m\"\n" +
+		"playwright_state_disk_ceiling_bytes = 123456\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{
+		"--config", configPath,
+		"--playwright-state-retention", "240h",
+		"--playwright-state-cleanup-interval", "45m",
+		"--playwright-state-disk-ceiling-bytes", "654321",
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got, want := cfg.PlaywrightCleanupPolicy.RetentionPeriod, 240*time.Hour; got != want {
+		t.Fatalf("Playwright retention = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightCleanupPolicy.CleanupInterval, 45*time.Minute; got != want {
+		t.Fatalf("Playwright cleanup interval = %s, want %s", got, want)
+	}
+	if got, want := cfg.PlaywrightCleanupPolicy.DiskUsageCeilingBytes, int64(654321); got != want {
+		t.Fatalf("Playwright disk ceiling = %d, want %d", got, want)
+	}
+}
+
+func TestParseRejectsInvalidManagedPlaywrightCleanupPolicy(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("playwright_state_cleanup_interval = \"0s\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Parse("scan", []string{"--config", configPath}); err == nil {
+		t.Fatal("expected zero managed Playwright cleanup interval to be rejected")
+	}
+	if _, err := Parse("scan", []string{"--playwright-state-retention=-1h"}); err == nil {
+		t.Fatal("expected negative managed Playwright retention to be rejected")
+	}
+}
+
 func TestDefaultUsesExplicitOnlyEngineerTodoCapture(t *testing.T) {
 	if got, want := Default().EngineerTodoCaptureMode, todocapture.ModeExplicit; got != want {
 		t.Fatalf("default engineer TODO capture mode = %s, want %s", got, want)
@@ -857,6 +914,12 @@ func testEditableSettingsValue(t *testing.T, fieldName string, typ reflect.Type)
 			LoginMode:          browserctl.LoginModePromote,
 			IsolationScope:     browserctl.IsolationScopeProject,
 		})
+	case reflect.TypeOf(browserctl.ManagedPlaywrightCleanupPolicy{}):
+		return reflect.ValueOf(browserctl.ManagedPlaywrightCleanupPolicy{
+			RetentionPeriod:       48 * time.Hour,
+			CleanupInterval:       2 * time.Hour,
+			DiskUsageCeilingBytes: 123456,
+		})
 	case reflect.TypeOf(time.Duration(0)):
 		return reflect.ValueOf(17 * time.Minute)
 	case reflect.TypeOf([]LCAgentModelSelection{}):
@@ -1103,6 +1166,11 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 			LoginMode:          browserctl.LoginModePromote,
 			IsolationScope:     browserctl.IsolationScopeProject,
 		},
+		PlaywrightCleanupPolicy: browserctl.ManagedPlaywrightCleanupPolicy{
+			RetentionPeriod:       168 * time.Hour,
+			CleanupInterval:       30 * time.Minute,
+			DiskUsageCeilingBytes: 123456,
+		},
 		EngineerTodoCaptureMode: todocapture.ModeExplicitAndClearDeferrals,
 		ScanInterval:            45 * time.Second,
 		ActiveThreshold:         15 * time.Minute,
@@ -1183,6 +1251,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		"playwright_default_browser_mode = \"headed\"",
 		"playwright_login_mode = \"promote\"",
 		"playwright_isolation_scope = \"project\"",
+		"playwright_state_retention = \"168h\"",
+		"playwright_state_cleanup_interval = \"30m\"",
+		"playwright_state_disk_ceiling_bytes = 123456",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("saved config should include %q: %q", want, text)
