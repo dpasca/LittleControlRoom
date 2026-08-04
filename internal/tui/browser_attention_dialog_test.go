@@ -230,7 +230,7 @@ func TestBrowserAttentionSettingsActionHidesLiveSessionBeforeOpeningSettings(t *
 }
 
 func TestManagedBrowserHydrationSurfacesDeferredBrowserAttention(t *testing.T) {
-	for _, provider := range []codexapp.Provider{codexapp.ProviderOpenCode, codexapp.ProviderLCAgent} {
+	for _, provider := range []codexapp.Provider{codexapp.ProviderOpenCode, codexapp.ProviderClaudeCode, codexapp.ProviderLCAgent} {
 		t.Run(string(provider), func(t *testing.T) {
 			const projectPath = "/tmp/demo"
 			snapshot := browserAttentionDialogSnapshot(projectPath)

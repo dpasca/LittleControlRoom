@@ -25,12 +25,14 @@ It is intentionally different from `STATUS.md`:
 - Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows the managed `playwright` skill and, when registered, the `lcr_runtime` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
 - OpenCode sessions now track their live Playwright tool activity plus the current managed browser page URL, so the shared browser strip/reveal UI can surface the same current-page and reconnect guidance patterns that Codex already uses.
 - OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `ctrl+o` available to reveal or refocus the managed browser window.
+- Newly launched embedded Claude Code sessions now receive `playwright` and `lcr_runtime` through one inline `--mcp-config`, with Playwright and the structured browser-attention tool pre-approved without suppressing the user's other MCP servers.
+- Claude Code sessions track live Playwright activity and current page URLs in the shared browser UI. A successful structured browser handoff keeps Claude's stream process and MCP children alive while the user acts, then reuses that exact managed browser context for the next message.
 - LCAgent now exposes native `browser_*` tools backed by an LCR-managed Playwright MCP process, tracks current page state in the embedded UI, and shadows the `playwright` skill by browser capability.
 - Long-lived TUI and server runtimes now clean managed Playwright state at startup and on a configurable interval. Cleanup retains live sessions and every profile they reference, expires inactive state by age, then evicts the oldest inactive state to a configurable disk ceiling, with bounded JSONL result logging.
 - Already-running embedded Codex helper processes do not retroactively pick up new MCP launch wiring; they still need to be reopened or reconnected.
 - Every managed Codex turn start and steer now carries LCR-owned application context for the structured browser-attention contract. A reopened or reconnected thread therefore receives current handoff guidance even when its persisted history names an older generated Playwright skill path.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
-- Embedded Codex and OpenCode can now make an explicit, structured `lcr_runtime/request_browser_attention` handoff after Playwright reaches a human-only step. The handoff carries a bounded user-facing instruction, survives turn idle/history replay, and is cleared by the next successfully submitted user message rather than by parsing assistant prose.
+- Embedded Codex, OpenCode, and Claude Code can now make an explicit, structured `lcr_runtime/request_browser_attention` handoff after Playwright reaches a human-only step. The handoff carries a bounded user-facing instruction and is cleared by the next successfully submitted user message rather than by parsing assistant prose. Codex and OpenCode also reconstruct unresolved handoffs from provider history; Claude preserves the live process while its handoff is pending.
 - Runtime-skill availability and managed-Playwright availability are gated independently, so `Classic browser behavior` does not advertise a managed-browser handoff that cannot succeed.
 - Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
 - Browser waits now raise the centered attention dialog even while the affected embedded session is visible, unless another provider input dialog already owns the foreground. Dismissing it acknowledges that specific handoff while leaving the Browser sidebar and `ctrl+o` available; a changed instruction or failed reveal can surface it again.
@@ -39,7 +41,7 @@ It is intentionally different from `STATUS.md`:
 - Visible embedded sessions briefly retry managed browser-state hydration when a browser page or login handoff appears before the Playwright wrapper has written a revealable browser PID, so `ctrl+o` can become available without leaving and re-entering the session.
 - Visible embedded sessions now renew managed browser liveness asynchronously from the wrapper heartbeat, independently of browser tool activity. Idle live browsers remain revealable, stale state files become detached, refreshes are coalesced, and `ctrl+o` performs a final liveness probe before revealing the existing browser context.
 - Resumed embedded Codex sessions mark browser page URLs recovered from transcript history as no longer attached, so the persistent Browser panel does not offer a broken `ctrl+o` reveal or keep showing stale URLs.
-- OpenCode and Claude Code still remain behind Codex in managed-browser support.
+- OpenCode and Claude Code still have weaker general approval and elicitation controls than Codex, but all three now use LCR-managed Playwright and the shared browser-handoff UI.
 
 ## Maintenance Rule
 
@@ -64,7 +66,7 @@ Make browser automation feel quiet and predictable by default:
 
 - Do not build a full VM or desktop virtualization layer.
 - Do not remove the provider-owned fallback path.
-- Do not force OpenCode or Claude into "managed" behavior before their embedded control surfaces are ready.
+- Do not claim general approval or elicitation parity where a provider's embedded control surface cannot support it.
 - Do not turn `STATUS.md` into a running implementation log.
 
 ## What Exists Today
@@ -124,6 +126,7 @@ Make browser automation feel quiet and predictable by default:
 - A managed embedded Codex smoke test now builds a real `lcroom` helper binary and verifies that a fresh trusted session can see Playwright MCP tools before the first turn starts.
 - The real embedded OpenCode Playwright smoke now launches with its own temporary `XDG_DATA_HOME`, so it exercises the managed browser path without polluting the user's normal OpenCode DB or leaving `tmp-oc-browser-smoke-*` projects in the dashboard.
 - Browser-attention coverage now verifies the exact structured tool identity, required instruction, stale or mismatched managed state rejection, failed tool results, idle and resume persistence, successful-response clearing, inactivity protection, popup acknowledgement/retry behavior, and OpenCode parity.
+- Claude coverage verifies its combined inline MCP config, Playwright wildcard permission, shared session key, activity and URL tracking, successful and failed attention results, inactivity protection, and same-process follow-up after a browser handoff.
 - Codex turn-start and turn-steer coverage now verifies that current managed-browser guidance is supplied as application context only when both managed Playwright and the runtime MCP are available, without rewriting the user's submitted text.
 - Handoff state reads use the same cross-process state lock as the managed-browser writer, and hydration coverage verifies that initially hidden OpenCode/LCAgent waits surface as soon as their revealable browser state arrives.
 - macOS window-control coverage now verifies launch-safe background hiding, PID-targeted activation postconditions, bounded verified retries, retained `(-600)` diagnostics, and termination of hung commands without requiring a live UI.
@@ -161,9 +164,11 @@ Make browser automation feel quiet and predictable by default:
 
 ### Claude Code
 
-- Launch-policy plumbing exists.
-- Embedded approval/tool-input/elicitation control is still limited.
-- Treat as observe-only for now.
+- Managed mode injects the LCR Playwright wrapper and runtime MCP into Claude's inline launch config while preserving other configured MCP servers.
+- Playwright tools and the structured browser-attention tool are pre-approved, and the current managed-browser contract is appended to Claude's system prompt.
+- Live Playwright activity, current page URL, MCP usage, and browser waits flow into the shared embedded browser UI.
+- A browser-attention result leaves the multi-turn Claude stream and its MCP children alive until the user's next message, preserving the exact managed browser process and profile through login or MFA.
+- General embedded approval, tool-input, and elicitation replies are still limited, so Claude remains behind Codex outside this managed-browser path.
 
 ## Immediate Next Steps
 
@@ -175,7 +180,7 @@ Make browser automation feel quiet and predictable by default:
    - The current tool deliberately returns immediately and tells the assistant to end its turn.
    - A future blocking version would need a bidirectional runtime-MCP dispatcher plus an explicit tool timeout and granular elicitation approval policy.
 
-3. Keep tightening tests around managed Codex transitions.
+3. Keep tightening tests around managed-provider transitions.
    - waiting -> show browser -> accept
    - waiting -> decline
    - waiting -> cancel
@@ -197,8 +202,8 @@ Make browser automation feel quiet and predictable by default:
    - Reuse auth/profile state deliberately instead of implicitly.
 
 3. Extend provider support carefully.
-   - Bring OpenCode along as far as its launch/config surface allows.
-   - Revisit Claude only when embedded control surfaces improve.
+   - Keep hardening OpenCode and Claude Code as far as their launch/config surfaces allow.
+   - Add Claude reconnect reconstruction if its provider history exposes a stable enough structured MCP result contract.
 
 4. Expand settings/status once the controller is real.
    - Active browser owner
@@ -220,7 +225,7 @@ Make browser automation feel quiet and predictable by default:
 - Should URL-based login waits stay manual on the final "accept/done" step, or should that eventually be guided more explicitly?
 - Should structured browser handoffs remain advisory turn boundaries, or eventually block through MCP elicitation until the user accepts?
 - When the real controller exists, should isolation default to per-task or per-project?
-- What is the cleanest way to let OpenCode and Claude participate without brittle wrappers?
+- How much provider-specific process lifecycle should remain before the managed browser handoff moves behind one shared session abstraction?
 
 ## Likely Follow-Up Docs
 

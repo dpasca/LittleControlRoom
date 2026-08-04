@@ -58,6 +58,19 @@ func TestSettingsBrowserSectionShowsStatusSummary(t *testing.T) {
 	}
 }
 
+func TestSettingsBrowserSectionDescribesClaudeManagedPlaywright(t *testing.T) {
+	for _, capability := range browserProviderCapabilities() {
+		if capability.provider != codexapp.ProviderClaudeCode {
+			continue
+		}
+		if !strings.Contains(capability.summary, "Managed Playwright plus browser handoff") {
+			t.Fatalf("Claude browser capability = %q, want managed Playwright and handoff support", capability.summary)
+		}
+		return
+	}
+	t.Fatal("Claude Code browser capability is missing")
+}
+
 func TestSettingsBrowserAutomationEnterOpensPicker(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 

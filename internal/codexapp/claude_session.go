@@ -25,48 +25,55 @@ import (
 )
 
 const (
-	claudeThinkingStatus                = "Claude Code is thinking..."
-	claudeFinishingStatus               = "Claude Code is finalizing the current turn..."
-	claudeBackgroundTaskUnresolved      = "Claude Code exited before its background work reported completion"
-	claudeReadyStatus                   = "Claude Code session ready"
-	claudeOpenElsewhereStatus           = "Claude Code session open in another terminal"
-	claudeFreshReadyStatus              = "Fresh embedded Claude Code session ready. Send a prompt to start it."
-	claudeSupportStatus                 = "Embedded Claude Code session ready"
-	claudeInterruptNotice               = "Interrupted embedded Claude Code turn."
-	claudeRecoverableAPIErrorNotice     = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
-	claudeCompactingStatus              = "Claude Code is compacting conversation history..."
-	claudeApprovalUnsupported           = "Embedded Claude Code approval responses are not supported yet"
-	claudeToolInputUnsupported          = "Embedded Claude Code tool-input responses are not supported yet"
-	claudeElicitationUnsupported        = "Embedded Claude Code elicitation responses are not supported yet"
-	claudeSafePresetMappingNotice       = "Embedded Claude Code currently maps Safe/Full Auto presets to Claude's acceptEdits mode until Claude-specific approval prompts are wired."
-	claudeYoloPresetMappingNotice       = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
-	claudeDefaultModelAlias             = "sonnet"
-	claudeFableModelAlias               = "fable"
-	claudeOpusModelAlias                = "opus"
-	claudeHaikuModelAlias               = "haiku"
-	claudeDefaultReasoningEffort        = "medium"
-	claudeSyntheticModelPlaceholder     = "<synthetic>"
-	claudeRuntimeMCPListControlsTool    = "mcp__lcr_runtime__list_control_capabilities"
-	claudeRuntimeMCPDescribeControlTool = "mcp__lcr_runtime__describe_control_capability"
-	claudeRuntimeMCPProposeControlTool  = "mcp__lcr_runtime__propose_control_operation"
-	claudeRuntimeMCPGetControlTool      = "mcp__lcr_runtime__get_control_operation"
-	claudeRuntimeMCPListTODOsTool       = "mcp__lcr_runtime__list_project_todos"
-	claudeRuntimeMCPAddTODOTool         = "mcp__lcr_runtime__add_project_todo"
-	claudePIDStatusBusy                 = "busy"
-	claudePIDStatusIdle                 = "idle"
-	claudePIDStatusShell                = "shell"
-	claudeDisableBackgroundTasksEnv     = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+	claudeThinkingStatus                 = "Claude Code is thinking..."
+	claudeFinishingStatus                = "Claude Code is finalizing the current turn..."
+	claudeBackgroundTaskUnresolved       = "Claude Code exited before its background work reported completion"
+	claudeReadyStatus                    = "Claude Code session ready"
+	claudeOpenElsewhereStatus            = "Claude Code session open in another terminal"
+	claudeFreshReadyStatus               = "Fresh embedded Claude Code session ready. Send a prompt to start it."
+	claudeSupportStatus                  = "Embedded Claude Code session ready"
+	claudeInterruptNotice                = "Interrupted embedded Claude Code turn."
+	claudeRecoverableAPIErrorNotice      = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
+	claudeCompactingStatus               = "Claude Code is compacting conversation history..."
+	claudeApprovalUnsupported            = "Embedded Claude Code approval responses are not supported yet"
+	claudeToolInputUnsupported           = "Embedded Claude Code tool-input responses are not supported yet"
+	claudeElicitationUnsupported         = "Embedded Claude Code elicitation responses are not supported yet"
+	claudeSafePresetMappingNotice        = "Embedded Claude Code currently maps Safe/Full Auto presets to Claude's acceptEdits mode until Claude-specific approval prompts are wired."
+	claudeYoloPresetMappingNotice        = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
+	claudeDefaultModelAlias              = "sonnet"
+	claudeFableModelAlias                = "fable"
+	claudeOpusModelAlias                 = "opus"
+	claudeHaikuModelAlias                = "haiku"
+	claudeDefaultReasoningEffort         = "medium"
+	claudeSyntheticModelPlaceholder      = "<synthetic>"
+	claudeRuntimeMCPListControlsTool     = "mcp__lcr_runtime__list_control_capabilities"
+	claudeRuntimeMCPDescribeControlTool  = "mcp__lcr_runtime__describe_control_capability"
+	claudeRuntimeMCPProposeControlTool   = "mcp__lcr_runtime__propose_control_operation"
+	claudeRuntimeMCPGetControlTool       = "mcp__lcr_runtime__get_control_operation"
+	claudeRuntimeMCPListTODOsTool        = "mcp__lcr_runtime__list_project_todos"
+	claudeRuntimeMCPAddTODOTool          = "mcp__lcr_runtime__add_project_todo"
+	claudeRuntimeMCPBrowserAttentionTool = "mcp__lcr_runtime__request_browser_attention"
+	claudePlaywrightMCPAllowedTools      = "mcp__playwright__*"
+	claudePIDStatusBusy                  = "busy"
+	claudePIDStatusIdle                  = "idle"
+	claudePIDStatusShell                 = "shell"
+	claudeDisableBackgroundTasksEnv      = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
 )
 
 type claudeCodeSession struct {
-	projectPath      string
-	preset           codexcli.Preset
-	notify           func()
-	playwrightPolicy browserctl.Policy
-	runtimeManager   *projectrun.Manager
-	runtimeMCPConfig string
-	runtimeMCPPrompt string
-	safetySettings   string
+	projectPath              string
+	preset                   codexcli.Preset
+	notify                   func()
+	playwrightPolicy         browserctl.Policy
+	managedBrowserSessionKey string
+	browserActivity          browserctl.SessionActivity
+	browserHandoffPending    bool
+	browserHandoffAt         time.Time
+	browserAttentionMessage  string
+	currentBrowserPageURL    string
+	runtimeManager           *projectrun.Manager
+	mcpOptions               claudeMCPOptions
+	safetySettings           string
 
 	mu                 sync.Mutex
 	claudeHome         string
@@ -111,6 +118,8 @@ type claudeCodeSession struct {
 	assistantBlocks     map[string]map[string]struct{}
 	toolCalls           map[string]claudeToolCall
 	toolResults         map[string]struct{}
+	mcpUsage            map[string]*mcpUsageStats
+	mcpUsageItemIDs     map[string]struct{}
 	backgroundTasks     map[string]BackgroundTaskSnapshot
 	backgroundTaskOrder []string
 	transcriptRevision  uint64
@@ -121,6 +130,7 @@ type claudeToolCall struct {
 	Name    string
 	Summary string
 	Command string
+	Input   json.RawMessage
 }
 
 type claudeSubmissionMode int
@@ -212,6 +222,7 @@ type claudeStreamMessage struct {
 		Input     json.RawMessage `json:"input"`
 		ToolUseID string          `json:"tool_use_id"`
 		Content   any             `json:"content"`
+		IsError   bool            `json:"is_error"`
 	} `json:"content"`
 	Usage claudeTokenUsage `json:"usage"`
 }
@@ -237,9 +248,11 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	if preset == "" {
 		preset = codexcli.DefaultPreset()
 	}
-	runtimeMCPConfig, runtimeMCPPrompt, err := claudeRuntimeMCPLaunchOptions(req)
+	ensureManagedPlaywrightSessionKey(&req)
+	policy := req.PlaywrightPolicy.Normalize()
+	mcpOptions, err := buildClaudeMCPOptions(req)
 	if err != nil {
-		return nil, fmt.Errorf("configure Claude Code runtime MCP: %w", err)
+		return nil, fmt.Errorf("configure Claude Code MCP servers: %w", err)
 	}
 	safetySettings, err := claudeSafetyHookSettings(req)
 	if err != nil {
@@ -247,24 +260,26 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 
 	s := &claudeCodeSession{
-		projectPath:      req.ProjectPath,
-		preset:           preset,
-		notify:           notify,
-		playwrightPolicy: req.PlaywrightPolicy.Normalize(),
-		runtimeManager:   req.RuntimeManager,
-		runtimeMCPConfig: runtimeMCPConfig,
-		runtimeMCPPrompt: runtimeMCPPrompt,
-		safetySettings:   safetySettings,
-		claudeHome:       claudeHome,
-		planUsageReader:  claudecli.NewPlanUsageReader(),
-		pendingModel:     concreteClaudeModel(req.PendingModel),
-		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
-		status:           claudeSupportStatus,
-		closedCh:         make(chan struct{}),
-		assistantBlocks:  make(map[string]map[string]struct{}),
-		toolCalls:        make(map[string]claudeToolCall),
-		toolResults:      make(map[string]struct{}),
-		backgroundTasks:  make(map[string]BackgroundTaskSnapshot),
+		projectPath:              req.ProjectPath,
+		preset:                   preset,
+		notify:                   notify,
+		playwrightPolicy:         policy,
+		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
+		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		runtimeManager:           req.RuntimeManager,
+		mcpOptions:               mcpOptions,
+		safetySettings:           safetySettings,
+		claudeHome:               claudeHome,
+		planUsageReader:          claudecli.NewPlanUsageReader(),
+		pendingModel:             concreteClaudeModel(req.PendingModel),
+		pendingReasoning:         strings.TrimSpace(req.PendingReasoning),
+		status:                   claudeSupportStatus,
+		closedCh:                 make(chan struct{}),
+		assistantBlocks:          make(map[string]map[string]struct{}),
+		toolCalls:                make(map[string]claudeToolCall),
+		toolResults:              make(map[string]struct{}),
+		mcpUsageItemIDs:          make(map[string]struct{}),
+		backgroundTasks:          make(map[string]BackgroundTaskSnapshot),
 	}
 
 	if !req.ForceNew {
@@ -353,30 +368,34 @@ func (s *claudeCodeSession) TryStateSnapshot() (Snapshot, bool) {
 
 func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 	return Snapshot{
-		Provider:           ProviderClaudeCode,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.sessionID,
-		Preset:             s.preset,
-		TranscriptRevision: s.transcriptRevision,
-		Phase:              s.phaseLocked(),
-		Started:            s.started,
-		Busy:               s.busy || s.externalTurnActive || s.compacting,
-		BusyExternal:       s.busyExternal,
-		Compacting:         s.compacting,
-		BusySince:          s.busySince,
-		Closed:             s.closed,
-		ActivityPreview:    activityPreviewFromEntries(s.entries),
-		Status:             s.status,
-		LastError:          s.lastError,
-		LastSystemNotice:   s.lastSystemNotice,
-		LastActivityAt:     s.lastActivityAt,
-		Model:              concreteClaudeModel(s.model),
-		ReasoningEffort:    s.reasoningEffort,
-		PendingModel:       concreteClaudeModel(s.pendingModel),
-		PendingReasoning:   s.pendingReasoning,
-		TokenUsage:         cloneTokenUsageSnapshot(s.tokenUsage),
-		UsageWindows:       cloneUsageWindowSnapshots(s.usageWindows),
-		BackgroundTasks:    s.backgroundTaskSnapshotsLocked(),
+		Provider:                 ProviderClaudeCode,
+		ProjectPath:              s.projectPath,
+		ThreadID:                 s.sessionID,
+		Preset:                   s.preset,
+		BrowserActivity:          s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		TranscriptRevision:       s.transcriptRevision,
+		Phase:                    s.phaseLocked(),
+		Started:                  s.started,
+		Busy:                     s.busy || s.externalTurnActive || s.compacting,
+		BusyExternal:             s.busyExternal,
+		Compacting:               s.compacting,
+		BusySince:                s.busySince,
+		Closed:                   s.closed,
+		ActivityPreview:          activityPreviewFromEntries(s.entries),
+		Status:                   s.status,
+		LastError:                s.lastError,
+		LastSystemNotice:         s.lastSystemNotice,
+		LastActivityAt:           s.lastActivityAt,
+		Model:                    concreteClaudeModel(s.model),
+		ReasoningEffort:          s.reasoningEffort,
+		PendingModel:             concreteClaudeModel(s.pendingModel),
+		PendingReasoning:         s.pendingReasoning,
+		MCPUsage:                 exportedMCPUsageSnapshot(s.mcpUsage),
+		TokenUsage:               cloneTokenUsageSnapshot(s.tokenUsage),
+		UsageWindows:             cloneUsageWindowSnapshots(s.usageWindows),
+		BackgroundTasks:          s.backgroundTaskSnapshotsLocked(),
 	}
 }
 
@@ -495,7 +514,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cmd, stdin, stdout, stderr, err = startClaudeTurnWithRuntimeMCP(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy, s.runtimeMCPConfig, s.runtimeMCPPrompt, s.safetySettings)
+		cmd, stdin, stdout, stderr, err = startClaudeTurnWithMCP(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy, s.mcpOptions, s.safetySettings)
 		if err != nil {
 			cancel()
 			s.mu.Unlock()
@@ -523,11 +542,13 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			s.mu.Unlock()
 			return fmt.Errorf("Claude Code is finishing the current turn")
 		}
-		var err error
-		control, err = buildClaudeInterruptRequest()
-		if err != nil {
-			s.mu.Unlock()
-			return fmt.Errorf("encode Claude interrupt: %w", err)
+		if s.busy {
+			var err error
+			control, err = buildClaudeInterruptRequest()
+			if err != nil {
+				s.mu.Unlock()
+				return fmt.Errorf("encode Claude interrupt: %w", err)
+			}
 		}
 	}
 
@@ -582,6 +603,11 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			s.mu.Unlock()
 		}
 		return err
+	}
+	if mode == claudeSubmissionNormal {
+		s.mu.Lock()
+		s.clearClaudeBrowserHandoffLocked()
+		s.mu.Unlock()
 	}
 	s.notifyAsync()
 	return nil
@@ -971,6 +997,8 @@ func (s *claudeCodeSession) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.clearClaudeBrowserHandoffLocked()
+	s.currentBrowserPageURL = ""
 	cmd := s.cmd
 	s.updateStatusLocked()
 	if cmd == nil {
@@ -985,6 +1013,17 @@ func (s *claudeCodeSession) Close() error {
 }
 
 func (s *claudeCodeSession) CloseDueToInactivity() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.busy || s.externalTurnActive || s.compacting || s.browserHandoffPending {
+		s.touchLocked()
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Unlock()
 	return s.Close()
 }
 
@@ -1081,6 +1120,10 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	if !s.busy && !s.externalTurnActive {
 		s.busySince = time.Time{}
 	}
+	browserHandoffLost := s.browserHandoffPending && !s.closed
+	s.clearClaudeBrowserHandoffLocked()
+	s.currentBrowserPageURL = ""
+	s.setClaudeBrowserActivityIdleLocked()
 
 	if compactCommand != nil {
 		result, compactErr := claudeCompactionCompletion(compactCommand, waitErr, stdoutErr, stderrErr)
@@ -1129,6 +1172,8 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code stderr: %v", stderrErr))
 		case transcriptErr != nil:
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not reload Claude Code session transcript: %v", transcriptErr))
+		case browserHandoffLost:
+			s.appendSystemErrorLocked("Claude Code closed before the managed browser step was completed; reconnect and navigate to the page again.")
 		case pendingBackgroundTasks > 0:
 			s.appendSystemErrorLocked(claudeBackgroundTaskUnresolved)
 		default:
@@ -1334,8 +1379,17 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.lastSystemNotice = claudeInterruptNotice
 		}
 		if s.pendingSubmissions == 0 && s.stdin != nil && s.runningBackgroundTaskCountLocked() == 0 {
-			stdinToClose = s.stdin
-			s.stdin = nil
+			if s.browserHandoffPending {
+				// Keep Claude and its stdio MCP children alive while the user
+				// completes the requested browser step. The next message reuses
+				// this process and therefore the exact managed browser context.
+				s.busy = false
+				s.busySince = time.Time{}
+			} else {
+				stdinToClose = s.stdin
+				s.stdin = nil
+				s.setClaudeBrowserActivityIdleLocked()
+			}
 		}
 		s.updateStatusLocked()
 	default:
@@ -1424,11 +1478,13 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, env
 				ToolName: strings.TrimSpace(block.Name),
 				ToolPath: toolPath,
 			})
+			s.observeClaudeToolUseLocked(block.ID, block.Name, block.Input)
 			if block.ID != "" {
 				s.toolCalls[block.ID] = claudeToolCall{
 					Name:    block.Name,
 					Summary: summary,
 					Command: command,
+					Input:   append(json.RawMessage(nil), block.Input...),
 				}
 			}
 		}
@@ -1538,6 +1594,7 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 		}
 		s.toolResults[toolUseID] = struct{}{}
 		call := s.toolCalls[toolUseID]
+		s.observeClaudeToolResultLocked(toolUseID, call, block.IsError, block.Content)
 		if !strings.EqualFold(call.Name, "Bash") {
 			continue
 		}
@@ -1558,6 +1615,164 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 			CommandText: command,
 		})
 	}
+}
+
+func claudeMCPToolCallInfo(name string) (serverName, toolName string) {
+	name = strings.TrimSpace(name)
+	const prefix = "mcp__"
+	if !strings.HasPrefix(name, prefix) {
+		return "", ""
+	}
+	parts := strings.SplitN(strings.TrimPrefix(name, prefix), "__", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	serverName = strings.ToLower(strings.TrimSpace(parts[0]))
+	toolName = strings.TrimSpace(parts[1])
+	if serverName == "" || toolName == "" {
+		return "", ""
+	}
+	return serverName, toolName
+}
+
+func (s *claudeCodeSession) recordClaudeMCPToolUsageLocked(toolUseID, name string) {
+	serverName, toolName := claudeMCPToolCallInfo(name)
+	if serverName == "" {
+		return
+	}
+	toolUseID = strings.TrimSpace(toolUseID)
+	if toolUseID != "" {
+		if s.mcpUsageItemIDs == nil {
+			s.mcpUsageItemIDs = make(map[string]struct{})
+		}
+		if _, exists := s.mcpUsageItemIDs[toolUseID]; exists {
+			return
+		}
+		s.mcpUsageItemIDs[toolUseID] = struct{}{}
+	}
+	s.mcpUsage = recordMCPToolUsage(s.mcpUsage, serverName, toolName)
+}
+
+func (s *claudeCodeSession) observeClaudeToolUseLocked(toolUseID, name string, input json.RawMessage) {
+	s.recordClaudeMCPToolUsageLocked(toolUseID, name)
+	serverName, toolName := claudeMCPToolCallInfo(name)
+	if !browserctl.IsPlaywrightToolCall(serverName, toolName) ||
+		s.playwrightPolicy.Normalize().ManagementMode != browserctl.ManagementModeManaged ||
+		strings.TrimSpace(s.managedBrowserSessionKey) == "" {
+		return
+	}
+
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	activity.State = browserctl.SessionActivityStateActive
+	activity.ServerName = "playwright"
+	activity.ToolName = toolName
+	activity.LastEventAt = time.Now()
+	s.browserActivity = activity.Normalize()
+	if pageURL := claudeToolInputPageURL(input); pageURL != "" {
+		s.currentBrowserPageURL = pageURL
+	}
+	if strings.EqualFold(toolName, "browser_close") {
+		s.currentBrowserPageURL = ""
+	}
+}
+
+func (s *claudeCodeSession) observeClaudeToolResultLocked(toolUseID string, call claudeToolCall, isError bool, content any) {
+	serverName, toolName := claudeMCPToolCallInfo(call.Name)
+	if browserctl.IsPlaywrightToolCall(serverName, toolName) {
+		if !isError {
+			if pageURL := extractPageURLFromText(flattenClaudeToolResultContent(content)); pageURL != "" {
+				s.currentBrowserPageURL = pageURL
+			}
+		}
+		if strings.EqualFold(toolName, "browser_close") {
+			s.currentBrowserPageURL = ""
+		}
+		return
+	}
+	if serverName != "lcr_runtime" || toolName != "request_browser_attention" {
+		return
+	}
+	if isError || claudeStructuredToolResultIsError(content) ||
+		s.playwrightPolicy.Normalize().ManagementMode != browserctl.ManagementModeManaged ||
+		strings.TrimSpace(s.managedBrowserSessionKey) == "" {
+		return
+	}
+
+	s.browserHandoffPending = true
+	s.browserHandoffAt = time.Now()
+	s.browserAttentionMessage = claudeBrowserAttentionMessage(call.Input)
+	s.setClaudeBrowserHandoffWaitingLocked()
+	s.lastSystemNotice = "Claude Code requested browser input"
+	s.updateStatusLocked()
+}
+
+func claudeToolInputPageURL(input json.RawMessage) string {
+	var payload struct {
+		URL     string `json:"url"`
+		PageURL string `json:"pageURL"`
+	}
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return ""
+	}
+	return firstNonEmptyTrimmed(payload.URL, payload.PageURL)
+}
+
+func claudeBrowserAttentionMessage(input json.RawMessage) string {
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(input, &payload); err == nil {
+		if message := strings.TrimSpace(payload.Message); message != "" {
+			return message
+		}
+	}
+	return "Complete the requested step in the managed browser."
+}
+
+func claudeStructuredToolResultIsError(content any) bool {
+	text := strings.TrimSpace(flattenClaudeToolResultContent(content))
+	if text == "" || !json.Valid([]byte(text)) {
+		return false
+	}
+	var payload struct {
+		Success *bool `json:"success"`
+		IsError bool  `json:"isError"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		return false
+	}
+	return payload.IsError || (payload.Success != nil && !*payload.Success)
+}
+
+func (s *claudeCodeSession) setClaudeBrowserHandoffWaitingLocked() {
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	activity.State = browserctl.SessionActivityStateWaitingForUser
+	activity.ServerName = "playwright"
+	activity.ToolName = "browser_handoff"
+	activity.AttentionMessage = s.browserAttentionMessage
+	activity.LastEventAt = s.browserHandoffAt
+	s.browserActivity = activity.Normalize()
+}
+
+func (s *claudeCodeSession) setClaudeBrowserActivityIdleLocked() {
+	if s.browserHandoffPending {
+		s.setClaudeBrowserHandoffWaitingLocked()
+		return
+	}
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	activity.LastEventAt = s.browserActivity.Normalize().LastEventAt
+	s.browserActivity = activity.Normalize()
+}
+
+func (s *claudeCodeSession) clearClaudeBrowserHandoffLocked() {
+	if !s.browserHandoffPending {
+		return
+	}
+	s.browserHandoffPending = false
+	s.browserHandoffAt = time.Time{}
+	s.browserAttentionMessage = ""
+	s.setClaudeBrowserActivityIdleLocked()
+	s.updateStatusLocked()
 }
 
 func (s *claudeCodeSession) appendEntryLocked(entry TranscriptEntry) {
@@ -1738,6 +1953,8 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		s.status = "Claude Code session active in another terminal"
 	case s.compacting:
 		s.status = claudeCompactingStatus
+	case s.browserHandoffPending:
+		s.status = "Browser needs attention"
 	case s.busy:
 		if s.pendingSubmissions > 0 {
 			s.status = claudeThinkingStatus
@@ -1992,11 +2209,11 @@ func claudePIDSessionTurnStartedAt(session claudeActivePIDSession) time.Time {
 	return time.Time{}
 }
 
-func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, runtimeMCPConfig, runtimeMCPPrompt, safetySettings string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+func startClaudeTurnWithMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, mcp claudeMCPOptions, safetySettings string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
 	if strings.TrimSpace(safetySettings) == "" {
 		return nil, nil, nil, nil, fmt.Errorf("Claude Code safety-hook settings are required")
 	}
-	args := claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt, safetySettings)
+	args := claudeTurnArgsWithMCP(resumeID, model, reasoning, permissionMode, mcp, safetySettings)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectPath
