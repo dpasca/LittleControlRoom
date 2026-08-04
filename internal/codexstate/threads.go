@@ -16,25 +16,39 @@ import (
 // Rollout JSONL remains the conversation source of truth; the index adds Git
 // identity that is needed to recreate a deleted worktree safely.
 type Thread struct {
-	ID           string
-	RolloutPath  string
-	CWD          string
-	Title        string
-	GitSHA       string
-	GitBranch    string
-	GitOriginURL string
-	Source       string
-	AgentRole    string
-	Archived     bool
-	HasUserEvent bool
-	StartedAt    time.Time
-	LastActivity time.Time
+	ID             string
+	RolloutPath    string
+	CWD            string
+	Title          string
+	GitSHA         string
+	GitBranch      string
+	GitOriginURL   string
+	Source         string
+	AgentRole      string
+	AgentRoleKnown bool
+	Archived       bool
+	Pinned         bool
+	PinnedKnown    bool
+	HasUserEvent   bool
+	StartedAt      time.Time
+	LastActivity   time.Time
 }
 
 // ListThreads reads Codex's global thread index without mutating it. Optional
 // columns are selected defensively so older state_5.sqlite schemas still yield
 // the session and cwd fields that they know about.
 func ListThreads(ctx context.Context, codexHome string) ([]Thread, error) {
+	return listThreads(ctx, codexHome, true)
+}
+
+// ListThreadsIncludingUnknownCWD includes indexed rows whose cwd is empty or
+// malformed. Cleanup audits need those rows so an uncertain descendant cannot
+// be omitted from a cascading thread/delete safety check.
+func ListThreadsIncludingUnknownCWD(ctx context.Context, codexHome string) ([]Thread, error) {
+	return listThreads(ctx, codexHome, false)
+}
+
+func listThreads(ctx context.Context, codexHome string, requireCWD bool) ([]Thread, error) {
 	codexHome = ResolveHomeRoot(codexHome)
 	if codexHome == "" || codexHome == "." {
 		return nil, nil
@@ -76,14 +90,14 @@ func ListThreads(ctx context.Context, codexHome string) ([]Thread, error) {
 	}
 	query := fmt.Sprintf(`
 		SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-			%s, %s, %s, %s, %s, %s, %s
+			%s, %s, %s, %s, %s, %s, %s, %s
 		FROM threads
 	`,
 		textColumn("id"), textColumn("rollout_path"), textColumn("cwd"), textColumn("title"),
 		textColumn("git_sha"), textColumn("git_branch"), textColumn("git_origin_url"), textColumn("source"),
 		textColumn("agent_role"), intColumn("archived"), intColumn("has_user_event"),
 		intColumn("created_at_ms"), intColumn("updated_at_ms"), intColumn("recency_at_ms"),
-		intColumn("created_at"), intColumn("updated_at"), intColumn("recency_at"),
+		intColumn("created_at"), intColumn("updated_at"), intColumn("recency_at"), intColumn("is_pinned"),
 	)
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -95,7 +109,7 @@ func ListThreads(ctx context.Context, codexHome string) ([]Thread, error) {
 	for rows.Next() {
 		var (
 			thread                                         Thread
-			archived, hasUserEvent                         int
+			archived, hasUserEvent, pinned                 int
 			createdMS, updatedMS, recencyMS                int64
 			createdSeconds, updatedSeconds, recencySeconds int64
 		)
@@ -104,13 +118,13 @@ func ListThreads(ctx context.Context, codexHome string) ([]Thread, error) {
 			&thread.GitSHA, &thread.GitBranch, &thread.GitOriginURL, &thread.Source,
 			&thread.AgentRole, &archived, &hasUserEvent,
 			&createdMS, &updatedMS, &recencyMS,
-			&createdSeconds, &updatedSeconds, &recencySeconds,
+			&createdSeconds, &updatedSeconds, &recencySeconds, &pinned,
 		); err != nil {
 			return nil, fmt.Errorf("scan codex thread: %w", err)
 		}
 		thread.ID = strings.TrimSpace(thread.ID)
 		thread.CWD = cleanThreadPath(thread.CWD)
-		if thread.ID == "" || thread.CWD == "" {
+		if thread.ID == "" || (requireCWD && thread.CWD == "") {
 			continue
 		}
 		thread.RolloutPath = NormalizeRolloutPath(codexHome, thread.RolloutPath)
@@ -120,7 +134,10 @@ func ListThreads(ctx context.Context, codexHome string) ([]Thread, error) {
 		thread.GitOriginURL = strings.TrimSpace(thread.GitOriginURL)
 		thread.Source = strings.TrimSpace(thread.Source)
 		thread.AgentRole = strings.TrimSpace(thread.AgentRole)
+		thread.AgentRoleKnown = columns["agent_role"]
 		thread.Archived = archived != 0
+		thread.Pinned = pinned != 0
+		thread.PinnedKnown = columns["is_pinned"]
 		thread.HasUserEvent = hasUserEvent != 0
 		thread.StartedAt = firstCodexThreadTime(createdMS, createdSeconds)
 		thread.LastActivity = firstCodexThreadTime(recencyMS, recencySeconds, updatedMS, updatedSeconds, createdMS, createdSeconds)

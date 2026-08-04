@@ -219,6 +219,20 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, "Restore worktree: ↑↓ choose, Enter restore and resume, Esc cancel", supplementSegments...)
 	}
+	if m.codexCleanup != nil {
+		switch {
+		case m.codexCleanup.Loading:
+			return m.renderModalFooter(width, "Codex cleanup: auditing only, Esc close", supplementSegments...)
+		case m.codexCleanup.Deleting:
+			return m.renderModalFooter(width, "Codex cleanup: permanent deletion and verification in progress", supplementSegments...)
+		case m.codexCleanup.Finished:
+			return m.renderModalFooter(width, "Codex cleanup report: Enter/Esc close", supplementSegments...)
+		case m.codexCleanup.Confirming:
+			return m.renderModalFooter(width, "Codex cleanup warning: D permanently delete, Esc back", supplementSegments...)
+		default:
+			return m.renderModalFooter(width, "Codex cleanup: ↑↓ inspect, Space select, Enter review, R refresh, Esc cancel", supplementSegments...)
+		}
+	}
 	if m.worktreeMergeRecoveryDialog != nil {
 		label := "Merge recovery: ↑↓/j/k choose agent, m model, Enter launch, Esc back"
 		if m.worktreeMergeRecoveryDialog.Submitting {

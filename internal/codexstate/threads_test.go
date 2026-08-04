@@ -70,6 +70,9 @@ func TestListThreadsReturnsRecoveryMetadata(t *testing.T) {
 	if got.Title != "Restore the feature" || got.GitOriginURL != "git@example.com:demo.git" || !got.Archived || !got.HasUserEvent {
 		t.Fatalf("thread metadata = %#v", got)
 	}
+	if !got.AgentRoleKnown || got.PinnedKnown {
+		t.Fatalf("optional-column knowledge = %#v", got)
+	}
 	if !got.StartedAt.Equal(started) || !got.LastActivity.Equal(active) {
 		t.Fatalf("thread times = (%s, %s), want (%s, %s)", got.StartedAt, got.LastActivity, started, active)
 	}
@@ -98,6 +101,9 @@ func TestListThreadsSupportsOlderOptionalColumnSet(t *testing.T) {
 	}
 	if len(threads) != 1 || threads[0].ID != "thread-old" || !threads[0].LastActivity.Equal(updated) {
 		t.Fatalf("threads = %#v", threads)
+	}
+	if threads[0].AgentRoleKnown || threads[0].PinnedKnown {
+		t.Fatalf("minimal optional-column knowledge = %#v", threads[0])
 	}
 }
 

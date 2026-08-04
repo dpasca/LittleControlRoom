@@ -1067,6 +1067,9 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 
 	startManagedPlaywrightStateCleanup(runCtx, svc.Config())
 	go svc.StartScheduler(runCtx)
+	go svc.StartCodexCleanupAuditor(runCtx, func() []string {
+		return codexapp.LoadedThreadIDs(codexManager)
+	})
 	go svc.StartSessionClassifier(runCtx)
 	go svc.StartTodoWorktreeSuggester(runCtx)
 	go svc.StartTodoCaptureRelay(runCtx)
@@ -1341,6 +1344,7 @@ func runServe(ctx context.Context, svc *service.Service, addr string) int {
 		}
 	}()
 	go svc.StartScheduler(ctx)
+	go svc.StartCodexCleanupAuditor(ctx, nil)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
 	go svc.StartTodoCaptureRelay(ctx)

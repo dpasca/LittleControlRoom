@@ -63,6 +63,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "clean Codex storage",
+			raw:  "/clean",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindClean || inv.Canonical != "/clean" {
+					t.Fatalf("clean invocation = %#v", inv)
+				}
+			},
+		},
+		{
 			name: "repair terminal",
 			raw:  "/repair-terminal",
 			check: func(t *testing.T, inv Invocation) {

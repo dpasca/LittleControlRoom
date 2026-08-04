@@ -102,6 +102,9 @@ func (m Model) View() string {
 		if m.actionNoticeDialog != nil {
 			return m.renderActionNoticeDialogOverlay(body, width, height)
 		}
+		if m.codexCleanup != nil {
+			return m.renderCodexCleanupOverlay(body, width, height)
+		}
 		if m.attentionDialog != nil {
 			return m.renderAttentionDialogOverlay(body, width, height)
 		}
@@ -329,6 +332,9 @@ func (m Model) View() string {
 	}
 	if m.worktreeRestore != nil {
 		body = m.renderWorktreeRestoreOverlay(body, layout.width, layout.height)
+	}
+	if m.codexCleanup != nil {
+		body = m.renderCodexCleanupOverlay(body, layout.width, layout.height)
 	}
 	if m.worktreeMergeConfirm != nil {
 		body = m.renderWorktreeMergeConfirmOverlay(body, layout.width, layout.height)

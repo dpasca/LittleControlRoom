@@ -17,6 +17,7 @@ const (
 	KindPerf            Kind = "perf"
 	KindErrors          Kind = "errors"
 	KindRefresh         Kind = "refresh"
+	KindClean           Kind = "clean"
 	KindRepairTerminal  Kind = "repair-terminal"
 	KindUpdate          Kind = "update"
 	KindSort            Kind = "sort"
@@ -153,6 +154,7 @@ var specs = []Spec{
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
+	{Name: "clean", Usage: "/clean", Summary: "Review safely eligible Codex session storage before permanent deletion"},
 	{Name: "repair-terminal", Usage: "/repair-terminal", Summary: "Reinitialize terminal display and paste handling"},
 	{Name: "update", Usage: "/update", Summary: "Check for and install a newer GitHub release"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
@@ -438,6 +440,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /refresh")
 		}
 		return Invocation{Kind: KindRefresh, Canonical: "/refresh"}, nil
+	case "clean":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /clean")
+		}
+		return Invocation{Kind: KindClean, Canonical: "/clean"}, nil
 	case "repair-terminal":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /repair-terminal")

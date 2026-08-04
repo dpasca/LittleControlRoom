@@ -123,6 +123,7 @@ type Model struct {
 	worktreePostMerge           *worktreePostMergeState
 	worktreeRemoveConfirm       *worktreeRemoveConfirmState
 	worktreeRestore             *worktreeRestoreDialogState
+	codexCleanup                *codexCleanupDialogState
 	repositoryIntegrityDialog   *repositoryIntegrityDialogState
 	attentionDialog             *attentionDialogState
 	suspendedTurnDialog         *suspendedTurnResumeDialogState
@@ -1785,6 +1786,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
+		if m.codexCleanup != nil {
+			return m.updateCodexCleanupMode(msg)
+		}
 		if m.worktreeRestore != nil {
 			return m.updateWorktreeRestoreMode(msg)
 		}
@@ -2754,6 +2758,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyWorktreeRestoreCandidates(msg)
 	case worktreeRestoreActionMsg:
 		return m.applyWorktreeRestoreAction(msg)
+	case codexCleanupAuditMsg:
+		return m.applyCodexCleanupAudit(msg)
+	case codexCleanupDeleteMsg:
+		return m.applyCodexCleanupDelete(msg)
 	case worktreeActionMsg:
 		if msg.clearPendingGitSummary {
 			if msg.err != nil {

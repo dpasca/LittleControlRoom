@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/appfs"
 	"lcroom/internal/attention"
 	"lcroom/internal/brand"
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
@@ -105,6 +106,11 @@ type Service struct {
 
 	commitTodoNotifyCh  chan struct{}
 	commitTodoStartOnce sync.Once
+
+	codexThreadDeleter      func(context.Context, string, []string) ([]string, error)
+	codexCleanupAuditMu     sync.RWMutex
+	codexCleanupAuditLatest CodexCleanupAuditSnapshot
+	codexCleanupAuditEvery  time.Duration
 }
 
 type asyncProjectRefreshKind uint8
@@ -172,6 +178,8 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitRepoInitializer:     runGitInit,
 		gitRepoCloner:          runGitClone,
 		scheduledScanTimeout:   defaultScheduledScanTimeout,
+		codexThreadDeleter:     codexapp.DeleteThreads,
+		codexCleanupAuditEvery: defaultCodexCleanupAuditInterval,
 	}
 	svc.cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(svc.cfg.EngineerTodoCaptureMode)
 	svc.configureAIClientsLocked()
