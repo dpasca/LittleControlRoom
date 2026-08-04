@@ -215,6 +215,25 @@ func CuratedTopics() []Topic {
 			SourceRefs: []string{"tui.openWorktreeRestoreForSelection", "service.ListRestorableWorktreeSessions", "service.RestoreWorktreeSession", "commands.Specs"},
 		},
 		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "clean-codex-session-storage"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Clean old Codex worktree sessions",
+			Summary: "Use /clean to audit old Codex trees tied to LCR-deleted worktrees, then explicitly select and permanently delete only fully verified candidates.",
+			Usage:   []string{"/clean"},
+			ManualSteps: []string{
+				"Run /clean and wait for the fresh read-only audit; the periodic background audit never deletes sessions.",
+				"Review each worktree group's age, Git evidence, spawned descendants, reason, and recoverable rollout size.",
+				"Press Space to explicitly select groups, then Enter to open the irreversible-deletion warning.",
+				"Press D only after reviewing the warning. LCR repeats the audit, calls Codex app-server thread/delete, and reports verified reclaimed rollout bytes.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "clean"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-restore-deleted-session"),
+			},
+			SourceRefs: []string{"tui.openCodexCleanup", "service.AuditCodexSessionStorage", "service.DeleteCodexCleanupWorktree", "codexapp.DeleteThreads", "commands.Specs"},
+		},
+		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-update-from-parent"),
 			Kind:    TopicKindWorkflow,
 			Surface: SurfaceMainTUI,

@@ -110,7 +110,9 @@ Observed *not* to update for every tool call in this run:
     - `rollout_path`
     - `title`
     - `git_sha`, `git_branch`, and `git_origin_url`
-    - `updated_at`
+    - `agent_role` for spawned-thread evidence
+    - `is_pinned`
+    - `updated_at` / `recency_at` timestamp variants
     - `cli_version`
     - additional metadata columns
 - Text logs
@@ -228,3 +230,54 @@ final directory deletion encountered a newly created `.DS_Store`, LCR verifies
 that the path is no longer registered and that the sole remaining entry is one
 regular `.DS_Store` before finishing cleanup. A still-registered worktree or any
 other residue preserves the original Git failure and remains untouched.
+
+## 10. Deleted-worktree session cleanup
+
+LCR's `/clean` workflow audits global Codex storage without using a missing
+directory alone as deletion authority. A read-only audit runs when the TUI or
+server starts and then once per day; it only refreshes an in-memory report and
+never deletes a thread. Opening `/clean` always runs another fresh audit.
+
+A root thread is eligible only when all of the following can be established:
+
+1. Its saved absolute `cwd` is absent, and an exact retained LCR project row
+   says that LCR forgot the same linked worktree after it disappeared.
+2. The retained repository root still exists, neither the LCR record nor any
+   member of the Codex thread tree is pinned, and no tree member is loaded by an
+   LCR-managed Codex app-server. Archived LCR records and worktrees with an open
+   project TODO are also excluded.
+3. Every root and descendant has at least 30 days of inactivity, while the LCR
+   worktree tombstone has been missing for at least 7 days.
+4. The worktree is not on a conventional external-volume path or a different
+   mounted filesystem from the configured Codex home.
+5. Every indexed descendant has readable `session_meta` lineage, the same
+   missing worktree `cwd`, and one regular rollout under `sessions/` or
+   `archived_sessions/`. Ambiguous lineage, paths, files, roots, or database
+   state exclude the whole tree.
+
+The audit queries the complete thread index, but bounds rollout-file I/O to
+threads whose `cwd` exactly matches a retained deletion record and descendants
+identified by structured `agent_role` or `source.subagent.thread_spawn`
+evidence. Indexed parent chains are cross-checked against rollout lineage;
+uncertainty blocks the related candidate tree rather than forcing unrelated
+root rollouts to be opened.
+
+Eligible roots are grouped by deleted worktree. The preview reports thread and
+worktree age, retained branch/parent metadata, Codex Git branch and commit,
+spawned-descendant counts, the eligibility reason, and the logical byte size of
+the rollout files that can be recovered. The preview revision includes the
+selected tree identities plus rollout paths, sizes, and modification times.
+
+Deletion is reachable only after selecting one or more worktree groups with
+Space, opening a separate permanent-deletion warning with Enter, and pressing
+`D`. LCR repeats the complete audit and compares the preview revision before
+each group. It then calls Codex app-server `thread/delete` for each selected
+root; the Codex API performs the root-and-descendant cascade. Direct SQLite or
+rollout-file deletion is not used.
+
+After every app-server response, LCR verifies that every selected root and
+descendant row is absent from `state_5.sqlite` and that each previewed rollout
+file is absent. Progress and partial failures remain visible. Reclaimed space is
+reported as verified logical rollout bytes only after those absence checks; it
+does not claim filesystem block-level savings on sparse, compressed, or
+copy-on-write storage.

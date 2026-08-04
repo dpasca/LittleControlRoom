@@ -11,6 +11,88 @@ import (
 	"time"
 )
 
+// DeletedWorktreeRecord is retained evidence that LCR removed a linked
+// worktree and subsequently observed its checkout missing on disk.
+type DeletedWorktreeRecord struct {
+	Path          string
+	Name          string
+	RootPath      string
+	Branch        string
+	InitialBranch string
+	ParentBranch  string
+	Pinned        bool
+	Archived      bool
+	HasOpenTodo   bool
+	MissingSince  time.Time
+}
+
+func (s *Store) ListDeletedWorktreeRecords(ctx context.Context) ([]DeletedWorktreeRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			path,
+			name,
+			worktree_root_path,
+			repo_branch,
+			worktree_initial_branch,
+			worktree_parent_branch,
+			pinned,
+			archived,
+			EXISTS (
+				SELECT 1
+				FROM project_todos pt
+				WHERE pt.project_path = projects.path AND pt.done = 0
+			),
+			missing_since
+		FROM projects
+		WHERE worktree_kind = ?
+			AND present_on_disk = 0
+			AND forgotten = 1
+			AND missing_since IS NOT NULL
+		ORDER BY path ASC
+	`, string(model.WorktreeKindLinked))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]DeletedWorktreeRecord, 0)
+	for rows.Next() {
+		var (
+			record       DeletedWorktreeRecord
+			pinned       int
+			archived     int
+			hasOpenTodo  int
+			missingSince int64
+		)
+		if err := rows.Scan(
+			&record.Path,
+			&record.Name,
+			&record.RootPath,
+			&record.Branch,
+			&record.InitialBranch,
+			&record.ParentBranch,
+			&pinned,
+			&archived,
+			&hasOpenTodo,
+			&missingSince,
+		); err != nil {
+			return nil, err
+		}
+		record.Path = filepath.Clean(strings.TrimSpace(record.Path))
+		record.RootPath = filepath.Clean(strings.TrimSpace(record.RootPath))
+		record.Name = strings.TrimSpace(record.Name)
+		record.Branch = strings.TrimSpace(record.Branch)
+		record.InitialBranch = strings.TrimSpace(record.InitialBranch)
+		record.ParentBranch = strings.TrimSpace(record.ParentBranch)
+		record.Pinned = pinned != 0
+		record.Archived = archived != 0
+		record.HasOpenTodo = hasOpenTodo != 0
+		record.MissingSince = time.Unix(missingSince, 0)
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
 func (s *Store) DeleteExpiredMissingLinkedWorktrees(ctx context.Context, now time.Time, retention time.Duration) (int, error) {
 	if retention <= 0 {
 		return 0, nil
