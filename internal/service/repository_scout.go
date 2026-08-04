@@ -11,8 +11,9 @@ import (
 )
 
 // NewRepositoryScout builds a read-only LCAgent Scout whose inference routes
-// inherit already-configured LCR providers. Dedicated LCAgent settings are an
-// optional first-choice override, not a prerequisite for Chat file access.
+// inherit already-configured LCR providers. Chat inference stays the first
+// choice; a configured LCAgent worker is an availability fallback, not a
+// silent override of Chat's model selection.
 func (s *Service) NewRepositoryScout() *lcagent.ScoutService {
 	if s == nil {
 		return &lcagent.ScoutService{}
@@ -43,15 +44,14 @@ func hasMeaningfulScoutUsage(usage model.LLMUsage) bool {
 
 func repositoryScoutRoutes(cfg config.AppConfig) []lcagent.ScoutRoute {
 	var routes []lcagent.ScoutRoute
-	if route, ok := explicitLCAgentScoutRoute(cfg); ok {
-		routes = append(routes, route)
-	}
-
 	chatBackend := cfg.EffectiveBossChatBackend()
 	if route, ok := inheritedScoutRoute(cfg, chatBackend, configuredBossUtilityModelForBackend(cfg, chatBackend), "chat_utility", "inherited Chat utility model"); ok {
 		routes = append(routes, route)
 	}
 	if route, ok := inheritedScoutRoute(cfg, chatBackend, configuredBossHelmModelForBackend(cfg, chatBackend), "chat_main", "inherited Chat main model fallback"); ok {
+		routes = append(routes, route)
+	}
+	if route, ok := configuredLCAgentScoutFallback(cfg); ok {
 		routes = append(routes, route)
 	}
 
@@ -66,12 +66,13 @@ func repositoryScoutRoutes(cfg config.AppConfig) []lcagent.ScoutRoute {
 	return routes
 }
 
-func explicitLCAgentScoutRoute(cfg config.AppConfig) (lcagent.ScoutRoute, bool) {
+func configuredLCAgentScoutFallback(cfg config.AppConfig) (lcagent.ScoutRoute, bool) {
 	if presetName := strings.TrimSpace(cfg.LCAgentRoutePreset); presetName != "" {
 		route, ok := lcagent.ScoutRouteFromPreset(presetName)
 		if !ok {
 			return lcagent.ScoutRoute{}, false
 		}
+		route.Description = "configured LCAgent worker fallback (" + presetName + ")"
 		return hydrateScoutRoute(cfg, route, true), true
 	}
 	provider := strings.ToLower(strings.TrimSpace(cfg.LCAgentProvider))
@@ -86,7 +87,7 @@ func explicitLCAgentScoutRoute(cfg config.AppConfig) (lcagent.ScoutRoute, bool) 
 	}
 	route := lcagent.ScoutRoute{
 		Source:          "lcagent_override",
-		Description:     "explicit LCAgent provider/model route",
+		Description:     "configured LCAgent worker fallback",
 		Provider:        provider,
 		Model:           strings.TrimSpace(cfg.EmbeddedLCAgentModel),
 		ReasoningEffort: strings.TrimSpace(cfg.EmbeddedLCAgentReasoning),

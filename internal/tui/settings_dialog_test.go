@@ -1805,7 +1805,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "Sections") || !strings.Contains(rendered, "> LCAgent") {
 		t.Fatalf("settings modal should make the top-level section chooser obvious: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Scout override") || !strings.Contains(rendered, "inherits Chat inference") {
+	if !strings.Contains(rendered, "Scout fallback") || !strings.Contains(rendered, "Chat inference first") {
 		t.Fatalf("settings modal should explain LCAgent's optional Scout role: %q", rendered)
 	}
 
@@ -1824,7 +1824,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "inherits Chat inference") || !strings.Contains(rendered, "available route, fallbacks, evidence, and trace") {
+	if !strings.Contains(rendered, "Chat inference first") || !strings.Contains(rendered, "every Scout answer reports the target") || !strings.Contains(rendered, "route, evidence, and trace") {
 		t.Fatalf("LCAgent section should disclose automatic Scout routing and receipts: %q", rendered)
 	}
 	if !strings.Contains(rendered, "LCAgent route preset") || !strings.Contains(rendered, "Main model") {

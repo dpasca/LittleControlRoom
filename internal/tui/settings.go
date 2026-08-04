@@ -225,8 +225,8 @@ func settingsSections() []settingsSection {
 		{
 			id:      settingsSectionLCAgent,
 			label:   "LCAgent",
-			summary: "Worker · Scout override",
-			hint:    "Configure the experimental LCR-native worker and an optional first-choice repository Scout route. Without an override, /chat Scout inherits Chat inference automatically; every Scout answer reports the available route, fallbacks, evidence, and trace.",
+			summary: "Worker · Scout fallback",
+			hint:    "Configure the experimental LCR-native worker. /chat Scout uses compatible Chat inference first and keeps this worker route as an availability fallback; every Scout answer reports the target, route, evidence, and trace.",
 			fieldOrder: []int{
 				settingsFieldLCAgentRoutePreset,
 				settingsFieldLCAgentModel,
@@ -2323,7 +2323,7 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 	case settingsDrilldownBossChat:
 		return "Choose a realtime backend for /chat. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
 	case settingsDrilldownLCAgent:
-		return "Configure the LCR-native worker essentials and an optional first-choice repository Scout route. Without an override, /chat Scout inherits Chat inference automatically. Use the LCAgent section for runtime policy and advanced launch fields."
+		return "Configure the LCR-native worker essentials. /chat Scout uses compatible Chat inference first and keeps the worker route as an availability fallback. Use the LCAgent section for runtime policy and advanced launch fields."
 	case settingsDrilldownProjectScope:
 		return "Choose where projects are discovered and which folders or names stay hidden."
 	case settingsDrilldownMobile:
@@ -4402,7 +4402,7 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentRoutePreset:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "":
-			return "LCAgent launches use the individual fields below. An explicitly configured provider or main model also becomes /chat Scout's first-choice route before its automatic Chat fallbacks."
+			return "LCAgent launches use the individual fields below. A configured worker route is also available to /chat Scout after its compatible Chat routes."
 		case "balanced":
 			return "Balanced uses direct DeepSeek V4 Pro with conservative coding budgets."
 		case "quality":

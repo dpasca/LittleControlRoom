@@ -1430,6 +1430,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"suspicious PIDs",
 		"XML-like boss_session and turn snippets",
 		"after it finds one project path, inspect project_detail before answering",
+		"Keep the user's acronym, alias, codename, or partial project name unchanged",
+		"A request for news, progress, or current status calls for project/task state first, not Repository Scout",
 		"live engineer work context",
 		"concise coworker update",
 		"turn tool output into judgment",
@@ -1471,11 +1473,36 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Use help_reference for questions about how to use Little Control Room",
 		"Use goal_run_report when the user asks what LCR goal runs happened",
 		"put only that id in query",
+		"Repository Scout is intentionally unavailable to this fast router",
+		"Never expand it into a similar loaded project name or path",
+		"A request for news, progress, or current status is not by itself a repository-file inspection",
 		"Do not answer the user",
 	} {
 		if !strings.Contains(routerPrompt, want) {
 			t.Fatalf("read-only router prompt missing %q:\n%s", want, routerPrompt)
 		}
+	}
+}
+
+func TestReadOnlyRouterSchemaDefersRepositoryScoutToMainPlanner(t *testing.T) {
+	t.Parallel()
+
+	properties := schemaProperties(t, bossReadOnlyRouteSchema())
+	kindSchema, ok := properties["kind"].(map[string]any)
+	if !ok {
+		t.Fatalf("kind schema = %#v", properties["kind"])
+	}
+	kinds, ok := kindSchema["enum"].([]string)
+	if !ok {
+		t.Fatalf("kind enum = %#v", kindSchema["enum"])
+	}
+	for _, kind := range kinds {
+		if kind == bossActionProjectScout {
+			t.Fatalf("fast router unexpectedly exposes %q: %#v", bossActionProjectScout, kinds)
+		}
+	}
+	if !strings.Contains(fmt.Sprint(kindSchema["description"]), "main planner after target resolution") {
+		t.Fatalf("kind description does not explain Scout deferral: %#v", kindSchema)
 	}
 }
 

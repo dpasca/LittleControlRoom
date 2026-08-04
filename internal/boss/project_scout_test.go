@@ -53,7 +53,7 @@ func TestQueryExecutorProjectScoutReturnsEvidenceAndUserReceipt(t *testing.T) {
 			t.Fatalf("result missing %q:\n%s", want, result.Text)
 		}
 	}
-	if !strings.Contains(result.UserReceipt, "Repository inspection:") || !strings.Contains(result.UserReceipt, "evidence") || !strings.Contains(result.UserReceipt, "trace") {
+	if !strings.Contains(result.UserReceipt, "Repository Scout:") || !strings.Contains(result.UserReceipt, filepath.Base(root)) || !strings.Contains(result.UserReceipt, "evidence") || !strings.Contains(result.UserReceipt, "trace") {
 		t.Fatalf("receipt = %q", result.UserReceipt)
 	}
 	if scout.request.WorkspaceRoot != root || scout.request.Question != "Do we have an MVP plan?" || scout.request.DataDir != "/tmp/lcr-data" {
@@ -62,6 +62,19 @@ func TestQueryExecutorProjectScoutReturnsEvidenceAndUserReceipt(t *testing.T) {
 	answer := appendBossToolReceipts("Yes, the plan exists.", []bossToolResult{result})
 	if !strings.Contains(answer, "Yes, the plan exists.") || !strings.Contains(answer, result.UserReceipt) {
 		t.Fatalf("answer receipt not appended:\n%s", answer)
+	}
+}
+
+func TestProjectScoutReceiptNamesSearchOnlyInspection(t *testing.T) {
+	receipt := projectScoutUserReceipt("/tmp/lcr-intercept", lcagent.ScoutResult{
+		Route:           lcagent.ScoutRoute{Description: "inherited Chat utility model", Provider: "openai", Model: "gpt-5.6-luna"},
+		InspectionTools: []string{"search"},
+		ArtifactPath:    "/tmp/scout.jsonl",
+	})
+	for _, want := range []string{"Repository Scout: lcr-intercept", "inherited Chat utility model", "inspection search", "trace"} {
+		if !strings.Contains(receipt, want) {
+			t.Fatalf("receipt missing %q: %s", want, receipt)
+		}
 	}
 }
 

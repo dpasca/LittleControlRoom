@@ -83,7 +83,7 @@ func successfulProjectScoutToolResult(projectPath, resolution string, result lca
 		lines = append(lines, "", "Inspection evidence: successful "+strings.Join(result.InspectionTools, ", ")+" calls are recorded in the durable trace; no read_file line ranges were produced.")
 	}
 	lines = append(lines, "", "Evidence policy: use these fresh repository findings for the answer. Do not claim a file, plan, or implementation is absent unless the Scout findings and inspection evidence actually support that negative claim. The host appends the route/evidence receipt to the user-facing answer; do not duplicate it.")
-	toolResult := clippedToolResultWithReceipt(bossActionProjectScout, strings.Join(lines, "\n"), projectScoutUserReceipt(result))
+	toolResult := clippedToolResultWithReceipt(bossActionProjectScout, strings.Join(lines, "\n"), projectScoutUserReceipt(projectPath, result))
 	toolResult.Usage = result.Usage
 	return toolResult
 }
@@ -112,13 +112,19 @@ func unavailableProjectScoutToolResult(projectPath string, attempts []lcagent.Sc
 	return clippedToolResultWithReceipt(bossActionProjectScout, strings.Join(lines, "\n"), receipt)
 }
 
-func projectScoutUserReceipt(result lcagent.ScoutResult) string {
-	parts := []string{"Repository inspection: " + scoutRouteLabel(result)}
+func projectScoutUserReceipt(projectPath string, result lcagent.ScoutResult) string {
+	projectLabel := filepath.Base(filepath.Clean(strings.TrimSpace(projectPath)))
+	if projectLabel == "." || projectLabel == string(filepath.Separator) || projectLabel == "" {
+		projectLabel = "selected repository"
+	}
+	parts := []string{"Repository Scout: " + projectLabel + " via " + scoutRouteLabel(result)}
 	if failed := failedScoutAttempts(result.Attempts); len(failed) > 0 {
-		parts[0] = "Repository inspection fallback: " + scoutRouteLabel(result) + " after " + formatScoutAttemptFailures(failed)
+		parts[0] = "Repository Scout fallback: " + projectLabel + " via " + scoutRouteLabel(result) + " after " + formatScoutAttemptFailures(failed)
 	}
 	if links := scoutEvidenceReceiptLinks(result.Evidence, 3); len(links) > 0 {
 		parts = append(parts, "evidence "+strings.Join(links, ", "))
+	} else if len(result.InspectionTools) > 0 {
+		parts = append(parts, "inspection "+strings.Join(result.InspectionTools, ", "))
 	}
 	if result.ArtifactPath != "" {
 		parts = append(parts, markdownLocalPath("trace", result.ArtifactPath, 0))
