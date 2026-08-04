@@ -41,6 +41,10 @@ const fullScanLockPollInterval = 25 * time.Millisecond
 const scanGitMetadataTimeoutPathLimit = 8
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
+
+// Repository status may need to stat the entire worktree. Cold File Provider
+// folders can take several seconds even when their contents are available offline.
+var scanGitRepoStatusTimeout = 15 * time.Second
 var scanGitMetadataConcurrency = 8
 
 type SessionClassifier interface {
@@ -366,7 +370,7 @@ func (s *scanGitMetadataTimeoutSet) snapshot(limit int) (int, []string) {
 	return count, paths
 }
 
-func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, error), timedOutPaths *scanGitMetadataTimeoutSet) func(context.Context, string) (T, error) {
+func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, error), maximum time.Duration, timedOutPaths *scanGitMetadataTimeoutSet) func(context.Context, string) (T, error) {
 	if reader == nil {
 		return nil
 	}
@@ -376,7 +380,7 @@ func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, 
 		if timedOutPaths.contains(cleanPath) {
 			return zero, fmt.Errorf("skipping git metadata read for %s after earlier timeout", cleanPath)
 		}
-		timeout := scanGitMetadataTimeout
+		timeout := maximum
 		if timeout <= 0 {
 			return reader(parent, path)
 		}
@@ -1237,10 +1241,10 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 	cfg := runtime.cfg
 	classifier := runtime.classifier
 	timedOutGitPaths := &scanGitMetadataTimeoutSet{}
-	gitFingerprintReader := withScanGitMetadataTimeout(runtime.gitFingerprintReader, timedOutGitPaths)
-	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, timedOutGitPaths)
-	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, timedOutGitPaths)
-	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, timedOutGitPaths)
+	gitFingerprintReader := withScanGitMetadataTimeout(runtime.gitFingerprintReader, scanGitMetadataTimeout, timedOutGitPaths)
+	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, scanGitRepoStatusTimeout, timedOutGitPaths)
+	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, scanGitMetadataTimeout, timedOutGitPaths)
+	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, scanGitMetadataTimeout, timedOutGitPaths)
 	bus := runtime.bus
 	now := time.Now()
 	progress.setPhase("purging expired missing linked worktrees")
@@ -2963,9 +2967,9 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPath string, opts ScanOptions) error {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	runtime := s.runtimeSnapshot()
-	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, nil)
-	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, nil)
-	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, nil)
+	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, scanGitRepoStatusTimeout, nil)
+	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, scanGitMetadataTimeout, nil)
+	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, scanGitMetadataTimeout, nil)
 	now := time.Now()
 	initialDetail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
