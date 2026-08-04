@@ -343,6 +343,74 @@ func TestReadScanGitMetadataUsesBoundedConcurrency(t *testing.T) {
 	}
 }
 
+func TestScanWithOptionsUsesLongerTimeoutForRepoStatus(t *testing.T) {
+	oldMetadataTimeout := scanGitMetadataTimeout
+	oldRepoStatusTimeout := scanGitRepoStatusTimeout
+	scanGitMetadataTimeout = 10 * time.Millisecond
+	scanGitRepoStatusTimeout = 500 * time.Millisecond
+	defer func() {
+		scanGitMetadataTimeout = oldMetadataTimeout
+		scanGitRepoStatusTimeout = oldRepoStatusTimeout
+	}()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := t.TempDir()
+	now := time.Date(2026, 8, 4, 15, 8, 14, 0, time.UTC)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "cold-status",
+		LastActivity:   now,
+		Status:         model.StatusIdle,
+		AttentionScore: 1,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	statusBudget := make(chan time.Duration, 1)
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(nil)
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = func(ctx context.Context, _ string) (scanner.GitRepoStatus, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			statusBudget <- 0
+		} else {
+			statusBudget <- time.Until(deadline)
+		}
+		return scanner.GitRepoStatus{Branch: "master"}, nil
+	}
+	svc.gitWorktreeInfoReader = nil
+	svc.gitWorktreeListReader = nil
+
+	report, err := svc.ScanWithOptions(ctx, ScanOptions{})
+	if err != nil {
+		t.Fatalf("ScanWithOptions() error = %v", err)
+	}
+	if report.GitMetadataTimeoutCount != 0 {
+		t.Fatalf("GitMetadataTimeoutCount = %d, want 0", report.GitMetadataTimeoutCount)
+	}
+	select {
+	case got := <-statusBudget:
+		if got < 250*time.Millisecond {
+			t.Fatalf("repo status timeout budget = %s, want the longer operation-specific budget", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("repo status reader was not called")
+	}
+}
+
 func TestWithScanGitMetadataTimeoutSharesConcurrentTimeoutSet(t *testing.T) {
 	oldTimeout := scanGitMetadataTimeout
 	scanGitMetadataTimeout = 10 * time.Millisecond
@@ -356,8 +424,8 @@ func TestWithScanGitMetadataTimeoutSharesConcurrentTimeoutSet(t *testing.T) {
 		return "", ctx.Err()
 	}
 	readers := []func(context.Context, string) (string, error){
-		withScanGitMetadataTimeout(blockingReader, timedOutPaths),
-		withScanGitMetadataTimeout(blockingReader, timedOutPaths),
+		withScanGitMetadataTimeout(blockingReader, scanGitMetadataTimeout, timedOutPaths),
+		withScanGitMetadataTimeout(blockingReader, scanGitMetadataTimeout, timedOutPaths),
 	}
 
 	root := t.TempDir()
@@ -399,7 +467,7 @@ func TestWithScanGitMetadataTimeoutSharesConcurrentTimeoutSet(t *testing.T) {
 	skippedReader := withScanGitMetadataTimeout(func(context.Context, string) (string, error) {
 		t.Fatal("reader called for a path that already timed out")
 		return "", nil
-	}, timedOutPaths)
+	}, scanGitMetadataTimeout, timedOutPaths)
 	if _, err := skippedReader(context.Background(), paths[0]); err == nil || !strings.Contains(err.Error(), "after earlier timeout") {
 		t.Fatalf("read after timeout error = %v, want earlier-timeout skip", err)
 	}
