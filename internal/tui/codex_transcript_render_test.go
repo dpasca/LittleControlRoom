@@ -2028,6 +2028,23 @@ func TestCodexInlineCodePathScanIgnoresFencesAndBareCodeTokens(t *testing.T) {
 	}
 }
 
+func TestCodexInlineCodePathScanIgnoresOpenCommandPrefix(t *testing.T) {
+	projectPath := filepath.Join("/Users", "davide", "dev", "repos", "cuda-learning")
+	text := "Open the explainer with `open notes/matmul-explainer.html`."
+
+	targets := codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)
+	if len(targets) != 1 {
+		t.Fatalf("inline code path targets = %#v, want exactly one HTML file", targets)
+	}
+	wantPath := filepath.Join(projectPath, "notes", "matmul-explainer.html")
+	if targets[0].Kind != "html" || targets[0].Path != wantPath {
+		t.Fatalf("inline code path target = %#v, want HTML path %q", targets[0], wantPath)
+	}
+	if strings.Contains(targets[0].Path, "open notes") {
+		t.Fatalf("inline code path should not retain the open command prefix: %#v", targets[0])
+	}
+}
+
 func TestCodexArtifactTargetsPreferStandaloneAbsolutePathForImplicitProjectRelativeVideo(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "FractalMech")
