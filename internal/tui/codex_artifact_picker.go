@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 type codexArtifactOpenTarget struct {
@@ -1494,7 +1495,7 @@ func leadingBacktickRunLength(text string) int {
 }
 
 func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (codexArtifactOpenTarget, bool) {
-	rawPath = strings.TrimSpace(rawPath)
+	rawPath = codexInlineCodeOpenTarget(rawPath)
 	if !codexInlineCodePathCandidate(rawPath) {
 		return codexArtifactOpenTarget{}, false
 	}
@@ -1521,6 +1522,20 @@ func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (cod
 		return codexArtifactOpenTarget{Kind: "url", Label: externalTarget, Path: externalTarget}, true
 	}
 	return codexArtifactOpenTarget{}, false
+}
+
+func codexInlineCodeOpenTarget(text string) string {
+	text = strings.TrimSpace(text)
+	const command = "open"
+	if !strings.HasPrefix(text, command) || len(text) == len(command) {
+		return text
+	}
+	remainder := text[len(command):]
+	target := strings.TrimLeftFunc(remainder, unicode.IsSpace)
+	if target == remainder {
+		return text
+	}
+	return strings.TrimSpace(target)
 }
 
 func codexInlineCodePathCandidate(text string) bool {
