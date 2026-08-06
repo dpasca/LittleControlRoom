@@ -755,6 +755,33 @@ func TestSetupBossDeepSeekModelDefaultsUseSelectedBackend(t *testing.T) {
 	}
 }
 
+func TestSetupAcceptingNewChatProviderResetsChatModels(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.BossHelmModel = "gpt-5.6"
+	settings.BossUtilityModel = "gpt-5.6-luna"
+	m := Model{
+		setupMode:         true,
+		setupStep:         setupStepBossProvider,
+		setupFocusedRole:  setupRoleBossChat,
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendDeepSeek),
+		settingsBaseline:  &settings,
+		settingsFields:    newSettingsFields(settings),
+	}
+
+	updated, _ := m.setupAdvance()
+	got := updated.(Model)
+	if backend := got.settingsFieldValue(settingsFieldBossChatBackend); backend != string(config.AIBackendDeepSeek) {
+		t.Fatalf("Chat provider field = %q, want deepseek", backend)
+	}
+	if main, utility := got.settingsFieldValue(settingsFieldBossChatModel), got.settingsFieldValue(settingsFieldBossUtilityModel); main != "" || utility != "" {
+		t.Fatalf("Chat models = %q/%q, want DeepSeek defaults", main, utility)
+	}
+	if !strings.Contains(got.status, "models reset to its defaults") {
+		t.Fatalf("status = %q, want reset explanation", got.status)
+	}
+}
+
 func TestRenderSetupHintExplainsClaudeHaikuDefault(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendClaude

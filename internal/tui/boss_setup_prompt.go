@@ -78,9 +78,9 @@ func (m Model) bossSetupPromptReason() string {
 	case settings.BossChatBackend == config.AIBackendXiaomi && strings.TrimSpace(settings.XiaomiAPIKey) == "":
 		return "Chat is set to Xiaomi, but needs a saved Xiaomi API key before it can start."
 	case settings.BossChatBackend == config.AIBackendUnset:
-		return "Chat is not configured yet. Open setup to choose a chat backend."
+		return "Chat is not configured yet. Open setup to choose a Chat provider."
 	case settings.BossChatBackend != config.AIBackendOpenAIAPI:
-		return "Chat is not connected to a supported direct chat backend yet."
+		return "Chat is not connected to a supported direct provider yet."
 	default:
 		return "Chat needs one quick setup step before it can start."
 	}

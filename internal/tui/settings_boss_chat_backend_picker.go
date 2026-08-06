@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,7 +15,7 @@ func (m Model) openSettingsBossChatBackendPicker() (tea.Model, tea.Cmd) {
 	options := m.settingsBossChatBackendOptions()
 	m.settingsBossChatPickerVisible = true
 	m.settingsBossChatPickerSelected = m.settingsBossChatBackendPickerSelection(options)
-	m.status = "Choose the helper for Chat."
+	m.status = "Choose the provider for Chat."
 	return m, nil
 }
 
@@ -66,11 +67,62 @@ func (m Model) updateSettingsBossChatBackendPickerMode(msg tea.KeyMsg) (tea.Mode
 }
 
 func (m Model) applySettingsBossChatBackendPickerSelection(option providerChoice) (tea.Model, tea.Cmd) {
-	if len(m.settingsFields) > settingsFieldBossChatBackend {
-		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(option.Value))
+	modelsReset := m.applySettingsBossChatBackend(option.Value)
+	status := fmt.Sprintf("Chat provider set to %s. Press ctrl+s to save.", option.Label)
+	if modelsReset {
+		status = fmt.Sprintf("Chat provider set to %s; Chat models reset to its defaults. Press ctrl+s to save.", option.Label)
 	}
-	m.closeSettingsBossChatBackendPicker(fmt.Sprintf("Chat set to %s. Press ctrl+s to save.", option.Label))
+	m.closeSettingsBossChatBackendPicker(status)
 	return m.focusSettingsProviderDetail(option.Value)
+}
+
+// applySettingsBossChatBackend keeps the single Chat provider selection and
+// its model overrides coherent. A provider change invalidates both overrides;
+// reselecting the current provider repairs any known cross-provider model left
+// behind by older settings UIs.
+func (m *Model) applySettingsBossChatBackend(backend config.AIBackend) bool {
+	if len(m.settingsFields) <= settingsFieldBossChatBackend {
+		return false
+	}
+	previous := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatBackend)))
+	m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(backend))
+	if previous != backend {
+		return m.resetSettingsBossChatModels()
+	}
+
+	provider := settingsCloudModelProviderForBackend(backend)
+	if provider == "" {
+		return false
+	}
+	reset := false
+	for _, fieldIndex := range []int{settingsFieldBossChatModel, settingsFieldBossUtilityModel} {
+		if fieldIndex >= len(m.settingsFields) {
+			continue
+		}
+		model := strings.TrimSpace(m.settingsFieldValue(fieldIndex))
+		if _, mismatch := codexapp.LCAgentKnownModelProviderMismatch(provider, model); !mismatch {
+			continue
+		}
+		m.settingsFields[fieldIndex].input.SetValue("")
+		m.settingsFields[fieldIndex].input.CursorEnd()
+		reset = true
+	}
+	return reset
+}
+
+func (m *Model) resetSettingsBossChatModels() bool {
+	reset := false
+	for _, fieldIndex := range []int{settingsFieldBossChatModel, settingsFieldBossUtilityModel} {
+		if fieldIndex >= len(m.settingsFields) {
+			continue
+		}
+		if strings.TrimSpace(m.settingsFieldValue(fieldIndex)) != "" {
+			reset = true
+		}
+		m.settingsFields[fieldIndex].input.SetValue("")
+		m.settingsFields[fieldIndex].input.CursorEnd()
+	}
+	return reset
 }
 
 func (m Model) renderSettingsBossChatBackendPickerOverlay(body string, bodyW, bodyH int) string {
@@ -92,7 +144,7 @@ func (m Model) renderSettingsBossChatBackendPickerContent(width int) string {
 	options := m.settingsBossChatBackendOptions()
 	currentLabel := settingsBossChatBackendOptionLabel(m.settingsFieldValue(settingsFieldBossChatBackend))
 	current := config.AIBackend(strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatBackend)))
-	return renderProviderChoicePickerContent(providerChoiceRoleTitle(providerChoiceRoleBossChat), currentLabel, options, m.settingsBossChatPickerSelected, current, width)
+	return renderProviderChoicePickerContent("Chat Provider", currentLabel, options, m.settingsBossChatPickerSelected, current, width)
 }
 
 func renderSettingsBossChatBackendLabel(raw string) string {

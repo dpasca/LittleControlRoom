@@ -19,9 +19,12 @@ import (
 )
 
 func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossHelmModel = "gpt-5.6"
+	settings.BossUtilityModel = "gpt-5.6-luna"
 	m := Model{
 		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		settingsFields: newSettingsFields(settings),
 		width:          100,
 		height:         24,
 	}
@@ -47,6 +50,31 @@ func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
 	if got.settingsFieldValue(settingsFieldBossChatBackend) != string(config.AIBackendOpenAIAPI) {
 		t.Fatalf("Chat backend field = %q, want openai_api", got.settingsFieldValue(settingsFieldBossChatBackend))
 	}
+	if got.settingsFieldValue(settingsFieldBossChatModel) != "" || got.settingsFieldValue(settingsFieldBossUtilityModel) != "" {
+		t.Fatalf("Chat model overrides = %q/%q, want provider defaults after provider change", got.settingsFieldValue(settingsFieldBossChatModel), got.settingsFieldValue(settingsFieldBossUtilityModel))
+	}
+	if !strings.Contains(got.status, "models reset to its defaults") {
+		t.Fatalf("status = %q, want model reset explanation", got.status)
+	}
+}
+
+func TestSettingsBossChatBackendReselectionRepairsKnownStaleModel(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendDeepSeek
+	settings.BossHelmModel = "gpt-5.6-luna"
+	settings.BossUtilityModel = config.DefaultDeepSeekModel
+	m := Model{settingsFields: newSettingsFields(settings)}
+
+	reset := m.applySettingsBossChatBackend(config.AIBackendDeepSeek)
+	if !reset {
+		t.Fatal("reselecting DeepSeek should repair the known OpenAI model")
+	}
+	if got := m.settingsFieldValue(settingsFieldBossChatModel); got != "" {
+		t.Fatalf("Chat main model = %q, want DeepSeek default", got)
+	}
+	if got := m.settingsFieldValue(settingsFieldBossUtilityModel); got != config.DefaultDeepSeekModel {
+		t.Fatalf("compatible Chat utility model = %q, want preserved", got)
+	}
 }
 
 func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
@@ -66,6 +94,11 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 	fields := got.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
 	if !slices.Contains(fields, settingsFieldBossChatOllamaThinking) {
 		t.Fatalf("Chat Ollama drilldown fields = %#v, want thinking field", fields)
+	}
+	for _, duplicate := range []int{settingsFieldBossChatModel, settingsFieldBossUtilityModel} {
+		if slices.Contains(fields, duplicate) {
+			t.Fatalf("Chat Ollama drilldown fields = %#v, should use the single shared Ollama model field", fields)
+		}
 	}
 	rendered := ansi.Strip(got.renderSettingsContent(100, 24))
 	for _, want := range []string{"Ollama Thinking", "Chat Ollama thinking"} {
@@ -1396,14 +1429,14 @@ func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
 	}
 
 	projectPicker := ansi.Strip(m.renderSettingsAIBackendPickerContent(72))
-	for _, want := range []string{"Project Reports", "Codex", "ready", "Selected Helper", "Will do", "Needs", "Readiness", "After choosing"} {
+	for _, want := range []string{"Project Reports", "Codex", "ready", "Selected Provider", "Will do", "Needs", "Readiness", "After choosing"} {
 		if !strings.Contains(projectPicker, want) {
 			t.Fatalf("project picker missing %q: %q", want, projectPicker)
 		}
 	}
 
 	bossPicker := ansi.Strip(m.renderSettingsBossChatBackendPickerContent(72))
-	for _, want := range []string{"Chat", "Auto", "ready", "shared OpenAI API connection", "Selected Helper", "After choosing"} {
+	for _, want := range []string{"Chat", "Auto", "ready", "shared OpenAI API connection", "Selected Provider", "After choosing"} {
 		if !strings.Contains(bossPicker, want) {
 			t.Fatalf("boss picker missing %q: %q", want, bossPicker)
 		}
@@ -1713,14 +1746,20 @@ func TestSettingsXiaomiBossChatDrilldownShowsModelFields(t *testing.T) {
 	_ = got.setSettingsSelection(settingsFieldBossChatModel)
 	updated, cmd := got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("opening Boss Xiaomi model picker should not immediately load models")
+	if cmd == nil {
+		t.Fatalf("opening Boss Xiaomi model picker should immediately load Xiaomi models")
 	}
 	if got.settingsLCAgentModelPicker == nil {
 		t.Fatalf("Boss Xiaomi model row should open the unified model picker")
 	}
 	if got.settingsLCAgentModelPicker.Provider != "xiaomi" {
 		t.Fatalf("model picker provider = %q, want xiaomi", got.settingsLCAgentModelPicker.Provider)
+	}
+	if !got.settingsLCAgentModelPicker.ProviderLocked || got.settingsLCAgentModelPicker.Step != settingsLCAgentModelPickerStepModel {
+		t.Fatalf("model picker state = %#v, want provider-locked model step", got.settingsLCAgentModelPicker)
+	}
+	if len(got.settingsLCAgentModelPicker.ProviderOptions) != 0 {
+		t.Fatalf("Chat model picker provider options = %#v, want none", got.settingsLCAgentModelPicker.ProviderOptions)
 	}
 }
 

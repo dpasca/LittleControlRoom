@@ -60,6 +60,7 @@ type settingsLCAgentModelPickerState struct {
 	ReasoningSelected  int
 	RecentSelections   []config.LCAgentModelSelection
 	RecentSelected     int
+	ProviderLocked     bool
 	Loading            bool
 	Err                string
 }
@@ -154,6 +155,10 @@ func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	settings := m.settingsDraftForInferenceStatus()
+	providerLocked := settingsFieldUsesBossCloudModelPicker(fieldIndex)
+	if providerLocked {
+		settings = m.bossModelDefaultSettings()
+	}
 	provider := settingsLCAgentModelPickerProvider(settings, fieldIndex)
 	current := settingsLCAgentModelPickerRawModel(settings, fieldIndex)
 	providerOptions := settingsLCAgentModelPickerProviderOptions(fieldIndex)
@@ -169,6 +174,11 @@ func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 		CurrentReasoning: settingsLCAgentModelPickerRawReasoning(settings, fieldIndex),
 		RecentSelections: settingsLCAgentModelPickerRecentSelections(settings, fieldIndex),
 		RecentSelected:   -1,
+		ProviderLocked:   providerLocked,
+	}
+	if providerLocked {
+		m.status = "Loading models for the selected Chat provider."
+		return m.startSettingsLCAgentModelPickerModelList()
 	}
 	m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(fieldIndex)) + " provider."
 	return m, nil
@@ -396,6 +406,10 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		case "esc":
 			m.closeSettingsLCAgentModelPicker("LCAgent model check canceled")
 		case "left", "h", "backspace":
+			if state.ProviderLocked {
+				m.status = "Choose the Chat provider from the Chat provider row."
+				return m, nil
+			}
 			if strings.TrimSpace(state.APIKeyProvider) != "" {
 				m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepAPIKey
 				m.status = "Confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " connection."
@@ -419,6 +433,10 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
 		return m, nil
 	case "left", "h":
+		if state.ProviderLocked {
+			m.status = "Choose the Chat provider from the Chat provider row."
+			return m, nil
+		}
 		if strings.TrimSpace(state.APIKeyProvider) != "" {
 			state.Step = settingsLCAgentModelPickerStepAPIKey
 			m.status = "Confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " connection."
@@ -639,8 +657,10 @@ func (m Model) startSettingsLCAgentModelPickerModelList() (tea.Model, tea.Cmd) {
 		m.status = "Choose a provider before checking models."
 		return m, nil
 	}
-	m.setSettingsModelPickerAPIKey(provider, state.APIKeyInput.Value())
-	m.setSettingsModelPickerBaseURL(provider, state.BaseURLInput.Value())
+	if !state.ProviderLocked {
+		m.setSettingsModelPickerAPIKey(provider, state.APIKeyInput.Value())
+		m.setSettingsModelPickerBaseURL(provider, state.BaseURLInput.Value())
+	}
 	settings := m.settingsDraftForInferenceStatus()
 	cfg, resolvedProvider, current, ok := settingsLCAgentModelListConfigForProvider(settings, state.FieldIndex, provider)
 	if !ok {
@@ -649,7 +669,9 @@ func (m Model) startSettingsLCAgentModelPickerModelList() (tea.Model, tea.Cmd) {
 	}
 	state.Step = settingsLCAgentModelPickerStepModel
 	state.Provider = resolvedProvider
-	state.APIKeyProvider = resolvedProvider
+	if !state.ProviderLocked {
+		state.APIKeyProvider = resolvedProvider
+	}
 	state.Current = current
 	state.FilterInput = newSettingsLCAgentModelPickerFilterInput()
 	state.Models = nil
@@ -958,13 +980,16 @@ func (m Model) applySettingsProjectCloudModelPickerSelection(provider, model str
 }
 
 func (m Model) applySettingsBossCloudModelPickerSelection(provider, model string) (tea.Model, tea.Cmd) {
-	backend := settingsCloudModelBackendForProvider(provider)
-	if backend == config.AIBackendUnset {
-		m.closeSettingsLCAgentModelPicker("Chat does not have a model list for " + settingsLCAgentModelPickerProviderLabel(provider) + ".")
+	settings := m.bossModelDefaultSettings()
+	backend := settings.BossChatBackend
+	expectedProvider := settingsCloudModelProviderForBackend(backend)
+	if expectedProvider == "" {
+		m.closeSettingsLCAgentModelPicker("Choose a cloud Chat provider before selecting a Chat model.")
 		return m, nil
 	}
-	if len(m.settingsFields) > settingsFieldBossChatBackend {
-		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(backend))
+	if !strings.EqualFold(strings.TrimSpace(provider), expectedProvider) {
+		m.closeSettingsLCAgentModelPicker("Chat models are scoped to " + backend.Label() + ". Change the Chat provider from the Chat provider row first.")
+		return m, nil
 	}
 	fieldIndex := settingsFieldBossChatModel
 	label := "Chat main model"
@@ -1021,12 +1046,19 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
-		renderDialogAction("Type", "filter", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("Left", "key", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
+	actions := []string{
+		renderDialogAction("Type", "filter", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle),
+	}
+	if state == nil || !state.ProviderLocked {
+		actions = append(actions, renderDialogAction("Left", "connection", navigateActionKeyStyle, navigateActionTextStyle))
+	}
+	actions = append(actions,
+		renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	)
+	lines = append(lines, strings.Join(actions, "   "))
 	if state == nil || state.Loading {
 		lines = append(lines, "", commandPaletteHintStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)]+" Checking provider model list..."))
 		return strings.Join(lines, "\n")
@@ -1339,7 +1371,7 @@ func settingsLCAgentModelPickerProviderOptions(fieldIndex int) []settingsLCAgent
 	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
 		return settingsProjectCloudModelProviderOptions()
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
-		return settingsBossCloudModelProviderOptions()
+		return nil
 	default:
 		return settingsLCAgentProviderOptions()
 	}
@@ -1369,41 +1401,6 @@ func settingsProjectCloudModelProviderOptions() []settingsLCAgentProviderOption 
 			Value:       "xiaomi",
 			Label:       "Xiaomi",
 			Summary:     "Use direct Xiaomi MiMo for project reports and background summaries.",
-			Description: "Uses the shared Xiaomi API key and MiMo model IDs.",
-		},
-	}
-}
-
-func settingsBossCloudModelProviderOptions() []settingsLCAgentProviderOption {
-	return []settingsLCAgentProviderOption{
-		{
-			Value:       "openai",
-			Label:       "OpenAI",
-			Summary:     "Use direct OpenAI API inference for Chat.",
-			Description: "Uses the shared OpenAI API key and direct OpenAI model IDs.",
-		},
-		{
-			Value:       "openrouter",
-			Label:       "OpenRouter",
-			Summary:     "Use OpenRouter for Chat.",
-			Description: "Uses the shared OpenRouter API key and model list.",
-		},
-		{
-			Value:       "deepseek",
-			Label:       "DeepSeek",
-			Summary:     "Use direct DeepSeek for Chat.",
-			Description: "Uses the shared DeepSeek API key and direct DeepSeek model IDs.",
-		},
-		{
-			Value:       "moonshot",
-			Label:       "Moonshot",
-			Summary:     "Use direct Moonshot/Kimi for Chat.",
-			Description: "Uses the shared Moonshot API key and Kimi model IDs.",
-		},
-		{
-			Value:       "xiaomi",
-			Label:       "Xiaomi",
-			Summary:     "Use direct Xiaomi MiMo for Chat.",
 			Description: "Uses the shared Xiaomi API key and MiMo model IDs.",
 		},
 	}
@@ -1624,6 +1621,9 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 		model := strings.TrimSpace(settings.BossHelmModel)
 		if fieldIndex == settingsFieldBossUtilityModel {
 			model = strings.TrimSpace(settings.BossUtilityModel)
+		}
+		if mismatch, ok := codexapp.LCAgentKnownModelProviderMismatch(provider, model); ok {
+			return "Mismatch: " + model + " belongs to " + codexapp.LCAgentProviderDisplayName(mismatch.ResolvedProvider)
 		}
 		if model == "" {
 			model = "Default: " + settingsLCAgentModelPickerAutoLabelForProvider(settings, fieldIndex, provider)

@@ -372,9 +372,14 @@ func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
 	case setupStepProjectProvider:
 		return m.enterSetupStep(m.nextSetupStepAfterProjectProvider(), "Project reports selected. Press Enter to continue.")
 	case setupStepProjectConfig:
-		return m.enterSetupStep(setupStepBossProvider, "Project reports details accepted. Choose the Chat helper.")
+		return m.enterSetupStep(setupStepBossProvider, "Project reports details accepted. Choose the Chat provider.")
 	case setupStepBossProvider:
-		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), "Chat selected. Press Enter to continue.")
+		modelsReset := m.applySettingsBossChatBackend(m.setupSelectedBossBackend())
+		status := "Chat provider selected. Press Enter to continue."
+		if modelsReset {
+			status = "Chat provider selected; Chat models reset to its defaults. Press Enter to continue."
+		}
+		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), status)
 	case setupStepBossConfig:
 		return m.enterSetupStep(setupStepLCAgentConfig, "Chat details accepted. LCAgent is optional; Repository Scout uses compatible Chat inference first and keeps the worker route as a fallback.")
 	case setupStepLCAgentConfig:
@@ -420,10 +425,15 @@ func (m Model) setupAdvanceSectionDialog() (tea.Model, tea.Cmd) {
 	case setupStepProjectConfig:
 		return m.closeSetupSectionDialog("Project reports setup updated in this draft. Open Save to write config.")
 	case setupStepBossProvider:
-		if m.setupStepNeedsConfig(setupStepBossConfig) {
-			return m.enterSetupStep(setupStepBossConfig, "Chat details. Press Enter to return to setup sections.")
+		modelsReset := m.applySettingsBossChatBackend(m.setupSelectedBossBackend())
+		status := "Chat setup updated in this draft. Open Save to write config."
+		if modelsReset {
+			status = "Chat provider updated and Chat models reset to its defaults. Open Save to write config."
 		}
-		return m.closeSetupSectionDialog("Chat setup updated in this draft. Open Save to write config.")
+		if m.setupStepNeedsConfig(setupStepBossConfig) {
+			return m.enterSetupStep(setupStepBossConfig, status)
+		}
+		return m.closeSetupSectionDialog(status)
 	case setupStepBossConfig:
 		return m.closeSetupSectionDialog("Chat setup updated in this draft. Open Save to write config.")
 	case setupStepLCAgentConfig:
@@ -442,7 +452,7 @@ func (m Model) openSetupSectionDialog() (tea.Model, tea.Cmd) {
 	case setupStepProjectProvider:
 		return m.enterSetupStep(setupStepProjectProvider, "Project reports setup. Choose a runner, then press Enter.")
 	case setupStepBossProvider:
-		return m.enterSetupStep(setupStepBossProvider, "Chat setup. Choose a realtime backend, then press Enter.")
+		return m.enterSetupStep(setupStepBossProvider, "Chat setup. Choose a realtime provider, then press Enter.")
 	case setupStepLCAgentConfig:
 		return m.enterSetupStep(setupStepLCAgentConfig, "LCAgent setup. Press Enter to return to setup sections.")
 	case setupStepSave:
@@ -557,7 +567,7 @@ func (m Model) enterSetupStep(step setupStep, status string) (tea.Model, tea.Cmd
 	case setupStepBossProvider:
 		m.setupFocusedRole = setupRoleBossChat
 		if status == "" {
-			status = "Choose the Chat helper. Enter accepts the selected provider."
+			status = "Choose the Chat provider. Enter accepts the selected provider."
 		}
 	case setupStepBossConfig:
 		m.setupFocusedRole = setupRoleBossChat
@@ -700,6 +710,10 @@ func (m Model) setupConfigFieldIndexes() []int {
 
 func (m Model) saveSetupFromCurrentChoices() (tea.Model, tea.Cmd) {
 	settings := m.setupSettingsFromCurrentChoices()
+	if issue, ok := settingsBossKnownModelProviderIssue(settings); ok {
+		m.status = issue.saveStatus()
+		return m, nil
+	}
 	if issue, ok := settingsLCAgentKnownModelProviderIssue(settings); ok {
 		m.status = issue.saveStatus()
 		return m, nil
@@ -1301,6 +1315,9 @@ func (m Model) renderSetupConfigContent(width int) string {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, warning))
 	}
 	if issue, ok := settingsLCAgentKnownModelProviderIssue(m.setupDraftSettingsForProviderChoices()); ok {
+		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
+	}
+	if issue, ok := settingsBossKnownModelProviderIssue(m.setupSettingsFromCurrentChoices()); ok {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
 	}
 	if m.setupFocusedRole == setupRoleLCAgent {

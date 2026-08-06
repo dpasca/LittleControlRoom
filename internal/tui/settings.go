@@ -551,6 +551,9 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	if issue, ok := settingsLCAgentKnownModelProviderIssue(saved); ok {
 		m.status = issue.message()
 	}
+	if issue, ok := settingsBossKnownModelProviderIssue(saved); ok {
+		m.status = issue.message()
+	}
 	if issue := settingsLocalFileIssue(saved); issue != nil {
 		m.appendSettingsConfigIssue(issue)
 		m.status = errorStatusWithHint(settingsConfigIssueStatus)
@@ -896,6 +899,12 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.LCAgentProvider = lcagentProvider
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentModel))
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentReasoning))
+	if issue, ok := settingsBossKnownModelProviderIssue(settings); ok {
+		m.err = nil
+		m.settingsSaving = false
+		m.status = issue.saveStatus()
+		return m, nil
+	}
 	if issue, ok := settingsLCAgentKnownModelProviderIssue(settings); ok {
 		m.err = nil
 		m.settingsSaving = false
@@ -1332,9 +1341,7 @@ func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
 		settings.BossChatBackend == config.AIBackendDeepSeek ||
 		settings.BossChatBackend == config.AIBackendMoonshot ||
 		settings.BossChatBackend == config.AIBackendXiaomi ||
-		settings.BossChatBackend == config.AIBackendMLX ||
-		settings.BossChatBackend == config.AIBackendOllama ||
-		strings.TrimSpace(settings.OpenAIAPIKey) != ""
+		(settings.BossChatBackend == config.AIBackendUnset && strings.TrimSpace(settings.OpenAIAPIKey) != "")
 }
 
 func settingsOpenAICompatibleFieldsRelevant(settings config.EditableSettings, backend config.AIBackend) bool {
@@ -2047,6 +2054,9 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	if issue, ok := settingsLCAgentKnownModelProviderIssue(m.settingsDraftForInferenceStatus()); ok {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
 	}
+	if issue, ok := settingsBossKnownModelProviderIssue(m.settingsDraftForInferenceStatus()); ok {
+		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
+	}
 	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")
 	if m.settingsSectionMenu {
@@ -2321,7 +2331,7 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 	case settingsDrilldownProjectReports:
 		return "Choose the runner for background summaries, classification, TODO help, and commit help. Provider credentials are shared when another feature uses the same connection."
 	case settingsDrilldownBossChat:
-		return "Choose a realtime backend for /chat. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
+		return "Choose one provider for /chat, then choose main and utility models from that provider. Codex, OpenCode, and Claude Code are excluded because engineer sessions can be too slow for chat."
 	case settingsDrilldownLCAgent:
 		return "Configure the LCR-native worker essentials. /chat Scout uses compatible Chat inference first and keeps the worker route as an availability fallback. Use the LCAgent section for runtime policy and advanced launch fields."
 	case settingsDrilldownProjectScope:
@@ -2348,6 +2358,51 @@ type settingsLCAgentModelProviderIssue struct {
 	resolvedProvider   string
 	model              string
 	normalizedModel    string
+}
+
+type settingsBossModelProviderIssue struct {
+	modelLabel string
+	backend    config.AIBackend
+	mismatch   codexapp.LCAgentModelProviderMismatch
+}
+
+func settingsBossKnownModelProviderIssue(settings config.EditableSettings) (settingsBossModelProviderIssue, bool) {
+	provider := settingsCloudModelProviderForBackend(settings.BossChatBackend)
+	if provider == "" {
+		return settingsBossModelProviderIssue{}, false
+	}
+	for _, candidate := range []struct {
+		label string
+		model string
+	}{
+		{label: "Chat main model", model: settings.BossHelmModel},
+		{label: "Chat utility model", model: settings.BossUtilityModel},
+	} {
+		mismatch, ok := codexapp.LCAgentKnownModelProviderMismatch(provider, candidate.model)
+		if ok {
+			return settingsBossModelProviderIssue{
+				modelLabel: candidate.label,
+				backend:    settings.BossChatBackend,
+				mismatch:   mismatch,
+			}, true
+		}
+	}
+	return settingsBossModelProviderIssue{}, false
+}
+
+func (i settingsBossModelProviderIssue) message() string {
+	return fmt.Sprintf(
+		"%s mismatch: %s belongs to %s, but the Chat provider is %s. Choose Auto in the %s picker, or change the Chat provider.",
+		i.modelLabel,
+		i.mismatch.Model,
+		codexapp.LCAgentProviderDisplayName(i.mismatch.ResolvedProvider),
+		i.backend.Label(),
+		strings.ToLower(i.modelLabel),
+	)
+}
+
+func (i settingsBossModelProviderIssue) saveStatus() string {
+	return i.message() + " Settings were not saved."
 }
 
 func settingsLCAgentKnownModelProviderIssue(settings config.EditableSettings) (settingsLCAgentModelProviderIssue, bool) {
@@ -2431,6 +2486,9 @@ func (m Model) renderSettingsDrilldownStatus(width int) []string {
 	case settingsDrilldownBossChat:
 		choice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
 		lines = append(lines, renderWrappedDetailField("Current", detailValueStyle, width, firstNonEmptyTrimmed(choice.NextStep, choice.Detail)))
+		if issue, ok := settingsBossKnownModelProviderIssue(settings); ok {
+			lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
+		}
 		return lines
 	case settingsDrilldownLCAgent:
 		provider := settingsLCAgentMainProvider(settings)
@@ -2476,7 +2534,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 	case settingsDrilldownBossChat:
 		switch fieldIndex {
 		case settingsFieldBossChatBackend:
-			return "Realtime Chat Backend"
+			return "Chat Provider"
 		case settingsFieldOpenAIAPIKey:
 			return "Shared OpenAI Connection"
 		case settingsFieldOpenRouterAPIKey:
@@ -3746,8 +3804,8 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
-			"Chat",
-			"Press Enter to choose Auto, direct API, local endpoint, or Off. This is separate from project analysis, so summaries can stay on another backend.",
+			"Chat provider",
+			"Press Enter to choose the single provider used by Chat. Changing it resets both Chat model overrides to that provider's defaults.",
 			string(settings.BossChatBackend),
 			32,
 			settingsSectionGettingStarted,

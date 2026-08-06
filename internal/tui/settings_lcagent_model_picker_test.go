@@ -944,6 +944,87 @@ func TestSettingsBossModelPickerOnlyUsesCloudSelectorForCloudBackend(t *testing.
 	}
 }
 
+func TestSettingsBossModelPickerCannotSwitchChatProvider(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendDeepSeek
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldBossChatModel,
+			Provider:       "openai",
+			PendingModel:   "gpt-5.6",
+			ProviderLocked: true,
+		},
+	}
+
+	updated, cmd := m.applySettingsLCAgentModelPickerSelection()
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("rejected cross-provider Chat model should not queue work")
+	}
+	if backend := got.settingsFieldValue(settingsFieldBossChatBackend); backend != string(config.AIBackendDeepSeek) {
+		t.Fatalf("Chat provider = %q, want DeepSeek unchanged", backend)
+	}
+	if model := got.settingsFieldValue(settingsFieldBossChatModel); model != "" {
+		t.Fatalf("Chat main model = %q, want unchanged", model)
+	}
+	if !strings.Contains(got.status, "scoped to DeepSeek") || !strings.Contains(got.status, "Chat provider row") {
+		t.Fatalf("status = %q, want fixed-provider guidance", got.status)
+	}
+}
+
+func TestSettingsBossKnownModelProviderMismatchBlocksSave(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendDeepSeek
+	settings.BossHelmModel = "gpt-5.6-luna"
+	settings.BossUtilityModel = config.DefaultDeepSeekModel
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("mismatched Chat provider/model should block save")
+	}
+	if got.settingsSaving {
+		t.Fatal("settingsSaving = true, want false after blocked save")
+	}
+	for _, want := range []string{"Chat main model mismatch", "gpt-5.6-luna belongs to OpenAI", "Chat provider is DeepSeek", "Settings were not saved"} {
+		if !strings.Contains(got.status, want) {
+			t.Fatalf("status missing %q: %q", want, got.status)
+		}
+	}
+	label := settingsLCAgentModelValueLabel(settings, settingsFieldBossChatModel)
+	if !strings.Contains(label, "Mismatch:") || strings.Contains(label, "DeepSeek / gpt-5.6-luna") {
+		t.Fatalf("Chat model label = %q, want explicit mismatch instead of an invalid pair", label)
+	}
+}
+
+func TestSettingsBossOpenRouterAllowsCrossProviderModel(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenRouter
+	settings.BossHelmModel = "openai/gpt-5.6"
+	settings.BossUtilityModel = "deepseek/deepseek-v4-flash"
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil || !got.settingsSaving {
+		t.Fatal("OpenRouter Chat cross-provider models should remain saveable")
+	}
+}
+
 func applySettingsLCAgentModelPickerSelectionForTest(t *testing.T, m Model, provider string, option codexapp.ModelOption) Model {
 	t.Helper()
 	if m.settingsLCAgentModelPicker == nil {

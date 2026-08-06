@@ -39,7 +39,7 @@ func providerChoiceRoleTitle(role providerChoiceRole) string {
 func providerChoiceRoleListTitle(role providerChoiceRole) string {
 	switch role {
 	case providerChoiceRoleBossChat:
-		return "Who Should Handle Chat?"
+		return "Choose Chat Provider"
 	default:
 		return "Who Should Handle Project Reports?"
 	}
@@ -48,7 +48,7 @@ func providerChoiceRoleListTitle(role providerChoiceRole) string {
 func providerChoiceRolePurpose(role providerChoiceRole) string {
 	switch role {
 	case providerChoiceRoleBossChat:
-		return "This is the direct high-level /chat conversation. It can use a different helper from background reports, or stay off."
+		return "This is the direct high-level /chat conversation. It can use a different provider from background reports, or stay off."
 	default:
 		return "This helper writes summaries, classifications, TODO help, and commit help in the background."
 	}
@@ -155,7 +155,7 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 		{
 			Value:       config.AIBackendUnset,
 			Label:       "Auto",
-			Summary:     "Leaves /chat unconfigured until you choose a chat backend.",
+			Summary:     "Leaves /chat unconfigured until you choose a Chat provider.",
 			Description: "If the shared OpenAI API connection already exists, /chat can use it automatically. No OpenAI key is required unless you choose OpenAI API.",
 		},
 		{
@@ -281,7 +281,7 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 		if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 			return "Save to let Chat use the shared OpenAI API connection automatically."
 		}
-		return "Choose a Chat backend, or save to leave /chat unconfigured."
+		return "Choose a Chat provider, or save to leave /chat unconfigured."
 	case config.AIBackendDisabled:
 		return "Save to keep Chat off."
 	case config.AIBackendOpenAIAPI:
@@ -315,7 +315,7 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 		}
 		return "Start or configure the " + choice.Label + " local endpoint, then refresh."
 	default:
-		return "Choose a supported Chat backend."
+		return "Choose a supported Chat provider."
 	}
 }
 
@@ -409,7 +409,7 @@ func renderProviderChoicePickerContent(title string, currentLabel string, option
 }
 
 func renderProviderChoiceDetail(choice providerChoice, width int) string {
-	lines := []string{detailSectionStyle.Render("Selected Helper")}
+	lines := []string{detailSectionStyle.Render("Selected Provider")}
 	lines = append(lines, renderWrappedDetailField("Will do", detailValueStyle, width, choice.Summary))
 	lines = append(lines, renderWrappedDetailField("Needs", detailValueStyle, width, choice.Description))
 	lines = append(lines, detailField("Readiness", renderProviderChoiceStatus(choice)))

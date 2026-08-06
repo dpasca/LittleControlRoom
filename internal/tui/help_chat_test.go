@@ -28,7 +28,7 @@ func TestUnconfiguredHelpChatOpensSetupPrompt(t *testing.T) {
 	if got.bossSetupPrompt == nil {
 		t.Fatalf("unconfigured Chat should open its setup prompt")
 	}
-	if !strings.Contains(got.bossSetupPrompt.Reason, "chat backend") {
+	if !strings.Contains(got.bossSetupPrompt.Reason, "Chat provider") {
 		t.Fatalf("setup prompt reason = %q, want provider-neutral chat guidance", got.bossSetupPrompt.Reason)
 	}
 	rendered := ansi.Strip(got.View())
