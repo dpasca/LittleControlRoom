@@ -1405,6 +1405,58 @@ func TestCommandPaletteScrollsSelectedSuggestionIntoView(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteShowsEveryNewCommandWithoutScrolling(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("/new")
+
+	m := Model{
+		commandMode:  true,
+		commandInput: input,
+		width:        100,
+		height:       40,
+	}
+	m.syncCommandSelection()
+
+	rendered := m.renderCommandPaletteContent(70)
+	for _, want := range []string{
+		"/new-project",
+		"/new-task",
+		"/new-codex",
+		"/new-claude",
+		"/new-opencode",
+		"/new-lcagent",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered palette should list %s without scrolling: %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "↓ ") {
+		t.Fatalf("rendered palette should not hide any /new command: %q", rendered)
+	}
+}
+
+func TestCommandPaletteSuggestionRowsShrinkOnShortTerminals(t *testing.T) {
+	tall := Model{height: 40}
+	if got := tall.commandSuggestionRowLimit(); got != commandPaletteSuggestionRows {
+		t.Fatalf("tall terminal row limit = %d, want %d", got, commandPaletteSuggestionRows)
+	}
+
+	short := Model{height: 24}
+	if got := short.commandSuggestionRowLimit(); got != 5 {
+		t.Fatalf("short terminal row limit = %d, want 5", got)
+	}
+
+	tiny := Model{height: 12}
+	if got := tiny.commandSuggestionRowLimit(); got != commandPaletteMinSuggestionRows {
+		t.Fatalf("tiny terminal row limit = %d, want %d", got, commandPaletteMinSuggestionRows)
+	}
+
+	unsized := Model{}
+	if got := unsized.commandSuggestionRowLimit(); got != commandPaletteSuggestionRows {
+		t.Fatalf("unsized model row limit = %d, want %d", got, commandPaletteSuggestionRows)
+	}
+}
+
 func TestDispatchSessionCommandOpensEmbeddedSessionPicker(t *testing.T) {
 	now := time.Date(2026, 5, 9, 11, 30, 0, 0, time.UTC)
 	m := Model{

@@ -932,12 +932,37 @@ func (m Model) renderCommandPaletteContent(width int) string {
 	return strings.Join(lines, "\n")
 }
 
+const (
+	// Suggestion rows the command palette shows when the terminal is tall
+	// enough. Command families such as /new* need room for every member to be
+	// visible without scrolling.
+	commandPaletteSuggestionRows = 7
+	// Floor for very short terminals, where showing fewer rows beats letting
+	// the palette overflow the body and lose its bottom lines.
+	commandPaletteMinSuggestionRows = 3
+	// Terminal lines the palette needs besides its suggestion rows: the app's
+	// top line and footer (2), the panel border (2), the palette's own fixed
+	// lines (11: title, selected project, blank, input, actions, blank,
+	// "Suggestions", a scroll hint, blank, "About", summary), and two body
+	// lines above and below so the project list and detail pane stay visible
+	// behind the overlay (4).
+	commandPaletteChromeLines = 19
+)
+
+func (m Model) commandSuggestionRowLimit() int {
+	limit := commandPaletteSuggestionRows
+	if m.height > 0 {
+		limit = min(limit, m.height-commandPaletteChromeLines)
+	}
+	return max(commandPaletteMinSuggestionRows, limit)
+}
+
 func (m Model) commandSuggestionWindow(total int) (int, int) {
 	if total <= 0 {
 		return 0, 0
 	}
 
-	limit := min(5, total)
+	limit := min(m.commandSuggestionRowLimit(), total)
 	start := 0
 	if m.commandSelected >= limit {
 		start = m.commandSelected - limit + 1
