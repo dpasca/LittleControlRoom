@@ -798,6 +798,115 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t 
 	}
 }
 
+func TestLaunchEmbeddedForSelectionKeepsLiveProviderWhenNestedArtifactIsLatest(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     true,
+				ThreadID: "claude-live",
+				Status:   "Claude Code session running",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                     "/tmp/demo",
+			Name:                     "demo",
+			PresentOnDisk:            true,
+			LatestSessionID:          "nested-codex",
+			LatestSessionFormat:      "modern",
+			LatestSessionLastEventAt: time.Now(),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+	}
+
+	updated, _ := m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, false, "")
+	got := updated.(Model)
+	if got.attentionDialog != nil {
+		t.Fatalf("live Claude Code session should not be blocked by its nested Codex artifact: %#v", got.attentionDialog)
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("visible project = %q, want managed Claude Code project", got.codexVisibleProject)
+	}
+	if got.status != "Embedded Claude Code session reopened. Alt+Up hides it." {
+		t.Fatalf("status = %q, want Claude Code reopen notice", got.status)
+	}
+}
+
+func TestLaunchEmbeddedForSelectionBlocksProviderSwitchWhileManagedStateSnapshotIsContended(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     true,
+				ThreadID: "claude-live",
+			},
+			tryStateSnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+				return codexapp.Snapshot{}, false
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                     "/tmp/demo",
+			Name:                     "demo",
+			PresentOnDisk:            true,
+			LatestSessionID:          "nested-codex",
+			LatestSessionFormat:      "modern",
+			LatestSessionLastEventAt: time.Now(),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, false, "")
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("launchEmbeddedForSelection() cmd = %#v, want nil while managed Claude Code identity is known", cmd)
+	}
+	if got.attentionDialog == nil {
+		t.Fatal("launchEmbeddedForSelection() should show the managed Claude Code blocker")
+	}
+	if got.attentionDialog.PrimaryProvider != codexapp.ProviderClaudeCode {
+		t.Fatalf("attention dialog provider = %q, want Claude Code", got.attentionDialog.PrimaryProvider)
+	}
+	if got.attentionDialog.PrimaryLabel != "Open Claude Code" {
+		t.Fatalf("attention dialog primary label = %q, want open action", got.attentionDialog.PrimaryLabel)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the original Claude Code open", len(requests))
+	}
+}
+
 func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsOpen(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

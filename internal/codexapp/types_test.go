@@ -308,6 +308,9 @@ func TestManagerOpenReusesExistingSessionAndSubmitsPrompt(t *testing.T) {
 	if reused {
 		t.Fatalf("first Open() reused = true, want false")
 	}
+	if provider, ok := manager.SessionProvider("/tmp/demo"); !ok || provider != ProviderCodex {
+		t.Fatalf("SessionProvider() = (%q, %v), want Codex after first open", provider, ok)
+	}
 
 	second, reused, err := manager.Open(LaunchRequest{
 		ProjectPath: "/tmp/demo",
@@ -867,6 +870,15 @@ func TestManagerOpenReplacesSessionWhenProviderChanges(t *testing.T) {
 	}
 	if got := created[1].snapshot.Provider; got != ProviderOpenCode {
 		t.Fatalf("replacement provider = %q, want %q", got, ProviderOpenCode)
+	}
+	if provider, ok := manager.SessionProvider("/tmp/demo"); !ok || provider != ProviderOpenCode {
+		t.Fatalf("SessionProvider() = (%q, %v), want OpenCode after replacement", provider, ok)
+	}
+	if err := manager.CloseProject("/tmp/demo"); err != nil {
+		t.Fatalf("CloseProject() error = %v", err)
+	}
+	if provider, ok := manager.SessionProvider("/tmp/demo"); ok {
+		t.Fatalf("SessionProvider() = (%q, true), want no provider after close", provider)
 	}
 }
 

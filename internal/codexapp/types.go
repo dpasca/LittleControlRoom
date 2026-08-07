@@ -809,6 +809,7 @@ type Manager struct {
 	mu                      sync.Mutex
 	shutdownMu              sync.Mutex
 	sessions                map[string]Session
+	sessionProviders        map[string]Provider
 	parallelSessions        map[string]Session
 	updates                 chan string
 	parallelUpdates         chan string
@@ -837,6 +838,7 @@ func NewManagerWithFactory(factory func(req LaunchRequest, notify func()) (Sessi
 	}
 	manager := &Manager{
 		sessions:                make(map[string]Session),
+		sessionProviders:        make(map[string]Provider),
 		parallelSessions:        make(map[string]Session),
 		updates:                 make(chan string, 256),
 		parallelUpdates:         make(chan string, 64),
@@ -877,6 +879,30 @@ func (m *Manager) Session(projectPath string) (Session, bool) {
 	defer m.mu.Unlock()
 	session, ok := m.sessions[projectPath]
 	return session, ok
+}
+
+// SessionProvider returns the identity of the interactive provider without
+// consulting the provider session's state lock. This remains available while a
+// busy session cannot produce a non-blocking snapshot.
+func (m *Manager) SessionProvider(projectPath string) (Provider, bool) {
+	if m == nil {
+		return "", false
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.sessions[projectPath]; !ok {
+		return "", false
+	}
+	provider, ok := m.sessionProviders[projectPath]
+	if !ok {
+		return "", false
+	}
+	provider = provider.Normalized()
+	if provider == "" {
+		return "", false
+	}
+	return provider, true
 }
 
 // TrySessionSnapshot returns a live project snapshot without waiting on a
@@ -974,6 +1000,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 	if ok && existingState.Closed {
 		delete(m.sessions, projectPath)
+		delete(m.sessionProviders, projectPath)
 		existing = nil
 		ok = false
 	}
@@ -1056,6 +1083,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 
 	m.mu.Lock()
 	m.sessions[projectPath] = session
+	m.sessionProviders[projectPath] = req.Provider.Normalized()
 	m.mu.Unlock()
 	m.notify(projectPath)
 	return session, false, nil
@@ -1175,6 +1203,7 @@ func (m *Manager) CloseProject(projectPath string) error {
 	session, ok := m.sessions[projectPath]
 	if ok {
 		delete(m.sessions, projectPath)
+		delete(m.sessionProviders, projectPath)
 		delete(m.idleProtected, projectPath)
 	}
 	m.mu.Unlock()
@@ -1197,6 +1226,7 @@ func (m *Manager) CloseAll() error {
 		sessions = append(sessions, session)
 	}
 	m.sessions = make(map[string]Session)
+	m.sessionProviders = make(map[string]Provider)
 	m.parallelSessions = make(map[string]Session)
 	clear(m.idleProtected)
 	m.mu.Unlock()

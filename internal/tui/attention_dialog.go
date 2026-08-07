@@ -72,6 +72,9 @@ func (m Model) attentionDialogSessionActionLabel(project model.ProjectSummary, p
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok && embeddedProvider(snapshot) == provider {
 		return "Open " + provider.Label()
 	}
+	if managedProvider, ok := m.managedEmbeddedProviderForProject(project.Path); ok && managedProvider == provider {
+		return "Open " + provider.Label()
+	}
 	if strings.TrimSpace(m.selectedProjectSessionID(project, provider)) != "" {
 		return "Resume " + provider.Label()
 	}

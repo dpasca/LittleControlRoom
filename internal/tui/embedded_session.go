@@ -1487,7 +1487,10 @@ func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codex
 	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		liveProvider := embeddedProvider(snapshot)
-		if liveProvider != requested && snapshot.Started && !snapshot.Closed {
+		if liveProvider == requested {
+			return embeddedLaunchBlock{}, false
+		}
+		if snapshot.Started && !snapshot.Closed {
 			blocking := embeddedSessionBlocksProviderSwitch(snapshot)
 			if blocking || !forceNew {
 				message := fmt.Sprintf("This project already has an open embedded %s session. Close it before starting %s here.", liveProvider.Label(), requested.Label())
@@ -1500,6 +1503,14 @@ func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codex
 				}, true
 			}
 		}
+	} else if managedProvider, ok := m.managedEmbeddedProviderForProject(project.Path); ok {
+		if managedProvider != requested {
+			return embeddedLaunchBlock{
+				Message:          fmt.Sprintf("This project already has an open embedded %s session. Close it before starting %s here.", managedProvider.Label(), requested.Label()),
+				BlockingProvider: managedProvider,
+			}, true
+		}
+		return embeddedLaunchBlock{}, false
 	}
 	latestProvider := providerForSessionFormat(project.LatestSessionFormat)
 	if latestProvider == "" || latestProvider == requested {
@@ -1646,10 +1657,27 @@ func (m Model) preferredEmbeddedProviderForProject(project model.ProjectSummary)
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		return embeddedProvider(snapshot)
 	}
+	if provider, ok := m.managedEmbeddedProviderForProject(project.Path); ok {
+		return provider
+	}
 	if provider, ok := m.embeddedLaunchProviderOverride(project.Path); ok {
 		return provider
 	}
 	return preferredEmbeddedProviderFromProjectSummary(project)
+}
+
+func (m Model) managedEmbeddedProviderForProject(projectPath string) (codexapp.Provider, bool) {
+	if m.codexManager == nil {
+		return "", false
+	}
+	provider, ok := m.codexManager.SessionProvider(projectPath)
+	if !ok {
+		return "", false
+	}
+	if cached, cachedOK := m.codexCachedSnapshot(projectPath); cachedOK && cached.Closed && embeddedProvider(cached) == provider {
+		return "", false
+	}
+	return provider, true
 }
 
 func embeddedLaunchProviderOptions() []codexapp.Provider {

@@ -182,6 +182,80 @@ func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T)
 	}
 }
 
+func TestEnterKeepsManagedClaudeSessionWhenNestedCodexArtifactIsLatest(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     true,
+				ThreadID: "claude-live",
+				Status:   "Claude Code session running",
+			},
+			trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+				return codexapp.Snapshot{}, false
+			},
+			tryStateSnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+				return codexapp.Snapshot{}, false
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                     "/tmp/demo",
+			Name:                     "demo",
+			PresentOnDisk:            true,
+			LatestSessionID:          "nested-codex",
+			LatestSessionFormat:      "modern",
+			LatestSessionLastEventAt: time.Now(),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		}},
+		selected:      0,
+		focusedPane:   focusProjects,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("enter should reopen the manager-owned Claude Code session")
+	}
+	if got.attentionDialog != nil {
+		t.Fatalf("enter should not offer the nested Codex artifact: %#v", got.attentionDialog)
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("pending open = %#v, want Claude Code", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok || opened.err != nil {
+		t.Fatalf("open message = %#v, want successful Claude Code reopen", msg)
+	}
+	if opened.snapshot.Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("opened provider = %q, want Claude Code", opened.snapshot.Provider)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want no nested Codex replacement", len(requests))
+	}
+}
+
 func TestEnterReopensClosedEmbeddedSessionByLaunchingAgain(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

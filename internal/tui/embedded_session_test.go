@@ -876,6 +876,41 @@ func TestPreferredEmbeddedProviderKeepsLiveSessionBeforeOneShotOverride(t *testi
 	}
 }
 
+func TestPreferredEmbeddedProviderKeepsManagedProviderWhileStateSnapshotIsContended(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     true,
+				ThreadID: "claude-live",
+			},
+			tryStateSnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+				return codexapp.Snapshot{}, false
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		Name:                "demo",
+		LatestSessionID:     "nested-codex",
+		LatestSessionFormat: "modern",
+	}
+	m := Model{codexManager: manager}
+
+	if got := m.preferredEmbeddedProviderForProject(project); got != codexapp.ProviderClaudeCode {
+		t.Fatalf("preferred provider = %q, want managed Claude Code provider while its state lock is contended", got)
+	}
+}
+
 func TestDefaultNewItemProviderUsesLatestScannedEmbeddedProvider(t *testing.T) {
 	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
 	m := Model{
