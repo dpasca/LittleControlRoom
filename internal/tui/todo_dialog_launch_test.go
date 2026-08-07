@@ -356,7 +356,7 @@ func TestTodoDialogBlocksImageAttachmentsForUnsupportedProvider(t *testing.T) {
 	if got.todoCopyDialog == nil {
 		t.Fatalf("todo copy dialog should open")
 	}
-	got.todoCopyDialog.Provider = codexapp.ProviderClaudeCode
+	got.todoCopyDialog.Provider = codexapp.ProviderLCAgent
 	got.todoCopyDialog.RunMode = todoCopyModeHere
 	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
 	if !strings.Contains(rendered, "no images") || !strings.Contains(rendered, "does not support TODO image attachments") {
@@ -368,8 +368,103 @@ func TestTodoDialogBlocksImageAttachmentsForUnsupportedProvider(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("unsupported image launch should not return a command")
 	}
-	if got.status != todoAttachmentUnsupportedStatus(codexapp.ProviderClaudeCode) {
+	if got.status != todoAttachmentUnsupportedStatus(codexapp.ProviderLCAgent) {
 		t.Fatalf("status = %q, want unsupported-provider message", got.status)
+	}
+}
+
+func TestTodoDialogAllowsImageAttachmentsForClaudeCode(t *testing.T) {
+	if !providerSupportsTodoAttachments(codexapp.ProviderClaudeCode) {
+		t.Fatalf("Claude Code should support TODO image attachments")
+	}
+	if status := todoAttachmentUnsupportedStatus(codexapp.ProviderLCAgent); !strings.Contains(status, "Claude Code") {
+		t.Fatalf("unsupported status = %q, want Claude Code listed as an alternative", status)
+	}
+
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-todo-claude-image",
+				Started:  true,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	todoText := "Match the UI state shown in the screenshot"
+	imagePath := "/tmp/todo-reference.png"
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          11,
+				ProjectPath: "/tmp/demo",
+				Text:        todoText,
+				Attachments: []model.TodoAttachment{{
+					Kind: model.TodoAttachmentLocalImage,
+					Path: imagePath,
+				}},
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open")
+	}
+	got.todoCopyDialog.Provider = codexapp.ProviderClaudeCode
+	got.todoCopyDialog.RunMode = todoCopyModeHere
+	if readiness := got.todoCopyProviderReadiness(codexapp.ProviderClaudeCode, config.EditableSettings{}); readiness.State == "no images" {
+		t.Fatalf("Claude Code readiness = %#v, want no image warning", readiness)
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("starting a Claude Code TODO with an image should return an open command")
+	}
+	draft := got.codexDrafts["/tmp/demo"]
+	if len(draft.Attachments) != 1 || draft.Attachments[0].Path != imagePath {
+		t.Fatalf("draft attachments = %#v, want image path", draft.Attachments)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("todo launch returned error = %v", opened.err)
+	}
+	if len(requests) != 1 || requests[0].Provider.Normalized() != codexapp.ProviderClaudeCode {
+		t.Fatalf("launch requests = %#v, want one Claude Code request", requests)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.currentCodexDraft().Submission().Text != todoText {
+		t.Fatalf("submission text = %q, want TODO text without image marker", got.currentCodexDraft().Submission().Text)
+	}
+	if len(got.currentCodexDraft().Submission().Attachments) != 1 {
+		t.Fatalf("submission attachments = %#v, want one image", got.currentCodexDraft().Submission().Attachments)
 	}
 }
 

@@ -330,15 +330,44 @@ func todoAttachmentSummary(attachments []model.TodoAttachment) string {
 
 func providerSupportsTodoAttachments(provider codexapp.Provider) bool {
 	switch provider.Normalized() {
-	case codexapp.ProviderCodex, codexapp.ProviderOpenCode:
+	case codexapp.ProviderCodex, codexapp.ProviderOpenCode, codexapp.ProviderClaudeCode:
 		return true
 	default:
 		return false
 	}
 }
 
+func todoAttachmentSupportedProviderLabels() []string {
+	options := embeddedLaunchProviderOptions()
+	labels := make([]string, 0, len(options))
+	for _, provider := range options {
+		if providerSupportsTodoAttachments(provider) {
+			labels = append(labels, provider.Label())
+		}
+	}
+	return labels
+}
+
 func todoAttachmentUnsupportedStatus(provider codexapp.Provider) string {
-	return provider.Label() + " does not support TODO image attachments yet. Choose Codex or OpenCode, or remove the images."
+	status := provider.Label() + " does not support TODO image attachments yet."
+	labels := todoAttachmentSupportedProviderLabels()
+	if len(labels) == 0 {
+		return status + " Remove the images to start this TODO."
+	}
+	return status + " Choose " + joinLabelsWithOr(labels) + ", or remove the images."
+}
+
+func joinLabelsWithOr(labels []string) string {
+	switch len(labels) {
+	case 0:
+		return ""
+	case 1:
+		return labels[0]
+	case 2:
+		return labels[0] + " or " + labels[1]
+	default:
+		return strings.Join(labels[:len(labels)-1], ", ") + ", or " + labels[len(labels)-1]
+	}
 }
 
 func (m *Model) openTodoDialogForSelection() tea.Cmd {

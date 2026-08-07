@@ -1170,82 +1170,89 @@ func TestTodoWorktreeLaunchHandoffMentionsPreparedSubmodules(t *testing.T) {
 }
 
 func TestTodoWorktreeAutoSubmitUsesInitialInputForImageAttachments(t *testing.T) {
-	var requests []codexapp.LaunchRequest
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		requests = append(requests, req)
-		return &fakeCodexSession{
-			projectPath: req.ProjectPath,
-			snapshot: codexapp.Snapshot{
-				Provider: req.Provider.Normalized(),
-				ThreadID: "ses-worktree-image",
-				Started:  true,
-				Preset:   req.Preset,
-				Status:   req.Provider.Label() + " session ready",
-			},
-		}, nil
-	})
+	for _, provider := range []codexapp.Provider{codexapp.ProviderCodex, codexapp.ProviderClaudeCode} {
+		t.Run(string(provider), func(t *testing.T) {
+			var requests []codexapp.LaunchRequest
+			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+				requests = append(requests, req)
+				return &fakeCodexSession{
+					projectPath: req.ProjectPath,
+					snapshot: codexapp.Snapshot{
+						Provider: req.Provider.Normalized(),
+						ThreadID: "ses-worktree-image",
+						Started:  true,
+						Preset:   req.Preset,
+						Status:   req.Provider.Label() + " session ready",
+					},
+				}, nil
+			})
 
-	imagePath := "/tmp/todo-worktree-reference.png"
-	m := Model{
-		codexManager: manager,
-		codexInput:   newCodexTextarea(),
-		codexDrafts:  make(map[string]codexDraft),
-		projects: []model.ProjectSummary{{
-			Path:          "/tmp/root",
-			Name:          "root",
-			PresentOnDisk: true,
-		}},
-		selected: 0,
-		width:    100,
-		height:   24,
-	}
-
-	updated, cmd := m.Update(todoWorktreeLaunchMsg{
-		projectPath: "/tmp/root--feat-image",
-		todoID:      12,
-		todoText:    "Use the attached reference screenshot",
-		attachments: []model.TodoAttachment{{
-			Kind: model.TodoAttachmentLocalImage,
-			Path: imagePath,
-		}},
-		provider: codexapp.ProviderCodex,
-	})
-	got := updated.(Model)
-	draft, ok := got.todoLaunchDraftFor("/tmp/root--feat-image")
-	if !ok || !draft.autoSubmit {
-		t.Fatalf("todoLaunchDraftFor(%q) = %#v, want auto-submit launch state", "/tmp/root--feat-image", draft)
-	}
-	if len(draft.attachments) != 1 || draft.attachments[0].Path != imagePath {
-		t.Fatalf("launch draft attachments = %#v, want image path", draft.attachments)
-	}
-	if cmd == nil {
-		t.Fatalf("worktree launch should return an embedded open command")
-	}
-
-	msgs := collectCmdMsgs(cmd)
-	foundOpen := false
-	for _, msg := range msgs {
-		if opened, ok := msg.(codexSessionOpenedMsg); ok {
-			foundOpen = true
-			if opened.err != nil {
-				t.Fatalf("embedded session open returned error = %v", opened.err)
+			imagePath := "/tmp/todo-worktree-reference.png"
+			m := Model{
+				codexManager: manager,
+				codexInput:   newCodexTextarea(),
+				codexDrafts:  make(map[string]codexDraft),
+				projects: []model.ProjectSummary{{
+					Path:          "/tmp/root",
+					Name:          "root",
+					PresentOnDisk: true,
+				}},
+				selected: 0,
+				width:    100,
+				height:   24,
 			}
-		}
-	}
-	if !foundOpen {
-		t.Fatalf("cmd messages did not include codexSessionOpenedMsg: %#v", msgs)
-	}
-	if len(requests) != 1 {
-		t.Fatalf("request count = %d, want 1", len(requests))
-	}
-	if requests[0].Prompt != "" {
-		t.Fatalf("launch prompt = %q, want empty prompt when attachments use InitialInput", requests[0].Prompt)
-	}
-	if requests[0].InitialInput.Text != "Use the attached reference screenshot" {
-		t.Fatalf("initial input text = %q, want TODO text", requests[0].InitialInput.Text)
-	}
-	if len(requests[0].InitialInput.Attachments) != 1 || requests[0].InitialInput.Attachments[0].Path != imagePath {
-		t.Fatalf("initial input attachments = %#v, want image path", requests[0].InitialInput.Attachments)
+
+			updated, cmd := m.Update(todoWorktreeLaunchMsg{
+				projectPath: "/tmp/root--feat-image",
+				todoID:      12,
+				todoText:    "Use the attached reference screenshot",
+				attachments: []model.TodoAttachment{{
+					Kind: model.TodoAttachmentLocalImage,
+					Path: imagePath,
+				}},
+				provider: provider,
+			})
+			got := updated.(Model)
+			draft, ok := got.todoLaunchDraftFor("/tmp/root--feat-image")
+			if !ok || !draft.autoSubmit {
+				t.Fatalf("todoLaunchDraftFor(%q) = %#v, want auto-submit launch state", "/tmp/root--feat-image", draft)
+			}
+			if len(draft.attachments) != 1 || draft.attachments[0].Path != imagePath {
+				t.Fatalf("launch draft attachments = %#v, want image path", draft.attachments)
+			}
+			if cmd == nil {
+				t.Fatalf("worktree launch should return an embedded open command")
+			}
+
+			msgs := collectCmdMsgs(cmd)
+			foundOpen := false
+			for _, msg := range msgs {
+				if opened, ok := msg.(codexSessionOpenedMsg); ok {
+					foundOpen = true
+					if opened.err != nil {
+						t.Fatalf("embedded session open returned error = %v", opened.err)
+					}
+				}
+			}
+			if !foundOpen {
+				t.Fatalf("cmd messages did not include codexSessionOpenedMsg: %#v", msgs)
+			}
+			if len(requests) != 1 {
+				t.Fatalf("request count = %d, want 1", len(requests))
+			}
+			if requests[0].Provider.Normalized() != provider {
+				t.Fatalf("launch provider = %q, want %q", requests[0].Provider.Normalized(), provider)
+			}
+			if requests[0].Prompt != "" {
+				t.Fatalf("launch prompt = %q, want empty prompt when attachments use InitialInput", requests[0].Prompt)
+			}
+			if requests[0].InitialInput.Text != "Use the attached reference screenshot" {
+				t.Fatalf("initial input text = %q, want TODO text", requests[0].InitialInput.Text)
+			}
+			if len(requests[0].InitialInput.Attachments) != 1 || requests[0].InitialInput.Attachments[0].Path != imagePath {
+				t.Fatalf("initial input attachments = %#v, want image path", requests[0].InitialInput.Attachments)
+			}
+		})
 	}
 }
 
