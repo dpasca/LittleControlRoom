@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"lcroom/internal/model"
+	"lcroom/internal/viewportnav"
 )
 
 func TestNormalizeTodoTextPreservesBlankLines(t *testing.T) {
@@ -76,5 +80,69 @@ func TestNewTodoTextInputAllowsLongPrompts(t *testing.T) {
 	input := newTodoTextInput("")
 	if input.CharLimit < 10000 {
 		t.Fatalf("newTodoTextInput CharLimit = %d, want at least 10000", input.CharLimit)
+	}
+}
+
+func newTodoEditorModelWithLines(t *testing.T, count int) Model {
+	t.Helper()
+
+	lines := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		lines = append(lines, fmt.Sprintf("line %03d", i))
+	}
+	m := Model{
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		todoEditor: &todoEditorState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Input:       newTodoTextInput(strings.Join(lines, "\n")),
+		},
+	}
+	m.todoEditor.Input.Focus()
+	return m
+}
+
+func TestTodoEditorEnterInsertsNewlineInLongValue(t *testing.T) {
+	t.Parallel()
+
+	// Pasting more rows than the bubbles textarea default cap used to make
+	// Enter a silent no-op.
+	m := newTodoEditorModelWithLines(t, 150)
+	before := m.todoEditor.Input.Value()
+
+	updated, _ := m.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoEditor == nil {
+		t.Fatal("enter should keep the todo editor open")
+	}
+	if want := before + "\n"; got.todoEditor.Input.Value() != want {
+		t.Fatalf("enter on a 150-line value did not insert a newline: value length = %d, want %d",
+			len(got.todoEditor.Input.Value()), len(want))
+	}
+}
+
+func TestTodoEditorPageKeysMoveThroughLongValue(t *testing.T) {
+	t.Parallel()
+
+	m := newTodoEditorModelWithLines(t, 150)
+	step := viewportnav.PageStep(m.todoEditor.Input.Height())
+	if step < 2 {
+		t.Fatalf("page step = %d, want a multi-line page for a %d-row editor", step, m.todoEditor.Input.Height())
+	}
+	bottomRow := m.todoEditor.Input.Line()
+
+	updated, _ := m.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyPgUp})
+	got := updated.(Model)
+	if row := got.todoEditor.Input.Line(); row != bottomRow-step {
+		t.Fatalf("row after pgup = %d, want %d", row, bottomRow-step)
+	}
+
+	updated, _ = got.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyPgDown})
+	got = updated.(Model)
+	if row := got.todoEditor.Input.Line(); row != bottomRow {
+		t.Fatalf("row after pgdown = %d, want %d", row, bottomRow)
+	}
+	if value := got.todoEditor.Input.Value(); !strings.HasSuffix(value, "line 149") {
+		t.Fatal("page navigation should not modify the todo text")
 	}
 }

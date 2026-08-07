@@ -212,6 +212,7 @@ func newTodoTextInput(value string) textarea.Model {
 	input.CharLimit = todoTextCharLimit
 	input.ShowLineNumbers = false
 	styleDialogTextarea(&input)
+	allowLongDialogTextarea(&input)
 	input.SetWidth(72)
 	input.SetHeight(6)
 	input.SetValue(value)
@@ -1141,6 +1142,10 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dialog.ClipboardBusy = true
 		m.status = "Reading clipboard..."
 		return m, readTodoClipboardCmd(m.appDataDir(), dialog.ProjectPath, dialog.TodoID)
+	case "pgup", "pageup":
+		return m, pageDialogTextarea(&dialog.Input, -1)
+	case "pgdown", "pagedown":
+		return m, pageDialogTextarea(&dialog.Input, 1)
 	case "backspace", "delete":
 		if strings.TrimSpace(dialog.Input.Value()) == "" && len(dialog.Attachments) > 0 {
 			removed := todoAttachmentLabel(len(dialog.Attachments)-1, dialog.Attachments[len(dialog.Attachments)-1])
@@ -2345,12 +2350,17 @@ func todoLinkedWorktreeProjectIn(projects []model.ProjectSummary, todoID int64) 
 }
 
 func todoEditorLegendLine() string {
-	return renderHelpPanelActionRow(
-		renderDialogAction("enter", "newline", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
-	)
+	return strings.Join([]string{
+		renderHelpPanelActionRow(
+			renderDialogAction("enter", "newline", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("pgup/pgdn", "page", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
+		),
+		renderHelpPanelActionRow(
+			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+		),
+	}, "\n")
 }
 
 func renderTodoEditorAttachments(attachments []model.TodoAttachment, width int) string {

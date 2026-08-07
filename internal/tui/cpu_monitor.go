@@ -110,6 +110,7 @@ func newCPURemediationPromptInput(value string) textarea.Model {
 	input.CharLimit = cpuRemediationPromptCharLimit
 	input.ShowLineNumbers = false
 	styleDialogTextarea(&input)
+	allowLongDialogTextarea(&input)
 	input.SetWidth(84)
 	input.SetHeight(16)
 	input.SetValue(value)

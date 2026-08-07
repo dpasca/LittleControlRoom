@@ -1659,6 +1659,7 @@ func newSettingsPrivacyEditorInput(value string) textarea.Model {
 	input.CharLimit = 2048
 	input.ShowLineNumbers = false
 	styleDialogTextarea(&input)
+	allowLongDialogTextarea(&input)
 	input.SetWidth(72)
 	input.SetHeight(8)
 	input.SetValue(settingsPrivacyEditorInitialValue(value))

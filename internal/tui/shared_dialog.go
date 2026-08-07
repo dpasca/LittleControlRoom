@@ -5,7 +5,10 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"lcroom/internal/viewportnav"
 )
 
 var (
@@ -48,4 +51,35 @@ func styleDialogTextarea(input *textarea.Model) {
 
 	input.FocusedStyle = focused
 	input.BlurredStyle = blurred
+}
+
+// allowLongDialogTextarea drops the bubbles textarea default 99-row cap.
+// The cap makes Enter a silent no-op once a value grows past 99 lines, which
+// is easy to reach by pasting a long block into a dialog editor. Character
+// limits still bound how much text a dialog accepts.
+func allowLongDialogTextarea(input *textarea.Model) {
+	if input == nil {
+		return
+	}
+	input.MaxHeight = 0
+}
+
+// pageDialogTextarea moves the textarea cursor by roughly one visible page so
+// long values can be navigated with PageUp/PageDown. Direction is negative for
+// up and positive for down. Cursor moves are fed through the textarea so it
+// keeps wrapped lines and its own viewport in sync.
+func pageDialogTextarea(input *textarea.Model, direction int) tea.Cmd {
+	if input == nil || direction == 0 {
+		return nil
+	}
+	step := viewportnav.PageStep(input.Height())
+	key := tea.KeyMsg{Type: tea.KeyUp}
+	if direction > 0 {
+		key = tea.KeyMsg{Type: tea.KeyDown}
+	}
+	var cmd tea.Cmd
+	for i := 0; i < step; i++ {
+		*input, cmd = input.Update(key)
+	}
+	return cmd
 }
