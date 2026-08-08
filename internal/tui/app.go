@@ -562,6 +562,7 @@ type worktreeActionMsg struct {
 	postMergeTodoID        int64
 	postMergeTodoText      string
 	postMergeTodoPath      string
+	closedEmbeddedSession  bool
 	err                    error
 }
 
@@ -2764,6 +2765,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case codexCleanupDeleteMsg:
 		return m.applyCodexCleanupDelete(msg)
 	case worktreeActionMsg:
+		if msg.closedEmbeddedSession {
+			m.dropCodexSnapshot(msg.projectPath)
+			if normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(msg.projectPath) {
+				m.codexVisibleProject = ""
+				m.codexInput.Blur()
+			}
+			if normalizeProjectPath(m.codexHiddenProject) == normalizeProjectPath(msg.projectPath) {
+				m.codexHiddenProject = ""
+			}
+		}
 		if msg.clearPendingGitSummary {
 			if msg.err != nil {
 				m.clearPendingGitSummary(msg.projectPath)

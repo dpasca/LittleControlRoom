@@ -32,8 +32,9 @@ const (
 )
 
 // worktreeRemoveConfirm focus indices are computed dynamically via helper
-// functions because the checkbox row is only present when the worktree is
-// dirty.  See worktreeRemoveConfirmRemoveIndex / KeepIndex / FocusCount.
+// functions because the force checkbox is only present when the worktree is
+// dirty or has an idle embedded session. See worktreeRemoveConfirmRemoveIndex /
+// KeepIndex / FocusCount.
 
 const (
 	worktreeUpdatePendingSummary      = "Updating worktree from parent..."
@@ -70,6 +71,8 @@ type worktreeRemoveConfirmState struct {
 	LinkedTodoID          int64
 	Dirty                 bool
 	ForceRemove           bool
+	HasIdleSession        bool
+	IdleSessionProvider   codexapp.Provider
 	MarkTodoDone          bool
 	ResidualCleanup       bool
 	OrphanedCheckoutCount int
@@ -83,7 +86,7 @@ func worktreeRemoveConfirmOptionCount(confirm *worktreeRemoveConfirmState) int {
 		return 0
 	}
 	count := 0
-	if confirm.Dirty {
+	if worktreeRemoveConfirmNeedsForce(confirm) {
 		count++ // "Force remove" checkbox
 	}
 	if confirm.LinkedTodoID > 0 {
@@ -101,7 +104,7 @@ func worktreeRemoveConfirmKeepIndex(confirm *worktreeRemoveConfirmState) int {
 }
 
 func worktreeRemoveConfirmTodoIndex(confirm *worktreeRemoveConfirmState) int {
-	if confirm != nil && confirm.Dirty {
+	if worktreeRemoveConfirmNeedsForce(confirm) {
 		return 1
 	}
 	return 0
@@ -115,7 +118,15 @@ func worktreeRemoveConfirmReady(confirm *worktreeRemoveConfirmState) bool {
 	if confirm == nil {
 		return false
 	}
-	return !confirm.Dirty || confirm.ForceRemove
+	return !worktreeRemoveConfirmNeedsForce(confirm) || confirm.ForceRemove
+}
+
+func worktreeRemoveConfirmNeedsForce(confirm *worktreeRemoveConfirmState) bool {
+	return confirm != nil && (confirm.Dirty || confirm.HasIdleSession)
+}
+
+func worktreeRemoveConfirmGitForce(confirm *worktreeRemoveConfirmState) bool {
+	return confirm != nil && confirm.Dirty && confirm.ForceRemove
 }
 
 func toggleWorktreeRemoveConfirmSelection(confirm *worktreeRemoveConfirmState) bool {
@@ -123,7 +134,7 @@ func toggleWorktreeRemoveConfirmSelection(confirm *worktreeRemoveConfirmState) b
 		return false
 	}
 	index := confirm.Selected
-	if confirm.Dirty {
+	if worktreeRemoveConfirmNeedsForce(confirm) {
 		if index == 0 {
 			confirm.ForceRemove = !confirm.ForceRemove
 			return true
@@ -2136,7 +2147,7 @@ func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 			return m, m.completeWorktreePostMergeTodoCmd(prompt.TodoPath, prompt.TodoID, prompt.ProjectPath, prompt.RootPath, false, prompt.Status)
 		}
 		m.beginAsyncWorktreeAction(prompt.ProjectPath, worktreePostMergeRemoveSummary, worktreePostMergeRemoveSummary)
-		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath, false)
+		return m, m.removeWorktreeCmd(prompt.ProjectPath, prompt.RootPath, false, false)
 	}
 	return m, nil
 }
@@ -2303,15 +2314,19 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		m.status = "Select a linked worktree to remove it"
 		return nil
 	}
+	idleSessionProvider := codexapp.Provider("")
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
-		m.showSessionBlockedAttentionDialog(
-			project,
-			"Remove blocked",
-			"Close the embedded agent session before removing this worktree.",
-			"retry the removal",
-			embeddedProvider(snapshot),
-		)
-		return nil
+		if embeddedSessionBlocksProviderSwitch(snapshot) {
+			m.showSessionBlockedAttentionDialog(
+				project,
+				"Remove blocked",
+				"Finish or close the active embedded agent session before removing this worktree.",
+				"retry the removal",
+				embeddedProvider(snapshot),
+			)
+			return nil
+		}
+		idleSessionProvider = embeddedProvider(snapshot)
 	}
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
 		m.status = "Stop the runtime before removing this worktree"
@@ -2322,13 +2337,15 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	state := &worktreeRemoveConfirmState{
-		ProjectPath:  project.Path,
-		RootPath:     row.RootPath,
-		ProjectName:  project.Name,
-		BranchName:   projectWorktreeLabel(project),
-		TargetBranch: strings.TrimSpace(project.WorktreeParentBranch),
-		MergeStatus:  project.WorktreeMergeStatus,
-		Dirty:        project.RepoDirty,
+		ProjectPath:         project.Path,
+		RootPath:            row.RootPath,
+		ProjectName:         project.Name,
+		BranchName:          projectWorktreeLabel(project),
+		TargetBranch:        strings.TrimSpace(project.WorktreeParentBranch),
+		MergeStatus:         project.WorktreeMergeStatus,
+		Dirty:               project.RepoDirty,
+		HasIdleSession:      idleSessionProvider != "",
+		IdleSessionProvider: idleSessionProvider,
 	}
 	if !state.Dirty && state.MergeStatus == model.WorktreeMergeStatusMerged && project.WorktreeOriginTodoID > 0 {
 		state.LinkedTodoID = project.WorktreeOriginTodoID
@@ -2375,8 +2392,15 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 			return m, nil
 		}
 		if !worktreeRemoveConfirmReady(confirm) {
-			m.status = "Check \"Force remove\" to discard uncommitted changes"
+			m.status = worktreeRemoveConfirmForcePrompt(confirm)
 			return m, nil
+		}
+		if confirm.HasIdleSession {
+			if snapshot, ok := m.liveCodexSnapshot(confirm.ProjectPath); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
+				confirm.ForceRemove = false
+				m.status = "The embedded agent session became active; finish or close it before removing this worktree"
+				return m, nil
+			}
 		}
 		if confirm.ResidualCleanup {
 			if normalizeProjectPath(confirm.ProjectPath) != normalizeProjectPath(confirm.RootPath) {
@@ -2388,21 +2412,30 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		if confirm.MarkTodoDone && confirm.LinkedTodoID > 0 {
 			m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeFinalizeRemoveSummary, worktreeFinalizeRemoveSummary)
-			return m, m.finalizeMergedWorktreeCmd(confirm.ProjectPath, confirm.RootPath, confirm.ForceRemove)
+			return m, m.finalizeMergedWorktreeCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
 		}
 		m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
-		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, confirm.ForceRemove)
+		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
 	}
 	return m, nil
 }
 
-func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force bool) tea.Cmd {
+func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force, closeIdleSession bool) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return worktreeActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
 	return func() tea.Msg {
+		closedSession, err := closeIdleEmbeddedSessionForWorktree(m.codexManager, projectPath, closeIdleSession)
+		if err != nil {
+			return worktreeActionMsg{
+				projectPath:            projectPath,
+				clearPendingGitSummary: true,
+				closedEmbeddedSession:  closedSession,
+				err:                    err,
+			}
+		}
 		result, err := m.finalizeMergedWorktreeWithTimeout(projectPath, service.FinalizeMergedWorktreeOptions{
 			MarkLinkedTodoDone: true,
 			RemoveWorktree:     true,
@@ -2414,27 +2447,64 @@ func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force boo
 			selectPath:             rootPath,
 			status:                 worktreeFinalizeStatus("", result),
 			clearPendingGitSummary: true,
+			closedEmbeddedSession:  closedSession,
 			err:                    err,
 		}
 	}
 }
 
-func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.Cmd {
+func (m Model) removeWorktreeCmd(projectPath, rootPath string, force, closeIdleSession bool) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return worktreeActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
 	return func() tea.Msg {
-		err := m.removeWorktreeWithTimeout(projectPath, force)
+		closedSession, err := closeIdleEmbeddedSessionForWorktree(m.codexManager, projectPath, closeIdleSession)
+		if err == nil {
+			err = m.removeWorktreeWithTimeout(projectPath, force)
+		}
 		return worktreeActionMsg{
 			projectPath:            projectPath,
 			removedProjectPath:     removedWorktreePath(err == nil, projectPath),
 			selectPath:             rootPath,
 			status:                 "Worktree removed",
 			clearPendingGitSummary: true,
+			closedEmbeddedSession:  closedSession,
 			err:                    err,
 		}
+	}
+}
+
+func closeIdleEmbeddedSessionForWorktree(manager *codexapp.Manager, projectPath string, requested bool) (bool, error) {
+	if !requested || manager == nil {
+		return false, nil
+	}
+	session, ok := manager.Session(projectPath)
+	if !ok || session == nil {
+		return false, nil
+	}
+	snapshot := session.Snapshot()
+	if embeddedSessionBlocksProviderSwitch(snapshot) {
+		return false, fmt.Errorf("embedded %s turn became active; wait for it to finish before removing the worktree", embeddedProvider(snapshot).Label())
+	}
+	if err := manager.CloseProject(projectPath); err != nil {
+		// CloseProject removes the session from the manager before asking the
+		// provider helper to shut down. Clear the now-unmanaged UI state even
+		// when that helper reports an error.
+		return true, fmt.Errorf("close idle embedded %s session: %w", embeddedProvider(snapshot).Label(), err)
+	}
+	return true, nil
+}
+
+func worktreeRemoveConfirmForcePrompt(confirm *worktreeRemoveConfirmState) string {
+	switch {
+	case confirm != nil && confirm.Dirty && confirm.HasIdleSession:
+		return "Check \"Force remove\" to close the idle session and discard uncommitted changes"
+	case confirm != nil && confirm.HasIdleSession:
+		return "Check \"Force remove\" to close the idle session"
+	default:
+		return "Check \"Force remove\" to discard uncommitted changes"
 	}
 }
 
@@ -2547,11 +2617,11 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if individualResidualCleanup {
 		removeLabel = "Clear"
 	}
-	if confirm.Dirty && confirm.ForceRemove {
+	if worktreeRemoveConfirmNeedsForce(confirm) && confirm.ForceRemove {
 		removeLabel = "Force Remove"
 	}
 	removeButton := renderDialogButton(removeLabel, confirm.Selected == worktreeRemoveConfirmRemoveIndex(confirm))
-	if confirm.Dirty && !confirm.ForceRemove {
+	if worktreeRemoveConfirmNeedsForce(confirm) && !confirm.ForceRemove {
 		removeButton = disabledActionTextStyle.Render("[Remove blocked]")
 	}
 	if confirm.Busy {
@@ -2603,10 +2673,24 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 			cleanupCopy,
 		)...)
 	}
-	if confirm.Dirty && !confirm.Busy {
+	if (confirm.Dirty || confirm.HasIdleSession) && !confirm.Busy {
 		lines = append(lines, "")
-		lines = append(lines, detailWarningStyle.Render("Uncommitted changes"))
-		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, "This worktree has uncommitted changes that will be discarded if you force-remove it.")...)
+		forceTitle := "Uncommitted changes"
+		forceCopy := "This worktree has uncommitted changes that will be discarded if you force-remove it."
+		forceLabel := "Force remove (discard uncommitted changes)"
+		if confirm.HasIdleSession {
+			providerLabel := confirm.IdleSessionProvider.Label()
+			forceTitle = "Open embedded session"
+			forceCopy = "The embedded " + providerLabel + " session is open, but no engineer turn is running. Force removal closes that idle session before deleting the checkout."
+			forceLabel = "Force remove (close idle " + providerLabel + " session)"
+			if confirm.Dirty {
+				forceTitle = "Open session and uncommitted changes"
+				forceCopy += " It also discards the worktree's uncommitted changes."
+				forceLabel = "Force remove (close session and discard changes)"
+			}
+		}
+		lines = append(lines, detailWarningStyle.Render(forceTitle))
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, forceCopy)...)
 		lines = append(lines, "")
 		prefix := "[ ] "
 		style := detailMutedStyle
@@ -2614,7 +2698,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 			prefix = "[x] "
 			style = detailWarningStyle
 		}
-		line := truncateText(prefix+"Force remove (discard uncommitted changes)", panelInnerW)
+		line := truncateText(prefix+forceLabel, panelInnerW)
 		if confirm.Selected == 0 {
 			lines = append(lines, dialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line))
 		} else {

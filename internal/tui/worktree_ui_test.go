@@ -2313,7 +2313,7 @@ func TestWorktreeMergeWithOpenSessionBlocksRemovalOnly(t *testing.T) {
 	}
 }
 
-func TestOpenWorktreeRemoveConfirmWithLiveSessionShowsAttentionDialog(t *testing.T) {
+func TestOpenWorktreeRemoveConfirmWithActiveSessionShowsAttentionDialog(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -2322,6 +2322,8 @@ func TestOpenWorktreeRemoveConfirmWithLiveSessionShowsAttentionDialog(t *testing
 			snapshot: codexapp.Snapshot{
 				Provider: req.Provider.Normalized(),
 				Started:  true,
+				Busy:     true,
+				Phase:    codexapp.SessionPhaseRunning,
 				ThreadID: "thread-live",
 				Status:   req.Provider.Label() + " session ready",
 			},
@@ -2374,8 +2376,233 @@ func TestOpenWorktreeRemoveConfirmWithLiveSessionShowsAttentionDialog(t *testing
 	if m.attentionDialog.PrimaryLabel != "Open Claude Code" {
 		t.Fatalf("attention dialog primary label = %q, want open action", m.attentionDialog.PrimaryLabel)
 	}
-	if m.status != "Close the embedded agent session before removing this worktree." {
+	if m.status != "Finish or close the active embedded agent session before removing this worktree." {
 		t.Fatalf("status = %q, want removal block warning", m.status)
+	}
+}
+
+func TestOpenWorktreeRemoveConfirmWithIdleSessionOffersForceRemoval(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				ThreadID: "thread-idle",
+				Phase:    codexapp.SessionPhaseIdle,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: childPath,
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--feat-parallel-lane",
+				Path:             childPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	if cmd := m.openWorktreeRemoveConfirmForSelection(); cmd != nil {
+		t.Fatalf("idle-session removal confirmation should not schedule work")
+	}
+	if m.attentionDialog != nil {
+		t.Fatalf("idle session should use the force-removal confirmation, not the blocked dialog")
+	}
+	confirm := m.worktreeRemoveConfirm
+	if confirm == nil || !confirm.HasIdleSession || confirm.IdleSessionProvider != codexapp.ProviderClaudeCode {
+		t.Fatalf("idle-session removal confirmation = %#v", confirm)
+	}
+	if confirm.ForceRemove {
+		t.Fatal("force removal must be off by default")
+	}
+	if worktreeRemoveConfirmReady(confirm) {
+		t.Fatal("idle-session removal should remain blocked until force removal is enabled")
+	}
+
+	rendered := ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 100, 32))
+	for _, want := range []string{
+		"Open embedded session",
+		"no engineer turn is",
+		"running. Force removal closes that idle session",
+		"[ ] Force remove (close idle Claude Code session)",
+		"[Remove blocked]",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("idle-session removal confirmation missing %q in %q", want, rendered)
+		}
+	}
+
+	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
+	updated, cmd := m.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("removal without the force switch should not schedule work")
+	}
+	if got.status != "Check \"Force remove\" to close the idle session" {
+		t.Fatalf("status = %q, want idle-session force guidance", got.status)
+	}
+
+	confirm = got.worktreeRemoveConfirm
+	confirm.Selected = 0
+	updated, cmd = got.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeySpace})
+	got = updated.(Model)
+	if cmd != nil || !got.worktreeRemoveConfirm.ForceRemove {
+		t.Fatalf("force switch did not toggle: confirm=%#v cmd=%v", got.worktreeRemoveConfirm, cmd)
+	}
+	confirm = got.worktreeRemoveConfirm
+	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
+	updated, cmd = got.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("confirmed idle-session force removal should schedule work")
+	}
+	if got.worktreeRemoveConfirm != nil {
+		t.Fatal("confirmed idle-session force removal should dismiss the dialog")
+	}
+}
+
+func TestWorktreeRemoveConfirmStopsWhenIdleSessionBecomesActive(t *testing.T) {
+	projectPath := "/tmp/repo--became-active"
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	confirm := &worktreeRemoveConfirmState{
+		ProjectPath:         projectPath,
+		RootPath:            "/tmp/repo",
+		HasIdleSession:      true,
+		ForceRemove:         true,
+		Selected:            1,
+		IdleSessionProvider: codexapp.ProviderCodex,
+	}
+	m := Model{
+		codexManager:          manager,
+		worktreeRemoveConfirm: confirm,
+	}
+
+	updated, cmd := m.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("a session that became active should prevent removal from being scheduled")
+	}
+	if got.worktreeRemoveConfirm == nil || got.worktreeRemoveConfirm.ForceRemove {
+		t.Fatalf("active-session refusal should keep the dialog open and reset force removal: %#v", got.worktreeRemoveConfirm)
+	}
+	if got.status != "The embedded agent session became active; finish or close it before removing this worktree" {
+		t.Fatalf("status = %q, want active-session refusal", got.status)
+	}
+}
+
+func TestWorktreeRemoveConfirmOnlyForcesGitForAcknowledgedDirtyWork(t *testing.T) {
+	idleSession := &worktreeRemoveConfirmState{
+		HasIdleSession: true,
+		ForceRemove:    true,
+	}
+	if worktreeRemoveConfirmGitForce(idleSession) {
+		t.Fatal("idle-session override must not authorize Git to discard uncommitted changes")
+	}
+
+	dirtyWorktree := &worktreeRemoveConfirmState{
+		Dirty:       true,
+		ForceRemove: true,
+	}
+	if !worktreeRemoveConfirmGitForce(dirtyWorktree) {
+		t.Fatal("acknowledged dirty-worktree removal should force Git removal")
+	}
+}
+
+func TestCloseIdleEmbeddedSessionForWorktreeRefusesActiveTurn(t *testing.T) {
+	projectPath := "/tmp/repo--active"
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	closed, err := closeIdleEmbeddedSessionForWorktree(manager, projectPath, true)
+	if err == nil || closed {
+		t.Fatalf("active-session close = (%t, %v), want refusal", closed, err)
+	}
+	if _, ok := manager.Session(projectPath); !ok {
+		t.Fatal("active session should remain managed after force-removal refusal")
+	}
+	if session.snapshot.Closed {
+		t.Fatal("active session should not be closed")
+	}
+}
+
+func TestCloseIdleEmbeddedSessionForWorktreeClosesIdleSession(t *testing.T) {
+	projectPath := "/tmp/repo--idle"
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Phase:    codexapp.SessionPhaseIdle,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	closed, err := closeIdleEmbeddedSessionForWorktree(manager, projectPath, true)
+	if err != nil || !closed {
+		t.Fatalf("idle-session close = (%t, %v), want success", closed, err)
+	}
+	if _, ok := manager.Session(projectPath); ok {
+		t.Fatal("idle session should be removed from the manager")
+	}
+	if !session.snapshot.Closed {
+		t.Fatal("idle session should be closed")
 	}
 }
 
