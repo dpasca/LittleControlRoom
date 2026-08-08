@@ -8,7 +8,7 @@ import (
 	"lcroom/internal/commandguard"
 )
 
-func TestRunBlocksDirectRMInClaudeBashTool(t *testing.T) {
+func TestRunBlocksRecursiveRMInClaudeBashTool(t *testing.T) {
 	tests := []string{
 		`rm -rf build/dev && cmake --preset dev`,
 		`sudo -n env MODE=clean zsh -c 'rm -fr "$TARGET"'`,
@@ -21,15 +21,18 @@ func TestRunBlocksDirectRMInClaudeBashTool(t *testing.T) {
 			if code != 2 {
 				t.Fatalf("Run() code = %d, want Claude blocking code 2", code)
 			}
-			if !strings.Contains(stderr.String(), commandguard.DirectRMDenialReason) {
-				t.Fatalf("Run() stderr = %q, want direct-rm denial", stderr.String())
+			if !strings.Contains(stderr.String(), commandguard.RecursiveRMDenialReason) {
+				t.Fatalf("Run() stderr = %q, want recursive-rm denial", stderr.String())
 			}
 		})
 	}
 }
 
-func TestRunAllowsNonRMCommandAndQuotedExample(t *testing.T) {
+func TestRunAllowsNonRecursiveRMOtherCommandsAndQuotedExample(t *testing.T) {
 	for _, command := range []string{
+		`rm TODO.md`,
+		`rm -f generated.txt`,
+		`rm -- "$TARGET"`,
 		`cmake --build --preset dev`,
 		`printf '%s\n' 'rm -rf /'`,
 		`rg 'rm -rf' README.md`,

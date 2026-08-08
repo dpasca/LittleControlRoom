@@ -170,20 +170,21 @@ Embedded Codex keeps the filesystem reach and approval behavior selected by
 `codex_launch_preset`; the default remains `yolo`. Little Control Room adds a
 narrow destructive-command seatbelt to every LCR-managed embedded Codex
 session. Its PATH-pinned `rm` shim permits plain `rm -rf /tmp/<name>` only when
-every operand is unambiguous and its parent resolves below `/tmp`; other named
-`rm` calls are rejected. Codex exec-policy rules separately forbid absolute
-executables and common wrapper forms that could bypass the shim. This does not
-confine reads or ordinary writes to the current project. Embedded Claude Code
-receives an LCR-owned Bash `PreToolUse` hook that denies direct `rm` before
-execution in every permission mode, including YOLO's `bypassPermissions`.
-LCAgent keeps its stricter policy and denies every direct `rm` invocation.
+every operand is unambiguous and its parent resolves below `/tmp`; ordinary
+non-recursive named commands such as `rm TODO.md` are also allowed. Codex
+exec-policy rules separately forbid absolute executables and common wrapper
+forms that could bypass the shim. This does not confine reads or ordinary
+writes to the current project. Embedded Claude Code receives an LCR-owned Bash
+`PreToolUse` hook that denies recursive or option-ambiguous `rm` before execution
+in every permission mode, including YOLO's `bypassPermissions`. LCAgent applies
+the same recursive guard in every permission mode.
 
 The guard is deliberately narrower than a security sandbox. Other deletion
 mechanisms, an absolute executable hidden inside a script, or deliberate PATH
 replacement can bypass it. Keep normal backups and filesystem protections in
 place; use the `/tmp` exception only for disposable temporary trees, use
-targeted file/patch tools for agent edits, and run other intentional bulk
-cleanup manually outside the embedded agent session.
+non-recursive `rm` or targeted file/patch tools for explicit files, and run
+other intentional bulk cleanup manually outside the embedded agent session.
 
 The architecture, threat model, maintenance invariants, and provider-extension
 plan are recorded in
@@ -230,10 +231,11 @@ the default: it allows workspace file edits, read-only command inspection, and
 recognized verifier commands, while broader commands ask in the embedded pane.
 `medium` allows workspace-contained commands without repeated approvals; write
 tools still stay inside the workspace unless `lcagent_admin_write` is enabled.
-Direct `rm` commands are denied structurally in both `run_command` and
-`start_process` at every LCAgent permission level; a Low approval or switch to
-Medium cannot override that denial. Targeted LCAgent file and patch tools remain
-available.
+Recursive and option-ambiguous `rm` commands are denied structurally in both
+`run_command` and `start_process` at every LCAgent permission level; a Low
+approval or switch to Medium cannot override that denial. Non-recursive removal
+of explicit files is available at Medium or after normal Low approval, alongside
+the targeted LCAgent file and patch tools.
 Persistent user/system configuration mutations through `run_command`, such as
 file-association/defaults changes or global package-manager state changes, also
 require explicit `admin_scope=system` plus `lcagent_admin_write`.

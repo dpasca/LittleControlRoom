@@ -129,16 +129,16 @@ func shadowRuntimeSkillMarkdown(browserAttentionAvailable bool) string {
 	return text + shadowRuntimeSkillMarkdownFooter
 }
 
-const codexDirectRMRuleFilename = "lcroom-no-direct-rm.rules"
+const codexRMGuardRuleFilename = "lcroom-guarded-rm.rules"
 
-const codexDirectRMExecPolicy = `# Managed by Little Control Room.
+const codexRMGuardExecPolicy = `# Managed by Little Control Room.
 # Named rm is validated by the PATH-pinned Little Control Room shim so it can
-# permit tightly scoped /tmp cleanup. Keep executable paths that bypass that
-# shim forbidden. More targeted editing and deletion tools remain available.
+# permit non-recursive file removal and tightly scoped /tmp cleanup. Keep
+# executable paths that bypass that shim forbidden.
 prefix_rule(
     pattern = [["/bin/rm", "/usr/bin/rm"]],
     decision = "forbidden",
-    justification = "Little Control Room requires named rm commands to pass through its guarded PATH. Use rm -rf /tmp/<name> for temporary cleanup, targeted file or patch tools, or ask the user to run other intentional cleanup manually.",
+    justification = "Little Control Room requires named rm commands to pass through its guarded PATH. Use plain rm file.txt for non-recursive file removal, rm -rf /tmp/<name> for temporary cleanup, or ask the user to run other intentional directory cleanup manually.",
     match = ["/bin/rm -fr build", "/usr/bin/rm -rf /tmp/example"],
     not_match = ["rm file.txt", "rm -rf /tmp/example", "rmdir empty-dir"],
 )
@@ -146,17 +146,28 @@ prefix_rule(
 prefix_rule(
     pattern = [["command", "builtin", "exec", "nohup", "sudo", "env", "/usr/bin/env"], ["rm", "/bin/rm", "/usr/bin/rm"]],
     decision = "forbidden",
-    justification = "Little Control Room disables wrapped rm commands because they may bypass its guarded PATH. Use plain rm -rf /tmp/<name> for temporary cleanup, targeted file or patch tools, or ask the user to run other intentional cleanup manually.",
+    justification = "Little Control Room disables wrapped rm commands because they may bypass its guarded PATH. Use plain rm file.txt for non-recursive file removal, rm -rf /tmp/<name> for temporary cleanup, or ask the user to run other intentional directory cleanup manually.",
     match = ["command rm file.txt", "sudo /bin/rm -rf build", "env rm -rf /tmp/example"],
     not_match = ["command echo rm", "sudo echo rm", "env MODE=rm echo ok"],
 )
 `
 
-const codexDirectRMShim = `#!/bin/sh
+const codexRMGuardShim = `#!/bin/sh
 block_rm() {
-    printf '%s\n' 'Blocked by Little Control Room: rm is disabled except for recursive forced cleanup of validated /tmp descendants.' >&2
-    printf '%s\n' 'Use plain rm -rf /tmp/<name>, targeted file or patch tools, or ask the user to run other intentional cleanup manually.' >&2
+    printf '%s\n' 'Blocked by Little Control Room: recursive rm is disabled except for recursive forced cleanup of validated /tmp descendants.' >&2
+    printf '%s\n' 'Use plain rm file.txt for non-recursive file removal, rm -rf /tmp/<name> for temporary cleanup, or ask the user to run other intentional directory cleanup manually.' >&2
     exit 126
+}
+
+run_system_rm() {
+    if [ -x /bin/rm ]; then
+        exec /bin/rm "$@"
+    fi
+    if [ -x /usr/bin/rm ]; then
+        exec /usr/bin/rm "$@"
+    fi
+    printf '%s\n' 'Little Control Room could not find the system rm executable.' >&2
+    exit 127
 }
 
 tmp_root=$(
@@ -221,7 +232,7 @@ do
                 scan_options=0
                 continue
                 ;;
-            --recursive)
+            --r|--re|--rec|--recu|--recur|--recurs|--recursi|--recursiv|--recursive|--recursive=*)
                 recursive=1
                 continue
                 ;;
@@ -246,18 +257,15 @@ do
     fi
 done
 
-if [ "$recursive" -ne 1 ] || [ "$force" -ne 1 ] || [ "$target_count" -eq 0 ] || [ "$safe_targets" -ne 1 ]; then
+if [ "$recursive" -eq 0 ]; then
+    run_system_rm "$@"
+fi
+
+if [ "$force" -ne 1 ] || [ "$target_count" -eq 0 ] || [ "$safe_targets" -ne 1 ]; then
     block_rm
 fi
 
-if [ -x /bin/rm ]; then
-    exec /bin/rm "$@"
-fi
-if [ -x /usr/bin/rm ]; then
-    exec /usr/bin/rm "$@"
-fi
-printf '%s\n' 'Little Control Room could not find the system rm executable.' >&2
-exit 127
+run_system_rm "$@"
 `
 
 func prepareCodexHomeOverlay(dataDir, requestedHome string) (string, error) {
@@ -297,7 +305,7 @@ func populateCodexHomeOverlay(overlayRoot, sourceHome string, shadowPlaywright, 
 			return err
 		}
 	}
-	if err := installCodexDirectRMGuard(overlayRoot, sourceHome); err != nil {
+	if err := installCodexRMGuard(overlayRoot, sourceHome); err != nil {
 		return err
 	}
 	return nil
@@ -333,7 +341,7 @@ func mirrorCodexHomeEntries(overlayRoot, sourceHome string, shadowSkills bool) e
 	return nil
 }
 
-func installCodexDirectRMGuard(overlayRoot, sourceHome string) error {
+func installCodexRMGuard(overlayRoot, sourceHome string) error {
 	overlayRulesDir := filepath.Join(overlayRoot, "rules")
 	if err := os.MkdirAll(overlayRulesDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir overlay rules dir: %w", err)
@@ -346,15 +354,15 @@ func installCodexDirectRMGuard(overlayRoot, sourceHome string) error {
 	}
 	for _, entry := range sourceEntries {
 		name := strings.TrimSpace(entry.Name())
-		if name == "" || name == codexDirectRMRuleFilename {
+		if name == "" || name == codexRMGuardRuleFilename {
 			continue
 		}
 		if err := os.Symlink(filepath.Join(sourceRulesDir, name), filepath.Join(overlayRulesDir, name)); err != nil {
 			return fmt.Errorf("symlink rule %s: %w", name, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(overlayRulesDir, codexDirectRMRuleFilename), []byte(codexDirectRMExecPolicy), 0o600); err != nil {
-		return fmt.Errorf("write direct rm execpolicy: %w", err)
+	if err := os.WriteFile(filepath.Join(overlayRulesDir, codexRMGuardRuleFilename), []byte(codexRMGuardExecPolicy), 0o600); err != nil {
+		return fmt.Errorf("write guarded rm execpolicy: %w", err)
 	}
 
 	overlayBinDir := filepath.Join(overlayRoot, "bin")
@@ -375,8 +383,8 @@ func installCodexDirectRMGuard(overlayRoot, sourceHome string) error {
 			return fmt.Errorf("symlink bin entry %s: %w", name, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(overlayBinDir, "rm"), []byte(codexDirectRMShim), 0o755); err != nil {
-		return fmt.Errorf("write direct rm shim: %w", err)
+	if err := os.WriteFile(filepath.Join(overlayBinDir, "rm"), []byte(codexRMGuardShim), 0o755); err != nil {
+		return fmt.Errorf("write guarded rm shim: %w", err)
 	}
 	return nil
 }
@@ -487,7 +495,7 @@ func withPathPrefix(base []string, pathPrefix string) []string {
 	return withEnvOverride(base, "PATH", pathPrefix+string(os.PathListSeparator)+pathValue)
 }
 
-func applyCodexDirectRMGuardEnvironment(cmd *exec.Cmd, overlayRoot string) {
+func applyCodexRMGuardEnvironment(cmd *exec.Cmd, overlayRoot string) {
 	if cmd == nil {
 		return
 	}

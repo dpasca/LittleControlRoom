@@ -7,12 +7,13 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-const DirectRMDenialReason = "direct rm commands are disabled in Little Control Room agent sessions; use targeted file or patch tools, or ask the user to run intentional cleanup manually"
+const RecursiveRMDenialReason = "recursive or option-ambiguous rm commands are disabled in Little Control Room agent sessions; use non-recursive rm with explicit file targets, add -- before dynamic targets, or ask the user to run intentional directory cleanup manually"
 
-// ContainsDirectRM reports whether a shell program contains a literal rm
-// invocation. It parses shell structure so quoted examples such as
+// ContainsRecursiveRM reports whether a shell program contains a literal rm
+// invocation that is recursive or whose dynamic arguments could become
+// recursive options. It parses shell structure so quoted examples such as
 // `printf 'rm -rf /'` are not mistaken for executable commands.
-func ContainsDirectRM(command string) bool {
+func ContainsRecursiveRM(command string) bool {
 	command = strings.TrimSpace(command)
 	if command == "" {
 		return false
@@ -33,8 +34,8 @@ func ContainsDirectRM(command string) bool {
 		if !ok {
 			return true
 		}
-		argv, ok := literalArgv(call.Args)
-		if ok && ArgvContainsDirectRM(argv) {
+		argv, complete := literalArgvPrefix(call.Args)
+		if ArgvContainsRecursiveRM(argv) || (!complete && partialArgvMayInvokeRecursiveRM(argv)) {
 			found = true
 			return false
 		}
@@ -43,14 +44,15 @@ func ContainsDirectRM(command string) bool {
 	return found
 }
 
-// ArgvContainsDirectRM recognizes a direct rm invocation or one contained in a
-// literal script passed to a common shell executable.
-func ArgvContainsDirectRM(argv []string) bool {
-	if ArgvInvokesRM(argv) {
-		return true
+// ArgvContainsRecursiveRM recognizes recursive rm options on a direct
+// invocation or in a literal script passed to a common shell executable.
+func ArgvContainsRecursiveRM(argv []string) bool {
+	unwrapped := unwrapExecutionWrappers(argv)
+	if len(unwrapped) > 0 && commandBase(unwrapped[0]) == "rm" {
+		return rmArgsContainRecursiveOption(unwrapped[1:])
 	}
 	script, ok := shellScriptFromArgv(argv)
-	return ok && ContainsDirectRM(script)
+	return ok && ContainsRecursiveRM(script)
 }
 
 // ArgvInvokesRM recognizes rm directly and behind common execution wrappers.
@@ -59,6 +61,43 @@ func ArgvContainsDirectRM(argv []string) bool {
 func ArgvInvokesRM(argv []string) bool {
 	argv = unwrapExecutionWrappers(argv)
 	return len(argv) > 0 && commandBase(argv[0]) == "rm"
+}
+
+func partialArgvMayInvokeRecursiveRM(argv []string) bool {
+	argv = unwrapExecutionWrappers(argv)
+	if len(argv) == 0 || commandBase(argv[0]) != "rm" {
+		return false
+	}
+	for _, arg := range argv[1:] {
+		if arg == "--" {
+			return false
+		}
+	}
+	return true
+}
+
+func rmArgsContainRecursiveOption(argv []string) bool {
+	for _, arg := range argv {
+		arg = strings.TrimSpace(arg)
+		if arg == "--" {
+			return false
+		}
+		if arg == "" || arg == "-" || !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			name := strings.TrimPrefix(arg, "--")
+			name, _, _ = strings.Cut(name, "=")
+			if name != "" && strings.HasPrefix("recursive", strings.ToLower(name)) {
+				return true
+			}
+			continue
+		}
+		if strings.ContainsAny(strings.TrimPrefix(arg, "-"), "rR") {
+			return true
+		}
+	}
+	return false
 }
 
 func unwrapExecutionWrappers(argv []string) []string {
@@ -102,16 +141,16 @@ func shellScriptFromArgv(argv []string) (string, bool) {
 	return "", false
 }
 
-func literalArgv(words []*syntax.Word) ([]string, bool) {
+func literalArgvPrefix(words []*syntax.Word) ([]string, bool) {
 	argv := make([]string, 0, len(words))
 	for _, word := range words {
 		value, ok := literalWord(word)
 		if !ok {
-			break
+			return argv, false
 		}
 		argv = append(argv, value)
 	}
-	return argv, len(argv) > 0
+	return argv, true
 }
 
 func literalWord(word *syntax.Word) (string, bool) {
@@ -120,7 +159,7 @@ func literalWord(word *syntax.Word) (string, bool) {
 	}
 	var b strings.Builder
 	for _, part := range word.Parts {
-		value, ok := literalWordPart(part)
+		value, ok := literalWordPart(part, true)
 		if !ok {
 			return "", false
 		}
@@ -129,16 +168,19 @@ func literalWord(word *syntax.Word) (string, bool) {
 	return b.String(), true
 }
 
-func literalWordPart(part syntax.WordPart) (string, bool) {
+func literalWordPart(part syntax.WordPart, unquoted bool) (string, bool) {
 	switch value := part.(type) {
 	case *syntax.Lit:
+		if unquoted && strings.ContainsAny(value.Value, "*?[") {
+			return "", false
+		}
 		return value.Value, true
 	case *syntax.SglQuoted:
 		return value.Value, true
 	case *syntax.DblQuoted:
 		var b strings.Builder
 		for _, nested := range value.Parts {
-			text, ok := literalWordPart(nested)
+			text, ok := literalWordPart(nested, false)
 			if !ok {
 				return "", false
 			}

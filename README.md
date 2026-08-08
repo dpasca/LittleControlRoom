@@ -276,12 +276,12 @@ and [cost](https://code.claude.com/docs/en/costs) docs.
 Agents with broad filesystem access make mistakes. LCR adds narrow seatbelts
 rather than pretending to be a sandbox:
 
-- **Guarded `rm`.** Embedded Codex keeps its launch preset's access, including
-  YOLO, but its guarded `rm` only allows plain `rm -rf /tmp/<name>` when every
-  target resolves below `/tmp`. Embedded Claude Code uses an LCR-owned
-  `PreToolUse` hook to structurally deny direct `rm` even in `bypassPermissions`
-  mode. LCAgent denies it at every permission level. This stops the common
-  accidental command, not a determined one — keep your backups.
+- **Guarded recursive `rm`.** Embedded agents can remove explicit files with
+  ordinary non-recursive commands such as `rm TODO.md`. Recursive `rm` remains
+  blocked for Claude Code and LCAgent in every permission mode. Codex additionally
+  allows plain `rm -rf /tmp/<name>` when every target is a validated descendant
+  of `/tmp`. This stops the common accidental command, not a determined one —
+  keep your backups.
   ([threat model](docs/destructive_command_safety.md))
 - **Repository root integrity.** LCR remembers the trusted root branch before
   creating linked worktrees and warns if the canonical checkout later moves. `I`

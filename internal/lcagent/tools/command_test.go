@@ -116,7 +116,7 @@ func TestCommandRunnerDeniesShellWorkspaceWriteAtMedium(t *testing.T) {
 	}
 }
 
-func TestCommandRunnerDeniesDirectRMStructurally(t *testing.T) {
+func TestCommandRunnerDeniesRecursiveRMStructurally(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
 	if err != nil {
 		t.Fatal(err)
@@ -132,8 +132,40 @@ func TestCommandRunnerDeniesDirectRMStructurally(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			result := runner.RunSpec(context.Background(), tt.spec)
-			if result.Success || !result.Denied || !strings.Contains(result.DenialReason, "direct rm commands are disabled") {
-				t.Fatalf("result = %#v, want direct rm denial", result)
+			if result.Success || !result.Denied || !strings.Contains(result.DenialReason, "recursive or option-ambiguous rm commands are disabled") {
+				t.Fatalf("result = %#v, want recursive rm denial", result)
+			}
+		})
+	}
+}
+
+func TestCommandRunnerAllowsNonRecursiveRMAtMedium(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}
+	tests := []struct {
+		name   string
+		target string
+		spec   CommandSpec
+	}{
+		{name: "argv", target: "TODO.md", spec: CommandSpec{Argv: []string{"/bin/rm", "--", "TODO.md"}, TimeoutMS: 1000}},
+		{name: "shell", target: "generated.txt", spec: CommandSpec{Command: "/bin/rm -- generated.txt", Shell: true, TimeoutMS: 1000}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := filepath.Join(root, tt.target)
+			if err := os.WriteFile(target, []byte("done\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			result := runner.RunSpec(context.Background(), tt.spec)
+			if !result.Success || result.Denied {
+				t.Fatalf("result = %#v, want non-recursive rm allowed", result)
+			}
+			if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Fatalf("target stat error = %v, want removed", err)
 			}
 		})
 	}

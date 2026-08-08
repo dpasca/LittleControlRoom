@@ -45,7 +45,7 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	}
 	s.codexHomeOverlay = codexHomeOverlay
 	cmd.Env = withEnvOverride(cmd.Env, "CODEX_HOME", codexHomeOverlay)
-	applyCodexDirectRMGuardEnvironment(cmd, codexHomeOverlay)
+	applyCodexRMGuardEnvironment(cmd, codexHomeOverlay)
 	compatibility := codexcli.ApplyCodeModeHostCompatibility(cmd)
 
 	stdin, err := cmd.StdinPipe()

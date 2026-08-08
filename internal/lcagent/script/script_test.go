@@ -1940,7 +1940,7 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	}
 }
 
-func TestRunnerStartProcessDeniesDirectRMBeforeApprovalOrLaunch(t *testing.T) {
+func TestRunnerStartProcessDeniesRecursiveRMBeforeApprovalOrLaunch(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
 	if err != nil {
@@ -1967,9 +1967,9 @@ func TestRunnerStartProcessDeniesDirectRMBeforeApprovalOrLaunch(t *testing.T) {
 		Args: raw(`{"command":"rm -rf \"$TARGET\"","project_path":"../SiblingProject"}`),
 	})
 	if err == nil {
-		t.Fatalf("RunTool() error = nil, want direct rm denial; result=%#v", result)
+		t.Fatalf("RunTool() error = nil, want recursive rm denial; result=%#v", result)
 	}
-	if !result.Denied || !strings.Contains(result.DenialReason, "direct rm commands are disabled") {
+	if !result.Denied || !strings.Contains(result.DenialReason, "recursive or option-ambiguous rm commands are disabled") {
 		t.Fatalf("result = %#v", result)
 	}
 	if approvals.calls != 0 {

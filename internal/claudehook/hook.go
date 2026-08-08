@@ -98,8 +98,8 @@ func Run(input io.Reader, errorOutput io.Writer) int {
 	if command == "" {
 		return deny(errorOutput, "Claude Code Bash command was empty")
 	}
-	if commandguard.ContainsDirectRM(command) {
-		return deny(errorOutput, commandguard.DirectRMDenialReason)
+	if commandguard.ContainsRecursiveRM(command) {
+		return deny(errorOutput, commandguard.RecursiveRMDenialReason)
 	}
 	return 0
 }

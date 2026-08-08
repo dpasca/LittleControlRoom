@@ -2168,12 +2168,12 @@ func (r *Runner) runProcessWithApproval(ctx context.Context, request ProcessRequ
 	if r == nil {
 		return tools.ToolResult{Success: false, Error: "runner unavailable"}
 	}
-	if commandguard.ContainsDirectRM(spec.Command) {
+	if commandguard.ContainsRecursiveRM(spec.Command) {
 		result := tools.ToolResult{
 			Success:      false,
 			Denied:       true,
-			DenialReason: commandguard.DirectRMDenialReason,
-			Error:        commandguard.DirectRMDenialReason,
+			DenialReason: commandguard.RecursiveRMDenialReason,
+			Error:        commandguard.RecursiveRMDenialReason,
 			Command:      commandLabelForApproval(spec),
 			CWD:          commandCWDForApproval(r.Command.Workspace.Root, spec),
 		}

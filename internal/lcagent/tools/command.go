@@ -80,12 +80,12 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 	}
-	if commandContainsDirectRM(spec) {
+	if commandContainsRecursiveRM(spec) {
 		return ToolResult{
 			Success:          false,
-			Error:            commandguard.DirectRMDenialReason,
+			Error:            commandguard.RecursiveRMDenialReason,
 			Denied:           true,
-			DenialReason:     commandguard.DirectRMDenialReason,
+			DenialReason:     commandguard.RecursiveRMDenialReason,
 			Command:          commandLabelFromSpec(spec),
 			Argv:             cleanArgv(spec.Argv),
 			CWD:              cwd,
@@ -200,12 +200,12 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	}
 }
 
-func commandContainsDirectRM(spec CommandSpec) bool {
+func commandContainsRecursiveRM(spec CommandSpec) bool {
 	argv := cleanArgv(spec.Argv)
 	if len(argv) > 0 {
-		return commandguard.ArgvContainsDirectRM(argv)
+		return commandguard.ArgvContainsRecursiveRM(argv)
 	}
-	return commandguard.ContainsDirectRM(spec.Command)
+	return commandguard.ContainsRecursiveRM(spec.Command)
 }
 
 func IsWorkspaceWriteCommandDenied(result ToolResult) bool {
@@ -381,7 +381,7 @@ func argvWorkspaceWriteDetail(argv []string) string {
 		if script := shellScriptArg(argv); script != "" {
 			return shellWorkspaceWriteDetail(script)
 		}
-	case name == "tee" || name == "rm" || name == "mv" || name == "cp" || name == "install":
+	case name == "tee" || name == "mv" || name == "cp" || name == "install":
 		return "detected workspace-mutating command " + name
 	case name == "sed":
 		for _, arg := range argv[1:] {
