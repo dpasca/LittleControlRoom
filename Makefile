@@ -3,6 +3,8 @@ SHELL := /bin/bash
 APP := lcroom
 APP_NAME := Little Control Room
 GO ?= go
+GOTOOLCHAIN ?= local
+export GOTOOLCHAIN
 GORELEASER ?= goreleaser
 GORELEASER_VERSION := $(shell awk '$$1 == "goreleaser" { print $$2; exit }' .tool-versions)
 
@@ -85,6 +87,7 @@ help:
 	@echo ""
 	@echo "Config vars (override like: make scan INCLUDE_PATHS=... DB=...):"
 	@echo "  DATA_DIR=$(DATA_DIR)"
+	@echo "  GOTOOLCHAIN=$(GOTOOLCHAIN)"
 	@echo "  CONFIG=$(CONFIG)"
 	@echo "  INCLUDE_PATHS=$(INCLUDE_PATHS)"
 	@echo "  EXCLUDE_PATHS=$(EXCLUDE_PATHS)"

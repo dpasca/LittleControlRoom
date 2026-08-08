@@ -1,6 +1,6 @@
 module lcroom
 
-go 1.25.4
+go 1.26.5
 
 require (
 	github.com/alecthomas/chroma/v2 v2.23.1

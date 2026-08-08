@@ -97,7 +97,8 @@ LCR is not published through Homebrew, apt, Snap, Flatpak, or Nix yet.
 <details>
 <summary>Build from source</summary>
 
-Requires Go 1.25+.
+Requires Go 1.26.5 or newer. Make targets default to `GOTOOLCHAIN=local`, so a
+version mismatch fails instead of downloading another Go toolchain automatically.
 
 ```bash
 make build          # local binary
