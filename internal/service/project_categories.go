@@ -50,22 +50,9 @@ func (s *Service) MoveProjectToCategory(ctx context.Context, projectPath, catego
 	if projectPath == "" || projectPath == "." {
 		return model.ProjectCategory{}, fmt.Errorf("project path is required")
 	}
-	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
-	if err != nil {
-		return model.ProjectCategory{}, err
-	}
-	defer unlockProjectState()
-
-	projects, err := s.store.GetProjectSummaryMap(ctx)
-	if err != nil {
-		return model.ProjectCategory{}, err
-	}
-	project := projects[projectPath]
-	if project.Path == "" {
-		return model.ProjectCategory{}, fmt.Errorf("project not found: %s", projectPath)
-	}
 
 	var category model.ProjectCategory
+	var err error
 	categoryName = strings.TrimSpace(categoryName)
 	if categoryName != "" {
 		category, err = s.store.GetProjectCategoryByName(ctx, categoryName)
@@ -73,16 +60,66 @@ func (s *Service) MoveProjectToCategory(ctx context.Context, projectPath, catego
 			return model.ProjectCategory{}, err
 		}
 	}
-	if err := s.store.SetResourceCategory(ctx, model.CategoryResourceProject, projectPath, category.ID); err != nil {
+	if err := s.moveProjectToResolvedCategory(ctx, projectPath, category); err != nil {
 		return model.ProjectCategory{}, err
 	}
-	if project.Archived {
-		if err := s.store.SetProjectArchived(ctx, projectPath, false); err != nil {
-			return model.ProjectCategory{}, err
+	return category, nil
+}
+
+func (s *Service) moveProjectToResolvedCategory(ctx context.Context, projectPath string, category model.ProjectCategory) error {
+	return s.setProjectFamilyCategory(ctx, projectPath, category.ID, true, func(path string) {
+		s.publishCategoryAction(ctx, path, "project_category_changed", category)
+	})
+}
+
+func (s *Service) setProjectFamilyCategory(
+	ctx context.Context,
+	projectPath string,
+	categoryID string,
+	unarchive bool,
+	afterSet func(string),
+) error {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return fmt.Errorf("project path is required")
+	}
+	projects, err := s.store.GetProjectSummaryMap(ctx)
+	if err != nil {
+		return err
+	}
+	project := projects[projectPath]
+	if project.Path == "" {
+		return fmt.Errorf("project not found: %s", projectPath)
+	}
+	if unarchive {
+		if err := validateLinkedWorktreeUnarchiveTargets(projects, []string{projectPath}); err != nil {
+			return err
 		}
 	}
-	s.publishCategoryAction(ctx, projectPath, "project_category_changed", category)
-	return category, nil
+	paths, err := expandProjectWorktreeFamilyPaths(projects, []string{projectPath})
+	if err != nil {
+		return err
+	}
+	unlockProjectState, err := s.lockProjectStateMutationsContext(ctx, paths)
+	if err != nil {
+		return err
+	}
+	defer unlockProjectState()
+
+	if unarchive {
+		err = s.store.MoveProjectsToCategory(ctx, paths, categoryID)
+	} else {
+		err = s.store.SetProjectsCategory(ctx, paths, categoryID)
+	}
+	if err != nil {
+		return err
+	}
+	if afterSet != nil {
+		for _, path := range paths {
+			afterSet(path)
+		}
+	}
+	return nil
 }
 
 func (s *Service) MoveAgentTaskToCategory(ctx context.Context, taskID, categoryName string) (model.ProjectCategory, error) {
@@ -124,7 +161,6 @@ func (s *Service) MoveResourcesToCategory(ctx context.Context, resources []model
 	}
 	moved := 0
 	seen := map[model.CategoryResourceRef]struct{}{}
-	projectSummaries := map[string]model.ProjectSummary{}
 	for _, resource := range resources {
 		resource.Kind = model.NormalizeCategoryResourceKind(resource.Kind)
 		resource.ID = strings.TrimSpace(resource.ID)
@@ -143,25 +179,9 @@ func (s *Service) MoveResourcesToCategory(ctx context.Context, resources []model
 		seen[resource] = struct{}{}
 		switch resource.Kind {
 		case model.CategoryResourceProject:
-			if len(projectSummaries) == 0 {
-				projectSummaries, err = s.store.GetProjectSummaryMap(ctx)
-				if err != nil {
-					return model.ProjectCategory{}, moved, err
-				}
-			}
-			project := projectSummaries[resource.ID]
-			if strings.TrimSpace(project.Path) == "" {
-				return model.ProjectCategory{}, moved, fmt.Errorf("project not found: %s", resource.ID)
-			}
-			if err := s.store.SetResourceCategory(ctx, model.CategoryResourceProject, resource.ID, category.ID); err != nil {
+			if err := s.moveProjectToResolvedCategory(ctx, resource.ID, category); err != nil {
 				return model.ProjectCategory{}, moved, err
 			}
-			if project.Archived {
-				if err := s.store.SetProjectArchived(ctx, resource.ID, false); err != nil {
-					return model.ProjectCategory{}, moved, err
-				}
-			}
-			s.publishCategoryAction(ctx, resource.ID, "project_category_changed", category)
 		case model.CategoryResourceAgentTask:
 			task, err := s.store.GetAgentTask(ctx, resource.ID)
 			if err != nil {

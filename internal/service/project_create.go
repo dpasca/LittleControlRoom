@@ -205,7 +205,7 @@ func (s *Service) assignProjectCategoryIfRequested(ctx context.Context, projectP
 	if projectPath == "" || projectPath == "." {
 		return fmt.Errorf("project path is required")
 	}
-	if err := s.store.SetResourceCategory(ctx, model.CategoryResourceProject, projectPath, strings.TrimSpace(categoryID)); err != nil {
+	if err := s.setProjectFamilyCategory(ctx, projectPath, strings.TrimSpace(categoryID), false, nil); err != nil {
 		return fmt.Errorf("assign project category: %w", err)
 	}
 	return nil

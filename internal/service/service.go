@@ -3433,7 +3433,7 @@ func (s *Service) setProjectsArchived(ctx context.Context, projectPaths []string
 			return err
 		}
 	}
-	paths, err = expandProjectArchiveFamilyPaths(projects, paths)
+	paths, err = expandProjectWorktreeFamilyPaths(projects, paths)
 	if err != nil {
 		return err
 	}
@@ -3505,7 +3505,10 @@ func validateLinkedWorktreeUnarchiveTargets(projects map[string]model.ProjectSum
 	return nil
 }
 
-func expandProjectArchiveFamilyPaths(projects map[string]model.ProjectSummary, projectPaths []string) ([]string, error) {
+// expandProjectWorktreeFamilyPaths adds linked worktrees when a repository root
+// is targeted. A linked worktree targeted on its own remains an individual
+// project operation.
+func expandProjectWorktreeFamilyPaths(projects map[string]model.ProjectSummary, projectPaths []string) ([]string, error) {
 	paths := cleanProjectPathList(projectPaths)
 	seen := make(map[string]struct{}, len(paths))
 	familyRoots := make(map[string]struct{}, len(paths))

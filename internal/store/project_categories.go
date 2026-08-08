@@ -159,6 +159,100 @@ func (s *Store) SetResourceCategory(ctx context.Context, kind model.CategoryReso
 	return err
 }
 
+// SetProjectsCategory assigns one category to a repository family atomically.
+// Unlike MoveProjectsToCategory, it preserves each project's archive state.
+func (s *Store) SetProjectsCategory(ctx context.Context, projectPaths []string, categoryID string) error {
+	return s.setProjectsCategory(ctx, projectPaths, categoryID, false)
+}
+
+// MoveProjectsToCategory assigns one category to a repository family and makes
+// every member active as one atomic operation.
+func (s *Store) MoveProjectsToCategory(ctx context.Context, projectPaths []string, categoryID string) error {
+	return s.setProjectsCategory(ctx, projectPaths, categoryID, true)
+}
+
+func (s *Store) setProjectsCategory(ctx context.Context, projectPaths []string, categoryID string, unarchive bool) error {
+	paths := cleanProjectCategoryPaths(projectPaths)
+	if len(paths) == 0 {
+		return errors.New("project path is required")
+	}
+	categoryID = strings.TrimSpace(categoryID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if categoryID != "" {
+		if _, err := scanProjectCategory(tx.QueryRowContext(ctx, `
+			SELECT id, name, private, position, created_at, updated_at
+			FROM project_categories
+			WHERE id = ?
+		`, categoryID)); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("category not found: %s", categoryID)
+			}
+			return err
+		}
+	}
+
+	now := time.Now().Unix()
+	for _, path := range paths {
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM projects WHERE path = ?`, path).Scan(&exists); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("project not found: %s", path)
+			}
+			return err
+		}
+		if unarchive {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE projects
+				SET archived = 0, updated_at = ?
+				WHERE path = ?
+			`, now, path); err != nil {
+				return err
+			}
+		}
+		if categoryID == "" {
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM category_assignments
+				WHERE resource_kind = ? AND resource_id = ?
+			`, string(model.CategoryResourceProject), path); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO category_assignments(resource_kind, resource_id, category_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(resource_kind, resource_id) DO UPDATE SET
+				category_id = excluded.category_id,
+				updated_at = excluded.updated_at
+		`, string(model.CategoryResourceProject), path, categoryID, now, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func cleanProjectCategoryPaths(projectPaths []string) []string {
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(projectPaths))
+	for _, path := range projectPaths {
+		path = cleanCategoryResourceID(model.CategoryResourceProject, path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 func scanProjectCategory(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectCategory, error) {

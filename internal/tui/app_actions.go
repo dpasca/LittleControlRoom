@@ -1071,6 +1071,19 @@ func (m Model) moveCategoryResourcesCmd(resources []model.CategoryResourceRef, c
 func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName, selectPath string) tea.Cmd {
 	path := filepath.Clean(strings.TrimSpace(project.Path))
 	name := projectRemovalName(project)
+	targetLabel := fmt.Sprintf("%q", name)
+	if projectIsWorktreeRoot(project) {
+		rootPath := projectWorktreeRootPath(project)
+		linkedCount := 0
+		for _, candidate := range append(append([]model.ProjectSummary(nil), m.allProjects...), m.archivedProjects...) {
+			if candidate.WorktreeKind == model.WorktreeKindLinked && projectWorktreeRootPath(candidate) == rootPath {
+				linkedCount++
+			}
+		}
+		if linkedCount > 0 {
+			targetLabel = fmt.Sprintf("%q and %d linked %s", name, linkedCount, pluralize("worktree", linkedCount))
+		}
+	}
 	detailPath := path
 	if strings.TrimSpace(selectPath) != "" {
 		detailPath = selectPath
@@ -1080,9 +1093,9 @@ func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName
 		defer cancel()
 		category, err := m.svc.MoveProjectToCategory(ctx, path, categoryName)
 		err = timeoutActionError(err, tuiQuickActionTimeout, "moving the project category")
-		status := fmt.Sprintf("Moved %q to Main", name)
+		status := fmt.Sprintf("Moved %s to Main", targetLabel)
 		if strings.TrimSpace(category.Name) != "" {
-			status = fmt.Sprintf("Moved %q to %s", name, category.Name)
+			status = fmt.Sprintf("Moved %s to %s", targetLabel, category.Name)
 		}
 		return actionMsg{
 			projectPath: path,

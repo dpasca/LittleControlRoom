@@ -494,7 +494,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/filter [text|clear]` (`f`): Temporarily narrow the whole dashboard to matching project names.
 - `/sort <attention|recent>` (`o`): Change project and agent-task ordering. Recent activity is the default; it groups activity by minute and orders ties alphabetically.
 - `/tab [main|archived|toggle|category]` (`a`): Switch between the Main, custom category, and Archived project-list tabs.
-- `/category create|remove|move|clear [name]`: Create categories, or move the selected item between category tabs.
+- `/category create|remove|move|clear [name]`: Create categories, or move the selected item between category tabs. Moving a repository root also moves its linked worktrees; targeting a linked worktree directly moves only that worktree.
 - `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.
 - `/focus <list|detail|runtime>`: Move focus between panes.
 - `/pin` (`p`): Toggle pin on the selected project.
