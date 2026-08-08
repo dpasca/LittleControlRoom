@@ -632,17 +632,25 @@ func TestEmbeddedSidebarHidesEquivalentClaudeAliasAsNextModel(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSidebarShowsClaudeAliasWhenReasoningChanges(t *testing.T) {
+func TestEmbeddedSidebarNormalizesEquivalentClaudeAliasWhenReasoningChanges(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Provider = codexapp.ProviderClaudeCode
-	snapshot.Model = "claude-fable-5"
-	snapshot.ReasoningEffort = "high"
-	snapshot.PendingModel = "fable"
+	snapshot.Model = "claude-opus-5"
+	snapshot.ReasoningEffort = "xhigh"
+	snapshot.PendingModel = "opus"
 	snapshot.PendingReasoning = "max"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	if !strings.Contains(rendered, "Next fable / max") {
-		t.Fatalf("equivalent Claude alias with a new reasoning effort should stay visible:\n%s", rendered)
+	for _, want := range []string{
+		"Model claude-opus-5 / xhigh",
+		"Next claude-opus-5 / max",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidebar model rows missing normalized label %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Next opus / max") {
+		t.Fatalf("equivalent active and pending Claude models should use one label:\n%s", rendered)
 	}
 }
 

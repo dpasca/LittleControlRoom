@@ -1201,6 +1201,9 @@ func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLin
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, maxLines)...)
 	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent && !pendingMatchesCurrent {
+		if codexapp.ModelNamesEquivalent(snapshot.Provider, model, nextModel) {
+			nextModel = model
+		}
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
 		next := nextModel
 		if snapshot.Provider == codexapp.ProviderLCAgent {
