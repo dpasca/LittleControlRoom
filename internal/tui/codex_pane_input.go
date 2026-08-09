@@ -155,7 +155,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, nil
 			}
-			m.status = label + " is rechecking whether the current turn has gone idle. If this persists, use /reconnect or /sessions."
+			m.status = label + " is rechecking whether the current turn has gone idle. If this persists, use /reconnect, /handoff, or /sessions."
 			return m, nil
 		}
 		m.status = "Closing embedded " + label + " session..."
@@ -264,7 +264,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				inv.Kind == codexslash.KindReview ||
 				inv.Kind == codexslash.KindGoal ||
 				inv.Kind == codexslash.KindPermissions) {
-				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
+				m.status = label + " session is closed. Use /resume, /new, /handoff, or /reconnect to reopen it."
 				return m, nil
 			}
 			switch inv.Kind {
@@ -286,6 +286,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "Reconnecting embedded " + label + " session..."
 				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.reconnectVisibleCodexSessionCmd()
+			case codexslash.KindHandoff:
+				m.status = "Saving a continuation brief and starting a fresh embedded " + label + " session..."
+				m.beginNewCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
+				return m, m.handoffVisibleCodexSessionCmd(snapshot, inv.HandoffNote)
 			case codexslash.KindPause:
 				switch {
 				case snapshot.BusyExternal:
@@ -469,11 +473,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, batchCmds(focusCmd, refreshCmd)
 			}
-			m.status = label + " is rechecking the current turn state. If this persists, use /reconnect or /sessions before sending another prompt."
+			m.status = label + " is rechecking the current turn state. If this persists, use /reconnect, /handoff, or /sessions before sending another prompt."
 			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
-			m.status = label + " looks stuck or disconnected. Interrupt the current turn with ctrl+c or use /reconnect before sending another prompt."
+			m.status = label + " looks stuck or disconnected. Interrupt with ctrl+c, use /reconnect, or use /handoff to continue in a fresh session."
 			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Busy && !codexSnapshotCanSubmitBusyInput(snapshot) {

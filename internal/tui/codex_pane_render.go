@@ -661,12 +661,14 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("/reconnect", "recover"),
+			footerNavAction("/handoff", "fresh"),
 			footerNavAction("/sessions", "inspect"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseStalled:
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("/reconnect", "recover"),
+			footerNavAction("/handoff", "fresh"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseFinishing:
 		actions = []footerAction{

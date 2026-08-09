@@ -1530,6 +1530,13 @@ func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.
 }
 
 func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRequest, revealOnOpen, restartWarmup bool) tea.Cmd {
+	return m.openCodexSessionCmdPrepared(req, revealOnOpen, restartWarmup, nil)
+}
+
+// prepare runs inside the returned tea.Cmd, before the current provider
+// session is touched. This keeps prerequisite disk work off Bubble Tea's
+// Update path and lets callers abort replacement without closing the source.
+func (m *Model) openCodexSessionCmdPrepared(req codexapp.LaunchRequest, revealOnOpen, restartWarmup bool, prepare func() error) tea.Cmd {
 	req = m.enrichEmbeddedLaunchRequest(req)
 	restartIntentKey := ""
 	if req.ContinueInterruptedTurn {
@@ -1565,6 +1572,19 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 	launchCmd := func() tea.Msg {
 		startedAt := time.Now()
 		label := provider.Label()
+		if prepare != nil {
+			if err := prepare(); err != nil {
+				return codexSessionOpenedMsg{
+					projectPath:   req.ProjectPath,
+					provider:      provider,
+					openRequestID: openRequestID,
+					perfOpID:      perfOpID,
+					perfDuration:  time.Since(startedAt),
+					restartWarmup: restartWarmup,
+					err:           err,
+				}
+			}
+		}
 		if manager == nil {
 			return codexSessionOpenedMsg{
 				projectPath:   req.ProjectPath,
@@ -2009,6 +2029,73 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 		}
 	}
 	return m.openCodexSessionCmd(req)
+}
+
+func (m *Model) handoffVisibleCodexSessionCmd(source codexapp.Snapshot, note string) tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	provider := embeddedProvider(source)
+	source.Provider = provider
+	source.ProjectPath = projectPath
+	handoff, err := codexapp.NewSessionHandoff(m.appDataDir(), source, note, m.currentTime())
+	if err != nil {
+		requestID := m.codexPendingOpenRequestID(projectPath, provider)
+		return func() tea.Msg {
+			return codexSessionOpenedMsg{
+				projectPath:   projectPath,
+				provider:      provider,
+				openRequestID: requestID,
+				err:           err,
+			}
+		}
+	}
+
+	req := codexapp.LaunchRequest{
+		Provider:         provider,
+		ProjectPath:      projectPath,
+		ForceNew:         true,
+		Prompt:           handoff.LaunchPrompt(),
+		Preset:           source.Preset,
+		PlaywrightPolicy: m.currentPlaywrightPolicy(),
+		AppDataDir:       m.appDataDir(),
+		CodexHome:        m.codexHome(),
+	}
+	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
+		req.Preset = codexcli.DefaultPreset()
+	}
+
+	handoffSaved := false
+	cmd := m.openCodexSessionCmdPrepared(req, true, false, func() error {
+		if err := handoff.Write(); err != nil {
+			return fmt.Errorf("save embedded session handoff: %w", err)
+		}
+		handoffSaved = true
+		return nil
+	})
+	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
+		opened, ok := msg.(codexSessionOpenedMsg)
+		if !ok {
+			return msg
+		}
+		if opened.err != nil {
+			if handoffSaved {
+				opened.err = fmt.Errorf(
+					"handoff saved to %s, but the fresh %s session could not be opened: %w",
+					handoff.Path(),
+					provider.Label(),
+					opened.err,
+				)
+			}
+			return opened
+		}
+		prefix := "Handoff saved to " + handoff.Path() + ". "
+		opened.status = prefix + strings.TrimSpace(opened.status)
+		opened.visibleStatus = prefix + strings.TrimSpace(opened.visibleStatus)
+		opened.backgroundStatus = prefix + strings.TrimSpace(opened.backgroundStatus)
+		return opened
+	})
 }
 
 func (m Model) compactVisibleCodexSessionCmd(instructions string) tea.Cmd {

@@ -66,6 +66,22 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashHandoffSuggestionRenders(t *testing.T) {
+	input := newCodexTextarea()
+	input.SetValue("/handoff")
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+		width:               100,
+		height:              24,
+	}
+
+	rendered := ansi.Strip(strings.Join(m.renderCodexSlashBlocks(100), "\n"))
+	if !strings.Contains(rendered, "/handoff [note]") || !strings.Contains(rendered, "host-generated continuation brief") {
+		t.Fatalf("rendered handoff suggestion = %q", rendered)
+	}
+}
+
 func TestVisibleCodexSlashPermissionsSummaryNotClippedByEllipsis(t *testing.T) {
 	input := newCodexTextarea()
 	input.SetValue("/permissions ")
@@ -863,6 +879,199 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	}
 	if len(requests[1].ReconnectTranscript) != 1 || requests[1].ReconnectTranscript[0].ItemID != "call_live_tool" {
 		t.Fatalf("second launch reconnect transcript = %#v, want live transcript carried across helper restart", requests[1].ReconnectTranscript)
+	}
+}
+
+func TestVisibleCodexSlashHandoffSavesBriefAndStartsFreshSession(t *testing.T) {
+	dataDir := t.TempDir()
+	capturedAt := time.Date(2026, time.August, 9, 4, 5, 6, 0, time.UTC)
+	var requests []codexapp.LaunchRequest
+	source := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:        codexapp.ProviderCodex,
+			Started:         true,
+			Busy:            true,
+			Phase:           codexapp.SessionPhaseStalled,
+			ThreadID:        "thread-source",
+			ActiveTurnID:    "turn-failed",
+			Preset:          codexcli.PresetYolo,
+			Status:          "Reconnecting... 5/5",
+			LastError:       "stream disconnected before completion",
+			ReasoningEffort: "max",
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: "Fix the shared dialog frame centering."},
+				{Kind: codexapp.TranscriptReasoning, Text: "private analysis should stay out of the brief"},
+				{Kind: codexapp.TranscriptAgent, Text: "The content and frame appear to use different origins."},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, _ func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		if len(requests) == 1 {
+			return source, nil
+		}
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider,
+				Started:  true,
+				ThreadID: "thread-fresh",
+				Preset:   req.Preset,
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+		ResumeID:    "thread-source",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/handoff preserve the centering diagnosis")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		appDataDirPath:      dataDir,
+		nowFn:               func() time.Time { return capturedAt },
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("enter should run the host-side /handoff command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /handoff, got %q", got.codexInput.Value())
+	}
+	if got.codexPendingOpen == nil || !got.codexPendingOpen.newSession {
+		t.Fatalf("handoff should mark a fresh pending session: %#v", got.codexPendingOpen)
+	}
+	if !strings.Contains(got.status, "Saving a continuation brief") {
+		t.Fatalf("handoff pending status = %q", got.status)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("handoff cmd returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("handoff open error = %v", opened.err)
+	}
+	if opened.snapshot.ThreadID != "thread-fresh" {
+		t.Fatalf("fresh thread id = %q, want thread-fresh", opened.snapshot.ThreadID)
+	}
+	if !strings.Contains(opened.status, "Handoff saved to ") || !strings.Contains(opened.status, "Prompt sent to fresh embedded Codex") {
+		t.Fatalf("handoff success status = %q", opened.status)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want initial and fresh", len(requests))
+	}
+	fresh := requests[1]
+	if !fresh.ForceNew || fresh.ResumeID != "" {
+		t.Fatalf("handoff launch should be fresh, got ForceNew=%t ResumeID=%q", fresh.ForceNew, fresh.ResumeID)
+	}
+	if fresh.Provider != codexapp.ProviderCodex || fresh.Preset != codexcli.PresetYolo {
+		t.Fatalf("handoff launch lost provider/preset: provider=%q preset=%q", fresh.Provider, fresh.Preset)
+	}
+	if source.submitted != nil || source.submissions != nil {
+		t.Fatal("handoff should not submit work through the unavailable source session")
+	}
+	if !source.snapshot.Closed {
+		t.Fatal("source session should close only after the handoff brief is saved")
+	}
+
+	paths, err := filepath.Glob(filepath.Join(dataDir, "embedded-sessions", "handoffs", "*", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("handoff files = %#v, want one durable brief", paths)
+	}
+	raw, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := string(raw)
+	for _, want := range []string{
+		"preserve the centering diagnosis",
+		"Fix the shared dialog frame centering.",
+		"The content and frame appear to use different origins.",
+		"stream disconnected before completion",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("handoff brief should contain %q:\n%s", want, brief)
+		}
+	}
+	if strings.Contains(brief, "private analysis should stay out of the brief") {
+		t.Fatalf("handoff brief should omit private reasoning:\n%s", brief)
+	}
+	if !strings.Contains(fresh.Prompt, paths[0]) {
+		t.Fatalf("fresh prompt should point to %q: %q", paths[0], fresh.Prompt)
+	}
+}
+
+func TestHandoffWriteFailureLeavesSourceSessionOpen(t *testing.T) {
+	dataPath := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(dataPath, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	source := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:    codexapp.ProviderCodex,
+			ProjectPath: "/tmp/demo",
+			Started:     true,
+			ThreadID:    "thread-source",
+			Preset:      codexcli.PresetYolo,
+			Entries: []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptUser,
+				Text: "Continue this work safely.",
+			}},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, _ func()) (codexapp.Session, error) {
+		requests++
+		return source, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		appDataDirPath:      dataPath,
+	}
+	cmd := m.handoffVisibleCodexSessionCmd(source.Snapshot(), "")
+	if cmd == nil {
+		t.Fatal("handoff command should report a write failure")
+	}
+	opened, ok := cmd().(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatal("handoff failure should return codexSessionOpenedMsg")
+	}
+	if opened.err == nil || !strings.Contains(opened.err.Error(), "save embedded session handoff") {
+		t.Fatalf("handoff error = %v, want write failure", opened.err)
+	}
+	if requests != 1 {
+		t.Fatalf("provider launches = %d, want no fresh launch after write failure", requests)
+	}
+	if source.snapshot.Closed {
+		t.Fatal("source session should remain open when the handoff brief cannot be saved")
 	}
 }
 

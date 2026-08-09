@@ -17,6 +17,7 @@ const (
 	KindShowStatus  Kind = "show-status"
 	KindModel       Kind = "model"
 	KindReconnect   Kind = "reconnect"
+	KindHandoff     Kind = "handoff"
 	KindPause       Kind = "pause"
 	KindCompact     Kind = "compact"
 	KindContext     Kind = "context"
@@ -53,6 +54,7 @@ type Invocation struct {
 	GoalObjective       string
 	GoalTokenBudget     *int64
 	CompactInstructions string
+	HandoffNote         string
 	Canonical           string
 }
 
@@ -66,6 +68,7 @@ var specs = []Spec{
 	{Name: "show-status", Usage: "/show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
+	{Name: "handoff", Usage: "/handoff [note]", Summary: "Save a host-generated continuation brief and start a fresh embedded session"},
 	{Name: "pause", Usage: "/pause", Summary: "Interrupt the active turn locally without sending another model request"},
 	{Name: "suspend", Usage: "/suspend", Summary: "Alias for /pause", Hidden: true},
 	{Name: "compact", Usage: "/compact [instructions]", Summary: "Compact conversation history, optionally preserving a specific focus"},
@@ -142,6 +145,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/reconnect",
 			Display: "/reconnect",
 			Summary: "Restart the embedded provider helper and reconnect to the current session",
+		}}
+	case "handoff":
+		return []Suggestion{{
+			Insert:  "/handoff",
+			Display: "/handoff [note]",
+			Summary: "Save a mechanical continuation brief locally, then start a fresh embedded session from it",
 		}}
 	case "pause", "suspend":
 		return []Suggestion{{
@@ -367,6 +376,13 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindReconnect,
 			Canonical: "/reconnect",
+		}, nil
+	case "handoff":
+		note := strings.TrimSpace(rawArgs)
+		return Invocation{
+			Kind:        KindHandoff,
+			HandoffNote: note,
+			Canonical:   slashcmd.CanonicalCommand("handoff", note),
 		}, nil
 	case "pause", "suspend":
 		if strings.TrimSpace(rawArgs) != "" {

@@ -33,6 +33,20 @@ func TestSuggestionsIncludeReconnectCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeHandoffCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/handoff" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /handoff: %#v", suggestions)
+	}
+}
+
 func TestSuggestionsIncludePauseCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
@@ -191,6 +205,30 @@ func TestParseReconnectCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/reconnect" {
 		t.Fatalf("Parse(/reconnect) canonical = %q, want /reconnect", inv.Canonical)
+	}
+}
+
+func TestParseHandoffCommandWithOptionalNote(t *testing.T) {
+	inv, err := Parse("/handoff preserve the renderer investigation")
+	if err != nil {
+		t.Fatalf("Parse(/handoff ...) error = %v", err)
+	}
+	if inv.Kind != KindHandoff {
+		t.Fatalf("Parse(/handoff ...) kind = %q, want %q", inv.Kind, KindHandoff)
+	}
+	if inv.HandoffNote != "preserve the renderer investigation" {
+		t.Fatalf("handoff note = %q", inv.HandoffNote)
+	}
+	if inv.Canonical != "/handoff preserve the renderer investigation" {
+		t.Fatalf("handoff canonical = %q", inv.Canonical)
+	}
+
+	inv, err = Parse("/handoff")
+	if err != nil {
+		t.Fatalf("Parse(/handoff) error = %v", err)
+	}
+	if inv.Kind != KindHandoff || inv.HandoffNote != "" || inv.Canonical != "/handoff" {
+		t.Fatalf("Parse(/handoff) = %#v, want empty-note handoff", inv)
 	}
 }
 
