@@ -373,6 +373,7 @@ func TestVisibleClaudeReplacingImageKeepsEnterSubmissionSendable(t *testing.T) {
 }
 
 func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
+	largeText := strings.Repeat("a", codexLargePasteCharacterThreshold+200)
 	previousExporter := clipboardImageExporter
 	clipboardImageExporter = func() (string, error) {
 		return "", errClipboardHasNoImage
@@ -383,7 +384,7 @@ func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
 
 	previousReader := clipboardTextReader
 	clipboardTextReader = func() (string, error) {
-		return strings.Repeat("a", 1200), nil
+		return largeText, nil
 	}
 	t.Cleanup(func() {
 		clipboardTextReader = previousReader
@@ -431,8 +432,8 @@ func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
 	if len(pastedTexts) != 1 {
 		t.Fatalf("pasted texts = %d, want 1", len(pastedTexts))
 	}
-	if pastedTexts[0].Text != strings.Repeat("a", 1200) {
-		t.Fatalf("stored pasted text length = %d, want 1200", len([]rune(pastedTexts[0].Text)))
+	if pastedTexts[0].Text != largeText {
+		t.Fatalf("stored pasted text length = %d, want %d", len([]rune(pastedTexts[0].Text)), len([]rune(largeText)))
 	}
 	if got.status != "Pasted [1 line pasted] as a placeholder" {
 		t.Fatalf("status = %q, want placeholder notice", got.status)
@@ -458,7 +459,7 @@ func TestVisibleCodexBracketedPasteUsesLargeTextPlaceholder(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 
-	longText := strings.Repeat("b", 800)
+	longText := strings.Repeat("b", codexLargePasteCharacterThreshold+200)
 	m := Model{
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/demo",
@@ -502,7 +503,7 @@ func TestVisibleCodexBracketedPasteAfterExistingInputUsesPlaceholder(t *testing.
 	input := newCodexTextarea()
 	input.SetValue("short dictation")
 	input.CursorEnd()
-	longText := strings.Repeat("c", 800)
+	longText := strings.Repeat("c", codexLargePasteCharacterThreshold+200)
 	m := Model{
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/demo",
@@ -526,8 +527,8 @@ func TestVisibleCodexBracketedPasteAfterExistingInputUsesPlaceholder(t *testing.
 	if submission.Text != "short dictation "+longText {
 		t.Fatalf("submission text = %q, want existing text plus expanded paste", submission.Text)
 	}
-	if submission.DisplayText != "short dictation [1 line pasted]" {
-		t.Fatalf("submission display text = %q, want collapsed display text", submission.DisplayText)
+	if submission.TranscriptDisplayText() != "short dictation "+longText {
+		t.Fatalf("submission display text length = %d, want expanded pasted text", len([]rune(submission.TranscriptDisplayText())))
 	}
 }
 
@@ -550,7 +551,7 @@ func TestVisibleCodexBulkRuneInputUsesLargeTextPlaceholder(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 
-	longText := strings.Repeat("d", 900)
+	longText := strings.Repeat("d", codexLargePasteCharacterThreshold+200)
 	m := Model{
 		codexManager:        manager,
 		codexVisibleProject: "/tmp/demo",
@@ -618,6 +619,7 @@ func TestVisibleCodexInputDoesNotFreezeAtPreviousCharLimit(t *testing.T) {
 }
 
 func TestVisibleCodexBackspaceRemovesLargePastePlaceholder(t *testing.T) {
+	largeText := strings.Repeat("x", codexLargePasteCharacterThreshold+200)
 	previousExporter := clipboardImageExporter
 	clipboardImageExporter = func() (string, error) {
 		return "", errClipboardHasNoImage
@@ -628,7 +630,7 @@ func TestVisibleCodexBackspaceRemovesLargePastePlaceholder(t *testing.T) {
 
 	previousReader := clipboardTextReader
 	clipboardTextReader = func() (string, error) {
-		return strings.Repeat("x", 900), nil
+		return largeText, nil
 	}
 	t.Cleanup(func() {
 		clipboardTextReader = previousReader
@@ -765,7 +767,7 @@ func TestVisibleCodexSubmissionStripsInlineImageMarker(t *testing.T) {
 	}
 }
 
-func TestVisibleCodexSubmissionExpandsLargePastePlaceholder(t *testing.T) {
+func TestVisibleCodexSubmissionEchoesLargePastePlaceholderContents(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -826,11 +828,75 @@ func TestVisibleCodexSubmissionExpandsLargePastePlaceholder(t *testing.T) {
 	if submission.Text != hidden+" summarize this" {
 		t.Fatalf("submission text length = %d, want expanded hidden paste", len([]rune(submission.Text)))
 	}
-	if submission.DisplayText != "[1 line pasted] summarize this" {
-		t.Fatalf("submission display text = %q, want collapsed paste placeholder", submission.DisplayText)
+	if submission.TranscriptDisplayText() != hidden+" summarize this" {
+		t.Fatalf("submission display text length = %d, want expanded pasted text", len([]rune(submission.TranscriptDisplayText())))
 	}
 	if got.codexInput.Value() != "" {
 		t.Fatalf("composer should clear after submit, got %q", got.codexInput.Value())
+	}
+}
+
+func TestCodexDraftSubmissionClipsOnlyOutrageousPasteDisplay(t *testing.T) {
+	pasted := strings.Repeat("visible pasted line\n", codexPasteDisplayLineLimit) + "hidden pasted line"
+	token := codexPastedTextComposerToken(1, pasted)
+	draft := codexDraft{
+		Text: token + " summarize the paste",
+		PastedTexts: []codexPastedText{{
+			Token: token,
+			Text:  pasted,
+		}},
+	}
+
+	submission := draft.Submission()
+	if submission.Text != pasted+" summarize the paste" {
+		t.Fatalf("submission text was clipped before being sent")
+	}
+	if strings.Contains(submission.DisplayText, "hidden pasted line") {
+		t.Fatalf("display text should clip lines after the generous limit: %q", submission.DisplayText)
+	}
+	if !strings.Contains(submission.DisplayText, "visible pasted line") ||
+		!strings.Contains(submission.DisplayText, "[Pasted text clipped for display; full 101-line") ||
+		!strings.HasSuffix(submission.DisplayText, "summarize the paste") {
+		t.Fatalf("display text should retain the visible paste prefix, clipping notice, and surrounding prompt: %q", submission.DisplayText)
+	}
+}
+
+func TestCodexDraftSubmissionClipsExtremelyLongSingleLinePasteDisplay(t *testing.T) {
+	pasted := strings.Repeat("q", codexPasteDisplayCharacterLimit+1)
+	token := codexPastedTextComposerToken(1, pasted)
+	submission := (codexDraft{
+		Text: token,
+		PastedTexts: []codexPastedText{{
+			Token: token,
+			Text:  pasted,
+		}},
+	}).Submission()
+
+	if submission.Text != pasted {
+		t.Fatalf("submission text was clipped before being sent")
+	}
+	if strings.Contains(submission.DisplayText, pasted) {
+		t.Fatalf("display text should not contain the complete extreme single-line paste")
+	}
+	if !strings.Contains(submission.DisplayText, "[Pasted text clipped for display; full 1-line, 10001-character paste was sent]") {
+		t.Fatalf("display text should explain its clipping: %q", submission.DisplayText)
+	}
+}
+
+func TestShouldCollapseCodexPasteUsesGenerousComposerBudget(t *testing.T) {
+	if shouldCollapseCodexPaste(strings.Repeat("d", 3000)) {
+		t.Fatalf("ordinary long-form dictation should remain visible in the composer")
+	}
+	twentyLines := strings.Repeat("line\n", 19) + "line"
+	if shouldCollapseCodexPaste(twentyLines) {
+		t.Fatalf("a moderate multi-line paste should remain visible in the composer")
+	}
+	if !shouldCollapseCodexPaste(strings.Repeat("d", codexLargePasteCharacterThreshold)) {
+		t.Fatalf("a paste at the character threshold should use a composer placeholder")
+	}
+	fortyLines := strings.Repeat("line\n", codexLargePasteLineThreshold-1) + "line"
+	if !shouldCollapseCodexPaste(fortyLines) {
+		t.Fatalf("a paste at the line threshold should use a composer placeholder")
 	}
 }
 

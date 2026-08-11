@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	codexLargePasteCharacterThreshold = 500
-	codexLargePasteLineThreshold      = 8
+	codexLargePasteCharacterThreshold = 4000
+	codexLargePasteLineThreshold      = 40
+	codexPasteDisplayCharacterLimit   = 10000
+	codexPasteDisplayLineLimit        = 100
 	codexComposerCharLimit            = 0
 )
 
@@ -60,7 +62,10 @@ func (d codexDraft) Submission() codexapp.Submission {
 		Attachments: cloneCodexAttachments(d.Attachments),
 	}
 	if len(d.PastedTexts) > 0 {
-		sub.DisplayText = collapseCodexPastedTextTokens(displayText, d.PastedTexts)
+		boundedDisplayText := displayCodexPastedTextTokens(displayText, d.PastedTexts)
+		if boundedDisplayText != sub.Text {
+			sub.DisplayText = boundedDisplayText
+		}
 	}
 	return sub
 }
@@ -211,12 +216,39 @@ func codexPastedTextComposerToken(id int, text string) string {
 	return fmt.Sprintf("[Paste #%d: %d lines]", id, n)
 }
 
-func collapseCodexPastedTextTokens(text string, pastedTexts []codexPastedText) string {
-	collapsed := text
+func displayCodexPastedTextTokens(text string, pastedTexts []codexPastedText) string {
+	displayed := text
 	for _, pasted := range pruneCodexPastedTexts(text, pastedTexts) {
-		collapsed = strings.ReplaceAll(collapsed, pasted.Token, codexPastedTextPlaceholder(pasted.Text))
+		displayed = strings.ReplaceAll(displayed, pasted.Token, clipCodexPastedTextForDisplay(pasted.Text))
 	}
-	return strings.TrimSpace(collapsed)
+	return strings.TrimSpace(displayed)
+}
+
+func clipCodexPastedTextForDisplay(text string) string {
+	lineCount := codexVisibleLineCount(text)
+	runeCount := codexVisibleRuneCount(text)
+	if lineCount <= codexPasteDisplayLineLimit && runeCount <= codexPasteDisplayCharacterLimit {
+		return text
+	}
+
+	clipped := normalizeCodexPasteLineEndings(text)
+	lines := strings.Split(clipped, "\n")
+	if len(lines) > codexPasteDisplayLineLimit {
+		clipped = strings.Join(lines[:codexPasteDisplayLineLimit], "\n")
+	}
+	if runes := []rune(clipped); len(runes) > codexPasteDisplayCharacterLimit {
+		clipped = string(runes[:codexPasteDisplayCharacterLimit])
+	}
+	clipped = strings.TrimRight(clipped, "\n")
+	notice := fmt.Sprintf(
+		"[Pasted text clipped for display; full %d-line, %d-character paste was sent]",
+		lineCount,
+		runeCount,
+	)
+	if clipped == "" {
+		return notice
+	}
+	return clipped + "\n\n" + notice
 }
 
 func codexVisibleRuneCount(text string) int {
@@ -227,11 +259,14 @@ func codexVisibleLineCount(text string) int {
 	if text == "" {
 		return 0
 	}
-	// Normalize line endings: \r\n → \n, then standalone \r → \n.
+	normalized := normalizeCodexPasteLineEndings(text)
+	return strings.Count(normalized, "\n") + 1
+}
+
+func normalizeCodexPasteLineEndings(text string) string {
 	// Bracketed paste from terminals often uses \r instead of \n.
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	return strings.Count(normalized, "\n") + 1
+	return strings.ReplaceAll(normalized, "\r", "\n")
 }
 
 func shouldCollapseCodexPaste(text string) bool {

@@ -430,7 +430,7 @@ While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
 - `Enter` sends a prompt when idle and steers the active turn when the embedded session is busy
 - `Alt+Enter` or `ctrl+j` inserts a newline
-- `ctrl+v` attaches a clipboard image when available
+- `ctrl+v` attaches a clipboard image when available, otherwise it pastes clipboard text. The composer keeps ordinary dictation and pastes visible; only pastes of 4,000 characters or 40 lines and above become compact `[Paste #n]` markers. After sending, those markers expand in the echoed user turn. Echoes clip only an individual paste beyond 100 lines or 10,000 characters, show an explicit clipping notice, and still send the complete text to the embedded provider.
 - `Backspace` on an inline `[Image #n]` marker removes that attachment
 - Consecutive identical command and file-change blocks collapse into one row with an `×N` count; `Alt+L` cycles dense command, file, and tool transcript blocks through hidden output, preview, and full detail, revealing every collapsed occurrence in full mode
 - `ctrl+c` interrupts the active turn when busy and closes the session when idle

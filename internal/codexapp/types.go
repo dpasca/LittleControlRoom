@@ -172,8 +172,9 @@ type Submission struct {
 	Attachments []Attachment
 }
 
-// TranscriptDisplayText returns the display-friendly transcript text,
-// using DisplayText (collapsed paste placeholders) when available.
+// TranscriptDisplayText returns the display-friendly transcript text, using
+// DisplayText when the UI needs to keep model-only context out of the echo or
+// bound unusually large visible input.
 func (s Submission) TranscriptDisplayText() string {
 	parts := []string{}
 	text := strings.TrimSpace(s.DisplayText)

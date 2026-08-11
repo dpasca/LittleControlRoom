@@ -735,7 +735,7 @@ func TestVisibleScratchTaskPromptAutoRenameUsesTextAroundCollapsedPaste(t *testi
 		t.Fatalf("Open() error = %v", err)
 	}
 
-	pasted := strings.Repeat("raw log line that should not become the title\n", 9) + "raw log line that should not become the title"
+	pasted := strings.Repeat("raw log line that should not become the title\n", codexLargePasteLineThreshold-1) + "raw log line that should not become the title"
 	token := codexPastedTextComposerToken(1, pasted)
 	draft := codexDraft{
 		Text: token + " summarize the failing config",
@@ -765,8 +765,8 @@ func TestVisibleScratchTaskPromptAutoRenameUsesTextAroundCollapsedPaste(t *testi
 	if len(session.submissions) != 1 {
 		t.Fatalf("submissions = %d, want 1", len(session.submissions))
 	}
-	if got := session.submissions[0].DisplayText; !strings.Contains(got, "[10 lines pasted]") {
-		t.Fatalf("display text = %q, want collapsed paste placeholder", got)
+	if got := session.submissions[0].TranscriptDisplayText(); got != pasted+" summarize the failing config" {
+		t.Fatalf("display text should echo the expanded paste, got %q", got)
 	}
 
 	detail, err := st.GetProjectDetail(ctx, created.TaskPath, 5)
