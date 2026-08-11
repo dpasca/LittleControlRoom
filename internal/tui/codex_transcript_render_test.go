@@ -1758,6 +1758,80 @@ func TestCodexProgressiveLinkScanIgnoresCppLambdaCaptures(t *testing.T) {
 	}
 }
 
+func TestCodexProgressiveLinkScanIgnoresSourceCodePathSyntax(t *testing.T) {
+	projectPath := t.TempDir()
+	validRelativePath := filepath.Join(projectPath, "artifacts", "final.png")
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptCommand,
+				Text: strings.Join([]string{
+					"$ sed -n '1,240p' src/app/preview/faceStage.ts tests/avatar/profiledNose.test.ts",
+					"const gltf = await loader.loadAsync(`/reference/${fileName}`);",
+					"const audioURL = `/${episode.audio.path}`;",
+					"expect(() => validate(params)).toThrow(",
+					"  /tipRoundness/,",
+					");",
+					"Saved the [actual render](artifacts/final.png).",
+				}, "\n"),
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(100, 4),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	cmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+	if cmd == nil {
+		t.Fatalf("progressive link scan should start for transcript entries")
+	}
+	got := drainCmdMsgs(m, cmd)
+	targets := got.cachedProgressiveCodexOpenTargets(snapshot)
+	if len(targets) != 1 {
+		t.Fatalf("progressive targets = %#v, want only the concrete render path", targets)
+	}
+	if targets[0].Kind != "image" || targets[0].Path != validRelativePath {
+		t.Fatalf("progressive target = %#v, want image path %q", targets[0], validRelativePath)
+	}
+}
+
+func TestCodexPickerTargetSourcesReconcileVisibleScanOverlap(t *testing.T) {
+	projectPath := t.TempDir()
+	imagePath := filepath.Join(projectPath, "reference.jpg")
+	progressive := []codexArtifactOpenTarget{
+		{
+			Kind:          "image",
+			Label:         "reference.jpg",
+			Path:          imagePath,
+			sourceEntry:   4,
+			sourceLocated: true,
+		},
+		{
+			Kind:          "image",
+			Label:         "reference.jpg",
+			Path:          imagePath,
+			sourceEntry:   9,
+			sourceLocated: true,
+		},
+	}
+	visible := []codexArtifactOpenTarget{
+		{Kind: "image", Label: "reference.jpg", Path: imagePath},
+		{Kind: "image", Label: "reference.jpg", Path: imagePath},
+	}
+
+	targets := combineCodexOpenTargetsForPicker(visible, progressive, false, projectPath)
+	if len(targets) != 2 {
+		t.Fatalf("combined targets = %#v, want two transcript occurrences without scan-overlap duplicates", targets)
+	}
+	for i, target := range targets {
+		if target.Path != imagePath || !target.sourceLocated || target.sourceEntry != progressive[i].sourceEntry {
+			t.Fatalf("combined target %d = %#v, want progressive occurrence %#v", i, target, progressive[i])
+		}
+	}
+}
+
 func TestCodexMarkdownLinkParserBoundsMalformedBrackets(t *testing.T) {
 	longLabel := "[" + strings.Repeat("x", codexMarkdownLinkLabelScanLimit+1) + "](https://example.com/docs)"
 	if _, _, _, ok := parseCodexMarkdownLink(longLabel); ok {
@@ -2023,6 +2097,23 @@ func TestCodexInlineCodePathScanIgnoresFencesAndBareCodeTokens(t *testing.T) {
 		t.Fatalf("inline code path targets = %#v, want exactly one real path", targets)
 	}
 	wantPath := filepath.Join(projectPath, filepath.FromSlash(rel))
+	if targets[0].Kind != "image" || targets[0].Path != wantPath {
+		t.Fatalf("inline code path target = %#v, want image path %q", targets[0], wantPath)
+	}
+}
+
+func TestCodexInlineCodePathScanIgnoresUnexpandedTemplates(t *testing.T) {
+	projectPath := t.TempDir()
+	text := strings.Join([]string{
+		"Source examples: `/reference/${fileName}` and `/${episode.audio.path}`.",
+		"Concrete output: `artifacts/final.png`.",
+	}, "\n")
+
+	targets := codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)
+	if len(targets) != 1 {
+		t.Fatalf("inline code path targets = %#v, want only the concrete path", targets)
+	}
+	wantPath := filepath.Join(projectPath, "artifacts", "final.png")
 	if targets[0].Kind != "image" || targets[0].Path != wantPath {
 		t.Fatalf("inline code path target = %#v, want image path %q", targets[0], wantPath)
 	}

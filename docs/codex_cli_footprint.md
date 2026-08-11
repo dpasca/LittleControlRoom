@@ -78,6 +78,23 @@ and early assistant updates when multi-megabyte structured tool results push
 all conversational events outside the tail window; any newer conversational
 tail events still take precedence.
 
+### Embedded transcript link evidence
+
+The embedded `Open Links` picker combines structured generated-image, viewed-image,
+and file-tool paths with explicit Markdown links and concrete path-shaped text.
+Conversational text may advertise paths in inline-code spans. Raw command results
+may instead contribute explicit Markdown links and standalone artifact paths; their
+language-level backticks are not interpreted as Markdown. The command input itself
+is never scanned. Unexpanded template paths such as `${fileName}`, comment-shaped
+lines, and absolute lines whose terminal component contains only punctuation are
+source-code syntax rather than openable-link evidence and are excluded.
+
+Full-transcript discovery runs progressively outside the TUI render path. While
+that scan is incomplete, its occurrences are reconciled one-for-one with links
+already found in the visible viewport. This avoids showing the same transcript
+occurrence twice without collapsing separate mentions that may carry different
+labels or chronology.
+
 ### Format B: legacy JSONL
 
 Observed in older files (140/2053 sampled files):

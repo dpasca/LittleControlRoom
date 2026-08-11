@@ -173,26 +173,24 @@ func (m Model) codexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArti
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	visibleTargets := m.visibleCodexOpenTargets(snapshot)
 	progressiveTargets, progressiveComplete := m.cachedProgressiveCodexOpenTargetsWithState(snapshot)
-	if len(progressiveTargets) == 0 {
-		return normalizeCodexArtifactOpenTargetsForProject(visibleTargets, projectPath)
-	}
-	if progressiveComplete {
-		return normalizeCodexArtifactOpenTargetsForProject(progressiveTargets, projectPath)
-	}
-	return normalizeCodexArtifactOpenTargetsForProject(append(progressiveTargets, visibleTargets...), projectPath)
+	return combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets, progressiveComplete, projectPath)
 }
 
 func (m Model) cachedCodexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	visibleTargets := m.cachedVisibleCodexOpenTargets(snapshot)
 	progressiveTargets, progressiveComplete := m.cachedProgressiveCodexOpenTargetsWithState(snapshot)
+	return combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets, progressiveComplete, projectPath)
+}
+
+func combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets []codexArtifactOpenTarget, progressiveComplete bool, projectPath string) []codexArtifactOpenTarget {
 	if len(progressiveTargets) == 0 {
 		return normalizeCodexArtifactOpenTargetsForProject(visibleTargets, projectPath)
 	}
 	if progressiveComplete {
 		return normalizeCodexArtifactOpenTargetsForProject(progressiveTargets, projectPath)
 	}
-	return normalizeCodexArtifactOpenTargetsForProject(append(progressiveTargets, visibleTargets...), projectPath)
+	return reconcileCodexArtifactPickerTargets(progressiveTargets, visibleTargets, false, projectPath)
 }
 
 func (m Model) cachedProgressiveCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
@@ -467,7 +465,12 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 		}
 		scanLen := min(len(text)-textOffset, remainingBudget)
 		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+max(codexMarkdownLinkTargetScanLimit, codexInlineCodePathScanLimit)+4)
-		chunkTargets := codexArtifactOpenTargetsFromMarkdownPrefixInProject(text[textOffset:parseEnd], scanLen, projectPath)
+		chunkTargets := codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithInlineCode(
+			text[textOffset:parseEnd],
+			scanLen,
+			projectPath,
+			entry.Kind != codexapp.TranscriptCommand,
+		)
 		targets = append(targets, locateCodexArtifactOpenTargets(chunkTargets, entryIndex)...)
 		bytesScanned += scanLen
 		if textOffset+scanLen < len(text) {
@@ -555,6 +558,7 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 
 func reconcileCodexArtifactPickerTargets(scanned, existing []codexArtifactOpenTarget, complete bool, projectPath string) []codexArtifactOpenTarget {
 	scanned = normalizeCodexArtifactOpenTargetsForProject(scanned, projectPath)
+	existing = normalizeCodexArtifactOpenTargetsForProject(existing, projectPath)
 	if complete || len(existing) == 0 {
 		return scanned
 	}
@@ -1206,7 +1210,12 @@ func codexOpenTargetsFromTranscriptEntryFullInProject(entry codexapp.TranscriptE
 		targets = append(targets, target)
 	}
 	if text := codexFullTranscriptEntryLinkScanText(entry); strings.TrimSpace(text) != "" {
-		targets = append(targets, codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)...)
+		targets = append(targets, codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithInlineCode(
+			text,
+			len(text),
+			projectPath,
+			entry.Kind != codexapp.TranscriptCommand,
+		)...)
 	}
 	return normalizeCodexArtifactOpenTargetsForProject(targets, projectPath)
 }
@@ -1358,6 +1367,10 @@ func codexArtifactOpenTargetsFromMarkdownPrefix(text string, scanLimit int) []co
 }
 
 func codexArtifactOpenTargetsFromMarkdownPrefixInProject(text string, scanLimit int, projectPath string) []codexArtifactOpenTarget {
+	return codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithInlineCode(text, scanLimit, projectPath, true)
+}
+
+func codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithInlineCode(text string, scanLimit int, projectPath string, includeInlineCodePaths bool) []codexArtifactOpenTarget {
 	if scanLimit <= 0 || strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -1385,8 +1398,10 @@ func codexArtifactOpenTargetsFromMarkdownPrefixInProject(text string, scanLimit 
 				remainingScanLimit -= advance
 				continue
 			}
-			if target, ok := codexArtifactOpenTargetFromInlineCodePath(code, projectPath); ok {
-				targets = append(targets, target)
+			if includeInlineCodePaths {
+				if target, ok := codexArtifactOpenTargetFromInlineCodePath(code, projectPath); ok {
+					targets = append(targets, target)
+				}
 			}
 			advance := idx + max(1, consumed)
 			remaining = remaining[advance:]
@@ -1433,7 +1448,7 @@ func codexStandaloneLocalArtifactPathTargets(text string) []codexArtifactOpenTar
 	targets := make([]codexArtifactOpenTarget, 0)
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || !filepath.IsAbs(line) || codexCommentShapedPathText(line) {
+		if !codexStandaloneLocalPathCandidate(line) {
 			continue
 		}
 		if artifactPath, kind, ok := codexLocalArtifactOpenTarget("", line); ok {
@@ -1447,6 +1462,14 @@ func codexStandaloneLocalArtifactPathTargets(text string) []codexArtifactOpenTar
 	return targets
 }
 
+func codexStandaloneLocalPathCandidate(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || !filepath.IsAbs(text) || codexNonConcretePathText(text) {
+		return false
+	}
+	return codexLocalPathTerminalComponentHasWord(text)
+}
+
 // codexCommentShapedPathText reports whether text looks like a C++-style
 // comment ("// ...", "/// ...", or "/* ... */") rather than a real absolute
 // path. Transcript link scans treat any line or inline-code span starting
@@ -1455,6 +1478,30 @@ func codexStandaloneLocalArtifactPathTargets(text string) []codexArtifactOpenTar
 func codexCommentShapedPathText(text string) bool {
 	text = strings.TrimSpace(text)
 	return strings.HasPrefix(text, "//") || strings.HasPrefix(text, "/*")
+}
+
+func codexNonConcretePathText(text string) bool {
+	return codexCommentShapedPathText(text) ||
+		codexUnexpandedTemplatePathText(text)
+}
+
+func codexUnexpandedTemplatePathText(text string) bool {
+	start := strings.Index(text, "${")
+	if start < 0 {
+		return false
+	}
+	return strings.IndexByte(text[start+2:], '}') >= 0
+}
+
+func codexLocalPathTerminalComponentHasWord(text string) bool {
+	path, _ := codexLocalOpenPath(text)
+	base := filepath.Base(filepath.Clean(strings.TrimSpace(path)))
+	for _, r := range base {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
 }
 
 func earliestNonNegativeIndex(indexes ...int) int {
@@ -1543,19 +1590,26 @@ func codexInlineCodePathCandidate(text string) bool {
 	if text == "" || strings.ContainsAny(text, "\r\n") {
 		return false
 	}
-	if codexCommentShapedPathText(text) {
+	if codexNonConcretePathText(text) {
 		return false
 	}
-	if strings.HasPrefix(text, "/") ||
-		strings.HasPrefix(text, "./") ||
-		strings.HasPrefix(text, "../") ||
-		strings.HasPrefix(text, "file://") ||
-		strings.HasPrefix(text, "http://") ||
+	if strings.HasPrefix(text, "http://") ||
 		strings.HasPrefix(text, "https://") {
 		return true
 	}
+	if strings.HasPrefix(text, "file://") {
+		return true
+	}
+	if strings.HasPrefix(text, "/") ||
+		strings.HasPrefix(text, "./") ||
+		strings.HasPrefix(text, "../") {
+		return codexLocalPathTerminalComponentHasWord(text)
+	}
 	pathPart, _ := codexLocalOpenPath(text)
-	return strings.Contains(filepath.ToSlash(pathPart), "/") || strings.Contains(pathPart, "\\")
+	if !strings.Contains(filepath.ToSlash(pathPart), "/") && !strings.Contains(pathPart, "\\") {
+		return false
+	}
+	return codexLocalPathTerminalComponentHasWord(pathPart)
 }
 
 func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
@@ -1565,14 +1619,17 @@ func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []code
 	out := make([]codexArtifactOpenTarget, 0, len(targets))
 	for inputIndex, target := range targets {
 		path := strings.TrimSpace(target.Path)
-		if path == "" || codexArtifactPathIsFilesystemRoot(path) {
+		kind := strings.TrimSpace(target.Kind)
+		if path == "" ||
+			codexArtifactPathIsFilesystemRoot(path) ||
+			codexUnexpandedTemplatePathText(path) {
 			continue
 		}
 		order := target.order
 		if order <= 0 {
 			order = inputIndex + 1
 		}
-		target.Kind = strings.TrimSpace(target.Kind)
+		target.Kind = kind
 		target.Label = strings.TrimSpace(target.Label)
 		target.Path = path
 		target.order = order
