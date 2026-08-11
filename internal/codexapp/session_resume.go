@@ -22,6 +22,25 @@ func (s *appServerSession) hydrateResumedThread(thread resumedThread) {
 	s.hydrateResumedThreadLocked(thread)
 }
 
+// hydrateCompleteResumedThread reconciles a non-paginated thread/read response
+// with the bounded tail loaded by thread/resume. Missing older turns must be
+// prepended before ordinary item hydration; otherwise they are appended after
+// the recent tail and the restarted transcript appears incomplete or scrambled.
+func (s *appServerSession) hydrateCompleteResumedThread(thread resumedThread) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.prependHistoryTurnsLocked(thread.Turns)
+	s.historyNextCursor = ""
+	s.historyHasMore = false
+	s.historyLoading = false
+	s.historyLoadError = ""
+	s.historySummaryOnly = s.historySummaryOnly || thread.HistorySummaryOnly || resumedTurnsUseSummaryItems(thread.Turns)
+	s.historyInitialized = true
+	s.syncHistorySummaryNoticeLocked()
+	s.hydrateResumedThreadLocked(thread)
+}
+
 func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.touchLocked()
 	if thread.ID != "" {
@@ -108,7 +127,7 @@ func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input 
 	if err != nil {
 		return fmt.Errorf("refresh interrupted Codex turn: %w", err)
 	}
-	s.hydrateResumedThread(thread)
+	s.hydrateCompleteResumedThread(thread)
 
 	if status, ok := resumedTurnStatus(thread, capturedTurnID); ok && turnStatusCompleted(status) {
 		s.appendSystemNotice("The captured Codex turn completed before shutdown; no continuation prompt was needed.")
@@ -130,7 +149,7 @@ func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input 
 			if refreshErr != nil || activeTurnIDFromThread(refreshed) != "" {
 				return fmt.Errorf("interrupt captured Codex turn: %w", err)
 			}
-			s.hydrateResumedThread(refreshed)
+			s.hydrateCompleteResumedThread(refreshed)
 		} else if err := s.waitForThreadIdleAfterInterrupt(ctx, threadID); err != nil {
 			return fmt.Errorf("wait for captured Codex turn to stop: %w", err)
 		}

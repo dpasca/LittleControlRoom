@@ -3,6 +3,7 @@ package codexapp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -84,5 +85,93 @@ func TestContinueInterruptedCodexTurnDoesNotDuplicateCompletedTurn(t *testing.T)
 	}
 	if snapshot := s.Snapshot(); snapshot.Busy {
 		t.Fatalf("completed captured turn should remain idle: %+v", snapshot)
+	}
+}
+
+func TestContinueInterruptedCodexTurnRestoresCompleteHistoryInChronologicalOrder(t *testing.T) {
+	turns := make([]resumedTurn, 0, 13)
+	for i := 1; i <= 13; i++ {
+		status := "completed"
+		if i == 13 {
+			status = "inProgress"
+		}
+		turns = append(turns, resumedTurn{
+			ID:     fmt.Sprintf("turn-%02d", i),
+			Status: status,
+			Items: []map[string]json.RawMessage{{
+				"id":      json.RawMessage(fmt.Sprintf(`"user-%02d"`, i)),
+				"type":    json.RawMessage(`"userMessage"`),
+				"content": json.RawMessage(fmt.Sprintf(`[{"type":"text","text":"request %02d"}]`, i)),
+			}},
+		})
+	}
+
+	recent := resumedThread{
+		ID:                "thread-demo",
+		Status:            resumedThreadStatus{Type: "active"},
+		Turns:             append([]resumedTurn(nil), turns[5:]...),
+		HistoryTruncated:  true,
+		HistoryNextCursor: "older-turns",
+	}
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread-demo",
+		started:     true,
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+	s.initializeHistoryPagination(recent)
+	s.hydrateResumedThread(recent)
+	readCalls := 0
+	s.rpcCallHook = func(_ context.Context, method string, params any) (json.RawMessage, error) {
+		switch method {
+		case "thread/read":
+			_ = params.(threadReadParams)
+			readCalls++
+			thread := resumedThread{
+				ID:     "thread-demo",
+				Status: resumedThreadStatus{Type: "active"},
+				Turns:  append([]resumedTurn(nil), turns...),
+			}
+			if readCalls > 1 {
+				thread.Status = resumedThreadStatus{Type: "idle"}
+				thread.Turns[len(thread.Turns)-1].Status = "interrupted"
+			}
+			response, err := json.Marshal(threadReadResponse{Thread: thread})
+			if err != nil {
+				t.Fatalf("marshal thread/read response: %v", err)
+			}
+			return response, nil
+		case "turn/interrupt":
+			return json.RawMessage(`{}`), nil
+		case "turn/start":
+			return json.RawMessage(`{"turn":{"id":"turn-new"}}`), nil
+		default:
+			t.Fatalf("unexpected RPC method %q", method)
+			return nil, nil
+		}
+	}
+
+	if err := s.continueInterruptedTurn("turn-13", Submission{Text: "continue safely"}); err != nil {
+		t.Fatalf("continueInterruptedTurn() error = %v", err)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.HistoryHasMore {
+		t.Fatal("complete interrupted-turn refresh should settle older-history pagination")
+	}
+	want := 1
+	for _, entry := range snapshot.Entries {
+		if entry.Kind != TranscriptUser || !strings.HasPrefix(entry.Text, "request ") {
+			continue
+		}
+		wantText := fmt.Sprintf("request %02d", want)
+		if entry.Text != wantText {
+			t.Fatalf("restored request %d = %q, want %q; entries = %#v", want, entry.Text, wantText, snapshot.Entries)
+		}
+		want++
+	}
+	if want != 14 {
+		t.Fatalf("restored %d requests, want 13; entries = %#v", want-1, snapshot.Entries)
 	}
 }
