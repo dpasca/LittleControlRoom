@@ -65,6 +65,7 @@ type Model struct {
 	status               string
 	err                  error
 	actionNoticeDialog   *actionNoticeDialogState
+	quitConfirm          *quitConfirmState
 	gracefulQuitInFlight bool
 	relaunchAfterUpdate  bool
 	installedUpdate      string
@@ -1530,6 +1531,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if _, ok := msg.(tea.MouseMsg); ok && m.externalControlReviewActive() {
+		return m, nil
+	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.quitConfirm != nil {
+		return m.updateQuitConfirmMode(key)
+	}
+	if _, ok := msg.(tea.MouseMsg); ok && m.quitConfirm != nil {
 		return m, nil
 	}
 	if msg, ok := msg.(bossTrackedTodoLoadedMsg); ok {

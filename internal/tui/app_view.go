@@ -75,6 +75,9 @@ func (m Model) View() string {
 		layout := m.bodyLayout()
 		header := m.renderTopStatusLine(layout.width)
 		body := m.renderDiffView(layout.width, layout.height)
+		if m.quitConfirm != nil {
+			body = m.renderQuitConfirmOverlay(body, layout.width, layout.height)
+		}
 		if m.externalControlReviewActive() {
 			body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
 		}
@@ -98,6 +101,9 @@ func (m Model) View() string {
 		}
 		if m.externalControlReviewActive() {
 			return m.renderExternalControlConfirmationOverlay(body, width, height)
+		}
+		if m.quitConfirm != nil {
+			return m.renderQuitConfirmOverlay(body, width, height)
 		}
 		if m.actionNoticeDialog != nil {
 			return m.renderActionNoticeDialogOverlay(body, width, height)
@@ -365,6 +371,9 @@ func (m Model) View() string {
 	}
 	if m.actionNoticeDialog != nil {
 		body = m.renderActionNoticeDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.quitConfirm != nil {
+		body = m.renderQuitConfirmOverlay(body, layout.width, layout.height)
 	}
 	if m.externalControlReviewActive() {
 		body = m.renderExternalControlConfirmationOverlay(body, layout.width, layout.height)
