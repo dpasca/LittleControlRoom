@@ -1,12 +1,70 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"lcroom/internal/codexapp"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
+
+func TestQuitKeyOpensConfirmationWithStaySelected(t *testing.T) {
+	m := Model{width: 100, height: 24}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("q should not begin shutdown before confirmation")
+	}
+	if got.quitConfirm == nil {
+		t.Fatalf("q should open the quit confirmation")
+	}
+	if got.quitConfirm.Selected != quitConfirmFocusStay {
+		t.Fatalf("default quit confirmation selection = %d, want stay", got.quitConfirm.Selected)
+	}
+	if got.gracefulQuitInFlight {
+		t.Fatalf("graceful shutdown should not start while confirmation is open")
+	}
+
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{
+		"Quit Little Control Room?",
+		"In-flight engineer turns will be saved",
+		"managed runtimes will be stopped",
+		"Quit",
+		"Stay",
+		"Enter confirm",
+		"Esc stay",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("quit confirmation missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil || got.quitConfirm != nil || got.gracefulQuitInFlight {
+		t.Fatalf("Enter on the default stay choice should close the dialog without quitting")
+	}
+	if got.status != "Quit canceled" {
+		t.Fatalf("status = %q, want quit canceled", got.status)
+	}
+}
+
+func TestControlCStillBeginsGracefulQuitImmediately(t *testing.T) {
+	m := Model{appDataDirPath: t.TempDir()}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil || !got.gracefulQuitInFlight {
+		t.Fatalf("ctrl+c should begin graceful shutdown immediately")
+	}
+	if got.quitConfirm != nil {
+		t.Fatalf("ctrl+c should not open the q-key confirmation")
+	}
+}
 
 func TestGracefulQuitCapturesAndInterruptsOwnedEmbeddedTurn(t *testing.T) {
 	dataDir := t.TempDir()
@@ -36,8 +94,18 @@ func TestGracefulQuitCapturesAndInterruptsOwnedEmbeddedTurn(t *testing.T) {
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	got := updated.(Model)
-	if !got.gracefulQuitInFlight || cmd == nil {
-		t.Fatalf("q should begin asynchronous graceful shutdown")
+	if got.quitConfirm == nil || got.gracefulQuitInFlight || cmd != nil {
+		t.Fatalf("q should wait for explicit quit confirmation")
+	}
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got = updated.(Model)
+	if got.quitConfirm == nil || got.quitConfirm.Selected != quitConfirmFocusQuit {
+		t.Fatalf("left should select quit")
+	}
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if !got.gracefulQuitInFlight || got.quitConfirm != nil || cmd == nil {
+		t.Fatalf("confirming quit should begin asynchronous graceful shutdown")
 	}
 	msg, ok := cmd().(gracefulQuitFinishedMsg)
 	if !ok || msg.err != nil || msg.captured != 1 {
