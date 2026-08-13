@@ -102,7 +102,8 @@ type appServerSession struct {
 	compacting              bool
 	contextCompactionActive bool
 	reconciling             bool
-	reportedAuth403         bool
+	reportedAuthDiagnosis   bool
+	reportedAuthStderrKeys  map[string]struct{}
 	reportedCodeModeHostErr bool
 	busySince               time.Time
 	closed                  bool

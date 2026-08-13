@@ -574,7 +574,7 @@ func (s *appServerSession) appendSystemError(err error) {
 	}
 	s.mu.Unlock()
 	s.notify()
-	s.maybeAppendAuth403Diagnosis(message)
+	s.maybeAppendAuthDiagnosis(message)
 }
 
 func normalizeCodexStatusMessage(message string) string {
@@ -582,7 +582,7 @@ func normalizeCodexStatusMessage(message string) string {
 }
 
 func extractCodexHTTPStatusCode(normalized string) (int, bool) {
-	for _, marker := range []string{"http error: ", "unexpected status "} {
+	for _, marker := range []string{"http error: ", "unexpected status ", "auth error: "} {
 		idx := strings.Index(normalized, marker)
 		if idx < 0 {
 			continue
@@ -605,13 +605,58 @@ func isCodexResponsesTransportContext(normalized string) bool {
 		strings.Contains(normalized, "failed to connect to websocket")
 }
 
-func diagnoseCodexAuth403(message string) string {
+func isCodexBackendContext(normalized string) bool {
+	return strings.Contains(normalized, "/backend-api/codex/") ||
+		strings.Contains(normalized, "failed to connect to websocket")
+}
+
+func codexAuthFailureHTTPStatus(message string) (int, bool) {
 	normalized := normalizeCodexStatusMessage(message)
 	code, ok := extractCodexHTTPStatusCode(normalized)
-	if !ok || code != 403 || !isCodexResponsesTransportContext(normalized) {
+	if !ok || (code != 401 && code != 403) || !isCodexBackendContext(normalized) {
+		return 0, false
+	}
+	return code, true
+}
+
+func codexAuthErrorCode(message string) string {
+	const marker = "auth error code:"
+	normalized := normalizeCodexStatusMessage(message)
+	index := strings.Index(normalized, marker)
+	if index < 0 {
 		return ""
 	}
-	return "Codex rejected the request with HTTP 403. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then use `/reconnect` in the embedded pane or reopen the embedded session once ChatGPT account access is healthy again."
+	value := strings.TrimSpace(normalized[index+len(marker):])
+	if end := strings.IndexAny(value, " \t\r\n,;"); end >= 0 {
+		value = value[:end]
+	}
+	return strings.Trim(value, "\"'")
+}
+
+func codexAuthFailureFingerprint(message string) string {
+	code, ok := codexAuthFailureHTTPStatus(message)
+	if !ok {
+		return ""
+	}
+	// Retry records have fresh timestamps and Cloudflare request IDs. The HTTP
+	// status and provider auth code retain the user-relevant state across them.
+	return strconv.Itoa(code) + ":" + codexAuthErrorCode(message)
+}
+
+func codexAuthFailureStatusLabel(message string) string {
+	code, ok := codexAuthFailureHTTPStatus(message)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("Codex auth/session rejected (HTTP %d)", code)
+}
+
+func diagnoseCodexAuthFailure(message string) string {
+	code, ok := codexAuthFailureHTTPStatus(message)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("Codex rejected the request with HTTP %d. This usually means ChatGPT authentication, session access, or Codex entitlement is unavailable, or ChatGPT account access is temporarily degraded. It is usually not a Little Control Room transport bug. Check `codex login status`; if needed, run `codex logout` and `codex login`, then use `/reconnect` in the embedded pane or reopen the embedded session once ChatGPT account access is healthy again. Repeated copies of this same auth failure are suppressed for this embedded session.", code)
 }
 
 func codexRateLimited429StatusLabel() string {
@@ -668,10 +713,6 @@ func isCodexConnectionFailureMessage(normalized string) bool {
 	}
 }
 
-func codexAuth403StatusLabel() string {
-	return "Codex auth/session rejected (HTTP 403)"
-}
-
 func codexServiceUnavailable503StatusLabel() string {
 	return "Codex service unavailable (HTTP 503)"
 }
@@ -705,10 +746,11 @@ func codexGenericStderrStatusLabel(message string) string {
 }
 
 func compactCodexStatusLabel(message string) string {
+	if label := codexAuthFailureStatusLabel(message); label != "" {
+		return label
+	}
 	normalized := normalizeCodexStatusMessage(message)
 	switch {
-	case diagnoseCodexAuth403(message) != "":
-		return codexAuth403StatusLabel()
 	case func() bool {
 		code, ok := extractCodexHTTPStatusCode(normalized)
 		return ok && code == 429 && isCodexResponsesTransportContext(normalized)
@@ -756,24 +798,24 @@ func (s *appServerSession) maybeAppendCodeModeHostDiagnosis(message string) {
 	s.notify()
 }
 
-func (s *appServerSession) maybeAppendAuth403Diagnosis(message string) {
-	diagnosis := diagnoseCodexAuth403(message)
+func (s *appServerSession) maybeAppendAuthDiagnosis(message string) {
+	diagnosis := diagnoseCodexAuthFailure(message)
 	if diagnosis == "" {
 		return
 	}
 
 	s.mu.Lock()
-	if s.reportedAuth403 {
+	if s.reportedAuthDiagnosis {
 		s.mu.Unlock()
 		return
 	}
 	s.touchLocked()
-	s.reportedAuth403 = true
+	s.reportedAuthDiagnosis = true
 	s.appendEntryLocked("", TranscriptSystem, diagnosis)
 	s.lastSystemNotice = diagnosis
 	status := strings.ToLower(strings.TrimSpace(s.status))
-	if status == "" || status == "codex error" || strings.HasPrefix(status, "codex stderr:") || strings.Contains(status, "403 forbidden") {
-		s.status = codexAuth403StatusLabel()
+	if status == "" || status == "codex error" || strings.HasPrefix(status, "codex stderr:") || strings.Contains(status, "401 unauthorized") || strings.Contains(status, "403 forbidden") {
+		s.status = codexAuthFailureStatusLabel(message)
 	}
 	s.mu.Unlock()
 	s.notify()
