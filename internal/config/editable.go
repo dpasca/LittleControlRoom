@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -248,6 +249,13 @@ func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 	if settings.MobileListenAddress == "" {
 		settings.MobileListenAddress = DefaultMobileListenAddress
 	}
+	bossBackend := ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
+	settings.BossChatModel = NormalizeModelForBackend(bossBackend, settings.BossChatModel)
+	settings.BossHelmModel = NormalizeModelForBackend(bossBackend, settings.BossHelmModel)
+	settings.BossUtilityModel = NormalizeModelForBackend(bossBackend, settings.BossUtilityModel)
+	settings.DeepSeekModel = NormalizeModelForProvider("deepseek", settings.DeepSeekModel)
+	settings.MoonshotModel = NormalizeModelForProvider("moonshot", settings.MoonshotModel)
+	settings.XiaomiModel = NormalizeModelForProvider("xiaomi", settings.XiaomiModel)
 	settings.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider), settings.EmbeddedLCAgentModel)
 	settings.RecentLCAgentSelections = normalizeRecentLCAgentSelections(settings.RecentLCAgentSelections)
 	settings.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentUtilityProvider), settings.LCAgentUtilityModel)
@@ -319,30 +327,7 @@ func lcagentRoutePresetProvider(preset string) string {
 }
 
 func normalizeLCAgentModelForProvider(provider, model string) string {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return ""
-	}
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "openai":
-		return trimLCAgentModelProviderPrefix(model, "openai/")
-	case "deepseek":
-		return trimLCAgentModelProviderPrefix(model, "deepseek/")
-	case "moonshot":
-		model = trimLCAgentModelProviderPrefix(model, "moonshot/")
-		return trimLCAgentModelProviderPrefix(model, "moonshotai/")
-	case "xiaomi":
-		return trimLCAgentModelProviderPrefix(model, "xiaomi/")
-	default:
-		return model
-	}
-}
-
-func trimLCAgentModelProviderPrefix(model, prefix string) string {
-	if strings.HasPrefix(strings.ToLower(model), prefix) {
-		return strings.TrimSpace(model[len(prefix):])
-	}
-	return model
+	return NormalizeModelForProvider(provider, model)
 }
 
 func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw, mobileEnabledRaw, mobileInputEnabledRaw, mobileListenAddressRaw string) (EditableSettings, error) {
@@ -561,6 +546,9 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 	if err := validateEditableSettings(settings); err != nil {
 		return err
 	}
+	if err := checkEditableSettingsModelPairs(settings); err != nil {
+		return err
+	}
 	if path == "" {
 		return fmt.Errorf("config path is required")
 	}
@@ -657,6 +645,31 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.ConflictResolverProvider = NormalizeConflictResolverProvider(settings.ConflictResolverProvider)
 	cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	return validate(cfg)
+}
+
+// checkEditableSettingsModelPairs refuses a provider/model divergence at the
+// point of writing.
+//
+// It deliberately lives on the write path rather than in
+// validateEditableSettings, which also runs during parse: the settings UI has
+// its own mismatch check with copy written for that dialog, and failing the
+// parse would pre-empt it with a blunter message. This is the backstop for
+// every path that does not go through that dialog.
+func checkEditableSettingsModelPairs(settings EditableSettings) error {
+	if mismatches := settings.ModelMismatches(); len(mismatches) > 0 {
+		return errors.New(mismatches[0].Detail())
+	}
+	return nil
+}
+
+// ModelMismatches reports provider/model divergences in an in-flight settings
+// value, so the UI can show a live health indicator without going through a save.
+func (s EditableSettings) ModelMismatches() []ModelMismatch {
+	cfg := AppConfigFromEditableSettings(Default(), s)
+	cfg.BossChatModel = strings.TrimSpace(s.BossChatModel)
+	cfg.BossHelmModel = strings.TrimSpace(s.BossHelmModel)
+	cfg.BossUtilityModel = strings.TrimSpace(s.BossUtilityModel)
+	return cfg.ModelMismatches()
 }
 
 func parseConfigDuration(raw, label string) (time.Duration, error) {

@@ -56,7 +56,7 @@ func repositoryScoutRoutes(cfg config.AppConfig) []lcagent.ScoutRoute {
 	}
 
 	projectBackend := cfg.EffectiveAIBackend()
-	projectModel := strings.TrimSpace(cfg.OpenAICompatibleModel(projectBackend))
+	projectModel := strings.TrimSpace(configuredProjectModelForBackend(cfg, projectBackend))
 	if projectBackend == config.AIBackendOpenAIAPI {
 		projectModel = sessionclassify.DefaultModel
 	}

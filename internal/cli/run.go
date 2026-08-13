@@ -127,6 +127,7 @@ func Run(programName string, args []string) int {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		return 2
 	}
+	reportModelMismatches(os.Stderr, cfg)
 	serveAddr := server.DefaultListenAddress
 	mobileEnabled := cfg.MobileEnabled
 	if subcmd == "serve" || subcmd == "tui" {

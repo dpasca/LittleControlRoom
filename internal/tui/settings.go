@@ -2049,14 +2049,18 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Settings"),
 		commandPaletteHintStyle.Render("Config: " + truncateText(m.displayPathWithHomeTilde(m.currentConfigPath()), max(20, width-8))),
 	}
-	if warning := settingsXiaomiTokenPlanBaseURLWarning(m.settingsDraftForInferenceStatus()); warning != "" {
+	draft := m.settingsDraftForInferenceStatus()
+	if warning := settingsXiaomiTokenPlanBaseURLWarning(draft); warning != "" {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, warning))
 	}
-	if issue, ok := settingsLCAgentKnownModelProviderIssue(m.settingsDraftForInferenceStatus()); ok {
+	if issue, ok := settingsLCAgentKnownModelProviderIssue(draft); ok {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
 	}
-	if issue, ok := settingsBossKnownModelProviderIssue(m.settingsDraftForInferenceStatus()); ok {
+	if issue, ok := settingsBossKnownModelProviderIssue(draft); ok {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
+	}
+	if detail := modelHealthDetail(draft.ModelMismatches()); detail != "" {
+		lines = append(lines, renderWrappedDetailField("Model health", detailWarningStyle, width, detail))
 	}
 	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")

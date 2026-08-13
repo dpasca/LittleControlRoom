@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/commands"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -227,6 +228,40 @@ func TestStaleWorktreeCleanupContinuesAfterSkippedAndFailedItems(t *testing.T) {
 	}
 	if cmd == nil || !strings.Contains(got.status, "0 removed, 1 skipped, 1 failed") {
 		t.Fatalf("final command/status = %v / %q", cmd, got.status)
+	}
+}
+
+func TestStaleWorktreeCleanupRechecksLiveStateAfterGitRevalidation(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	candidate := staleWorktreeCleanupTestCandidate("/tmp/demo--became-active", "feature/became-active", now.Add(-48*time.Hour))
+	m := Model{
+		nowFn: func() time.Time { return now },
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			candidate.ProjectPath: {
+				ProjectPath: candidate.ProjectPath,
+				External:    true,
+				Running:     true,
+			},
+		},
+		staleWorktreeCleanup: &staleWorktreeCleanupDialogState{
+			Removing: true,
+			Queue:    []service.StaleWorktreeCleanupCandidate{candidate},
+		},
+	}
+
+	updated, cmd := m.applyStaleWorktreeCleanupRevalidate(staleWorktreeCleanupRevalidateMsg{candidate: candidate})
+	got := updated.(Model)
+	if !got.staleWorktreeCleanup.Finished || got.staleWorktreeCleanup.Removing {
+		t.Fatalf("cleanup did not finish after current live-state skip: %#v", got.staleWorktreeCleanup)
+	}
+	if len(got.staleWorktreeCleanup.Results) != 1 || !strings.Contains(got.staleWorktreeCleanup.Results[0].SkippedReason, "external") {
+		t.Fatalf("cleanup result = %#v, want external-runtime skip", got.staleWorktreeCleanup.Results)
+	}
+	if got.staleWorktreeCleanup.Results[0].Finalize.WorktreeRemoved {
+		t.Fatal("worktree was removed after a session became active")
+	}
+	if cmd == nil {
+		t.Fatal("finished cleanup should still invalidate the project list")
 	}
 }
 

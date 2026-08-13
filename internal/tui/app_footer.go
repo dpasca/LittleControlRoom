@@ -101,7 +101,8 @@ func (m Model) renderFooter(width int) string {
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
 	integritySegment := m.renderFooterRepositoryIntegritySegment()
-	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, assessmentSegment, usageSegment)
+	modelHealthSegment := m.renderFooterModelHealthSegment()
+	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, modelHealthSegment, assessmentSegment, usageSegment)
 	if m.quitConfirm != nil {
 		return m.renderModalFooter(width, "Quit: Tab or arrows choose, Enter confirm, Esc stay", supplementSegments...)
 	}

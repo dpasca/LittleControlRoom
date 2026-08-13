@@ -2773,6 +2773,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyWorktreeRestoreAction(msg)
 	case staleWorktreeCleanupAuditMsg:
 		return m.applyStaleWorktreeCleanupAudit(msg)
+	case staleWorktreeCleanupRevalidateMsg:
+		return m.applyStaleWorktreeCleanupRevalidate(msg)
 	case staleWorktreeCleanupRemoveMsg:
 		return m.applyStaleWorktreeCleanupRemove(msg)
 	case codexCleanupAuditMsg:

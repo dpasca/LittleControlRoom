@@ -974,7 +974,32 @@ func configuredBossAssistantModel(cfg config.AppConfig) string {
 	return configuredBossHelmModelForBackend(cfg, cfg.EffectiveBossChatBackend())
 }
 
+// correctModelForBackend is the last line of defence against a provider/model
+// divergence reaching the provider as a doomed request.
+//
+// A configured model that the backend does not serve is replaced by the
+// backend's own default, so chat degrades to a working model instead of
+// returning a raw provider 400 with nothing explaining it. The correction is
+// deliberately quiet: this runs on every request, so reporting belongs at the
+// places that run once — the config-load check and the TUI health indicator,
+// both of which name the field and the fix.
+func correctModelForBackend(modelName string, backend config.AIBackend, fallback string) string {
+	modelName = config.NormalizeModelForBackend(backend, modelName)
+	fallback = config.NormalizeModelForBackend(backend, fallback)
+	if fallback == "" {
+		return modelName
+	}
+	if config.CheckModel("", "", config.ProviderForBackend(backend), modelName, fallback) == nil {
+		return modelName
+	}
+	return fallback
+}
+
 func configuredBossHelmModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
+	return correctModelForBackend(bossHelmModelCandidate(cfg, backend), backend, backend.DefaultBossHelmModel())
+}
+
+func bossHelmModelCandidate(cfg config.AppConfig, backend config.AIBackend) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName
 	}
@@ -1000,6 +1025,14 @@ func configuredBossHelmModelForBackend(cfg config.AppConfig, backend config.AIBa
 }
 
 func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
+	return correctModelForBackend(bossUtilityModelCandidate(cfg, backend), backend, backend.DefaultBossUtilityModel())
+}
+
+func configuredProjectModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
+	return correctModelForBackend(cfg.OpenAICompatibleModel(backend), backend, backend.DefaultProjectModel())
+}
+
+func bossUtilityModelCandidate(cfg config.AppConfig, backend config.AIBackend) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName
 	}
@@ -1081,7 +1114,7 @@ func (s *Service) configureAIClientsLocked() {
 		if selectedStatus.Ready {
 			baseURL := s.cfg.OpenAICompatibleBaseURL(selectedBackend)
 			apiKey := s.cfg.OpenAICompatibleAPIKey(selectedBackend)
-			model := s.cfg.OpenAICompatibleModel(selectedBackend)
+			model := configuredProjectModelForBackend(s.cfg, selectedBackend)
 			if selectedBackend == config.AIBackendOllama {
 				commitAssistant = gitops.NewOpenAICommitMessageClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, defaultCommitAssistantTimeout, s.llmUsageTracker))
 				client = sessionclassify.NewClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, 60*time.Second, s.llmUsageTracker))

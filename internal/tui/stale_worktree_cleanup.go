@@ -43,6 +43,12 @@ type staleWorktreeCleanupAuditMsg struct {
 	err   error
 }
 
+type staleWorktreeCleanupRevalidateMsg struct {
+	candidate service.StaleWorktreeCleanupCandidate
+	reason    string
+	err       error
+}
+
 type staleWorktreeCleanupRemoveMsg struct {
 	result staleWorktreeCleanupResult
 }
@@ -110,35 +116,71 @@ func (m Model) applyStaleWorktreeCleanupAudit(msg staleWorktreeCleanupAuditMsg) 
 	return m, nil
 }
 
-func (m Model) staleWorktreeCleanupRemoveCmd(candidate service.StaleWorktreeCleanupCandidate) tea.Cmd {
+func (m Model) staleWorktreeCleanupRevalidateCmd(candidate service.StaleWorktreeCleanupCandidate) tea.Cmd {
 	svc := m.svc
-	manager := m.codexManager
-	runtimeManager := m.runtimeManager
 	now := m.currentTime()
-	preflightBlock, _ := m.staleWorktreeCleanupLiveState(candidate.ProjectPath, candidate.RootProjectPath)
 	return func() tea.Msg {
-		result := staleWorktreeCleanupResult{Candidate: candidate}
-		if preflightBlock != "" {
-			result.SkippedReason = preflightBlock
-			return staleWorktreeCleanupRemoveMsg{result: result}
-		}
 		if svc == nil {
-			result.Err = fmt.Errorf("service unavailable")
-			return staleWorktreeCleanupRemoveMsg{result: result}
+			return staleWorktreeCleanupRevalidateMsg{
+				candidate: candidate,
+				err:       fmt.Errorf("service unavailable"),
+			}
 		}
 
 		ctx, cancel := m.actionContext(tuiGitActionTimeout)
 		defer cancel()
 		revalidated, reason, err := svc.RevalidateStaleWorktreeCleanupCandidate(ctx, candidate.ProjectPath, now)
 		if err != nil {
-			result.Err = timeoutActionError(err, tuiGitActionTimeout, "revalidating the stale worktree")
-			return staleWorktreeCleanupRemoveMsg{result: result}
+			return staleWorktreeCleanupRevalidateMsg{
+				candidate: candidate,
+				err:       timeoutActionError(err, tuiGitActionTimeout, "revalidating the stale worktree"),
+			}
 		}
 		if reason != "" {
-			result.SkippedReason = reason
+			return staleWorktreeCleanupRevalidateMsg{candidate: candidate, reason: reason}
+		}
+		return staleWorktreeCleanupRevalidateMsg{candidate: revalidated}
+	}
+}
+
+func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupRevalidateMsg) (tea.Model, tea.Cmd) {
+	dialog := m.staleWorktreeCleanup
+	if dialog == nil || !dialog.Removing || dialog.QueueIndex >= len(dialog.Queue) {
+		return m, nil
+	}
+	expected := dialog.Queue[dialog.QueueIndex]
+	if normalizeProjectPath(expected.ProjectPath) != normalizeProjectPath(msg.candidate.ProjectPath) {
+		return m, nil
+	}
+	result := staleWorktreeCleanupResult{Candidate: msg.candidate, Err: msg.err, SkippedReason: msg.reason}
+	if result.Err != nil || result.SkippedReason != "" {
+		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: result})
+	}
+
+	// Re-read the current Model only after the slow Git revalidation returns.
+	// Pending actions, external runtimes, and embedded work may have appeared
+	// while that command was in flight; a snapshot captured before it began is
+	// no longer safe enough to authorize deletion.
+	if reason, _ := m.staleWorktreeCleanupLiveState(msg.candidate.ProjectPath, msg.candidate.RootProjectPath); reason != "" {
+		result.SkippedReason = reason
+		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: result})
+	}
+
+	m.status = fmt.Sprintf("Stale worktree cleanup %d/%d; removing %s...", dialog.QueueIndex, len(dialog.Queue), staleWorktreeCleanupCandidateName(msg.candidate))
+	return m, m.staleWorktreeCleanupFinalizeCmd(msg.candidate)
+}
+
+func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCleanupCandidate) tea.Cmd {
+	svc := m.svc
+	manager := m.codexManager
+	runtimeManager := m.runtimeManager
+	now := m.currentTime()
+	return func() tea.Msg {
+		result := staleWorktreeCleanupResult{Candidate: candidate}
+		if svc == nil {
+			result.Err = fmt.Errorf("service unavailable")
 			return staleWorktreeCleanupRemoveMsg{result: result}
 		}
-		result.Candidate = revalidated
 
 		if staleWorktreeManagedRuntimeRunning(runtimeManager, candidate.ProjectPath) {
 			result.SkippedReason = "a managed runtime became active"
@@ -158,8 +200,10 @@ func (m Model) staleWorktreeCleanupRemoveCmd(candidate service.StaleWorktreeClea
 			}
 		}
 
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
 		result.Finalize, result.Err = svc.FinalizeMergedWorktree(ctx, candidate.ProjectPath, service.FinalizeMergedWorktreeOptions{
-			MarkLinkedTodoDone: revalidated.LinkedTodoID > 0,
+			MarkLinkedTodoDone: candidate.LinkedTodoID > 0,
 			RemoveWorktree:     true,
 		})
 		result.Err = timeoutActionError(result.Err, tuiGitActionTimeout, "removing the stale worktree")
@@ -217,7 +261,7 @@ func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg
 	if dialog.QueueIndex < len(dialog.Queue) {
 		next := dialog.Queue[dialog.QueueIndex]
 		m.status = fmt.Sprintf("Stale worktree cleanup %d/%d; checking %s...", dialog.QueueIndex, len(dialog.Queue), staleWorktreeCleanupCandidateName(next))
-		return m, m.staleWorktreeCleanupRemoveCmd(next)
+		return m, m.staleWorktreeCleanupRevalidateCmd(next)
 	}
 
 	dialog.Removing = false
@@ -304,7 +348,7 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		dialog.ErrorMessage = ""
 		first := dialog.Queue[0]
 		m.status = fmt.Sprintf("Stale worktree cleanup 0/%d; checking %s...", len(dialog.Queue), staleWorktreeCleanupCandidateName(first))
-		return m, m.staleWorktreeCleanupRemoveCmd(first)
+		return m, m.staleWorktreeCleanupRevalidateCmd(first)
 	}
 	return m, nil
 }

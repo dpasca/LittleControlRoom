@@ -15,15 +15,21 @@ import (
 
 	"lcroom/internal/config"
 	"lcroom/internal/model"
+	"lcroom/internal/modelcatalog"
 )
 
 const (
-	DefaultOpenRouterModel    = "deepseek/deepseek-v4-pro"
-	DefaultOpenAIModel        = config.DefaultBossHelmModel
-	DefaultDeepSeekModel      = "deepseek-v4-pro"
-	DefaultMoonshotModel      = "kimi-k2.7-code"
-	DefaultXiaomiModel        = "mimo-v2.5-pro"
-	DefaultXiaomiUtilityModel = "mimo-v2.5"
+	DefaultOpenRouterModel = modelcatalog.OpenRouterViaDeepSeek
+	DefaultOpenAIModel     = config.DefaultBossHelmModel
+	// NOTE: this is the DeepSeek *pro* model. config.DefaultDeepSeekModel is the
+	// *flash* model — two exported constants that share a name across packages
+	// while holding different values. Both now resolve through modelcatalog,
+	// whose names state the tier, so the divergence is explicit rather than a
+	// trap for whoever reads only one of them.
+	DefaultDeepSeekModel      = modelcatalog.DeepSeekProModel
+	DefaultMoonshotModel      = modelcatalog.MoonshotModel
+	DefaultXiaomiModel        = modelcatalog.XiaomiProModel
+	DefaultXiaomiUtilityModel = modelcatalog.XiaomiUtilityModel
 	DefaultOllamaBaseURL      = "http://127.0.0.1:11434/v1"
 	DefaultOpenRouterMaxTurns = 160
 	DefaultChatTemperature    = 0.2
@@ -347,83 +353,25 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 	}, nil
 }
 
+// NormalizeModelForProvider delegates to modelcatalog, which both this package
+// and config depend on so a provider/model pair can be validated wherever it is
+// written rather than only in the settings UI.
 func NormalizeModelForProvider(provider, model string) string {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return ""
-	}
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "openai":
-		return trimProviderModelPrefix(model, "openai/")
-	case "deepseek":
-		return trimProviderModelPrefix(model, "deepseek/")
-	case "moonshot":
-		model = trimProviderModelPrefix(model, "moonshot/")
-		return trimProviderModelPrefix(model, "moonshotai/")
-	case "xiaomi":
-		return trimProviderModelPrefix(model, "xiaomi/")
-	default:
-		return model
-	}
-}
-
-func trimProviderModelPrefix(model, prefix string) string {
-	if strings.HasPrefix(strings.ToLower(model), prefix) {
-		return strings.TrimSpace(model[len(prefix):])
-	}
-	return model
+	return modelcatalog.NormalizeForRequest(provider, model)
 }
 
 // ModelIsKnownForProvider reports whether model is a recognized model ID
 // for the given direct provider. For openrouter, ollama, or unknown providers
 // it returns true (anything is routable). For direct providers (deepseek,
 // xiaomi, moonshot, openai) it checks against the known model set.
+// ModelIsKnownForProvider delegates to modelcatalog.
+//
+// The DeepSeek arm previously compared the raw string while every other
+// provider normalized and lowercased first, so a qualified or capitalized
+// DeepSeek model read as foreign. Sharing one implementation removes that class
+// of drift entirely.
 func ModelIsKnownForProvider(provider, model string) bool {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return false
-	}
-	switch provider {
-	case "openrouter", "", "ollama", "mlx":
-		return true // anything can be routed through openrouter
-	case "openai":
-		model = strings.ToLower(NormalizeModelForProvider("openai", model))
-		switch strings.ToLower(model) {
-		case strings.ToLower(DefaultOpenAIModel), "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano":
-			return true
-		default:
-			return hasVersionedOpenAIModelPrefix(model, "gpt-5.6-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.6-sol-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.6-terra-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.6-luna-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.5-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-mini-") ||
-				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-nano-")
-		}
-	case "deepseek":
-		return model == DefaultDeepSeekModel || model == "deepseek-v4-flash"
-	case "moonshot":
-		model = strings.ToLower(NormalizeModelForProvider("moonshot", model))
-		return model == DefaultMoonshotModel || model == "kimi-k2.6" ||
-			model == "kimi-k3" || strings.HasPrefix(model, "kimi-k3-")
-	case "xiaomi":
-		model = strings.ToLower(NormalizeModelForProvider("xiaomi", model))
-		return model == DefaultXiaomiUtilityModel ||
-			model == DefaultXiaomiModel ||
-			strings.HasPrefix(model, "mimo-v2.5-")
-	default:
-		return true
-	}
-}
-
-func hasVersionedOpenAIModelPrefix(model, prefix string) bool {
-	if !strings.HasPrefix(model, prefix) {
-		return false
-	}
-	suffix := strings.TrimPrefix(model, prefix)
-	return suffix != "" && suffix[0] >= '0' && suffix[0] <= '9'
+	return modelcatalog.IsKnown(provider, model)
 }
 
 func normalizeAuthHeader(header string) string {
