@@ -520,18 +520,25 @@ func (s *appServerSession) readStderr(r io.Reader) {
 		if strings.TrimSpace(line) == "" {
 			return
 		}
-		if recordIndex < 0 || startsCodexStderrRecord(line) {
+		startsRecord := startsCodexStderrRecord(line)
+		if recordIndex == suppressedCodexStderrRecordIndex && !startsRecord {
+			s.maybeAppendAuthDiagnosis(line)
+			return
+		}
+		if recordIndex < 0 || startsRecord {
 			recordIndex = -1
 			line = strings.TrimSpace(line)
 		}
 		recordIndex = s.appendCodexStderrLine(recordIndex, line)
 		s.maybeAppendCodeModeHostDiagnosis(line)
-		s.maybeAppendAuth403Diagnosis(line)
+		s.maybeAppendAuthDiagnosis(line)
 	})
 	if err != nil {
 		s.appendSystemNotice("codex stderr stream error: " + err.Error())
 	}
 }
+
+const suppressedCodexStderrRecordIndex = -2
 
 func startsCodexStderrRecord(line string) bool {
 	fields := strings.Fields(line)
@@ -551,6 +558,26 @@ func startsCodexStderrRecord(line string) bool {
 
 func (s *appServerSession) appendCodexStderrLine(recordIndex int, line string) int {
 	s.mu.Lock()
+	if recordIndex < 0 {
+		if fingerprint := codexAuthFailureFingerprint(line); fingerprint != "" {
+			if s.reportedAuthStderrKeys == nil {
+				s.reportedAuthStderrKeys = make(map[string]struct{})
+			}
+			if _, reported := s.reportedAuthStderrKeys[fingerprint]; reported {
+				label := codexAuthFailureStatusLabel(line)
+				statusChanged := label != "" && s.status != label
+				if statusChanged {
+					s.status = label
+				}
+				s.mu.Unlock()
+				if statusChanged {
+					s.notify()
+				}
+				return suppressedCodexStderrRecordIndex
+			}
+			s.reportedAuthStderrKeys[fingerprint] = struct{}{}
+		}
+	}
 	s.touchLocked()
 
 	message := ""

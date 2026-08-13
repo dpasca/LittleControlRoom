@@ -2348,8 +2348,66 @@ func TestReadStderrAppendsAuth403Diagnosis(t *testing.T) {
 	if snapshot.Entries[1].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[1].Text, "Codex rejected the request with HTTP 403.") {
 		t.Fatalf("second entry = %#v, want auth diagnosis notice", snapshot.Entries[1])
 	}
-	if snapshot.Status != codexAuth403StatusLabel() {
-		t.Fatalf("status = %q, want %q", snapshot.Status, codexAuth403StatusLabel())
+	if snapshot.Status != "Codex auth/session rejected (HTTP 403)" {
+		t.Fatalf("status = %q, want HTTP 403 auth rejection", snapshot.Status)
+	}
+}
+
+func TestReadStderrThrottlesRepeatedTokenInvalidatedErrors(t *testing.T) {
+	notifications := 0
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() { notifications++ },
+	}
+	first := "2026-08-13T09:02:44.181770Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 401 Unauthorized: Your authentication token has been invalidated. Please try signing in again., url: https://chatgpt.com/backend-api/codex/models?client_version=0.147.0, cf-ray: first-NRT, auth error: 401, auth error code: token_invalidated\n"
+	second := "2026-08-13T09:05:44.543435Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 401 Unauthorized: Your authentication token has been invalidated. Please try signing in again., url: https://chatgpt.com/backend-api/codex/models?client_version=0.147.0, cf-ray: second-NRT, auth error: 401, auth error code: token_invalidated\n"
+
+	s.readStderr(strings.NewReader(first))
+	s.mu.Lock()
+	priorActivity := time.Date(2026, 8, 13, 9, 3, 0, 0, time.UTC)
+	s.lastActivityAt = priorActivity
+	s.mu.Unlock()
+	s.readStderr(strings.NewReader(second))
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 2 {
+		t.Fatalf("entries = %#v, want one raw auth error and one diagnosis", snapshot.Entries)
+	}
+	if !strings.Contains(snapshot.Entries[0].Text, "cf-ray: first-NRT") || strings.Contains(snapshot.Transcript, "cf-ray: second-NRT") {
+		t.Fatalf("transcript = %q, want only the first raw auth error", snapshot.Transcript)
+	}
+	if !strings.Contains(snapshot.Entries[1].Text, "Repeated copies of this same auth failure are suppressed") {
+		t.Fatalf("diagnosis = %q, want suppression notice", snapshot.Entries[1].Text)
+	}
+	if snapshot.Status != "Codex auth/session rejected (HTTP 401)" {
+		t.Fatalf("status = %q, want HTTP 401 auth rejection", snapshot.Status)
+	}
+	if !snapshot.LastActivityAt.Equal(priorActivity) {
+		t.Fatalf("last activity = %v, want suppressed repeat not to advance %v", snapshot.LastActivityAt, priorActivity)
+	}
+	if notifications != 2 {
+		t.Fatalf("notifications = %d, want only first error and diagnosis", notifications)
+	}
+}
+
+func TestReadStderrReportsChangedAuthFailureCode(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+	invalidated := "2026-08-13T09:02:44Z ERROR codex_models_manager::manager: unexpected status 401 Unauthorized, url: https://chatgpt.com/backend-api/codex/models, auth error code: token_invalidated\n"
+	expired := "2026-08-13T09:05:44Z ERROR codex_models_manager::manager: unexpected status 401 Unauthorized, url: https://chatgpt.com/backend-api/codex/models, auth error code: token_expired\n"
+
+	s.readStderr(strings.NewReader(invalidated + expired))
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 3 {
+		t.Fatalf("entries = %#v, want both distinct raw failures and one diagnosis", snapshot.Entries)
+	}
+	if !strings.Contains(snapshot.Transcript, "token_invalidated") || !strings.Contains(snapshot.Transcript, "token_expired") {
+		t.Fatalf("transcript = %q, want changed auth failure retained", snapshot.Transcript)
 	}
 }
 
