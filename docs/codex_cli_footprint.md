@@ -250,10 +250,10 @@ other residue preserves the original Git failure and remains untouched.
 
 ## 10. Deleted-worktree session cleanup
 
-LCR's `/clean` workflow audits global Codex storage without using a missing
+LCR's `/codex-gc` workflow audits global Codex storage without using a missing
 directory alone as deletion authority. A read-only audit runs when the TUI or
 server starts and then once per day; it only refreshes an in-memory report and
-never deletes a thread. Opening `/clean` always runs another fresh audit.
+never deletes a thread. Opening `/codex-gc` always runs another fresh audit.
 
 A root thread is eligible only when all of the following can be established:
 

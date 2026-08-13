@@ -1,0 +1,265 @@
+package tui
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"lcroom/internal/browserctl"
+	"lcroom/internal/codexapp"
+	"lcroom/internal/commands"
+	"lcroom/internal/model"
+	"lcroom/internal/service"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+)
+
+func TestDispatchCleanOpensStaleWorktreeAudit(t *testing.T) {
+	updated, cmd := (Model{}).dispatchCommand(commands.Invocation{Kind: commands.KindClean})
+	got := updated.(Model)
+	if cmd == nil || got.staleWorktreeCleanup == nil || !got.staleWorktreeCleanup.Loading {
+		t.Fatalf("/clean state = %#v, cmd=%v", got.staleWorktreeCleanup, cmd)
+	}
+	if got.codexCleanup != nil {
+		t.Fatal("/clean must not open permanent Codex storage cleanup")
+	}
+}
+
+func TestStaleWorktreeAuditPreselectsEligibleAndExcludesLiveUnsafeSessions(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	idle := staleWorktreeCleanupTestCandidate("/tmp/demo--idle", "feature/idle", now.Add(-48*time.Hour))
+	active := staleWorktreeCleanupTestCandidate("/tmp/demo--active", "feature/active", now.Add(-72*time.Hour))
+	recentIdle := staleWorktreeCleanupTestCandidate("/tmp/demo--recent-idle", "feature/recent-idle", now.Add(-72*time.Hour))
+	m := Model{
+		nowFn:                        func() time.Time { return now },
+		renderCachedSessionStateOnly: true,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			idle.ProjectPath: {
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				Phase:    codexapp.SessionPhaseIdle,
+			},
+			active.ProjectPath: {
+				Provider: codexapp.ProviderOpenCode,
+				Started:  true,
+				Busy:     true,
+				Phase:    codexapp.SessionPhaseRunning,
+			},
+			recentIdle.ProjectPath: {
+				Provider:       codexapp.ProviderClaudeCode,
+				Started:        true,
+				Phase:          codexapp.SessionPhaseIdle,
+				LastActivityAt: now.Add(-time.Hour),
+			},
+		},
+		staleWorktreeCleanup: &staleWorktreeCleanupDialogState{
+			Chosen:  make(map[string]bool),
+			Loading: true,
+		},
+	}
+	updated, cmd := m.applyStaleWorktreeCleanupAudit(staleWorktreeCleanupAuditMsg{audit: service.StaleWorktreeCleanupAudit{
+		AuditedAt:              now,
+		ScannedLinkedWorktrees: 3,
+		Candidates:             []service.StaleWorktreeCleanupCandidate{idle, active, recentIdle},
+	}})
+	if cmd != nil {
+		t.Fatal("applying stale audit should not start removal")
+	}
+	got := updated.(Model)
+	if len(got.staleWorktreeCleanup.Audit.Candidates) != 1 || got.staleWorktreeCleanup.Audit.Candidates[0].ProjectPath != idle.ProjectPath {
+		t.Fatalf("filtered candidates = %#v, want only idle session", got.staleWorktreeCleanup.Audit.Candidates)
+	}
+	if !got.staleWorktreeCleanup.Chosen[idle.ProjectPath] || got.staleWorktreeCleanup.LiveExcluded != 2 {
+		t.Fatalf("dialog selection = %#v, live excluded = %d", got.staleWorktreeCleanup.Chosen, got.staleWorktreeCleanup.LiveExcluded)
+	}
+	rendered := ansi.Strip(got.renderStaleWorktreeCleanupOverlay("", 120, 36))
+	for _, want := range []string{"Clean stale worktrees", "[x] feature/idle", "idle Codex open", "Branches and AI conversation history are preserved"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("stale cleanup preview missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, cmd = got.updateStaleWorktreeCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil || !got.staleWorktreeCleanup.Removing || len(got.staleWorktreeCleanup.Queue) != 1 {
+		t.Fatalf("Enter should start checked cleanup: %#v cmd=%v", got.staleWorktreeCleanup, cmd)
+	}
+}
+
+func TestStaleWorktreeCuesShowInRowDetailFamilyAndFooter(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	root := model.ProjectSummary{
+		Path:             "/tmp/demo",
+		Name:             "demo",
+		PresentOnDisk:    true,
+		WorktreeRootPath: "/tmp/demo",
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+	}
+	child := staleWorktreeCleanupTestSummary(now)
+	m := Model{
+		nowFn:                        func() time.Time { return now },
+		allProjects:                  []model.ProjectSummary{root, child},
+		visibility:                   visibilityAllFolders,
+		sortMode:                     sortByAttention,
+		renderCachedSessionStateOnly: true,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			child.Path: {
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				Phase:    codexapp.SessionPhaseIdle,
+			},
+		},
+	}
+	m.rebuildProjectList(child.Path)
+	rendered := ansi.Strip(m.renderProjectList(120, 8))
+	for _, want := range []string{"stale", "idle Codex open", "[1 linked, 1 stale]"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("project list missing %q: %s", want, rendered)
+		}
+	}
+
+	detail := strings.Join(strings.Fields(ansi.Strip(renderProjectDetailSurface(m.buildProjectDetailSurface(child, model.ProjectDetail{}), 100))), " ")
+	if !strings.Contains(detail, "Cleanup: stale — merged, clean, idle 2d; idle Codex session will be closed") {
+		t.Fatalf("project detail missing stale cleanup explanation: %s", detail)
+	}
+
+	actions := m.worktreeFooterActions(120)
+	footer := ""
+	for _, action := range actions {
+		footer += " " + ansi.Strip(action.render())
+	}
+	if !strings.Contains(footer, "/clean clean stale") {
+		t.Fatalf("footer actions missing /clean hint: %q", footer)
+	}
+}
+
+func TestStaleWorktreeCleanupSessionBlockReasonCoversLiveProviderWork(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		snapshot codexapp.Snapshot
+		want     string
+	}{
+		{
+			name: "active goal",
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				Phase:    codexapp.SessionPhaseIdle,
+				Goal:     &codexapp.ThreadGoal{Status: codexapp.ThreadGoalStatusActive},
+			},
+			want: "active goal",
+		},
+		{
+			name: "background work",
+			snapshot: codexapp.Snapshot{
+				Provider:        codexapp.ProviderClaudeCode,
+				Started:         true,
+				Phase:           codexapp.SessionPhaseIdle,
+				BackgroundTasks: []codexapp.BackgroundTaskSnapshot{{ID: "task-1"}},
+			},
+			want: "background work",
+		},
+		{
+			name: "browser wait",
+			snapshot: codexapp.Snapshot{
+				Provider:        codexapp.ProviderOpenCode,
+				Started:         true,
+				Phase:           codexapp.SessionPhaseIdle,
+				BrowserActivity: browserctl.SessionActivity{State: browserctl.SessionActivityStateWaitingForUser},
+			},
+			want: "waiting for input",
+		},
+		{
+			name: "old idle session",
+			snapshot: codexapp.Snapshot{
+				Provider:       codexapp.ProviderCodex,
+				Started:        true,
+				Phase:          codexapp.SessionPhaseIdle,
+				LastActivityAt: now.Add(-48 * time.Hour),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reason := staleWorktreeCleanupSessionBlockReason(test.snapshot, now)
+			if test.want == "" && reason != "" {
+				t.Fatalf("block reason = %q, want none", reason)
+			}
+			if test.want != "" && !strings.Contains(reason, test.want) {
+				t.Fatalf("block reason = %q, want substring %q", reason, test.want)
+			}
+		})
+	}
+}
+
+func TestStaleWorktreeCleanupContinuesAfterSkippedAndFailedItems(t *testing.T) {
+	first := staleWorktreeCleanupTestCandidate("/tmp/demo--first", "feature/first", time.Now().Add(-48*time.Hour))
+	second := staleWorktreeCleanupTestCandidate("/tmp/demo--second", "feature/second", time.Now().Add(-72*time.Hour))
+	m := Model{
+		staleWorktreeCleanup: &staleWorktreeCleanupDialogState{
+			Removing: true,
+			Queue:    []service.StaleWorktreeCleanupCandidate{first, second},
+		},
+	}
+
+	updated, cmd := m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: staleWorktreeCleanupResult{
+		Candidate:     first,
+		SkippedReason: "a runtime became active",
+	}})
+	got := updated.(Model)
+	if cmd == nil || !got.staleWorktreeCleanup.Removing || got.staleWorktreeCleanup.QueueIndex != 1 {
+		t.Fatalf("first result did not continue batch: %#v cmd=%v", got.staleWorktreeCleanup, cmd)
+	}
+
+	updated, cmd = got.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: staleWorktreeCleanupResult{
+		Candidate: second,
+		Err:       fmt.Errorf("remove failed"),
+	}})
+	got = updated.(Model)
+	removed, skipped, failed := staleWorktreeCleanupResultCounts(got.staleWorktreeCleanup.Results)
+	if got.staleWorktreeCleanup.Removing || !got.staleWorktreeCleanup.Finished || removed != 0 || skipped != 1 || failed != 1 {
+		t.Fatalf("final batch state = %#v, counts=(%d,%d,%d)", got.staleWorktreeCleanup, removed, skipped, failed)
+	}
+	if cmd == nil || !strings.Contains(got.status, "0 removed, 1 skipped, 1 failed") {
+		t.Fatalf("final command/status = %v / %q", cmd, got.status)
+	}
+}
+
+func staleWorktreeCleanupTestCandidate(path, branch string, lastActivity time.Time) service.StaleWorktreeCleanupCandidate {
+	return service.StaleWorktreeCleanupCandidate{
+		ProjectPath:     path,
+		ProjectName:     filepath.Base(path),
+		RootProjectPath: "/tmp/demo",
+		Branch:          branch,
+		ParentBranch:    "master",
+		LastActivity:    lastActivity,
+	}
+}
+
+func staleWorktreeCleanupTestSummary(now time.Time) model.ProjectSummary {
+	lastActivity := now.Add(-48 * time.Hour)
+	return model.ProjectSummary{
+		Path:                            "/tmp/demo--stale",
+		Name:                            "demo--stale",
+		Status:                          model.StatusIdle,
+		PresentOnDisk:                   true,
+		WorktreeRootPath:                "/tmp/demo",
+		WorktreeKind:                    model.WorktreeKindLinked,
+		WorktreeParentBranch:            "master",
+		WorktreeMergeStatus:             model.WorktreeMergeStatusMerged,
+		RepoBranch:                      "feature/stale",
+		LastActivity:                    lastActivity,
+		LatestSessionFormat:             "modern",
+		LatestSessionLastEventAt:        lastActivity,
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             true,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryCompleted,
+		LatestSessionSummary:            "Work is complete.",
+	}
+}

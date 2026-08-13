@@ -141,6 +141,9 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 		}
 		surface.Field("Merge back", mergeBackText, mergeBackTone)
 		surface.RenderedField("Integration status", worktreeIntegrationStatusDetailText(p), worktreeIntegrationStatusDetailTone(p), worktreeIntegrationStatusDetailValue(p))
+		if candidate, idleProvider, stale := m.staleWorktreeCleanupCandidate(p); stale {
+			surface.WrappedField("Cleanup", staleWorktreeCleanupDetail(candidate, idleProvider, now), projectDetailToneWarning)
+		}
 	}
 	if task, ok := m.worktreeMergeRecoveryTaskForProjectPath(p.Path); ok {
 		status := "engineer in progress · press e to inspect"
@@ -163,7 +166,8 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 	if projectUsesRepoUI(p) && (len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0) {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
 		pendingIntegrationCount := worktreePendingIntegrationCount(family)
-		surface.Field("Worktrees", worktreeGroupSummary(family, activeCount, dirtyCount, pendingIntegrationCount, orphanedCount), projectDetailToneValue)
+		staleCount := m.staleWorktreeCleanupCount(family)
+		surface.Field("Worktrees", worktreeGroupSummary(family, activeCount, dirtyCount, pendingIntegrationCount, staleCount, orphanedCount), projectDetailToneValue)
 		if projectIsWorktreeRoot(p) {
 			surface.Section("Worktree lanes")
 			family = append([]model.ProjectSummary(nil), family...)
@@ -563,6 +567,10 @@ func (m Model) worktreeLaneDetailText(current, member model.ProjectSummary) (str
 		if integration := worktreeLaneIntegrationText(member); integration != "" {
 			statusParts = append(statusParts, integration)
 		}
+	}
+	if _, _, stale := m.staleWorktreeCleanupCandidate(member); stale {
+		statusParts = append(statusParts, "stale")
+		tone = projectDetailToneWarning
 	}
 	if filepath.Clean(member.Path) == filepath.Clean(current.Path) {
 		statusParts = append(statusParts, "current")

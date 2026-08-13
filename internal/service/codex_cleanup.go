@@ -412,7 +412,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 }
 
 // StartCodexCleanupAuditor performs read-only background audits. It never
-// deletes threads; /clean always performs another fresh audit with an explicit
+// deletes threads; /codex-gc always performs another fresh audit with an explicit
 // selection and confirmation before the mutation path becomes reachable.
 func (s *Service) StartCodexCleanupAuditor(ctx context.Context, loadedThreadIDs func() []string) {
 	if s == nil {

@@ -63,11 +63,20 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name: "clean Codex storage",
+			name: "clean stale worktrees",
 			raw:  "/clean",
 			check: func(t *testing.T, inv Invocation) {
 				if inv.Kind != KindClean || inv.Canonical != "/clean" {
 					t.Fatalf("clean invocation = %#v", inv)
+				}
+			},
+		},
+		{
+			name: "garbage collect Codex storage",
+			raw:  "/codex-gc",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindCodexGC || inv.Canonical != "/codex-gc" {
+					t.Fatalf("codex-gc invocation = %#v", inv)
 				}
 			},
 		},

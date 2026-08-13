@@ -57,6 +57,7 @@ type projectListRow struct {
 	LinkedActiveCount             int
 	LinkedDirtyCount              int
 	LinkedPendingIntegrationCount int
+	LinkedStaleCount              int
 	PendingLaunchID               int64
 	OrphanedDSStoreOnly           bool
 }
@@ -1334,6 +1335,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 		}
 		activeCount, dirtyCount := m.worktreeActivityCounts(children)
 		pendingIntegrationCount := worktreePendingIntegrationCount(children)
+		staleCount := m.staleWorktreeCleanupCount(children)
 
 		rows = append(rows, rootProject)
 		meta = append(meta, projectListRow{
@@ -1344,6 +1346,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 			LinkedActiveCount:             activeCount,
 			LinkedDirtyCount:              dirtyCount,
 			LinkedPendingIntegrationCount: pendingIntegrationCount,
+			LinkedStaleCount:              staleCount,
 		})
 		for _, child := range children {
 			rowKind := projectListRowWorktree
@@ -1398,7 +1401,11 @@ func (m Model) worktreeActivityCounts(projects []model.ProjectSummary) (int, int
 		if project.RepoDirty {
 			dirty++
 		}
-		if project.Status != model.StatusIdle || m.projectHasLiveCodexSession(project.Path) || m.projectRuntimeSnapshot(project.Path).Running {
+		liveEngineerActive := false
+		if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+			liveEngineerActive = embeddedSessionBlocksProviderSwitch(snapshot)
+		}
+		if project.Status != model.StatusIdle || liveEngineerActive || m.projectRuntimeSnapshot(project.Path).Running {
 			active++
 		}
 	}
@@ -1431,7 +1438,7 @@ func worktreePendingIntegrationCount(projects []model.ProjectSummary) int {
 	return count
 }
 
-func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, orphaned int) string {
+func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, stale, orphaned int) string {
 	if linked <= 0 && orphaned <= 0 {
 		return ""
 	}
@@ -1441,6 +1448,9 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, orpha
 	}
 	if orphaned > 0 {
 		parts = append(parts, orphanedCheckoutCountLabel(orphaned))
+	}
+	if stale > 0 {
+		parts = append(parts, fmt.Sprintf("%d stale", stale))
 	}
 	if pendingIntegration > 0 {
 		parts = append(parts, fmt.Sprintf("%d to integrate", pendingIntegration))
@@ -1475,7 +1485,7 @@ func projectListAssessmentWithWorktreeBadge(assessment, badge string, prioritize
 	}
 }
 
-func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, pendingIntegration, orphaned int) string {
+func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, pendingIntegration, stale, orphaned int) string {
 	rootCount := 0
 	for _, project := range projects {
 		if projectIsWorktreeRoot(project) {
@@ -1495,6 +1505,9 @@ func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, pendin
 	}
 	if orphaned > 0 {
 		parts = append(parts, orphanedCheckoutCountLabel(orphaned))
+	}
+	if stale > 0 {
+		parts = append(parts, fmt.Sprintf("%d stale", stale))
 	}
 	if pendingIntegration > 0 {
 		parts = append(parts, fmt.Sprintf("%d pending integration", pendingIntegration))
@@ -1551,6 +1564,19 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if row.Kind == projectListRowPendingWorktree {
 		actions = append(actions, footerPrimaryAction("Enter", "status"), footerHideAction("x", "abort"))
 		return actions
+	}
+	staleCount := 0
+	if _, _, stale := m.staleWorktreeCleanupCandidate(project); stale {
+		staleCount = 1
+	} else if projectIsWorktreeRoot(project) {
+		staleCount = m.staleWorktreeCleanupCount(m.worktreeFamily(projectWorktreeRootPath(project)))
+	}
+	if staleCount > 0 {
+		label := "clean stale"
+		if staleCount > 1 {
+			label = fmt.Sprintf("clean %d stale", staleCount)
+		}
+		actions = append(actions, footerPrimaryAction("/clean", label))
 	}
 	if row.Kind == projectListRowWorktree && width >= 80 {
 		actions = append(actions, footerNavAction("/wt", "ops"))
