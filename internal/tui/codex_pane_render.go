@@ -448,7 +448,7 @@ func (m Model) renderCodexBusyElsewhereNotice(snapshot codexapp.Snapshot, width 
 		if sessionID == "" {
 			sessionID = "this session"
 		}
-		message = fmt.Sprintf("Embedded %s session %s is already active in another process, so embedded controls are read-only until it finishes.", label, sessionID)
+		message = fmt.Sprintf("Embedded %s session %s belongs to another process, so LCR is read-only and Ctrl+C cannot stop it here. Starting a fresh session in LCR leaves that external process running, so both sessions may edit this checkout.", label, sessionID)
 	}
 	return renderCodexMessageBlock("Read-only", message, lipgloss.Color("221"), lipgloss.Color("252"), max(24, width-4))
 }

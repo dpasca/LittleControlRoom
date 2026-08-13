@@ -1491,6 +1491,12 @@ func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codex
 			return embeddedLaunchBlock{}, false
 		}
 		if snapshot.Started && !snapshot.Closed {
+			// A fresh launch may replace LCR's read-only view without touching
+			// the provider process that owns the external session. Keep ordinary
+			// opens blocked so an accidental provider switch remains impossible.
+			if forceNew && snapshot.BusyExternal {
+				return embeddedLaunchBlock{}, false
+			}
 			blocking := embeddedSessionBlocksProviderSwitch(snapshot)
 			if blocking || !forceNew {
 				message := fmt.Sprintf("This project already has an open embedded %s session. Close it before starting %s here.", liveProvider.Label(), requested.Label())

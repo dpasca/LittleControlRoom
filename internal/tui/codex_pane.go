@@ -1553,11 +1553,17 @@ func (m *Model) openCodexSessionCmdPrepared(req codexapp.LaunchRequest, revealOn
 	}
 	openRequestID := m.codexPendingOpenRequestID(req.ProjectPath, provider)
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
-	previousThreadID := ""
+	var (
+		previousThreadID     string
+		previousProvider     codexapp.Provider
+		previousBusyExternal bool
+	)
 	if manager != nil {
 		providerCheckStarted := time.Now()
 		if snapshot, ok := m.nonBlockingCodexSnapshot(req.ProjectPath); ok {
 			previousThreadID = strings.TrimSpace(snapshot.ThreadID)
+			previousProvider = embeddedProvider(snapshot)
+			previousBusyExternal = snapshot.BusyExternal
 		}
 		m.recordAISyncLatency("Embedded provider check", req.ProjectPath, provider.Label(), time.Since(providerCheckStarted), "")
 	}
@@ -1653,6 +1659,10 @@ func (m *Model) openCodexSessionCmdPrepared(req codexapp.LaunchRequest, revealOn
 		}
 		visibleStatus := embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot, true)
 		backgroundStatus := embeddedSessionOpenStatus(req, threadIDsToAvoid, reused, snapshot, false)
+		if req.ForceNew && previousBusyExternal && previousProvider != "" && previousProvider != provider {
+			visibleStatus = embeddedSessionOpenStatusAlongsideExternal(visibleStatus, previousProvider)
+			backgroundStatus = embeddedSessionOpenStatusAlongsideExternal(backgroundStatus, previousProvider)
+		}
 		status := visibleStatus
 		if !revealOnOpen {
 			status = backgroundStatus
@@ -1785,6 +1795,14 @@ func embeddedSessionOpenedStatus(action string, revealOnOpen bool) string {
 		return action + ". Alt+Up hides it."
 	}
 	return action + " in the background."
+}
+
+func embeddedSessionOpenStatusAlongsideExternal(status string, provider codexapp.Provider) string {
+	status = strings.TrimSpace(status)
+	if status != "" && !strings.HasSuffix(status, ".") {
+		status += "."
+	}
+	return strings.TrimSpace(status + " External " + provider.Label() + " remains open in its other process; LCR did not interrupt it. Both sessions may edit this checkout.")
 }
 
 func embeddedSessionReconnectStatus(req codexapp.LaunchRequest, snapshot codexapp.Snapshot) string {
