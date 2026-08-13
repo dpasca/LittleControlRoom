@@ -1,6 +1,6 @@
 # Claude Code Footprint Discovery
 
-Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29 (Asia/Tokyo)
+Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29; embedded stream input and permission callbacks re-verified 2026-08-13 (Asia/Tokyo)
 Host: macOS user-home environment
 
 This document summarizes observed Claude Code on-disk artifacts and the detector assumptions Little Control Room currently relies on.
@@ -174,7 +174,38 @@ owned sessions, and any task evidence a future Claude version still emits. If
 the owning Claude process exits with such a task unresolved, LCR shows the task
 as lost instead of treating the session as ready.
 
-## 6. Practical detection strategy
+## 6. Embedded stream input and permission callbacks
+
+Claude Code's stream-JSON input mode accepts another user message while a
+response is active. The message remains queued and runs as its own subsequent
+turn. Little Control Room therefore writes a busy-session follow-up directly to
+the existing stream; it must not synthesize an interrupt first. Only an explicit
+`ctrl+c` or `/pause` action stops the active turn. Claude may persist canceled
+tool results using denial-shaped provider text after an interrupt, so LCR records
+the explicit interruption source and does not present those canceled tools as
+individually denied by the user.
+
+For an LCR-owned non-YOLO session, LCR creates a private, per-session Unix socket
+and registers `mcp__lcr_runtime__request_tool_approval` through Claude's
+`--permission-prompt-tool` callback. The isolated runtime MCP process forwards
+the exact `tool_name`, tool input, and `tool_use_id` to the owning session. An
+approval returns the original input unchanged; a decline returns a
+non-interrupting denial; canceling the dialog returns an interrupting denial.
+`AskUserQuestion` uses the same bridge and returns the original question payload
+with a structured `answers` object.
+
+Current callback requests do not carry a durable approval scope, so Claude
+approvals are deliberately one-shot and the TUI does not offer an invented
+"accept for session" action. Preset mapping is provider-aware:
+
+- Safe uses Claude's `default` mode and routes unmatched tools to LCR.
+- Full Auto uses `acceptEdits`, while routing other unmatched tools to LCR.
+- YOLO uses `bypassPermissions` and does not create the approval bridge.
+- If callback routing cannot be initialized, Safe falls back to `dontAsk` and
+  Full Auto retains `acceptEdits`; unmatched requests fail closed instead of
+  waiting for an approval UI that cannot appear.
+
+## 7. Practical detection strategy
 
 Recommended filesystem-first approach:
 
@@ -197,7 +228,7 @@ Recommended filesystem-first approach:
 10. Continue parsing structured task events defensively. Surface unresolved
     ownership explicitly, and never infer completion from the model's prose.
 
-## 7. Notes
+## 8. Notes
 
 - Prefer structured Claude fields over regex or keyword heuristics.
 - Treat subagent and background-task artifacts as source-of-truth activity signals for Claude when they are present.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
@@ -59,6 +60,75 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	}
 	if strings.Contains(string(responses[1].Result), string(control.CapabilityProjectCreateAndStartEngineer)) {
 		t.Fatalf("tools/list eagerly exposes capability names instead of deferring them: %s", responses[1].Result)
+	}
+}
+
+func TestRuntimeMCPClaudePermissionToolWaitsForLCRDecision(t *testing.T) {
+	bridge, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = bridge.Close() })
+	manager := projectrun.NewManager()
+	t.Cleanup(func() { _ = manager.CloseAll() })
+	server, err := New(Options{
+		ProjectPath:          t.TempDir(),
+		ClaudeApprovalSocket: bridge.SocketPath(),
+		Manager:              manager,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	resultCh := make(chan toolCallResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, callErr := server.handleToolCall(t.Context(), json.RawMessage(`{"name":"request_tool_approval","arguments":{"tool_name":"Write","input":{"file_path":"/tmp/demo.txt","content":"demo"},"tool_use_id":"toolu-runtime"}}`))
+		resultCh <- result
+		errCh <- callErr
+	}()
+
+	request := <-bridge.Requests()
+	if request.ToolName != "Write" || request.ToolUseID != "toolu-runtime" {
+		t.Fatalf("approval request = %#v", request)
+	}
+	if err := bridge.Respond(request.ID, claudeapproval.Allow(request.Input)); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("handleToolCall() error = %v", err)
+	}
+	result := <-resultCh
+	if result.IsError || len(result.Content) != 1 {
+		t.Fatalf("permission tool result = %#v", result)
+	}
+	var response claudeapproval.Response
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &response); err != nil {
+		t.Fatalf("decode permission response: %v", err)
+	}
+	if response.Behavior != "allow" || !strings.Contains(string(response.UpdatedInput), `"file_path"`) {
+		t.Fatalf("permission response = %#v", response)
+	}
+	listed := runtimeTools(todocapture.ModeOff, false, true)
+	found := false
+	for _, tool := range listed {
+		found = found || tool.Name == claudeapproval.PermissionToolName
+	}
+	if !found {
+		t.Fatalf("runtime tools = %#v, want Claude permission callback", listed)
+	}
+}
+
+func TestRuntimeMCPRejectsClaudePermissionToolWithoutBridge(t *testing.T) {
+	manager := projectrun.NewManager()
+	t.Cleanup(func() { _ = manager.CloseAll() })
+	server, err := New(Options{ProjectPath: t.TempDir(), Manager: manager})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	_, err = server.handleToolCall(t.Context(), json.RawMessage(`{"name":"request_tool_approval","arguments":{"tool_name":"Write","input":{"file_path":"/tmp/demo.txt"},"tool_use_id":"toolu-runtime"}}`))
+	if err == nil || !strings.Contains(err.Error(), "approval routing is unavailable") {
+		t.Fatalf("unconfigured permission call error = %v", err)
 	}
 }
 

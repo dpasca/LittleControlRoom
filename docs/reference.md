@@ -176,8 +176,11 @@ exec-policy rules separately forbid absolute executables and common wrapper
 forms that could bypass the shim. This does not confine reads or ordinary
 writes to the current project. Embedded Claude Code receives an LCR-owned Bash
 `PreToolUse` hook that denies recursive or option-ambiguous `rm` before execution
-in every permission mode, including YOLO's `bypassPermissions`. LCAgent applies
-the same recursive guard in every permission mode.
+in every permission mode, including YOLO's `bypassPermissions`. In Safe mode,
+Claude's unmatched tool requests appear in LCR's existing approval dialog; Full
+Auto accepts edits and routes its remaining unmatched tools there. These Claude
+approvals are one-shot because the callback supplies no durable session scope.
+LCAgent applies the same recursive guard in every permission mode.
 
 The guard is deliberately narrower than a security sandbox. Other deletion
 mechanisms, an absolute executable hidden inside a script, or deliberate PATH
@@ -428,12 +431,12 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 
 While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
-- `Enter` sends a prompt when idle and steers the active turn when the embedded session is busy
+- `Enter` sends a prompt when idle. While busy, Codex and OpenCode steer the active turn; Claude Code queues a follow-up turn without canceling tools already in progress.
 - `Alt+Enter` or `ctrl+j` inserts a newline
 - `ctrl+v` attaches a clipboard image when available, otherwise it pastes clipboard text. The composer keeps ordinary dictation and pastes visible; only pastes of 4,000 characters or 40 lines and above become compact `[Paste #n]` markers. After sending, those markers expand in the echoed user turn. Echoes clip only an individual paste beyond 100 lines or 10,000 characters, show an explicit clipping notice, and still send the complete text to the embedded provider.
 - `Backspace` on an inline `[Image #n]` marker removes that attachment
 - Consecutive identical command and file-change blocks collapse into one row with an `×N` count; `Alt+L` cycles dense command, file, and tool transcript blocks through hidden output, preview, and full detail, revealing every collapsed occurrence in full mode
-- `ctrl+c` interrupts the active turn when busy and closes the session when idle
+- `ctrl+c` explicitly interrupts the active turn when busy and closes the session when idle. If Claude serializes canceled tools with denial-shaped text, LCR labels the operation as interrupted rather than claiming that each tool was denied.
 
 While the diff screen is visible:
 
@@ -633,10 +636,10 @@ same tracked TODO, worktree, and engineer launch.
 - `/review` starts an embedded Codex review of uncommitted changes and streams the review-mode transcript into the pane.
 - While Chat is visible, `Enter` sends or confirms a proposal, `Alt+Enter` adds a newline, `/new [prompt]` starts a fresh session, `Ctrl+L` clears into a fresh session, and `Esc` or backtick hides the overlay.
 - When Little Control Room itself is started through `go run`, it pins the disposable Go-cache executable under `<data-dir>/embedded-helpers/` before registering LCR-owned MCP servers or Claude Code safety hooks. The pin is a hard link when the cache and data directory share a filesystem, with a byte-for-byte copy as the cross-filesystem fallback. Clearing the Go build cache can therefore remove its original path without breaking newly opened embedded sessions.
-- Embedded Claude Code runs through Claude Code's `claude -p` stream flow. Prompt/response turns, session resume, `/model`, context-usage reporting, and native `/compact [instructions]` are wired, while other unsupported in-pane actions fall back to the local command subset above. LCR only reports successful Claude compaction after receiving Claude's structured compaction boundary; a short conversation can therefore return a clear no-op result. LCR disables Claude Code's native background-task mode for these embedded processes because Claude cleans up background tasks when its owning CLI exits; shell commands and tests therefore remain foreground-owned until they finish. LCR's per-process settings also disable Claude Code's automatic commit and pull-request attribution. Structured background-task evidence from restored or externally owned sessions is still shown under **Active Processes**, and a provider exit before a terminal notification is reported as lost work.
+- Embedded Claude Code runs through Claude Code's `claude -p` stream flow. Prompt/response turns, non-interrupting queued follow-ups, session resume, in-pane tool approvals and structured questions, `/model`, context-usage reporting, and native `/compact [instructions]` are wired, while other unsupported in-pane actions fall back to the local command subset above. A private per-session callback socket connects Claude's permission-prompt MCP tool to the owning TUI session without blocking the render path. LCR only reports successful Claude compaction after receiving Claude's structured compaction boundary; a short conversation can therefore return a clear no-op result. LCR disables Claude Code's native background-task mode for these embedded processes because Claude cleans up background tasks when its owning CLI exits; shell commands and tests therefore remain foreground-owned until they finish. LCR's per-process settings also disable Claude Code's automatic commit and pull-request attribution. Structured background-task evidence from restored or externally owned sessions is still shown under **Active Processes**, and a provider exit before a terminal notification is reported as lost work.
 - If LCR inherited a non-empty `ANTHROPIC_API_KEY`, it pauses before starting any embedded Claude Code process (including a Claude conflict-resolver lane) and warns that Claude Code may prioritize pay-as-you-go API billing over subscription limits. **Cancel launch** remains the default. **Continue anyway** acknowledges the warning for the current LCR process only; the warning becomes active again after LCR restarts.
 - The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail. When output is available, **Copy output** places that selected process's plain-text output on the clipboard, while **Add TODO** opens a prefilled, editable failure report under the repository-scoped project; press `Ctrl+S` there to save it.
-- `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
+- `codex_launch_preset` controls the shared embedded-provider launch preset. For Claude Code, `safe` maps to `default` plus LCR-routed approvals, `full-auto` maps to `acceptEdits` plus approvals for remaining unmatched tools, and `yolo` maps to `bypassPermissions`. The default is `yolo`.
 - `conflict_resolver_provider` controls which provider the `/resolve` chooser preselects. The default is `codex`, and confirming another choice remembers it.
 - CLI flags override config file values.

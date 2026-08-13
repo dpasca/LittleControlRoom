@@ -1288,4 +1288,17 @@ func TestApprovalRequestAllowsDecision(t *testing.T) {
 	if !fileApproval.AllowsDecision(DecisionAccept) {
 		t.Fatalf("file change approval should allow a normal accept")
 	}
+
+	oneShotCommand := ApprovalRequest{Kind: ApprovalCommandExecution, OnceOnly: true}
+	if oneShotCommand.AllowsDecision(DecisionAcceptForSession) {
+		t.Fatalf("one-shot command approval should not allow accept-for-session")
+	}
+	oneShotFile := ApprovalRequest{
+		Kind:      ApprovalFileChange,
+		GrantRoot: "/tmp/demo.txt",
+		OnceOnly:  true,
+	}
+	if got, want := oneShotFile.Summary(), "File change approval: /tmp/demo.txt"; got != want {
+		t.Fatalf("one-shot file summary = %q, want %q", got, want)
+	}
 }

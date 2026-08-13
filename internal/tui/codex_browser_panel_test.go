@@ -81,6 +81,84 @@ func TestPendingToolInputEnterSendsStructuredAnswer(t *testing.T) {
 	}
 }
 
+func TestPendingClaudeMultiSelectTogglesOptionsBeforeSubmitting(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderClaudeCode,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+			Status:   "Claude Code is waiting for your answer",
+			PendingToolInput: &codexapp.ToolInputRequest{
+				ID: "req_multi",
+				Questions: []codexapp.ToolInputQuestion{{
+					ID:          "formats",
+					Question:    "Which formats?",
+					MultiSelect: true,
+					Options: []codexapp.ToolInputOption{
+						{Label: "Summary"},
+						{Label: "Detailed"},
+					},
+				}},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexToolAnswers:    make(map[string]codexToolAnswerState),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	if cmd != nil {
+		t.Fatal("first multi-select toggle should not submit")
+	}
+	m = updated.(Model)
+	updated, cmd = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	if cmd != nil {
+		t.Fatal("second multi-select toggle should not submit")
+	}
+	m = updated.(Model)
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{"1 [x] Summary", "2 [x] Detailed", "Enter submit", "ctrl+c interrupt"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("multi-select view missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, cmd = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter should submit selected options")
+	}
+	_ = updated.(Model)
+	if action, ok := cmd().(codexActionMsg); !ok || action.err != nil {
+		t.Fatalf("multi-select submit returned %#v", action)
+	}
+	if len(session.toolAnswers) != 1 {
+		t.Fatalf("tool answers = %#v", session.toolAnswers)
+	}
+	answers := session.toolAnswers[0]["formats"]
+	if len(answers) != 2 || answers[0] != "Summary" || answers[1] != "Detailed" {
+		t.Fatalf("multi-select answers = %#v", answers)
+	}
+}
+
 func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

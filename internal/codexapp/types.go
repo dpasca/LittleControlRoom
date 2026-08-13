@@ -228,6 +228,7 @@ type ApprovalKind string
 const (
 	ApprovalCommandExecution ApprovalKind = "command"
 	ApprovalFileChange       ApprovalKind = "file_change"
+	ApprovalToolUse          ApprovalKind = "tool_use"
 )
 
 type ApprovalDecision string
@@ -240,22 +241,25 @@ const (
 )
 
 type ApprovalRequest struct {
-	ID        string
-	Kind      ApprovalKind
-	ThreadID  string
-	TurnID    string
-	ItemID    string
-	Command   string
-	CWD       string
-	Reason    string
-	Scope     string
-	GrantRoot string
+	ID          string
+	Kind        ApprovalKind
+	ThreadID    string
+	TurnID      string
+	ItemID      string
+	Command     string
+	CWD         string
+	Reason      string
+	Scope       string
+	GrantRoot   string
+	ToolName    string
+	ToolSummary string
+	OnceOnly    bool
 }
 
 func (r ApprovalRequest) AllowsDecision(decision ApprovalDecision) bool {
 	switch decision {
 	case DecisionAcceptForSession:
-		return r.Kind == ApprovalCommandExecution
+		return r.Kind == ApprovalCommandExecution && !r.OnceOnly
 	default:
 		return true
 	}
@@ -265,12 +269,27 @@ func (r ApprovalRequest) Summary() string {
 	switch r.Kind {
 	case ApprovalFileChange:
 		if r.GrantRoot != "" {
+			if r.OnceOnly {
+				return "File change approval: " + r.GrantRoot
+			}
 			return "File changes want write access under " + r.GrantRoot
 		}
 		if r.Reason != "" {
 			return "File changes need approval: " + r.Reason
 		}
 		return "File changes need approval"
+	case ApprovalToolUse:
+		toolName := strings.TrimSpace(r.ToolName)
+		if toolName == "" {
+			toolName = "Tool"
+		}
+		if summary := strings.TrimSpace(r.ToolSummary); summary != "" {
+			return "Tool approval: " + toolName + ": " + summary
+		}
+		if reason := strings.TrimSpace(r.Reason); reason != "" {
+			return "Tool approval: " + toolName + " (" + reason + ")"
+		}
+		return "Tool approval: " + toolName
 	default:
 		parts := []string{}
 		if r.Command != "" {
@@ -303,7 +322,10 @@ type ToolInputQuestion struct {
 	Question string
 	IsOther  bool
 	IsSecret bool
-	Options  []ToolInputOption
+	// MultiSelect allows more than one labeled option to be returned for this
+	// question. The provider-specific responder decides how to encode them.
+	MultiSelect bool
+	Options     []ToolInputOption
 }
 
 type ToolInputRequest struct {
@@ -671,14 +693,17 @@ type LaunchRequest struct {
 	// interrupted turn, so the replacement helper merges this history back in.
 	ReconnectTranscript []TranscriptEntry
 
-	ForceNew                   bool
-	Prompt                     string
-	InitialInput               Submission
-	Preset                     codexcli.Preset
-	PendingModel               string
-	PendingReasoning           string
-	PlaywrightPolicy           browserctl.Policy
-	ManagedBrowserSessionKey   string
+	ForceNew                 bool
+	Prompt                   string
+	InitialInput             Submission
+	Preset                   codexcli.Preset
+	PendingModel             string
+	PendingReasoning         string
+	PlaywrightPolicy         browserctl.Policy
+	ManagedBrowserSessionKey string
+	// ClaudeApprovalSocket is an ephemeral, session-owned callback bridge used
+	// only by the embedded Claude Code runtime MCP server.
+	ClaudeApprovalSocket       string
 	AppDataDir                 string
 	AppDBPath                  string
 	TodoCaptureMode            todocapture.CaptureMode

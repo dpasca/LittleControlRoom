@@ -31,14 +31,19 @@ func codexSnapshotNeedsSubmitRefresh(snapshot codexapp.Snapshot) bool {
 }
 
 func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
-	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
+	switch embeddedProvider(snapshot) {
+	case codexapp.ProviderClaudeCode:
+		return false
+	case codexapp.ProviderLCAgent:
 		return codexSnapshotBrowserWaitingForUser(snapshot)
+	default:
+		return codexSnapshotCanInterruptActiveTurn(snapshot)
 	}
-	return codexSnapshotCanInterruptActiveTurn(snapshot)
 }
 
 func codexSnapshotQueuesBusyInput(snapshot codexapp.Snapshot) bool {
-	if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+	provider := embeddedProvider(snapshot)
+	if provider != codexapp.ProviderLCAgent && provider != codexapp.ProviderClaudeCode {
 		return false
 	}
 	return snapshot.Busy && !snapshot.BusyExternal && !codexSnapshotBrowserWaitingForUser(snapshot)

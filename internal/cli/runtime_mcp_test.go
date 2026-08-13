@@ -11,6 +11,7 @@ func TestParseRuntimeMCPOptionsKeepsBrowserAndRuntimeSessionKeysDistinct(t *test
 		"--project-path", "/tmp/demo",
 		"--session-key", "todo-session",
 		"--browser-session-key", "browser-session",
+		"--claude-approval-socket", "/tmp/approval.sock",
 	})
 	if err != nil {
 		t.Fatalf("parseRuntimeMCPOptions() error = %v", err)
@@ -20,6 +21,9 @@ func TestParseRuntimeMCPOptionsKeepsBrowserAndRuntimeSessionKeysDistinct(t *test
 	}
 	if got, want := opts.browserSessionKey, "browser-session"; got != want {
 		t.Fatalf("browser session key = %q, want %q", got, want)
+	}
+	if got, want := opts.claudeApprovalSocket, "/tmp/approval.sock"; got != want {
+		t.Fatalf("Claude approval socket = %q, want %q", got, want)
 	}
 }
 

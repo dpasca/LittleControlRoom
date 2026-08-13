@@ -161,13 +161,21 @@ func (m Model) projectEmbeddedApprovalAttentionReason(projectPath string) *model
 	switch request.Kind {
 	case codexapp.ApprovalFileChange:
 		if request.GrantRoot != "" {
-			text = fmt.Sprintf("%s is waiting for file-change approval under %s", provider.Label(), request.GrantRoot)
+			if request.OnceOnly {
+				text = fmt.Sprintf("%s is waiting for file-change approval: %s", provider.Label(), request.GrantRoot)
+			} else {
+				text = fmt.Sprintf("%s is waiting for file-change approval under %s", provider.Label(), request.GrantRoot)
+			}
 		} else {
 			text = provider.Label() + " is waiting for file-change approval"
 		}
 	case codexapp.ApprovalCommandExecution:
 		if request.Command != "" {
 			text = fmt.Sprintf("%s is waiting for command approval: %s", provider.Label(), request.Command)
+		}
+	case codexapp.ApprovalToolUse:
+		if request.ToolName != "" {
+			text = fmt.Sprintf("%s is waiting for %s tool approval", provider.Label(), request.ToolName)
 		}
 	}
 

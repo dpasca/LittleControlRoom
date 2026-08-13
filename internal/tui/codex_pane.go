@@ -1810,12 +1810,14 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 	}
 	submission := draft.Submission()
 	steer := false
-	queueSteer := false
+	queueInput := false
+	provider := codexapp.ProviderCodex
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		steer = codexSnapshotCanSteer(snapshot)
-		queueSteer = codexSnapshotQueuesBusyInput(snapshot)
-		label = embeddedProvider(snapshot).Label()
+		queueInput = codexSnapshotQueuesBusyInput(snapshot)
+		provider = embeddedProvider(snapshot)
+		label = provider.Label()
 	}
 	return m.codexSessionCmd(projectPath, func() tea.Msg {
 		return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: errors.New("embedded session unavailable")}
@@ -1828,10 +1830,14 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		status := "Prompt sent to " + label
 		if steer {
 			status = "Steer sent to " + label
-		} else if queueSteer {
-			status = "Steer queued for " + label
+		} else if queueInput {
+			if provider == codexapp.ProviderClaudeCode {
+				status = "Follow-up queued for " + label + "; current work was not interrupted"
+			} else {
+				status = "Steer queued for " + label
+			}
 		}
-		return codexActionMsg{projectPath: projectPath, status: status, refreshView: queueSteer, renamedTask: renamedTask, renameErr: renameErr}
+		return codexActionMsg{projectPath: projectPath, status: status, refreshView: queueInput, renamedTask: renamedTask, renameErr: renameErr}
 	})
 }
 

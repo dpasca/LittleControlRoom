@@ -488,7 +488,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
 			m.status = "Pausing embedded " + label + " goal..."
 		} else if codexSnapshotQueuesBusyInput(snapshot) {
-			m.status = "Queueing steer for " + label + "..."
+			if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode {
+				m.status = "Queueing follow-up for " + label + " without interrupting its current work..."
+			} else {
+				m.status = "Queueing steer for " + label + "..."
+			}
 		} else if codexSnapshotCanSteer(snapshot) {
 			m.status = "Sending follow-up to " + label + "..."
 		} else {
@@ -575,10 +579,16 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 		return m, nil
 	case "enter":
 		answer := strings.TrimSpace(m.codexInput.Value())
-		if answer == "" {
+		if answer != "" {
+			if question.MultiSelect {
+				state.Answers[question.ID] = addToolInputAnswer(state.Answers[question.ID], answer)
+			} else {
+				state.Answers[question.ID] = []string{answer}
+			}
+		}
+		if len(nonEmptyToolInputAnswers(state.Answers[question.ID])) == 0 {
 			return m, nil
 		}
-		state.Answers[question.ID] = []string{answer}
 		m.codexToolAnswers[m.codexVisibleProject] = state
 		m.clearCodexDraft(m.codexVisibleProject)
 		return m.finishOrAdvanceToolInput(request, state)
@@ -586,7 +596,14 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 		// Keep textarea editing behavior below.
 	default:
 		if optionIndex, ok := numericOptionSelection(msg.String()); ok && optionIndex < len(question.Options) {
-			state.Answers[question.ID] = []string{question.Options[optionIndex].Label}
+			label := question.Options[optionIndex].Label
+			if question.MultiSelect {
+				state.Answers[question.ID] = toggleToolInputAnswer(state.Answers[question.ID], label)
+				m.codexToolAnswers[m.codexVisibleProject] = state
+				m.status = "Selection toggled. Choose more options or press Enter to submit."
+				return m, nil
+			}
+			state.Answers[question.ID] = []string{label}
 			m.codexToolAnswers[m.codexVisibleProject] = state
 			m.clearCodexDraft(m.codexVisibleProject)
 			return m.finishOrAdvanceToolInput(request, state)
@@ -607,6 +624,55 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	return m, cmd
+}
+
+func nonEmptyToolInputAnswers(values []string) []string {
+	answers := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			answers = append(answers, value)
+		}
+	}
+	return answers
+}
+
+func addToolInputAnswer(values []string, answer string) []string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return nonEmptyToolInputAnswers(values)
+	}
+	answers := nonEmptyToolInputAnswers(values)
+	for _, existing := range answers {
+		if existing == answer {
+			return answers
+		}
+	}
+	return append(answers, answer)
+}
+
+func toggleToolInputAnswer(values []string, answer string) []string {
+	answer = strings.TrimSpace(answer)
+	answers := nonEmptyToolInputAnswers(values)
+	for index, existing := range answers {
+		if existing != answer {
+			continue
+		}
+		return append(answers[:index], answers[index+1:]...)
+	}
+	if answer == "" {
+		return answers
+	}
+	return append(answers, answer)
+}
+
+func toolInputAnswerSelected(values []string, answer string) bool {
+	answer = strings.TrimSpace(answer)
+	for _, existing := range nonEmptyToolInputAnswers(values) {
+		if existing == answer {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) finishOrAdvanceToolInput(request *codexapp.ToolInputRequest, state codexToolAnswerState) (tea.Model, tea.Cmd) {
