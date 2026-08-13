@@ -782,6 +782,63 @@ func TestVisibleLCAgentEnterQueuesInputWhileBusy(t *testing.T) {
 	}
 }
 
+func TestVisibleClaudeEnterQueuesFollowUpWithoutInterrupting(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderClaudeCode,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+			Status:   "Claude Code is thinking...",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("also cover gameplay priorities")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("Enter should queue a Claude follow-up")
+	}
+	if !strings.Contains(got.status, "without interrupting") {
+		t.Fatalf("status = %q, want non-interrupting queue guidance", got.status)
+	}
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if !strings.Contains(action.status, "current work was not interrupted") {
+		t.Fatalf("action status = %q, want queued follow-up confirmation", action.status)
+	}
+	if len(session.submissions) != 1 || session.submissions[0].TranscriptText() != "also cover gameplay priorities" {
+		t.Fatalf("submissions = %#v", session.submissions)
+	}
+	if session.interrupted {
+		t.Fatal("queueing a Claude follow-up must not call Interrupt")
+	}
+}
+
 func TestVisibleCodexEnterDoesNotSubmitWhileCompacting(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

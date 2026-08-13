@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
@@ -34,37 +35,39 @@ const (
 )
 
 type Options struct {
-	ProjectPath       string
-	Provider          string
-	DataDir           string
-	SessionKey        string
-	BrowserSessionKey string
-	DBPath            string
-	TodoCaptureMode   todocapture.CaptureMode
-	ControlScope      control.AuthorityScope
-	Input             io.Reader
-	Output            io.Writer
-	Manager           *projectrun.Manager
-	TodoHandler       todocapture.Handler
-	Store             *store.Store
+	ProjectPath          string
+	Provider             string
+	DataDir              string
+	SessionKey           string
+	BrowserSessionKey    string
+	ClaudeApprovalSocket string
+	DBPath               string
+	TodoCaptureMode      todocapture.CaptureMode
+	ControlScope         control.AuthorityScope
+	Input                io.Reader
+	Output               io.Writer
+	Manager              *projectrun.Manager
+	TodoHandler          todocapture.Handler
+	Store                *store.Store
 }
 
 type Server struct {
-	projectPath       string
-	provider          string
-	dataDir           string
-	sessionKey        string
-	browserSessionKey string
-	input             io.Reader
-	output            io.Writer
-	manager           *projectrun.Manager
-	ownManager        bool
-	todoMode          todocapture.CaptureMode
-	todoHandler       todocapture.Handler
-	controlScope      control.AuthorityScope
-	stateStore        *store.Store
-	ownStore          bool
-	protocolVersion   string
+	projectPath          string
+	provider             string
+	dataDir              string
+	sessionKey           string
+	browserSessionKey    string
+	claudeApprovalSocket string
+	input                io.Reader
+	output               io.Writer
+	manager              *projectrun.Manager
+	ownManager           bool
+	todoMode             todocapture.CaptureMode
+	todoHandler          todocapture.Handler
+	controlScope         control.AuthorityScope
+	stateStore           *store.Store
+	ownStore             bool
+	protocolVersion      string
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -118,21 +121,22 @@ func New(opts Options) (*Server, error) {
 		controlScope = control.AuthorityScopeProject
 	}
 	return &Server{
-		projectPath:       projectPath,
-		provider:          strings.TrimSpace(opts.Provider),
-		dataDir:           strings.TrimSpace(opts.DataDir),
-		sessionKey:        strings.TrimSpace(opts.SessionKey),
-		browserSessionKey: strings.TrimSpace(opts.BrowserSessionKey),
-		input:             input,
-		output:            output,
-		manager:           manager,
-		ownManager:        ownManager,
-		todoMode:          todoMode,
-		todoHandler:       todoHandler,
-		controlScope:      controlScope,
-		stateStore:        stateStore,
-		ownStore:          ownStore,
-		protocolVersion:   defaultProtocolVersion,
+		projectPath:          projectPath,
+		provider:             strings.TrimSpace(opts.Provider),
+		dataDir:              strings.TrimSpace(opts.DataDir),
+		sessionKey:           strings.TrimSpace(opts.SessionKey),
+		browserSessionKey:    strings.TrimSpace(opts.BrowserSessionKey),
+		claudeApprovalSocket: strings.TrimSpace(opts.ClaudeApprovalSocket),
+		input:                input,
+		output:               output,
+		manager:              manager,
+		ownManager:           ownManager,
+		todoMode:             todoMode,
+		todoHandler:          todoHandler,
+		controlScope:         controlScope,
+		stateStore:           stateStore,
+		ownStore:             ownStore,
+		protocolVersion:      defaultProtocolVersion,
 	}, nil
 }
 
@@ -202,7 +206,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": runtimeTools(s.todoMode, s.supportsStructuredTools()),
+				"tools": runtimeTools(s.todoMode, s.supportsStructuredTools(), s.claudeApprovalSocket != ""),
 			},
 		}, true
 	case "tools/call":
@@ -294,6 +298,16 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		}
 		report, isErr := s.requestBrowserAttention(req)
 		return s.jsonToolResult(report, isErr)
+	case claudeapproval.PermissionToolName:
+		if s.claudeApprovalSocket == "" {
+			return toolCallResult{}, fmt.Errorf("Claude Code approval routing is unavailable")
+		}
+		var req claudePermissionPromptArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode %s args: %w", claudeapproval.PermissionToolName, err)
+		}
+		response := s.requestClaudeToolApproval(ctx, req)
+		return s.jsonToolResult(response, false)
 	case "list_project_todos":
 		if !s.todoMode.Enabled() || s.todoHandler == nil {
 			return toolCallResult{}, fmt.Errorf("project TODO capture is disabled")
@@ -642,6 +656,31 @@ func (s *Server) requestBrowserAttention(req requestBrowserAttentionArgs) (map[s
 	}, false
 }
 
+func (s *Server) requestClaudeToolApproval(ctx context.Context, req claudePermissionPromptArgs) claudeapproval.Response {
+	toolName := strings.TrimSpace(req.ToolName)
+	toolUseID := strings.TrimSpace(req.ToolUseID)
+	if toolName == "" || toolUseID == "" {
+		return claudeapproval.Deny("Claude Code sent a malformed approval request", false)
+	}
+	input := req.Input
+	if len(strings.TrimSpace(string(input))) == 0 {
+		input = json.RawMessage(`{}`)
+	}
+	response, err := claudeapproval.RequestApproval(ctx, s.claudeApprovalSocket, claudeapproval.Request{
+		ID:        toolUseID,
+		ToolName:  toolName,
+		Input:     input,
+		ToolUseID: toolUseID,
+	})
+	if err != nil {
+		return claudeapproval.Deny("Little Control Room could not collect this approval; deny the tool request", false)
+	}
+	if response.Behavior == "allow" && len(strings.TrimSpace(string(response.UpdatedInput))) == 0 {
+		response.UpdatedInput = append(json.RawMessage(nil), input...)
+	}
+	return response
+}
+
 func decodeStrictToolArgs(data json.RawMessage, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -948,7 +987,7 @@ func observedListenerSummary(projectPath string, instance procinspect.ProjectIns
 	}
 }
 
-func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpTool {
+func runtimeTools(todoMode todocapture.CaptureMode, structuredTools, claudeApprovalEnabled bool) []mcpTool {
 	tools := controlCatalogTools(structuredTools)
 	tools = append(tools,
 		mcpTool{
@@ -1018,6 +1057,22 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpT
 			},
 		},
 	)
+	if claudeApprovalEnabled {
+		tools = append(tools, mcpTool{
+			Name:        claudeapproval.PermissionToolName,
+			Description: "Reserved callback used by embedded Claude Code to ask Little Control Room for a tool approval or structured user answer. The model must not call this tool directly.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"tool_name":   map[string]any{"type": "string"},
+					"input":       map[string]any{"type": "object"},
+					"tool_use_id": map[string]any{"type": "string"},
+				},
+				"required": []string{"tool_name", "input", "tool_use_id"},
+			},
+		})
+	}
 	if !todoMode.Enabled() {
 		return tools
 	}
@@ -1433,6 +1488,12 @@ type toolCallResult struct {
 type toolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+}
+
+type claudePermissionPromptArgs struct {
+	ToolName  string          `json:"tool_name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
 }
 
 type listProcessesArgs struct {

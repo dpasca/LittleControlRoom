@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudeapproval"
 	"lcroom/internal/claudeartifact"
 	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
@@ -32,13 +33,14 @@ const (
 	claudeOpenElsewhereStatus            = "Claude Code session open in another terminal"
 	claudeFreshReadyStatus               = "Fresh embedded Claude Code session ready. Send a prompt to start it."
 	claudeSupportStatus                  = "Embedded Claude Code session ready"
-	claudeInterruptNotice                = "Interrupted embedded Claude Code turn."
+	claudeInterruptNotice                = "Interrupted embedded Claude Code turn at your request; canceled tool calls were not individually denied."
+	claudeInterruptedCommandResult       = "[interrupted by the explicit Little Control Room stop; this command was not individually denied]"
 	claudeRecoverableAPIErrorNotice      = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
 	claudeCompactingStatus               = "Claude Code is compacting conversation history..."
-	claudeApprovalUnsupported            = "Embedded Claude Code approval responses are not supported yet"
-	claudeToolInputUnsupported           = "Embedded Claude Code tool-input responses are not supported yet"
 	claudeElicitationUnsupported         = "Embedded Claude Code elicitation responses are not supported yet"
-	claudeSafePresetMappingNotice        = "Embedded Claude Code currently maps Safe/Full Auto presets to Claude's acceptEdits mode until Claude-specific approval prompts are wired."
+	claudeSafePresetNotice               = "Embedded Claude Code Safe mode routes unmatched tool requests to Little Control Room for approval."
+	claudeFullAutoPresetNotice           = "Embedded Claude Code Full Auto mode accepts file edits and routes remaining unmatched tool requests to Little Control Room for approval."
+	claudeApprovalUnavailableNotice      = "Embedded Claude Code approval routing is unavailable; unmatched tool requests will be denied."
 	claudeYoloPresetMappingNotice        = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
 	claudeDefaultModelAlias              = "sonnet"
 	claudeFableModelAlias                = "fable"
@@ -74,6 +76,7 @@ type claudeCodeSession struct {
 	runtimeManager           *projectrun.Manager
 	mcpOptions               claudeMCPOptions
 	safetySettings           string
+	approvalServer           *claudeapproval.Server
 
 	mu                 sync.Mutex
 	claudeHome         string
@@ -89,6 +92,11 @@ type claudeCodeSession struct {
 	busySince          time.Time
 	pendingSubmissions int
 	interruptPending   bool
+	pendingApproval    *ApprovalRequest
+	pendingToolInput   *ToolInputRequest
+	pendingClaudeInput *claudeapproval.Request
+	pendingClaudeQueue []claudePendingInteraction
+	interruptedTools   map[string]struct{}
 	lastActivityAt     time.Time
 	model              string
 	reasoningEffort    string
@@ -124,6 +132,12 @@ type claudeCodeSession struct {
 	backgroundTaskOrder []string
 	transcriptRevision  uint64
 	transcriptCache     transcriptExportCache
+}
+
+type claudePendingInteraction struct {
+	request   claudeapproval.Request
+	approval  *ApprovalRequest
+	toolInput *ToolInputRequest
 }
 
 type claudeToolCall struct {
@@ -250,12 +264,26 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 	ensureManagedPlaywrightSessionKey(&req)
 	policy := req.PlaywrightPolicy.Normalize()
+	var approvalServer *claudeapproval.Server
+	if preset != codexcli.PresetYolo {
+		approvalServer, err = claudeapproval.NewServer()
+		if err != nil {
+			return nil, err
+		}
+		req.ClaudeApprovalSocket = approvalServer.SocketPath()
+	}
 	mcpOptions, err := buildClaudeMCPOptions(req)
 	if err != nil {
+		_ = approvalServer.Close()
 		return nil, fmt.Errorf("configure Claude Code MCP servers: %w", err)
+	}
+	if strings.TrimSpace(mcpOptions.PermissionPromptTool) == "" {
+		_ = approvalServer.Close()
+		approvalServer = nil
 	}
 	safetySettings, err := claudeSafetyHookSettings(req)
 	if err != nil {
+		_ = approvalServer.Close()
 		return nil, fmt.Errorf("configure Claude Code destructive-command guard: %w", err)
 	}
 
@@ -269,6 +297,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		runtimeManager:           req.RuntimeManager,
 		mcpOptions:               mcpOptions,
 		safetySettings:           safetySettings,
+		approvalServer:           approvalServer,
 		claudeHome:               claudeHome,
 		planUsageReader:          claudecli.NewPlanUsageReader(),
 		pendingModel:             concreteClaudeModel(req.PendingModel),
@@ -278,6 +307,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		assistantBlocks:          make(map[string]map[string]struct{}),
 		toolCalls:                make(map[string]claudeToolCall),
 		toolResults:              make(map[string]struct{}),
+		interruptedTools:         make(map[string]struct{}),
 		mcpUsageItemIDs:          make(map[string]struct{}),
 		backgroundTasks:          make(map[string]BackgroundTaskSnapshot),
 	}
@@ -301,6 +331,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	s.mu.Lock()
 	if err := s.loadTranscriptLocked(); err != nil {
 		s.mu.Unlock()
+		_ = approvalServer.Close()
 		return nil, fmt.Errorf("load Claude Code session transcript: %w", err)
 	}
 	s.refreshActiveLocked()
@@ -310,9 +341,13 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	s.updateStatusLocked()
 	s.mu.Unlock()
 	s.scheduleClaudePlanUsageRefresh(true)
+	if approvalServer != nil {
+		go s.consumeClaudeApprovalRequests()
+	}
 
 	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
 		if err := s.SubmitInput(initialInput); err != nil {
+			_ = approvalServer.Close()
 			return nil, err
 		}
 	}
@@ -383,6 +418,8 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		Compacting:               s.compacting,
 		BusySince:                s.busySince,
 		Closed:                   s.closed,
+		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
 		ActivityPreview:          activityPreviewFromEntries(s.entries),
 		Status:                   s.status,
 		LastError:                s.lastError,
@@ -503,14 +540,13 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		stdin       io.WriteCloser
 		stdout      io.ReadCloser
 		stderr      io.ReadCloser
-		control     string
 		startStream bool
 	)
 	if s.cmd == nil {
 		model := firstNonEmptyTrimmed(concreteClaudeModel(s.pendingModel), concreteClaudeModel(s.model))
 		reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
 		sessionID := strings.TrimSpace(s.sessionID)
-		permissionMode, modeNotice := claudePermissionModeForPreset(s.preset)
+		permissionMode, modeNotice := claudePermissionModeForPreset(s.preset, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
@@ -542,14 +578,6 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			s.mu.Unlock()
 			return fmt.Errorf("Claude Code is finishing the current turn")
 		}
-		if s.busy {
-			var err error
-			control, err = buildClaudeInterruptRequest()
-			if err != nil {
-				s.mu.Unlock()
-				return fmt.Errorf("encode Claude interrupt: %w", err)
-			}
-		}
 	}
 
 	if s.busySince.IsZero() {
@@ -558,7 +586,6 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	s.busy = true
 	s.busyExternal = false
 	s.pendingSubmissions++
-	s.interruptPending = control != ""
 	if mode == claudeSubmissionCompact {
 		s.status = claudeCompactingStatus
 	} else {
@@ -575,19 +602,6 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		go s.consumeClaudeTurn(ctx, cmd, stdout, stderr)
 	}
 
-	if control != "" {
-		if _, err := io.WriteString(stdin, control+"\n"); err != nil {
-			s.mu.Lock()
-			if s.pendingSubmissions > 0 {
-				s.pendingSubmissions--
-			}
-			s.interruptPending = false
-			s.updateStatusLocked()
-			s.mu.Unlock()
-			return fmt.Errorf("write Claude interrupt: %w", err)
-		}
-	}
-
 	if _, err := io.WriteString(stdin, payload+"\n"); err != nil {
 		if startStream {
 			_ = terminateAppServerCommand(cmd)
@@ -598,7 +612,6 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			if s.pendingSubmissions > 0 {
 				s.pendingSubmissions--
 			}
-			s.interruptPending = false
 			s.updateStatusLocked()
 			s.mu.Unlock()
 		}
@@ -623,6 +636,10 @@ func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode
 		return fmt.Errorf("Claude Code is already compacting conversation history")
 	case mode == claudeSubmissionCompact && (!s.compacting || compactCommand == nil || s.compactCommand != compactCommand):
 		return fmt.Errorf("Claude Code compaction request is no longer active")
+	case s.interruptPending:
+		return fmt.Errorf("Claude Code is stopping the interrupted turn; wait for it to settle before sending another prompt")
+	case s.pendingApproval != nil || s.pendingToolInput != nil:
+		return fmt.Errorf("Claude Code is waiting for your response")
 	case s.busyExternal:
 		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
 	case mode == claudeSubmissionCompact && s.busy:
@@ -657,7 +674,7 @@ func (s *claudeCodeSession) ShowStatus() error {
 	if model == "" {
 		model = "(default)"
 	}
-	mode := claudePermissionModeLabel(s.preset)
+	mode, _ := claudePermissionModeForPreset(s.preset, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
 	sessionFile := strings.TrimSpace(s.sessionFile)
 	if sessionFile == "" {
 		sessionFile = "(not created yet)"
@@ -869,6 +886,7 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 func (s *claudeCodeSession) Interrupt() error {
 	s.mu.Lock()
 	cmd := s.cmd
+	approvalServer := s.approvalServer
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("Claude Code session is closed")
@@ -877,10 +895,17 @@ func (s *claudeCodeSession) Interrupt() error {
 		s.mu.Unlock()
 		return fmt.Errorf("Claude Code is not currently running")
 	}
+	s.markClaudeInterruptedToolsLocked()
+	pendingRequests := s.takeClaudePendingRequestsLocked()
 	s.interruptPending = true
 	s.lastSystemNotice = claudeInterruptNotice
 	s.status = claudeInterruptNotice
 	s.mu.Unlock()
+	for _, pendingRequest := range pendingRequests {
+		if approvalServer != nil {
+			_ = approvalServer.Respond(pendingRequest.ID, claudeapproval.Deny("User interrupted the active Claude Code turn in Little Control Room", true))
+		}
+	}
 
 	if err := terminateAppServerCommand(cmd); err != nil {
 		return err
@@ -978,12 +1003,331 @@ func claudeModelAliasFamily(model string) (string, bool) {
 	return "", false
 }
 
-func (s *claudeCodeSession) RespondApproval(_ ApprovalDecision) error {
-	return fmt.Errorf(claudeApprovalUnsupported)
+func (s *claudeCodeSession) consumeClaudeApprovalRequests() {
+	server := s.approvalServer
+	if server == nil {
+		return
+	}
+	for {
+		select {
+		case request := <-server.Requests():
+			s.handleClaudeApprovalRequest(request)
+		case <-server.Done():
+			return
+		}
+	}
 }
 
-func (s *claudeCodeSession) RespondToolInput(_ map[string][]string) error {
-	return fmt.Errorf(claudeToolInputUnsupported)
+func (s *claudeCodeSession) handleClaudeApprovalRequest(request claudeapproval.Request) {
+	request.ID = strings.TrimSpace(request.ID)
+	request.ToolName = strings.TrimSpace(request.ToolName)
+	if request.ID == "" || request.ToolName == "" {
+		return
+	}
+	interaction := claudePendingInteraction{request: request}
+	var err error
+	if strings.EqualFold(request.ToolName, "AskUserQuestion") {
+		interaction.toolInput, err = claudeToolInputRequest(request)
+	} else {
+		interaction.approval = mapClaudeApprovalRequest(request, s.projectPath)
+	}
+	if err != nil {
+		if s.approvalServer != nil {
+			_ = s.approvalServer.Respond(request.ID, claudeapproval.Deny("Little Control Room could not display Claude Code's question: "+err.Error(), false))
+		}
+		return
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		if s.approvalServer != nil {
+			_ = s.approvalServer.Respond(request.ID, claudeapproval.Deny("Little Control Room closed the Claude Code session", true))
+		}
+		return
+	}
+	if s.interruptPending {
+		s.mu.Unlock()
+		if s.approvalServer != nil {
+			_ = s.approvalServer.Respond(request.ID, claudeapproval.Deny("Little Control Room is stopping the Claude Code turn", true))
+		}
+		return
+	}
+	if s.pendingClaudeInput != nil {
+		s.pendingClaudeQueue = append(s.pendingClaudeQueue, cloneClaudePendingInteraction(interaction))
+	} else {
+		s.setClaudePendingInteractionLocked(interaction)
+	}
+	s.touchLocked()
+	s.updateStatusLocked()
+	s.mu.Unlock()
+	s.notifyAsync()
+}
+
+func cloneClaudePendingInteraction(interaction claudePendingInteraction) claudePendingInteraction {
+	interaction.request = *cloneClaudeApprovalRequest(&interaction.request)
+	interaction.approval = cloneApprovalRequest(interaction.approval)
+	interaction.toolInput = cloneToolInputRequest(interaction.toolInput)
+	return interaction
+}
+
+func (s *claudeCodeSession) setClaudePendingInteractionLocked(interaction claudePendingInteraction) {
+	interaction = cloneClaudePendingInteraction(interaction)
+	s.pendingClaudeInput = &interaction.request
+	s.pendingApproval = interaction.approval
+	s.pendingToolInput = interaction.toolInput
+	if s.pendingApproval != nil {
+		s.pendingApproval.ThreadID = s.sessionID
+	} else if s.pendingToolInput != nil {
+		s.pendingToolInput.ThreadID = s.sessionID
+	}
+}
+
+func (s *claudeCodeSession) advanceClaudePendingInteractionLocked() {
+	if s.pendingClaudeInput != nil || len(s.pendingClaudeQueue) == 0 {
+		return
+	}
+	next := s.pendingClaudeQueue[0]
+	copy(s.pendingClaudeQueue, s.pendingClaudeQueue[1:])
+	s.pendingClaudeQueue[len(s.pendingClaudeQueue)-1] = claudePendingInteraction{}
+	s.pendingClaudeQueue = s.pendingClaudeQueue[:len(s.pendingClaudeQueue)-1]
+	s.setClaudePendingInteractionLocked(next)
+}
+
+func (s *claudeCodeSession) takeClaudePendingRequestsLocked() []claudeapproval.Request {
+	requests := make([]claudeapproval.Request, 0, 1+len(s.pendingClaudeQueue))
+	if s.pendingClaudeInput != nil {
+		requests = append(requests, *cloneClaudeApprovalRequest(s.pendingClaudeInput))
+	}
+	for _, interaction := range s.pendingClaudeQueue {
+		requests = append(requests, *cloneClaudeApprovalRequest(&interaction.request))
+	}
+	s.pendingClaudeInput = nil
+	s.pendingApproval = nil
+	s.pendingToolInput = nil
+	s.pendingClaudeQueue = nil
+	return requests
+}
+
+func (s *claudeCodeSession) markClaudeInterruptedToolsLocked() {
+	if s.interruptedTools == nil {
+		s.interruptedTools = make(map[string]struct{})
+	}
+	for toolUseID := range s.toolCalls {
+		if _, completed := s.toolResults[toolUseID]; completed {
+			continue
+		}
+		s.interruptedTools[toolUseID] = struct{}{}
+	}
+}
+
+func mapClaudeApprovalRequest(request claudeapproval.Request, projectPath string) *ApprovalRequest {
+	summary, command := summarizeClaudeToolUse(request.ToolName, request.Input)
+	approval := &ApprovalRequest{
+		ID:          request.ID,
+		ItemID:      request.ToolUseID,
+		Kind:        ApprovalToolUse,
+		Reason:      "Claude Code requested this tool",
+		ToolName:    request.ToolName,
+		ToolSummary: summary,
+		OnceOnly:    true,
+	}
+	switch request.ToolName {
+	case "Bash":
+		approval.Kind = ApprovalCommandExecution
+		approval.Command = command
+		approval.CWD = strings.TrimSpace(projectPath)
+	case "Edit", "Write", "NotebookEdit":
+		approval.Kind = ApprovalFileChange
+		approval.GrantRoot = firstNonEmptyTrimmed(
+			claudeFileToolPath(request.ToolName, request.Input),
+			summary,
+		)
+	}
+	return approval
+}
+
+func claudeToolInputRequest(request claudeapproval.Request) (*ToolInputRequest, error) {
+	var input struct {
+		Questions []struct {
+			Question    string `json:"question"`
+			Header      string `json:"header"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal(request.Input, &input); err != nil {
+		return nil, fmt.Errorf("decode questions: %w", err)
+	}
+	if len(input.Questions) == 0 {
+		return nil, fmt.Errorf("Claude Code supplied no questions")
+	}
+	questions := make([]ToolInputQuestion, 0, len(input.Questions))
+	for index, raw := range input.Questions {
+		text := strings.TrimSpace(raw.Question)
+		if text == "" {
+			return nil, fmt.Errorf("question %d has no text", index+1)
+		}
+		options := make([]ToolInputOption, 0, len(raw.Options))
+		for _, rawOption := range raw.Options {
+			if label := strings.TrimSpace(rawOption.Label); label != "" {
+				options = append(options, ToolInputOption{
+					Label:       label,
+					Description: strings.TrimSpace(rawOption.Description),
+				})
+			}
+		}
+		questions = append(questions, ToolInputQuestion{
+			Header:      strings.TrimSpace(raw.Header),
+			ID:          fmt.Sprintf("question-%d", index+1),
+			Question:    text,
+			IsOther:     true,
+			MultiSelect: raw.MultiSelect,
+			Options:     options,
+		})
+	}
+	return &ToolInputRequest{
+		ID:        request.ID,
+		ItemID:    request.ToolUseID,
+		Questions: questions,
+	}, nil
+}
+
+func claudeQuestionResponseInput(input json.RawMessage, request *ToolInputRequest, answers map[string][]string) (json.RawMessage, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(input, &payload); err != nil {
+		return nil, fmt.Errorf("decode Claude Code question input: %w", err)
+	}
+	if payload == nil || request == nil {
+		return nil, fmt.Errorf("Claude Code question input is unavailable")
+	}
+	answerPayload := make(map[string]any, len(request.Questions))
+	for _, question := range request.Questions {
+		values := normalizeAnswerValues(answers[question.ID])
+		if len(values) == 0 {
+			return nil, fmt.Errorf("answer required for %q", question.Question)
+		}
+		answerPayload[question.Question] = strings.Join(values, ", ")
+	}
+	encodedAnswers, err := json.Marshal(answerPayload)
+	if err != nil {
+		return nil, fmt.Errorf("encode Claude Code answers: %w", err)
+	}
+	payload["answers"] = encodedAnswers
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode Claude Code question response: %w", err)
+	}
+	return updated, nil
+}
+
+func cloneClaudeApprovalRequest(request *claudeapproval.Request) *claudeapproval.Request {
+	if request == nil {
+		return nil
+	}
+	clone := *request
+	clone.Input = append(json.RawMessage(nil), request.Input...)
+	return &clone
+}
+
+func (s *claudeCodeSession) clearClaudePendingRequestLocked(id string) {
+	if s.pendingClaudeInput == nil || strings.TrimSpace(s.pendingClaudeInput.ID) != strings.TrimSpace(id) {
+		return
+	}
+	s.pendingClaudeInput = nil
+	s.pendingApproval = nil
+	s.pendingToolInput = nil
+}
+
+func (s *claudeCodeSession) RespondApproval(decision ApprovalDecision) error {
+	s.mu.Lock()
+	request := cloneApprovalRequest(s.pendingApproval)
+	bridgeRequest := cloneClaudeApprovalRequest(s.pendingClaudeInput)
+	approvalServer := s.approvalServer
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("Claude Code session is closed")
+	}
+	if request == nil || bridgeRequest == nil || approvalServer == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("no pending Claude Code approval")
+	}
+	if !request.AllowsDecision(decision) {
+		s.mu.Unlock()
+		return fmt.Errorf("this Claude Code approval can only be accepted once")
+	}
+	s.mu.Unlock()
+
+	var response claudeapproval.Response
+	switch decision {
+	case DecisionAccept:
+		response = claudeapproval.Allow(bridgeRequest.Input)
+	case DecisionDecline:
+		response = claudeapproval.Deny("User declined this specific tool request in Little Control Room", false)
+	case DecisionCancel:
+		response = claudeapproval.Deny("User canceled the pending tool request in Little Control Room", true)
+	default:
+		return fmt.Errorf("unsupported Claude Code approval decision %q", decision)
+	}
+	if err := approvalServer.Respond(bridgeRequest.ID, response); err != nil {
+		return err
+	}
+
+	var canceledRequests []claudeapproval.Request
+	s.mu.Lock()
+	s.clearClaudePendingRequestLocked(bridgeRequest.ID)
+	if decision == DecisionCancel {
+		s.markClaudeInterruptedToolsLocked()
+		s.interruptPending = true
+		canceledRequests = s.takeClaudePendingRequestsLocked()
+		s.lastSystemNotice = claudeInterruptNotice
+	} else {
+		s.advanceClaudePendingInteractionLocked()
+	}
+	s.touchLocked()
+	s.updateStatusLocked()
+	s.mu.Unlock()
+	for _, canceledRequest := range canceledRequests {
+		_ = approvalServer.Respond(canceledRequest.ID, claudeapproval.Deny("User canceled the active Claude Code turn in Little Control Room", true))
+	}
+	s.notifyAsync()
+	return nil
+}
+
+func (s *claudeCodeSession) RespondToolInput(answers map[string][]string) error {
+	s.mu.Lock()
+	request := cloneToolInputRequest(s.pendingToolInput)
+	bridgeRequest := cloneClaudeApprovalRequest(s.pendingClaudeInput)
+	approvalServer := s.approvalServer
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("Claude Code session is closed")
+	}
+	if request == nil || bridgeRequest == nil || approvalServer == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("no pending Claude Code question")
+	}
+	s.mu.Unlock()
+
+	updatedInput, err := claudeQuestionResponseInput(bridgeRequest.Input, request, answers)
+	if err != nil {
+		return err
+	}
+	if err := approvalServer.Respond(bridgeRequest.ID, claudeapproval.Allow(updatedInput)); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.clearClaudePendingRequestLocked(bridgeRequest.ID)
+	s.advanceClaudePendingInteractionLocked()
+	s.touchLocked()
+	s.updateStatusLocked()
+	s.mu.Unlock()
+	s.notifyAsync()
+	return nil
 }
 
 func (s *claudeCodeSession) RespondElicitation(_ ElicitationDecision, _ json.RawMessage) error {
@@ -997,6 +1341,7 @@ func (s *claudeCodeSession) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.takeClaudePendingRequestsLocked()
 	s.clearClaudeBrowserHandoffLocked()
 	s.currentBrowserPageURL = ""
 	cmd := s.cmd
@@ -1005,6 +1350,7 @@ func (s *claudeCodeSession) Close() error {
 		s.closeClosedCh()
 	}
 	s.mu.Unlock()
+	_ = s.approvalServer.Close()
 
 	if cmd != nil {
 		return terminateAppServerCommand(cmd)
@@ -1091,15 +1437,19 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	defer s.mu.Unlock()
 
 	compactCommand := s.compactCommand
-	pendingSubmissions := s.pendingSubmissions
 	s.busy = false
 	s.pendingSubmissions = 0
 	s.cmd = nil
 	s.stdin = nil
 	s.cancel = nil
 	s.runningPID = 0
-	interrupted := s.interruptPending && pendingSubmissions <= 1
+	interrupted := s.interruptPending
 	s.interruptPending = false
+	for _, pendingRequest := range s.takeClaudePendingRequestsLocked() {
+		if s.approvalServer != nil {
+			_ = s.approvalServer.Respond(pendingRequest.ID, claudeapproval.Deny("Claude Code ended the turn before the pending request was answered", interrupted))
+		}
+	}
 
 	if s.sessionID != "" {
 		s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, s.sessionID)
@@ -1160,7 +1510,11 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 		switch {
 		case interrupted:
 			s.lastError = ""
-			s.lastSystemNotice = claudeInterruptNotice
+			if !claudeTranscriptHasSystemNotice(s.entries, claudeInterruptNotice) {
+				s.appendSystemNoticeLocked(claudeInterruptNotice)
+			} else {
+				s.lastSystemNotice = claudeInterruptNotice
+			}
 			s.status = claudeReadyStatus
 		case errors.Is(waitErr, ErrClaudeCodeAuthenticationRequired):
 			s.appendSystemErrorLocked(waitErr.Error())
@@ -1354,9 +1708,6 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	case "result":
 		refreshPlanUsage = true
 		interruptedResult := s.interruptPending
-		if interruptedResult {
-			s.interruptPending = false
-		}
 		s.applyClaudeModelUsageLocked(env.ModelUsage)
 		if command := s.compactCommand; command != nil {
 			command.resultText = firstNonEmptyTrimmed(env.Result, env.LastMessage, command.resultText)
@@ -1599,7 +1950,13 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 			continue
 		}
 		text := strings.TrimSpace(flattenClaudeToolResultContent(block.Content))
-		if text == "" {
+		if s.interruptPending && block.IsError {
+			if s.interruptedTools == nil {
+				s.interruptedTools = make(map[string]struct{})
+			}
+			s.interruptedTools[toolUseID] = struct{}{}
+			text = claudeInterruptedCommandResult
+		} else if text == "" {
 			text = "[command completed]"
 		}
 		command := strings.TrimSpace(call.Command)
@@ -1610,6 +1967,7 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 			text = "$ " + command + "\n" + text
 		}
 		s.appendEntryLocked(TranscriptEntry{
+			ItemID:      toolUseID,
 			Kind:        TranscriptCommand,
 			Text:        text,
 			CommandText: command,
@@ -1953,6 +2311,12 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		s.status = "Claude Code session active in another terminal"
 	case s.compacting:
 		s.status = claudeCompactingStatus
+	case s.pendingApproval != nil:
+		s.status = claudePendingInteractionStatus("Waiting for Claude Code tool approval", len(s.pendingClaudeQueue))
+	case s.pendingToolInput != nil:
+		s.status = claudePendingInteractionStatus("Claude Code is waiting for your answer", len(s.pendingClaudeQueue))
+	case s.interruptPending:
+		s.status = claudeInterruptNotice
 	case s.browserHandoffPending:
 		s.status = "Browser needs attention"
 	case s.busy:
@@ -1974,6 +2338,16 @@ func (s *claudeCodeSession) updateStatusLocked() {
 	default:
 		s.status = claudeFreshReadyStatus
 	}
+}
+
+func claudePendingInteractionStatus(base string, queued int) string {
+	if queued <= 0 {
+		return base
+	}
+	if queued == 1 {
+		return base + " (1 more request queued)"
+	}
+	return fmt.Sprintf("%s (%d more requests queued)", base, queued)
 }
 
 func (s *claudeCodeSession) notifyAsync() {
@@ -2057,7 +2431,13 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	sawTokenState := false
 	for sc.Scan() {
 		line := sc.Text()
-		lineEntries, entryType, reasoningEffort, parsedState := parseCCLineEntries(line, toolCalls, toolResults, &conversationTracker)
+		lineEntries, entryType, reasoningEffort, parsedState := parseCCLineEntriesWithInterruptedTools(
+			line,
+			toolCalls,
+			toolResults,
+			s.interruptedTools,
+			&conversationTracker,
+		)
 		entries = append(entries, lineEntries...)
 		applyClaudeBackgroundTaskEvents(backgroundTasks, &backgroundTaskOrder, toolCalls, line, stat.ModTime())
 		if entryType != "" {
@@ -2334,21 +2714,6 @@ func buildClaudeStreamInput(input Submission) (string, error) {
 	return string(data), nil
 }
 
-func buildClaudeInterruptRequest() (string, error) {
-	payload := map[string]any{
-		"type":       "control_request",
-		"request_id": fmt.Sprintf("interrupt-%d", time.Now().UnixNano()),
-		"request": map[string]any{
-			"subtype": "interrupt",
-		},
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
 func claudeSessionFilePath(claudeHome, projectPath, sessionID string) string {
 	if strings.TrimSpace(sessionID) == "" {
 		return ""
@@ -2356,20 +2721,26 @@ func claudeSessionFilePath(claudeHome, projectPath, sessionID string) string {
 	return filepath.Join(claudeHome, "projects", claudeartifact.ProjectDirectoryName(projectPath), sessionID+".jsonl")
 }
 
-func claudePermissionModeForPreset(preset codexcli.Preset) (mode string, notice string) {
+func claudePermissionModeForPreset(preset codexcli.Preset, approvalRouting bool) (mode string, notice string) {
 	switch preset {
 	case codexcli.PresetYolo:
 		return "bypassPermissions", claudeYoloPresetMappingNotice
-	case codexcli.PresetFullAuto, codexcli.PresetSafe:
-		return "acceptEdits", claudeSafePresetMappingNotice
+	case codexcli.PresetFullAuto:
+		if approvalRouting {
+			return "acceptEdits", claudeFullAutoPresetNotice
+		}
+		return "acceptEdits", claudeApprovalUnavailableNotice
+	case codexcli.PresetSafe:
+		if approvalRouting {
+			return "default", claudeSafePresetNotice
+		}
+		return "dontAsk", claudeApprovalUnavailableNotice
 	default:
-		return "acceptEdits", claudeSafePresetMappingNotice
+		if approvalRouting {
+			return "default", claudeSafePresetNotice
+		}
+		return "dontAsk", claudeApprovalUnavailableNotice
 	}
-}
-
-func claudePermissionModeLabel(preset codexcli.Preset) string {
-	mode, _ := claudePermissionModeForPreset(preset)
-	return mode
 }
 
 func summarizeClaudeToolUse(name string, input json.RawMessage) (summary string, command string) {
@@ -2380,6 +2751,8 @@ func summarizeClaudeToolUse(name string, input json.RawMessage) (summary string,
 	switch name {
 	case "Read", "Edit", "Write":
 		return ccExtractString(fields, "file_path"), ""
+	case "NotebookEdit":
+		return ccExtractString(fields, "notebook_path"), ""
 	case "Bash":
 		command = ccExtractString(fields, "command")
 		if len(command) > 120 {
@@ -2398,8 +2771,12 @@ func summarizeClaudeToolUse(name string, input json.RawMessage) (summary string,
 }
 
 func claudeFileToolPath(name string, input json.RawMessage) string {
+	pathKey := ""
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "read", "edit", "write":
+		pathKey = "file_path"
+	case "notebookedit":
+		pathKey = "notebook_path"
 	default:
 		return ""
 	}
@@ -2407,7 +2784,7 @@ func claudeFileToolPath(name string, input json.RawMessage) string {
 	if err := json.Unmarshal(input, &fields); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(ccExtractString(fields, "file_path"))
+	return strings.TrimSpace(ccExtractString(fields, pathKey))
 }
 
 func flattenClaudeToolResultContent(content any) string {
@@ -2461,6 +2838,16 @@ func parseCCLineEntries(
 	line string,
 	toolCalls map[string]claudeToolCall,
 	toolResults map[string]struct{},
+	conversationTracker *claudeartifact.ConversationTracker,
+) ([]TranscriptEntry, string, string, claudeParsedLineState) {
+	return parseCCLineEntriesWithInterruptedTools(line, toolCalls, toolResults, nil, conversationTracker)
+}
+
+func parseCCLineEntriesWithInterruptedTools(
+	line string,
+	toolCalls map[string]claudeToolCall,
+	toolResults map[string]struct{},
+	interruptedTools map[string]struct{},
 	conversationTracker *claudeartifact.ConversationTracker,
 ) ([]TranscriptEntry, string, string, claudeParsedLineState) {
 	var raw struct {
@@ -2525,7 +2912,7 @@ func parseCCLineEntries(
 
 	switch raw.Type {
 	case "user":
-		return extractCCUserEntries(raw.Message.Content, raw.UUID, includeUserText, toolCalls, toolResults), raw.Type, reasoningEffort, state
+		return extractCCUserEntries(raw.Message.Content, raw.UUID, includeUserText, toolCalls, toolResults, interruptedTools), raw.Type, reasoningEffort, state
 
 	case "assistant":
 		entries := extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls)
@@ -2668,6 +3055,7 @@ func extractCCUserEntries(
 	includeText bool,
 	toolCalls map[string]claudeToolCall,
 	toolResults map[string]struct{},
+	interruptedTools map[string]struct{},
 ) []TranscriptEntry {
 	if len(content) == 0 {
 		return nil
@@ -2688,6 +3076,7 @@ func extractCCUserEntries(
 		Type      string          `json:"type"`
 		Content   json.RawMessage `json:"content"`
 		ToolUseID string          `json:"tool_use_id"`
+		IsError   bool            `json:"is_error"`
 	}
 	if err := json.Unmarshal(content, &blocks); err != nil {
 		return entries
@@ -2711,7 +3100,9 @@ func extractCCUserEntries(
 			continue
 		}
 		result := flattenClaudeToolResultRaw(block.Content)
-		if result == "" {
+		if _, interrupted := interruptedTools[toolUseID]; interrupted && block.IsError {
+			result = claudeInterruptedCommandResult
+		} else if result == "" {
 			result = "[command completed]"
 		}
 		command := strings.TrimSpace(call.Command)
@@ -2722,6 +3113,7 @@ func extractCCUserEntries(
 			result = "$ " + command + "\n" + result
 		}
 		entries = append(entries, TranscriptEntry{
+			ItemID:      toolUseID,
 			Kind:        TranscriptCommand,
 			Text:        result,
 			CommandText: command,

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudeapproval"
 	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexcli"
 )
@@ -36,17 +37,20 @@ func (r *recordingWriteCloser) Close() error {
 
 func TestClaudePermissionModeForPreset(t *testing.T) {
 	tests := []struct {
-		preset     codexcli.Preset
-		wantMode   string
-		wantNotice string
+		preset          codexcli.Preset
+		approvalRouting bool
+		wantMode        string
+		wantNotice      string
 	}{
-		{preset: codexcli.PresetYolo, wantMode: "bypassPermissions", wantNotice: claudeYoloPresetMappingNotice},
-		{preset: codexcli.PresetFullAuto, wantMode: "acceptEdits", wantNotice: claudeSafePresetMappingNotice},
-		{preset: codexcli.PresetSafe, wantMode: "acceptEdits", wantNotice: claudeSafePresetMappingNotice},
+		{preset: codexcli.PresetYolo, approvalRouting: true, wantMode: "bypassPermissions", wantNotice: claudeYoloPresetMappingNotice},
+		{preset: codexcli.PresetFullAuto, approvalRouting: true, wantMode: "acceptEdits", wantNotice: claudeFullAutoPresetNotice},
+		{preset: codexcli.PresetSafe, approvalRouting: true, wantMode: "default", wantNotice: claudeSafePresetNotice},
+		{preset: codexcli.PresetFullAuto, approvalRouting: false, wantMode: "acceptEdits", wantNotice: claudeApprovalUnavailableNotice},
+		{preset: codexcli.PresetSafe, approvalRouting: false, wantMode: "dontAsk", wantNotice: claudeApprovalUnavailableNotice},
 	}
 
 	for _, tt := range tests {
-		gotMode, gotNotice := claudePermissionModeForPreset(tt.preset)
+		gotMode, gotNotice := claudePermissionModeForPreset(tt.preset, tt.approvalRouting)
 		if gotMode != tt.wantMode {
 			t.Fatalf("claudePermissionModeForPreset(%q) mode = %q, want %q", tt.preset, gotMode, tt.wantMode)
 		}
@@ -54,6 +58,335 @@ func TestClaudePermissionModeForPreset(t *testing.T) {
 			t.Fatalf("claudePermissionModeForPreset(%q) notice = %q, want %q", tt.preset, gotNotice, tt.wantNotice)
 		}
 	}
+}
+
+func TestClaudeNotebookApprovalUsesNotebookPath(t *testing.T) {
+	request := claudeapproval.Request{
+		ID:       "toolu-notebook",
+		ToolName: "NotebookEdit",
+		Input:    json.RawMessage(`{"notebook_path":"/tmp/demo.ipynb","new_source":"print(1)"}`),
+	}
+	approval := mapClaudeApprovalRequest(request, "/tmp/demo")
+	if approval.Kind != ApprovalFileChange || approval.GrantRoot != "/tmp/demo.ipynb" {
+		t.Fatalf("notebook approval = %#v", approval)
+	}
+	if approval.ToolSummary != "/tmp/demo.ipynb" {
+		t.Fatalf("notebook summary = %q", approval.ToolSummary)
+	}
+}
+
+func TestClaudeApprovalBridgeSurfacesAndAcceptsOneToolRequest(t *testing.T) {
+	server, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 1,
+		approvalServer:     server,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+	go session.consumeClaudeApprovalRequests()
+
+	input := json.RawMessage(`{"command":"make test","description":"Run tests"}`)
+	responseCh := make(chan claudeapproval.Response, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		response, requestErr := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+			ID:        "toolu-approval",
+			ToolName:  "Bash",
+			Input:     input,
+			ToolUseID: "toolu-approval",
+		})
+		responseCh <- response
+		errCh <- requestErr
+	}()
+
+	snapshot := waitForClaudeInteractiveRequest(t, session)
+	if snapshot.PendingApproval == nil || snapshot.PendingApproval.Kind != ApprovalCommandExecution || snapshot.PendingApproval.Command != "make test" {
+		t.Fatalf("pending approval = %#v", snapshot.PendingApproval)
+	}
+	if snapshot.PendingApproval.AllowsDecision(DecisionAcceptForSession) {
+		t.Fatal("Claude permission-prompt-tool request should be one-shot")
+	}
+	if err := session.RespondApproval(DecisionAccept); err != nil {
+		t.Fatalf("RespondApproval() error = %v", err)
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("RequestApproval() error = %v", err)
+	}
+	response := <-responseCh
+	if response.Behavior != "allow" || string(response.UpdatedInput) != string(input) {
+		t.Fatalf("approval response = %#v, want unchanged allow input", response)
+	}
+	if pending := session.Snapshot().PendingApproval; pending != nil {
+		t.Fatalf("PendingApproval after response = %#v, want nil", pending)
+	}
+}
+
+func TestClaudeApprovalBridgeQueuesParallelRequestsWithoutDenyingThem(t *testing.T) {
+	server, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	session := &claudeCodeSession{
+		projectPath:     "/tmp/demo",
+		busy:            true,
+		approvalServer:  server,
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+	go session.consumeClaudeApprovalRequests()
+
+	firstResponse := make(chan claudeapproval.Response, 1)
+	firstErr := make(chan error, 1)
+	go func() {
+		response, requestErr := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+			ID:       "toolu-first",
+			ToolName: "Bash",
+			Input:    json.RawMessage(`{"command":"make test"}`),
+		})
+		firstResponse <- response
+		firstErr <- requestErr
+	}()
+	waitForClaudeApprovalID(t, session, "toolu-first")
+
+	secondResponse := make(chan claudeapproval.Response, 1)
+	secondErr := make(chan error, 1)
+	go func() {
+		response, requestErr := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+			ID:       "toolu-second",
+			ToolName: "Bash",
+			Input:    json.RawMessage(`{"command":"make scan"}`),
+		})
+		secondResponse <- response
+		secondErr <- requestErr
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(session.Snapshot().Status, "1 more request queued") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if snapshot := session.Snapshot(); snapshot.PendingApproval == nil || snapshot.PendingApproval.ID != "toolu-first" || !strings.Contains(snapshot.Status, "1 more request queued") {
+		t.Fatalf("queued approval snapshot = %#v", snapshot)
+	}
+	if err := session.RespondApproval(DecisionAccept); err != nil {
+		t.Fatalf("accept first approval: %v", err)
+	}
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first RequestApproval() error = %v", err)
+	}
+	if response := <-firstResponse; response.Behavior != "allow" {
+		t.Fatalf("first response = %#v", response)
+	}
+
+	waitForClaudeApprovalID(t, session, "toolu-second")
+	if err := session.RespondApproval(DecisionDecline); err != nil {
+		t.Fatalf("decline second approval: %v", err)
+	}
+	if err := <-secondErr; err != nil {
+		t.Fatalf("second RequestApproval() error = %v", err)
+	}
+	if response := <-secondResponse; response.Behavior != "deny" || response.Interrupt {
+		t.Fatalf("second response = %#v, want non-interrupting deny", response)
+	}
+}
+
+func TestClaudeApprovalCancelInterruptsQueuedParallelRequests(t *testing.T) {
+	server, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	session := &claudeCodeSession{
+		projectPath:     "/tmp/demo",
+		busy:            true,
+		approvalServer:  server,
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+	go session.consumeClaudeApprovalRequests()
+
+	responses := map[string]chan claudeapproval.Response{
+		"toolu-first":  make(chan claudeapproval.Response, 1),
+		"toolu-second": make(chan claudeapproval.Response, 1),
+	}
+	errorsByID := map[string]chan error{
+		"toolu-first":  make(chan error, 1),
+		"toolu-second": make(chan error, 1),
+	}
+	request := func(id string) {
+		go func() {
+			response, requestErr := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+				ID:       id,
+				ToolName: "Bash",
+				Input:    json.RawMessage(`{"command":"make test"}`),
+			})
+			responses[id] <- response
+			errorsByID[id] <- requestErr
+		}()
+	}
+	request("toolu-first")
+	waitForClaudeApprovalID(t, session, "toolu-first")
+	request("toolu-second")
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(session.Snapshot().Status, "1 more request queued") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if status := session.Snapshot().Status; !strings.Contains(status, "1 more request queued") {
+		t.Fatalf("second approval was not queued: %q", status)
+	}
+
+	if err := session.RespondApproval(DecisionCancel); err != nil {
+		t.Fatalf("cancel approval: %v", err)
+	}
+	for _, id := range []string{"toolu-first", "toolu-second"} {
+		if err := <-errorsByID[id]; err != nil {
+			t.Fatalf("%s RequestApproval() error = %v", id, err)
+		}
+		if response := <-responses[id]; response.Behavior != "deny" || !response.Interrupt {
+			t.Fatalf("%s response = %#v, want interrupting deny", id, response)
+		}
+	}
+	snapshot := session.Snapshot()
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || !session.interruptPending {
+		t.Fatalf("snapshot after cancel = %#v interruptPending=%t", snapshot, session.interruptPending)
+	}
+}
+
+func TestClaudeApprovalBridgeDistinguishesDeclineFromCancel(t *testing.T) {
+	tests := []struct {
+		name          string
+		decision      ApprovalDecision
+		wantInterrupt bool
+	}{
+		{name: "decline one tool", decision: DecisionDecline},
+		{name: "cancel turn", decision: DecisionCancel, wantInterrupt: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, err := claudeapproval.NewServer()
+			if err != nil {
+				t.Fatalf("NewServer() error = %v", err)
+			}
+			t.Cleanup(func() { _ = server.Close() })
+			session := &claudeCodeSession{
+				projectPath:     "/tmp/demo",
+				busy:            true,
+				approvalServer:  server,
+				assistantBlocks: make(map[string]map[string]struct{}),
+				toolCalls:       make(map[string]claudeToolCall),
+				toolResults:     make(map[string]struct{}),
+			}
+			go session.consumeClaudeApprovalRequests()
+			responseCh := make(chan claudeapproval.Response, 1)
+			go func() {
+				response, _ := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+					ID:        "toolu-decision",
+					ToolName:  "Write",
+					Input:     json.RawMessage(`{"file_path":"/tmp/demo.txt","content":"demo"}`),
+					ToolUseID: "toolu-decision",
+				})
+				responseCh <- response
+			}()
+			waitForClaudeInteractiveRequest(t, session)
+			if err := session.RespondApproval(tt.decision); err != nil {
+				t.Fatalf("RespondApproval() error = %v", err)
+			}
+			response := <-responseCh
+			if response.Behavior != "deny" || response.Interrupt != tt.wantInterrupt {
+				t.Fatalf("decision response = %#v, want interrupt=%t", response, tt.wantInterrupt)
+			}
+			if session.interruptPending != tt.wantInterrupt {
+				t.Fatalf("interruptPending = %t, want %t", session.interruptPending, tt.wantInterrupt)
+			}
+		})
+	}
+}
+
+func TestClaudeApprovalBridgeReturnsStructuredQuestionAnswers(t *testing.T) {
+	server, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	session := &claudeCodeSession{
+		projectPath:     "/tmp/demo",
+		busy:            true,
+		approvalServer:  server,
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+	go session.consumeClaudeApprovalRequests()
+	input := json.RawMessage(`{"questions":[{"question":"Which format?","header":"Format","options":[{"label":"Summary","description":"Brief"},{"label":"Detailed","description":"Full"}],"multiSelect":true}]}`)
+	responseCh := make(chan claudeapproval.Response, 1)
+	go func() {
+		response, _ := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+			ID:        "toolu-question",
+			ToolName:  "AskUserQuestion",
+			Input:     input,
+			ToolUseID: "toolu-question",
+		})
+		responseCh <- response
+	}()
+
+	snapshot := waitForClaudeInteractiveRequest(t, session)
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput == nil || len(snapshot.PendingToolInput.Questions) != 1 {
+		t.Fatalf("interactive snapshot = approval %#v question %#v", snapshot.PendingApproval, snapshot.PendingToolInput)
+	}
+	questionID := snapshot.PendingToolInput.Questions[0].ID
+	if err := session.RespondToolInput(map[string][]string{questionID: {"Summary", "Detailed"}}); err != nil {
+		t.Fatalf("RespondToolInput() error = %v", err)
+	}
+	response := <-responseCh
+	if response.Behavior != "allow" {
+		t.Fatalf("question response = %#v, want allow", response)
+	}
+	var updated struct {
+		Answers map[string]any `json:"answers"`
+	}
+	if err := json.Unmarshal(response.UpdatedInput, &updated); err != nil {
+		t.Fatalf("decode updated input: %v", err)
+	}
+	if updated.Answers["Which format?"] != "Summary, Detailed" {
+		t.Fatalf("answers = %#v", updated.Answers)
+	}
+}
+
+func waitForClaudeApprovalID(t *testing.T, session *claudeCodeSession, id string) Snapshot {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := session.Snapshot()
+		if snapshot.PendingApproval != nil && snapshot.PendingApproval.ID == id {
+			return snapshot
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for Claude Code approval %q", id)
+	return Snapshot{}
+}
+
+func waitForClaudeInteractiveRequest(t *testing.T, session *claudeCodeSession) Snapshot {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := session.Snapshot()
+		if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil {
+			return snapshot
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for Claude Code interactive request")
+	return Snapshot{}
 }
 
 func TestClaudeStdoutLineBuildsToolAndCommandEntries(t *testing.T) {
@@ -536,6 +869,32 @@ func TestParseCCLineEntriesRebuildsStructuredToolEntries(t *testing.T) {
 	}
 	if !strings.Contains(userEntries[0].Text, "$ make test") || !strings.Contains(userEntries[0].Text, "tests passed") {
 		t.Fatalf("user result text = %q, want reconstructed command output", userEntries[0].Text)
+	}
+}
+
+func TestParseCCLineEntriesLabelsKnownExplicitInterruptWithoutRewritingRealDecline(t *testing.T) {
+	assistantLine := `{"type":"assistant","uuid":"msg_1","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"make test"}}]}}`
+	resultLine := `{"type":"user","uuid":"msg_2","parentUuid":"msg_1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"The user doesn't want to proceed with this tool use."}]}}`
+
+	parseResult := func(interruptedTools map[string]struct{}) TranscriptEntry {
+		toolCalls := make(map[string]claudeToolCall)
+		toolResults := make(map[string]struct{})
+		var conversationTracker claudeartifact.ConversationTracker
+		parseCCLineEntriesWithInterruptedTools(assistantLine, toolCalls, toolResults, interruptedTools, &conversationTracker)
+		entries, _, _, _ := parseCCLineEntriesWithInterruptedTools(resultLine, toolCalls, toolResults, interruptedTools, &conversationTracker)
+		if len(entries) != 1 {
+			t.Fatalf("result entries = %#v", entries)
+		}
+		return entries[0]
+	}
+
+	interrupted := parseResult(map[string]struct{}{"toolu_1": {}})
+	if interrupted.ItemID != "toolu_1" || !strings.Contains(interrupted.Text, "not individually denied") || strings.Contains(interrupted.Text, "doesn't want to proceed") {
+		t.Fatalf("explicitly interrupted result = %#v", interrupted)
+	}
+	realDecline := parseResult(nil)
+	if !strings.Contains(realDecline.Text, "doesn't want to proceed") {
+		t.Fatalf("real decline was rewritten: %#v", realDecline)
 	}
 }
 
@@ -1185,9 +1544,10 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		claudeRuntimeMCPAddTODOTool,
 	}
 	got := claudeTurnArgsWithMCP("ses-demo", "sonnet", "high", "acceptEdits", claudeMCPOptions{
-		Config:       config,
-		Prompt:       prompt,
-		AllowedTools: allowedTools,
+		Config:               config,
+		Prompt:               prompt,
+		AllowedTools:         allowedTools,
+		PermissionPromptTool: claudeRuntimeMCPApprovalTool,
 	}, safetySettings)
 	want := []string{
 		"-p",
@@ -1201,6 +1561,7 @@ func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
 		"--settings", safetySettings,
 		"--mcp-config", config,
 		"--append-system-prompt", prompt,
+		"--permission-prompt-tool", claudeRuntimeMCPApprovalTool,
 		"--allowedTools", strings.Join(allowedTools, ","),
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -1331,7 +1692,7 @@ func TestClaudeSnapshotUsesFinishingPhaseWhenBatchIsDraining(t *testing.T) {
 	}
 }
 
-func TestClaudeSubmitInputSteersActiveStream(t *testing.T) {
+func TestClaudeSubmitInputQueuesOnActiveStreamWithoutInterrupting(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &claudeCodeSession{
 		projectPath:        "/tmp/demo",
@@ -1352,20 +1713,17 @@ func TestClaudeSubmitInputSteersActiveStream(t *testing.T) {
 	if session.pendingSubmissions != 2 {
 		t.Fatalf("pendingSubmissions = %d, want 2", session.pendingSubmissions)
 	}
-	if !session.interruptPending {
-		t.Fatalf("interruptPending = false, want true while steer is in flight")
+	if session.interruptPending {
+		t.Fatalf("interruptPending = true, want queued input without an interrupt")
 	}
-	if len(stdin.writes) != 2 {
-		t.Fatalf("stdin writes = %d, want 2", len(stdin.writes))
+	if len(stdin.writes) != 1 {
+		t.Fatalf("stdin writes = %d, want one queued user message", len(stdin.writes))
 	}
-	if !strings.Contains(stdin.writes[0], `"type":"control_request"`) || !strings.Contains(stdin.writes[0], `"subtype":"interrupt"`) {
-		t.Fatalf("first stdin payload = %q, want interrupt control request", stdin.writes[0])
-	}
-	if !strings.Contains(stdin.writes[1], `"type":"user"`) || !strings.Contains(stdin.writes[1], `"text":"keep going"`) {
-		t.Fatalf("second stdin payload = %q, want steered user message", stdin.writes[1])
+	if !strings.Contains(stdin.writes[0], `"type":"user"`) || !strings.Contains(stdin.writes[0], `"text":"keep going"`) {
+		t.Fatalf("stdin payload = %q, want queued user message", stdin.writes[0])
 	}
 	if got := session.entries[len(session.entries)-1]; got.Kind != TranscriptUser || got.Text != "keep going" {
-		t.Fatalf("last entry = %#v, want steered user transcript entry", got)
+		t.Fatalf("last entry = %#v, want queued user transcript entry", got)
 	}
 }
 
@@ -1450,13 +1808,12 @@ func TestClaudeSubmitInputRejectsMissingImageBeforeChangingSessionState(t *testi
 	}
 }
 
-func TestClaudeInterruptedResultKeepsRunningWhileSteeredFollowUpRemains(t *testing.T) {
+func TestClaudeResultKeepsRunningWhileQueuedFollowUpRemains(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &claudeCodeSession{
 		projectPath:        "/tmp/demo",
 		busy:               true,
 		pendingSubmissions: 2,
-		interruptPending:   true,
 		stdin:              stdin,
 		status:             claudeThinkingStatus,
 		assistantBlocks:    make(map[string]map[string]struct{}),
@@ -1464,25 +1821,74 @@ func TestClaudeInterruptedResultKeepsRunningWhileSteeredFollowUpRemains(t *testi
 		toolResults:        make(map[string]struct{}),
 	}
 
-	session.handleClaudeStdoutLine(`{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming"}`)
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"success","is_error":false,"result":"first turn done"}`)
 
 	if session.pendingSubmissions != 1 {
 		t.Fatalf("pendingSubmissions = %d, want 1", session.pendingSubmissions)
 	}
-	if session.interruptPending {
-		t.Fatalf("interruptPending = true, want false after interrupted result")
-	}
 	if stdin.closed {
-		t.Fatalf("stdin should remain open while steered follow-up remains")
+		t.Fatalf("stdin should remain open while queued follow-up remains")
 	}
 	if session.status != claudeThinkingStatus {
 		t.Fatalf("status = %q, want %q", session.status, claudeThinkingStatus)
 	}
 	if session.lastError != "" {
-		t.Fatalf("lastError = %q, want empty after interrupted result", session.lastError)
+		t.Fatalf("lastError = %q, want empty after first queued result", session.lastError)
 	}
 	if snapshot := session.Snapshot(); snapshot.Phase != SessionPhaseRunning {
 		t.Fatalf("snapshot.Phase = %q, want %q", snapshot.Phase, SessionPhaseRunning)
+	}
+}
+
+func TestClaudeExplicitInterruptLabelsCanceledCommandAsInterrupted(t *testing.T) {
+	session := &claudeCodeSession{
+		interruptPending: true,
+		assistantBlocks:  make(map[string]map[string]struct{}),
+		toolCalls: map[string]claudeToolCall{
+			"toolu-command": {Name: "Bash", Command: "make test"},
+		},
+		toolResults: make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu-command","is_error":true,"content":"The user doesn't want to proceed with this tool use."}]}}`)
+
+	if len(session.entries) != 1 {
+		t.Fatalf("entries = %#v, want one interrupted command", session.entries)
+	}
+	entry := session.entries[0]
+	if entry.Kind != TranscriptCommand || !strings.Contains(entry.Text, "not individually denied") {
+		t.Fatalf("interrupted command entry = %#v", entry)
+	}
+	if strings.Contains(entry.Text, "doesn't want to proceed") {
+		t.Fatalf("interrupted command leaked denial wording: %q", entry.Text)
+	}
+}
+
+func TestClaudeExplicitInterruptAppendsSessionNotice(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		busy:               true,
+		pendingSubmissions: 1,
+		interruptPending:   true,
+		stdin:              stdin,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+		backgroundTasks:    make(map[string]BackgroundTaskSnapshot),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Interrupted by user"}`)
+	if !session.interruptPending {
+		t.Fatal("explicit interrupt marker cleared before process completion")
+	}
+	if !stdin.closed {
+		t.Fatal("interrupted result should close stream input")
+	}
+	session.finishClaudeTurn(nil, nil, nil)
+
+	snapshot := session.Snapshot()
+	if snapshot.LastSystemNotice != claudeInterruptNotice || !strings.Contains(snapshot.Transcript, "not individually denied") {
+		t.Fatalf("interrupted snapshot notice=%q transcript=%q", snapshot.LastSystemNotice, snapshot.Transcript)
 	}
 }
 

@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"strings"
 
+	"lcroom/internal/claudeapproval"
 	"lcroom/internal/todocapture"
 )
+
+const claudeRuntimeMCPApprovalTool = "mcp__lcr_runtime__" + claudeapproval.PermissionToolName
 
 type claudeMCPConfig struct {
 	Servers map[string]claudeMCPServer `json:"mcpServers"`
@@ -18,9 +21,10 @@ type claudeMCPServer struct {
 }
 
 type claudeMCPOptions struct {
-	Config       string
-	Prompt       string
-	AllowedTools []string
+	Config               string
+	Prompt               string
+	AllowedTools         []string
+	PermissionPromptTool string
 }
 
 func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
@@ -81,10 +85,15 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 			compactPromptParts = append(compactPromptParts, part)
 		}
 	}
+	permissionPromptTool := ""
+	if runtimeEnabled && strings.TrimSpace(req.ClaudeApprovalSocket) != "" {
+		permissionPromptTool = claudeRuntimeMCPApprovalTool
+	}
 	return claudeMCPOptions{
-		Config:       string(encoded),
-		Prompt:       strings.Join(compactPromptParts, "\n\n"),
-		AllowedTools: allowedTools,
+		Config:               string(encoded),
+		Prompt:               strings.Join(compactPromptParts, "\n\n"),
+		AllowedTools:         allowedTools,
+		PermissionPromptTool: permissionPromptTool,
 	}, nil
 }
 
@@ -102,6 +111,10 @@ func claudeTurnArgsWithMCP(resumeID, model, reasoning, permissionMode string, mc
 	mcp.Prompt = strings.TrimSpace(mcp.Prompt)
 	if mcp.Prompt != "" {
 		args = append(args, "--append-system-prompt", mcp.Prompt)
+	}
+	mcp.PermissionPromptTool = strings.TrimSpace(mcp.PermissionPromptTool)
+	if mcp.PermissionPromptTool != "" {
+		args = append(args, "--permission-prompt-tool", mcp.PermissionPromptTool)
 	}
 	allowedTools := make([]string, 0, len(mcp.AllowedTools))
 	for _, tool := range mcp.AllowedTools {

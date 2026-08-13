@@ -194,6 +194,9 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 	if browserSessionKey := strings.TrimSpace(req.ManagedBrowserSessionKey); browserSessionKey != "" {
 		args = append(args, "--browser-session-key", browserSessionKey)
 	}
+	if approvalSocket := strings.TrimSpace(req.ClaudeApprovalSocket); approvalSocket != "" {
+		args = append(args, "--claude-approval-socket", approvalSocket)
+	}
 	sessionKey := strings.TrimSpace(req.TodoCaptureSessionKey)
 	if sessionKey == "" && !req.ForceNew {
 		sessionKey = strings.TrimSpace(req.ResumeID)

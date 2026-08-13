@@ -23,6 +23,7 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 		CLIExecutablePath:        "/tmp/lcroom-test-bin",
 		TodoCaptureMode:          todocapture.ModeExplicit,
 		ManagedBrowserSessionKey: "browser-session",
+		ClaudeApprovalSocket:     "/tmp/claude-approval.sock",
 		PlaywrightPolicy:         browserctl.DefaultPolicy(),
 	})
 	if err != nil {
@@ -30,6 +31,9 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 	}
 	if options.Config == "" {
 		t.Fatal("buildClaudeMCPOptions() config is empty")
+	}
+	if options.PermissionPromptTool != claudeRuntimeMCPApprovalTool {
+		t.Fatalf("permission prompt tool = %q, want %q", options.PermissionPromptTool, claudeRuntimeMCPApprovalTool)
 	}
 	for _, want := range []string{
 		strings.TrimSpace(todocapture.AgentInstructions(todocapture.ModeExplicit)),
@@ -71,6 +75,7 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 		"--project-path", "/tmp/demo-worktree",
 		"--data-dir", "/tmp/lcroom-data",
 		"--browser-session-key", "browser-session",
+		"--claude-approval-socket", "/tmp/claude-approval.sock",
 	} {
 		if !slices.Contains(runtimeServer.Args, want) {
 			t.Fatalf("runtime server args = %#v, want %q", runtimeServer.Args, want)
@@ -150,6 +155,9 @@ func TestClaudeManagedPlaywrightConfigDoesNotRequireRuntimeMCP(t *testing.T) {
 	}
 	if slices.Contains(options.AllowedTools, claudeRuntimeMCPBrowserAttentionTool) {
 		t.Fatalf("allowed tools = %#v, want no unavailable browser-attention tool", options.AllowedTools)
+	}
+	if options.PermissionPromptTool != "" {
+		t.Fatalf("permission prompt tool = %q, want none without runtime MCP", options.PermissionPromptTool)
 	}
 }
 

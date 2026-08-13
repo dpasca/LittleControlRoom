@@ -247,9 +247,20 @@ func (m Model) renderCodexToolInputBlocks(request codexapp.ToolInputRequest, wid
 	if question.IsSecret {
 		prompt += " [secret]"
 	}
+	if question.MultiSelect {
+		prompt += " [choose one or more]"
+	}
 	lines = append(lines, fitFooterWidth(prompt, width))
 	for i, option := range question.Options {
-		line := fmt.Sprintf("%d %s", i+1, strings.TrimSpace(option.Label))
+		label := strings.TrimSpace(option.Label)
+		marker := ""
+		if question.MultiSelect {
+			marker = "[ ] "
+			if toolInputAnswerSelected(state.Answers[question.ID], label) {
+				marker = "[x] "
+			}
+		}
+		line := fmt.Sprintf("%d %s%s", i+1, marker, label)
 		if desc := strings.TrimSpace(option.Description); desc != "" {
 			line += " - " + desc
 		}
@@ -593,16 +604,29 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	var actions []footerAction
 	switch {
 	case snapshot.PendingToolInput != nil:
+		answerAction := "answer"
+		exitAction := "close"
+		if codexSnapshotCanInterruptActiveTurn(snapshot) {
+			exitAction = "interrupt"
+		}
 		actions = append(actions,
-			footerPrimaryAction("Enter", "answer"),
-			footerExitAction("ctrl+c", "close"),
+			footerPrimaryAction("Enter", answerAction),
+			footerExitAction("ctrl+c", exitAction),
 			footerHideAction("Alt+Up", "hide"),
 			footerLowAction("Alt+C", "copy menu"),
 		)
 		state := m.toolAnswerStateFor(m.codexVisibleProject, snapshot.PendingToolInput)
 		if state.QuestionIndex >= 0 && state.QuestionIndex < len(snapshot.PendingToolInput.Questions) {
-			if len(snapshot.PendingToolInput.Questions[state.QuestionIndex].Options) > 0 {
-				actions = append(actions, footerNavAction("1-9", "choose"))
+			question := snapshot.PendingToolInput.Questions[state.QuestionIndex]
+			if question.MultiSelect {
+				actions[0] = footerPrimaryAction("Enter", "submit")
+			}
+			if len(question.Options) > 0 {
+				optionAction := "choose"
+				if question.MultiSelect {
+					optionAction = "toggle"
+				}
+				actions = append(actions, footerNavAction("1-9", optionAction))
 			}
 		}
 		if len(snapshot.PendingToolInput.Questions) > 1 {
@@ -703,7 +727,11 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
 			enterAction = footerPrimaryAction("Enter", "pause goal")
 		} else if codexSnapshotQueuesBusyInput(snapshot) {
-			enterAction = footerPrimaryAction("Enter", "queue")
+			enterLabel := "queue"
+			if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode {
+				enterLabel = "queue follow-up"
+			}
+			enterAction = footerPrimaryAction("Enter", enterLabel)
 		}
 		ctrlCAction := footerExitAction("ctrl+c", "close")
 		if codexSnapshotCanInterruptActiveTurn(snapshot) {
