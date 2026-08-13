@@ -455,8 +455,10 @@ func TestVisibleCodexCtrlCDoesNotInterruptExternalBusySession(t *testing.T) {
 	if session.interrupted {
 		t.Fatalf("session should not be interrupted")
 	}
-	if !strings.Contains(strings.ToLower(got.status), "another process") {
-		t.Fatalf("status = %q, want clear busy-elsewhere message", got.status)
+	for _, want := range []string{"belongs to another process", "Ctrl+C here cannot stop it", "read-only view"} {
+		if !strings.Contains(got.status, want) {
+			t.Fatalf("status = %q, want %q", got.status, want)
+		}
 	}
 }
 

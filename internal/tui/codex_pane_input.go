@@ -120,7 +120,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openCodexArtifactPicker(snapshot)
 	case "ctrl+c":
 		if snapshot.BusyExternal {
-			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Alt+Up."
+			m.status = "This " + label + " session belongs to another process, so Ctrl+C here cannot stop it. Interrupt it there or hide the read-only view with Alt+Up."
 			return m, nil
 		}
 		if codexSnapshotBrowserWaitingForUser(snapshot) {

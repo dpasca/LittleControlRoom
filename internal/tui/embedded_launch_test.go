@@ -798,6 +798,130 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t 
 	}
 }
 
+func TestLaunchEmbeddedForSelectionAllowsFreshCodexAlongsideExternalClaudeCode(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	var externalClaude *fakeCodexSession
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		snapshot := codexapp.Snapshot{
+			Provider: req.Provider.Normalized(),
+			Started:  true,
+			ThreadID: "thread-codex",
+			Status:   req.Provider.Label() + " session ready",
+		}
+		if req.Provider.Normalized() == codexapp.ProviderClaudeCode {
+			snapshot.Busy = true
+			snapshot.BusyExternal = true
+			snapshot.Phase = codexapp.SessionPhaseExternal
+			snapshot.ThreadID = "session-claude"
+			snapshot.Status = "Claude Code session active in another terminal"
+		}
+		session := &fakeCodexSession{projectPath: req.ProjectPath, snapshot: snapshot}
+		if req.Provider.Normalized() == codexapp.ProviderClaudeCode {
+			externalClaude = session
+		}
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("fresh Codex launch should replace the read-only Claude Code view")
+	}
+	if got.attentionDialog != nil {
+		t.Fatalf("fresh Codex launch should not be blocked by external Claude Code: %#v", got.attentionDialog)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("fresh Codex launch error = %v", opened.err)
+	}
+	for _, want := range []string{
+		"External Claude Code remains open in its other process; LCR did not interrupt it.",
+		"Both sessions may edit this checkout.",
+	} {
+		if !strings.Contains(opened.status, want) {
+			t.Fatalf("opened.status = %q, want %q", opened.status, want)
+		}
+	}
+	if externalClaude == nil || !externalClaude.snapshot.Closed {
+		t.Fatal("LCR's read-only Claude Code view should be closed during replacement")
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want Claude Code viewer plus fresh Codex", len(requests))
+	}
+	if requests[1].Provider.Normalized() != codexapp.ProviderCodex || !requests[1].ForceNew {
+		t.Fatalf("second request = %#v, want forced-new Codex", requests[1])
+	}
+	if provider, ok := manager.SessionProvider("/tmp/demo"); !ok || provider != codexapp.ProviderCodex {
+		t.Fatalf("managed provider = (%q, %t), want Codex", provider, ok)
+	}
+}
+
+func TestLaunchEmbeddedForSelectionStillBlocksOrdinaryOpenAlongsideExternalProvider(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:     req.Provider.Normalized(),
+				Started:      true,
+				Busy:         true,
+				BusyExternal: true,
+				Phase:        codexapp.SessionPhaseExternal,
+				ThreadID:     "session-claude",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, false, "")
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("ordinary Codex open should not switch away from external Claude Code")
+	}
+	if got.attentionDialog == nil || got.attentionDialog.PrimaryProvider != codexapp.ProviderClaudeCode {
+		t.Fatalf("ordinary open blocker = %#v, want Claude Code attention dialog", got.attentionDialog)
+	}
+}
+
 func TestLaunchEmbeddedForSelectionKeepsLiveProviderWhenNestedArtifactIsLatest(t *testing.T) {
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{

@@ -328,6 +328,24 @@ func TestVisibleCodexViewShowsBusyElsewhereWarningBlock(t *testing.T) {
 	}
 }
 
+func TestBusyElsewhereNoticeExplainsFreshSessionsDoNotStopExternalOwner(t *testing.T) {
+	rendered := ansi.Strip(Model{}.renderCodexBusyElsewhereNotice(codexapp.Snapshot{
+		Provider:     codexapp.ProviderClaudeCode,
+		BusyExternal: true,
+		ThreadID:     "session-claude",
+	}, 96))
+	rendered = strings.Join(strings.Fields(rendered), " ")
+	for _, want := range []string{
+		"Ctrl+C cannot stop it here",
+		"leaves that external process running",
+		"both sessions may edit this checkout",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("read-only notice missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestVisibleCodexViewShowsCompactingStateInsteadOfBusyElsewhere(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
