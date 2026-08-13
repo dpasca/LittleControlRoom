@@ -18,6 +18,7 @@ const (
 	KindErrors          Kind = "errors"
 	KindRefresh         Kind = "refresh"
 	KindClean           Kind = "clean"
+	KindCodexGC         Kind = "codex-gc"
 	KindRepairTerminal  Kind = "repair-terminal"
 	KindUpdate          Kind = "update"
 	KindSort            Kind = "sort"
@@ -154,7 +155,7 @@ var specs = []Spec{
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
-	{Name: "clean", Usage: "/clean", Summary: "Review safely eligible Codex session storage before permanent deletion"},
+	{Name: "clean", Usage: "/clean", Summary: "Review and remove merged worktrees that have been safely stale for 24 hours"},
 	{Name: "repair-terminal", Usage: "/repair-terminal", Summary: "Reinitialize terminal display and paste handling"},
 	{Name: "update", Usage: "/update", Summary: "Check for and install a newer GitHub release"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
@@ -187,6 +188,7 @@ var specs = []Spec{
 	{Name: "resolve", Usage: "/resolve", Summary: "Resolve merge conflicts in the background with project-row progress"},
 	{Name: "integrity", Usage: "/integrity", Summary: "Inspect a displaced repository root and choose a safe response"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
+	{Name: "codex-gc", Usage: "/codex-gc", Summary: "Review safely eligible Codex session storage before permanent deletion"},
 	{Name: "new-codex", Usage: "/new-codex [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "claude", Usage: "/claude [prompt]", Summary: "Resume the selected project's latest Claude Code session, or start a new one"},
 	{Name: "new-claude", Usage: "/new-claude [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
@@ -445,6 +447,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /clean")
 		}
 		return Invocation{Kind: KindClean, Canonical: "/clean"}, nil
+	case "codex-gc":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /codex-gc")
+		}
+		return Invocation{Kind: KindCodexGC, Canonical: "/codex-gc"}, nil
 	case "repair-terminal":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /repair-terminal")

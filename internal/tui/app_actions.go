@@ -483,6 +483,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.requestScanCmd(true),
 		)
 	case commands.KindClean:
+		return m.openStaleWorktreeCleanup()
+	case commands.KindCodexGC:
 		return m.openCodexCleanup()
 	case commands.KindRepairTerminal:
 		return m.beginTerminalRepair(false)

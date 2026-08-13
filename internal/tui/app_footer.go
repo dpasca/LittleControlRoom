@@ -222,6 +222,18 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, "Restore worktree: ↑↓ choose, Enter restore and resume, Esc cancel", supplementSegments...)
 	}
+	if m.staleWorktreeCleanup != nil {
+		switch {
+		case m.staleWorktreeCleanup.Loading:
+			return m.renderModalFooter(width, "Stale worktrees: auditing only, Esc close", supplementSegments...)
+		case m.staleWorktreeCleanup.Removing:
+			return m.renderModalFooter(width, "Stale worktrees: revalidation and removal in progress", supplementSegments...)
+		case m.staleWorktreeCleanup.Finished:
+			return m.renderModalFooter(width, "Stale worktree report: Enter/Esc close", supplementSegments...)
+		default:
+			return m.renderModalFooter(width, "Stale worktrees: ↑↓ inspect, Space toggle, Enter remove, R refresh, Esc cancel", supplementSegments...)
+		}
+	}
 	if m.codexCleanup != nil {
 		switch {
 		case m.codexCleanup.Loading:

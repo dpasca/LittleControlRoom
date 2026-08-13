@@ -12,11 +12,11 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestDispatchCleanOpensReadOnlyAudit(t *testing.T) {
-	updated, cmd := (Model{}).dispatchCommand(commands.Invocation{Kind: commands.KindClean})
+func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
+	updated, cmd := (Model{}).dispatchCommand(commands.Invocation{Kind: commands.KindCodexGC})
 	got := updated.(Model)
 	if cmd == nil || got.codexCleanup == nil || !got.codexCleanup.Loading {
-		t.Fatalf("/clean state = %#v, cmd=%v", got.codexCleanup, cmd)
+		t.Fatalf("/codex-gc state = %#v, cmd=%v", got.codexCleanup, cmd)
 	}
 }
 

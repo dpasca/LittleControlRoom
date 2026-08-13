@@ -108,6 +108,9 @@ func (m Model) View() string {
 		if m.actionNoticeDialog != nil {
 			return m.renderActionNoticeDialogOverlay(body, width, height)
 		}
+		if m.staleWorktreeCleanup != nil {
+			return m.renderStaleWorktreeCleanupOverlay(body, width, height)
+		}
 		if m.codexCleanup != nil {
 			return m.renderCodexCleanupOverlay(body, width, height)
 		}
@@ -338,6 +341,9 @@ func (m Model) View() string {
 	}
 	if m.worktreeRestore != nil {
 		body = m.renderWorktreeRestoreOverlay(body, layout.width, layout.height)
+	}
+	if m.staleWorktreeCleanup != nil {
+		body = m.renderStaleWorktreeCleanupOverlay(body, layout.width, layout.height)
 	}
 	if m.codexCleanup != nil {
 		body = m.renderCodexCleanupOverlay(body, layout.width, layout.height)
@@ -1164,6 +1170,13 @@ func (m Model) renderProjectList(width, height int) string {
 			summaryStyle = detailWarningStyle
 		}
 		pendingLaunch, pendingLaunchRow := m.todoPendingLaunchForProjectPath(p.Path)
+		if candidate, idleProvider, stale := m.staleWorktreeCleanupCandidate(p); stale {
+			statusText = "stale"
+			assessmentText = staleWorktreeCleanupSummary(candidate, idleProvider, now)
+			statusStyle = staleWorktreeCleanupStyle()
+			summaryStyle = staleWorktreeCleanupStyle()
+			nameStyle = nameStyle.Inherit(staleWorktreeCleanupStyle())
+		}
 		switch rowMeta.Kind {
 		case projectListRowRepo:
 			if rowMeta.LinkedCount > 0 || orphanedCount > 0 {
@@ -1171,7 +1184,7 @@ func (m Model) renderProjectList(width, height int) string {
 					nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 					summaryStyle = detailWarningStyle
 				}
-				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedPendingIntegrationCount, orphanedCount); badge != "" {
+				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedPendingIntegrationCount, rowMeta.LinkedStaleCount, orphanedCount); badge != "" {
 					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, false)
 				}
 			}
@@ -1214,7 +1227,7 @@ func (m Model) renderProjectList(width, height int) string {
 				nameLabel = "[A] " + nameLabel
 			}
 			if projectIsWorktreeRoot(p) {
-				if badge := worktreeLinkedBadgeSummary(0, 0, 0, 0, orphanedCount); badge != "" {
+				if badge := worktreeLinkedBadgeSummary(0, 0, 0, 0, 0, orphanedCount); badge != "" {
 					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, orphanedCount > 0)
 				}
 			}

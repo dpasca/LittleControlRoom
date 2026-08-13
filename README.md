@@ -157,6 +157,9 @@ agent session.
 worktree without touching the canonical checkout. `/wt merge`, `/wt remove`, and
 `/wt prune` handle the rest. `/wt restore` can rebuild an accidentally deleted
 worktree from Git evidence and resume the exact Codex conversation that was in it.
+Merged, clean worktrees whose latest assessed turn is done become **stale** after
+24 hours without activity. They are marked in the project list, and `/clean`
+opens a batch review with every safe candidate selected by default.
 
 | TODO list | Embedded session | Diff | Commit preview |
 | --- | --- | --- | --- |
@@ -290,8 +293,13 @@ rather than pretending to be a sandbox:
   provably safe. ([details](docs/repository_root_integrity.md))
 - **Explicit confirmation.** Every action an agent proposes through the control
   surface waits for you in the TUI.
-- **Conservative cleanup.** Orphaned worktree folders are only deleted when they
-  contain nothing but a single `.DS_Store`.
+- **Conservative cleanup.** `/clean` only offers present, unpinned linked
+  worktrees that are merged, clean, conflict-free, assessed done, on a completed
+  turn, and inactive for more than 24 hours. Every selection is revalidated
+  before removal; active turns and runtimes are skipped, while an idle
+  LCR-managed engineer session is closed first. Branches and conversation
+  history are preserved. Orphaned folders are only deleted when they contain
+  nothing but a single `.DS_Store`.
 
 ## More
 
