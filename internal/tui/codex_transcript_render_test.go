@@ -2136,6 +2136,83 @@ func TestCodexInlineCodePathScanIgnoresOpenCommandPrefix(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerExposesDirectoryForAsteriskPath(t *testing.T) {
+	directory := t.TempDir()
+	pattern := filepath.Join(directory, "b*.png")
+	snapshot := codexapp.Snapshot{
+		ProjectPath: directory,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Captures: `" + pattern + "`.",
+			},
+		},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: directory,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			directory: snapshot,
+		},
+	}
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("asterisk path should expose a directory without queuing an image preview, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("asterisk path picker state = %#v, want one directory target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "dir" || target.Path != directory || target.Label != filepath.Base(pattern) {
+		t.Fatalf("asterisk path target = %#v, want directory %q with mention %q", target, directory, filepath.Base(pattern))
+	}
+	overlay := ansi.Strip(got.renderCodexArtifactPicker(100, 24))
+	for _, want := range []string{"DIR", filepath.Base(directory), "Mention: " + filepath.Base(pattern)} {
+		if !strings.Contains(overlay, want) {
+			t.Fatalf("asterisk path picker missing %q: %q", want, overlay)
+		}
+	}
+	if strings.Contains(overlay, "Preview") {
+		t.Fatalf("asterisk path directory should not render an image preview: %q", overlay)
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on an asterisk path directory should queue an open command")
+	}
+	rawMsg := cmd()
+	openMsg, ok := rawMsg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("asterisk path open command returned %T, want browserOpenMsg", rawMsg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("asterisk path open command error = %v", openMsg.err)
+	}
+	if opened != directory {
+		t.Fatalf("asterisk path picker opened %q, want directory %q", opened, directory)
+	}
+	_ = updated
+}
+
+func TestCodexAsteriskPathDirectoryStopsBeforeWildcardDirectoryComponent(t *testing.T) {
+	root := t.TempDir()
+	pattern := filepath.Join(root, "rome_*", "b.png")
+
+	directory, ok := codexAsteriskPathDirectory(pattern)
+	if !ok || directory != root {
+		t.Fatalf("codexAsteriskPathDirectory(%q) = %q, %t; want %q, true", pattern, directory, ok, root)
+	}
+}
+
 func TestCodexArtifactTargetsPreferStandaloneAbsolutePathForImplicitProjectRelativeVideo(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "FractalMech")

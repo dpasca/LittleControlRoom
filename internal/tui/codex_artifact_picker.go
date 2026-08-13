@@ -1620,9 +1620,19 @@ func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []code
 	for inputIndex, target := range targets {
 		path := strings.TrimSpace(target.Path)
 		kind := strings.TrimSpace(target.Kind)
-		if path == "" ||
-			codexArtifactPathIsFilesystemRoot(path) ||
-			codexUnexpandedTemplatePathText(path) {
+		if path == "" || codexUnexpandedTemplatePathText(path) {
+			continue
+		}
+		if !strings.EqualFold(kind, "url") && strings.ContainsRune(path, '*') {
+			directory, ok := codexAsteriskPathDirectory(path)
+			if !ok {
+				continue
+			}
+			path = directory
+			kind = "dir"
+			target.PreviewData = nil
+		}
+		if codexArtifactPathIsFilesystemRoot(path) {
 			continue
 		}
 		order := target.order
@@ -1639,6 +1649,22 @@ func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []code
 		out = append(out, target)
 	}
 	return out
+}
+
+func codexAsteriskPathDirectory(path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	asterisk := strings.IndexRune(path, '*')
+	if asterisk < 0 {
+		return "", false
+	}
+	// An asterisk in a transcript path describes a set of files, not one
+	// openable artifact. Expose the nearest concrete containing directory and
+	// leave expansion to the user's file browser.
+	directory := filepath.Clean(filepath.Dir(path[:asterisk]))
+	if directory == "" || directory == "." || codexArtifactPathIsFilesystemRoot(directory) {
+		return "", false
+	}
+	return directory, true
 }
 
 func codexArtifactPathIsFilesystemRoot(path string) bool {
