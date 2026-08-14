@@ -111,6 +111,10 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 // intentionally does not restart generation. A hard helper exit can also
 // leave the captured turn reported as inProgress, so that exact turn is first
 // interrupted through the newly attached app-server.
+func (s *appServerSession) continueSavedInterruptedTurn(req LaunchRequest, input Submission) error {
+	return s.continueInterruptedTurn(req.InterruptedTurnID, input)
+}
+
 func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input Submission) error {
 	capturedTurnID = strings.TrimSpace(capturedTurnID)
 	s.mu.Lock()

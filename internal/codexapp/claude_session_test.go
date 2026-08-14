@@ -1702,6 +1702,158 @@ func TestClaudeSnapshotIncludesBusySinceForInternalTurn(t *testing.T) {
 	}
 }
 
+func TestClaudeLoadTranscriptRestoresStructuredCompletedTurnState(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	startedAt := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(time.Minute)
+	lines := []string{
+		fmt.Sprintf(`{"type":"user","timestamp":%q,"uuid":"prompt","promptSource":"sdk","origin":{"kind":"human"},"message":{"role":"user","content":"finish the task"}}`, startedAt.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"assistant","timestamp":%q,"uuid":"answer","parentUuid":"prompt","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}`, completedAt.Format(time.RFC3339Nano)),
+		`{"type":"queue-operation","operation":"dequeue"}`,
+		`{"type":"last-prompt"}`,
+		`{"type":"ai-title"}`,
+		`{"type":"mode"}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	session := &claudeCodeSession{
+		sessionFile: sessionFile,
+		toolCalls:   make(map[string]claudeToolCall),
+		toolResults: make(map[string]struct{}),
+	}
+	if err := session.loadTranscriptLocked(); err != nil {
+		t.Fatalf("loadTranscriptLocked() error = %v", err)
+	}
+
+	snapshot := session.stateSnapshotLocked()
+	if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted {
+		t.Fatalf("turn state = known:%t completed:%t, want completed", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted)
+	}
+	if !snapshot.LatestTurnStartedAt.IsZero() {
+		t.Fatalf("completed turn start = %v, want zero", snapshot.LatestTurnStartedAt)
+	}
+	if session.busyExternal || session.externalTurnActive {
+		t.Fatalf("completed transcript remained externally busy: busy=%t active=%t", session.busyExternal, session.externalTurnActive)
+	}
+	if !session.latestTurnStateAt.Equal(completedAt) {
+		t.Fatalf("terminal state time = %v, want %v", session.latestTurnStateAt, completedAt)
+	}
+	if !session.latestTurnVerified {
+		t.Fatal("terminal turn state was not marked verified")
+	}
+}
+
+func TestClaudeInterruptedTurnContinuationSkipsCompletedCapturedTurn(t *testing.T) {
+	startedAt := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	session := &claudeCodeSession{
+		sessionID:            "session-completed",
+		started:              true,
+		latestTurnStateKnown: true,
+		latestTurnCompleted:  true,
+		latestTurnVerified:   true,
+		latestTurnStateAt:    startedAt.Add(time.Minute),
+		assistantBlocks:      make(map[string]map[string]struct{}),
+		toolCalls:            make(map[string]claudeToolCall),
+		toolResults:          make(map[string]struct{}),
+		backgroundTasks:      make(map[string]BackgroundTaskSnapshot),
+	}
+
+	if err := session.continueInterruptedTurn(startedAt, Submission{Text: "continue safely"}); err != nil {
+		t.Fatalf("continueInterruptedTurn() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Busy {
+		t.Fatalf("completed captured turn restarted: %+v", snapshot)
+	}
+	if snapshot.LastSystemNotice != claudeRestartCompletedNotice {
+		t.Fatalf("system notice = %q", snapshot.LastSystemNotice)
+	}
+	for _, entry := range snapshot.Entries {
+		if entry.Kind == TranscriptUser && strings.Contains(entry.Text, "continue safely") {
+			t.Fatalf("completed turn received continuation input: %#v", snapshot.Entries)
+		}
+	}
+}
+
+func TestClaudeInterruptedTurnContinuationSubmitsForStructuredIncompleteTurn(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:          "/tmp/demo",
+		started:              true,
+		latestTurnStartedAt:  time.Now().Add(-time.Minute),
+		latestTurnStateKnown: true,
+		latestTurnCompleted:  false,
+		latestTurnVerified:   true,
+		cmd:                  &exec.Cmd{},
+		stdin:                stdin,
+		assistantBlocks:      make(map[string]map[string]struct{}),
+		toolCalls:            make(map[string]claudeToolCall),
+		toolResults:          make(map[string]struct{}),
+		backgroundTasks:      make(map[string]BackgroundTaskSnapshot),
+	}
+
+	if err := session.continueInterruptedTurn(session.latestTurnStartedAt, Submission{Text: "continue safely"}); err != nil {
+		t.Fatalf("continueInterruptedTurn() error = %v", err)
+	}
+	if len(stdin.writes) != 1 || !strings.Contains(stdin.writes[0], "continue safely") {
+		t.Fatalf("continuation writes = %#v", stdin.writes)
+	}
+	if snapshot := session.Snapshot(); !snapshot.Busy || snapshot.LatestTurnCompleted {
+		t.Fatalf("continued snapshot = %+v", snapshot)
+	}
+}
+
+func TestClaudeInterruptedTurnContinuationFailsClosedWhenStateIsAmbiguous(t *testing.T) {
+	startedAt := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		session   *claudeCodeSession
+		wantError string
+	}{
+		{
+			name: "unknown state",
+			session: &claudeCodeSession{
+				sessionID: "session-unknown",
+			},
+			wantError: "structured turn state is unavailable",
+		},
+		{
+			name: "terminal record predates captured turn",
+			session: &claudeCodeSession{
+				sessionID:            "session-stale-terminal",
+				latestTurnStateKnown: true,
+				latestTurnCompleted:  true,
+				latestTurnVerified:   true,
+				latestTurnStateAt:    startedAt.Add(-time.Minute),
+			},
+			wantError: "predates the captured turn",
+		},
+		{
+			name: "assistant record without lifecycle status",
+			session: &claudeCodeSession{
+				sessionID:            "session-ambiguous-assistant",
+				latestTurnStateKnown: true,
+			},
+			wantError: "no explicit lifecycle status",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.session.continueInterruptedTurn(startedAt, Submission{Text: "continue safely"})
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("continueInterruptedTurn() error = %v, want %q", err, tt.wantError)
+			}
+			if snapshot := tt.session.Snapshot(); snapshot.Busy {
+				t.Fatalf("ambiguous turn was restarted: %+v", snapshot)
+			}
+		})
+	}
+}
+
 func TestClaudeSnapshotUsesFinishingPhaseWhenBatchIsDraining(t *testing.T) {
 	session := &claudeCodeSession{
 		projectPath:     "/tmp/demo",

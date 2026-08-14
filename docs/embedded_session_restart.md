@@ -26,9 +26,9 @@ Marking the turn interrupted settles provider state; it does not add an
 would stop when its process closes either way.
 
 The restart-intent file is written atomically with user-only permissions. It
-contains provider, project path, session ID, active turn ID, and capture time;
-the provider's own artifact remains the source of truth for conversation
-content.
+contains provider, project path, session ID, active turn ID when available,
+turn start time, and capture time; the provider's own artifact remains the
+source of truth for conversation content.
 
 Sessions reported as active in another process (`BusyExternal`) are never
 captured or interrupted by this flow.
@@ -67,9 +67,15 @@ interrupts it only when its turn ID matches the journal, waits for the thread to
 become idle, and then calls `turn/start`. If the captured turn completed during
 shutdown, LCR leaves it completed and does not create a duplicate turn.
 
-OpenCode and Claude Code reopen their saved session before receiving the
-continuation prompt. LCAgent resumes from canonical thread state and starts a
-new continuation run.
+Claude Code recovery performs the equivalent check against structured JSONL
+lifecycle fields. A terminal assistant `stop_reason` or `turn_duration` record
+at or after the captured turn start suppresses the continuation prompt and
+settles the saved intent. An explicitly incomplete turn receives the prompt.
+If the exact state cannot be verified, recovery sends nothing and leaves the
+intent available for manual review or a later retry.
+
+OpenCode reopens its saved session before receiving the continuation prompt.
+LCAgent resumes from canonical thread state and starts a new continuation run.
 
 ## Boundary of the guarantee
 

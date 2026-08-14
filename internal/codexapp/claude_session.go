@@ -56,6 +56,7 @@ const (
 	claudeRuntimeMCPAddTODOTool          = "mcp__lcr_runtime__add_project_todo"
 	claudeRuntimeMCPBrowserAttentionTool = "mcp__lcr_runtime__request_browser_attention"
 	claudePlaywrightMCPAllowedTools      = "mcp__playwright__*"
+	claudeRestartCompletedNotice         = "The captured Claude Code turn completed before restart recovery; no continuation prompt was sent."
 	claudePIDStatusBusy                  = "busy"
 	claudePIDStatusIdle                  = "idle"
 	claudePIDStatusShell                 = "shell"
@@ -78,50 +79,55 @@ type claudeCodeSession struct {
 	safetySettings           string
 	approvalServer           *claudeapproval.Server
 
-	mu                 sync.Mutex
-	claudeHome         string
-	sessionFile        string
-	sessionID          string
-	started            bool
-	closed             bool
-	busy               bool
-	busyExternal       bool
-	externalTurnActive bool
-	compacting         bool
-	compactCommand     *claudeCompactCommand
-	busySince          time.Time
-	pendingSubmissions int
-	interruptPending   bool
-	pendingApproval    *ApprovalRequest
-	pendingToolInput   *ToolInputRequest
-	pendingClaudeInput *claudeapproval.Request
-	pendingClaudeQueue []claudePendingInteraction
-	interruptedTools   map[string]struct{}
-	lastActivityAt     time.Time
-	model              string
-	reasoningEffort    string
-	tokenUsage         *TokenUsageSnapshot
-	tokenUsageTracker  claudeTokenUsageTracker
-	modelContextWindow int64
-	planUsageReader    claudePlanUsageReader
-	usageWindows       []UsageWindowSnapshot
-	usageRefreshAt     time.Time
-	usageRefreshActive bool
-	usageRefreshQueued bool
-	pendingModel       string
-	pendingReasoning   string
-	status             string
-	lastError          string
-	lastSystemNotice   string
-	entries            []TranscriptEntry
-	lastFileSize       int64
-	runningPID         int
-	cmd                *exec.Cmd
-	stdin              io.WriteCloser
-	cancel             context.CancelFunc
-	closedCh           chan struct{}
-	closedOnce         sync.Once
-	modeNoticeShown    bool
+	mu                   sync.Mutex
+	claudeHome           string
+	sessionFile          string
+	sessionID            string
+	started              bool
+	closed               bool
+	busy                 bool
+	busyExternal         bool
+	externalTurnActive   bool
+	compacting           bool
+	compactCommand       *claudeCompactCommand
+	busySince            time.Time
+	latestTurnStartedAt  time.Time
+	latestTurnStateAt    time.Time
+	latestTurnStateKnown bool
+	latestTurnCompleted  bool
+	latestTurnVerified   bool
+	pendingSubmissions   int
+	interruptPending     bool
+	pendingApproval      *ApprovalRequest
+	pendingToolInput     *ToolInputRequest
+	pendingClaudeInput   *claudeapproval.Request
+	pendingClaudeQueue   []claudePendingInteraction
+	interruptedTools     map[string]struct{}
+	lastActivityAt       time.Time
+	model                string
+	reasoningEffort      string
+	tokenUsage           *TokenUsageSnapshot
+	tokenUsageTracker    claudeTokenUsageTracker
+	modelContextWindow   int64
+	planUsageReader      claudePlanUsageReader
+	usageWindows         []UsageWindowSnapshot
+	usageRefreshAt       time.Time
+	usageRefreshActive   bool
+	usageRefreshQueued   bool
+	pendingModel         string
+	pendingReasoning     string
+	status               string
+	lastError            string
+	lastSystemNotice     string
+	entries              []TranscriptEntry
+	lastFileSize         int64
+	runningPID           int
+	cmd                  *exec.Cmd
+	stdin                io.WriteCloser
+	cancel               context.CancelFunc
+	closedCh             chan struct{}
+	closedOnce           sync.Once
+	modeNoticeShown      bool
 
 	assistantBlocks     map[string]map[string]struct{}
 	toolCalls           map[string]claudeToolCall
@@ -346,7 +352,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 
 	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
-		if err := s.SubmitInput(initialInput); err != nil {
+		if err := submitLaunchRequestInput(s, req, initialInput); err != nil {
 			_ = approvalServer.Close()
 			return nil, err
 		}
@@ -417,6 +423,9 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		BusyExternal:             s.busyExternal,
 		Compacting:               s.compacting,
 		BusySince:                s.busySince,
+		LatestTurnStartedAt:      s.latestTurnStartedAt,
+		LatestTurnStateKnown:     s.latestTurnStateKnown,
+		LatestTurnCompleted:      s.latestTurnCompleted,
 		Closed:                   s.closed,
 		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
 		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
@@ -484,6 +493,40 @@ func (s *claudeCodeSession) Submit(prompt string) error {
 
 func (s *claudeCodeSession) SubmitInput(input Submission) error {
 	return s.submitInput(input, claudeSubmissionNormal, nil)
+}
+
+func (s *claudeCodeSession) continueSavedInterruptedTurn(req LaunchRequest, input Submission) error {
+	return s.continueInterruptedTurn(req.InterruptedTurnStartedAt, input)
+}
+
+func (s *claudeCodeSession) continueInterruptedTurn(capturedStartedAt time.Time, input Submission) error {
+	s.mu.Lock()
+	known := s.latestTurnStateKnown
+	completed := s.latestTurnCompleted
+	verified := s.latestTurnVerified
+	stateAt := s.latestTurnStateAt
+	sessionID := strings.TrimSpace(s.sessionID)
+	if known && completed && verified {
+		if !capturedStartedAt.IsZero() && (stateAt.IsZero() || stateAt.Before(capturedStartedAt)) {
+			s.mu.Unlock()
+			return fmt.Errorf("cannot verify interrupted Claude Code turn in session %s: the latest terminal transcript record predates the captured turn", shortID(sessionID))
+		}
+		s.appendSystemNoticeLocked(claudeRestartCompletedNotice)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.notifyAsync()
+		return nil
+	}
+	if !known {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot verify interrupted Claude Code turn in session %s: structured turn state is unavailable", shortID(sessionID))
+	}
+	if !verified {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot verify interrupted Claude Code turn in session %s: the latest transcript record has no explicit lifecycle status", shortID(sessionID))
+	}
+	s.mu.Unlock()
+	return s.SubmitInput(input)
 }
 
 func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
@@ -580,8 +623,9 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		}
 	}
 
+	submittedAt := time.Now()
 	if s.busySince.IsZero() {
-		s.busySince = time.Now()
+		s.busySince = submittedAt
 	}
 	s.busy = true
 	s.busyExternal = false
@@ -593,6 +637,11 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 	s.lastError = ""
 	if mode == claudeSubmissionNormal {
+		s.latestTurnStartedAt = submittedAt
+		s.latestTurnStateAt = submittedAt
+		s.latestTurnStateKnown = true
+		s.latestTurnCompleted = false
+		s.latestTurnVerified = true
 		s.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: displayText})
 	}
 	s.touchLocked()
@@ -2428,6 +2477,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	backgroundTasks := make(map[string]BackgroundTaskSnapshot)
 	backgroundTaskOrder := []string{}
 	var conversationTracker claudeartifact.ConversationTracker
+	var turnTracker claudeartifact.TurnTracker
 	lastType := ""
 	latestReasoningEffort := ""
 	latestModel := ""
@@ -2444,6 +2494,8 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 			&conversationTracker,
 		)
 		entries = append(entries, lineEntries...)
+		parsedState.turnObservation.AsyncEvents = claudeartifact.ParseAsyncTaskEvents([]byte(line))
+		turnTracker.Observe(parsedState.turnObservation)
 		applyClaudeBackgroundTaskEvents(backgroundTasks, &backgroundTaskOrder, toolCalls, line, stat.ModTime())
 		if entryType != "" {
 			lastType = entryType
@@ -2489,14 +2541,25 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	s.tokenUsageTracker = usageTracker
 	s.invalidateTranscriptCacheLocked()
 	s.lastFileSize = stat.Size()
+	turnState := turnTracker.State()
+	s.latestTurnStartedAt = turnState.StartedAt
+	s.latestTurnStateAt = turnState.UpdatedAt
+	s.latestTurnStateKnown = turnState.Known
+	s.latestTurnCompleted = turnState.Completed
+	s.latestTurnVerified = turnState.Verified
 
-	switch lastType {
-	case "assistant", "progress":
-		s.busyExternal = true
-		s.externalTurnActive = true
-	default:
-		s.busyExternal = false
-		s.externalTurnActive = false
+	if turnState.Known {
+		s.busyExternal = !turnState.Completed
+		s.externalTurnActive = !turnState.Completed
+	} else {
+		switch lastType {
+		case "assistant", "progress":
+			s.busyExternal = true
+			s.externalTurnActive = true
+		default:
+			s.busyExternal = false
+			s.externalTurnActive = false
+		}
 	}
 
 	if len(entries) > 0 {
@@ -2858,6 +2921,7 @@ func parseCCLineEntriesWithInterruptedTools(
 	var raw struct {
 		Type              string                `json:"type"`
 		Subtype           string                `json:"subtype"`
+		Timestamp         string                `json:"timestamp"`
 		IsMeta            bool                  `json:"isMeta"`
 		IsCompactSummary  bool                  `json:"isCompactSummary"`
 		UUID              string                `json:"uuid"`
@@ -2873,11 +2937,12 @@ func parseCCLineEntriesWithInterruptedTools(
 			Kind string `json:"kind"`
 		} `json:"origin"`
 		Message struct {
-			ID      string           `json:"id"`
-			Role    string           `json:"role"`
-			Content json.RawMessage  `json:"content"`
-			Model   string           `json:"model"`
-			Usage   claudeTokenUsage `json:"usage"`
+			ID         string           `json:"id"`
+			Role       string           `json:"role"`
+			Content    json.RawMessage  `json:"content"`
+			Model      string           `json:"model"`
+			Usage      claudeTokenUsage `json:"usage"`
+			StopReason string           `json:"stop_reason"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal([]byte(line), &raw); err != nil {
@@ -2886,6 +2951,14 @@ func parseCCLineEntriesWithInterruptedTools(
 	reasoningEffort := strings.TrimSpace(raw.Effort)
 	state := claudeParsedLineState{
 		model: concreteClaudeModel(firstNonEmptyTrimmed(raw.Message.Model, raw.Model)),
+		turnObservation: claudeartifact.TurnObservation{
+			Type:                raw.Type,
+			Subtype:             raw.Subtype,
+			AssistantStopReason: raw.Message.StopReason,
+		},
+	}
+	if raw.Timestamp != "" {
+		state.turnObservation.At, _ = time.Parse(time.RFC3339Nano, raw.Timestamp)
 	}
 	if raw.Type == "assistant" {
 		state.usage = claudeTokenUsageSnapshot(raw.Message.Usage, 0)
@@ -2910,6 +2983,7 @@ func parseCCLineEntriesWithInterruptedTools(
 			OriginKind:       raw.Origin.Kind,
 		})
 	}
+	state.turnObservation.ConversationalUser = includeUserText
 
 	if raw.IsMeta || raw.IsCompactSummary {
 		return nil, raw.Type, reasoningEffort, state
@@ -2968,6 +3042,7 @@ type claudeParsedLineState struct {
 	usageID         string
 	compactBoundary bool
 	compactMetadata claudeCompactMetadata
+	turnObservation claudeartifact.TurnObservation
 }
 
 func extractCCTextContent(content json.RawMessage) string {

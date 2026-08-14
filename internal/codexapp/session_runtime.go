@@ -135,13 +135,13 @@ func (s *appServerSession) start(req LaunchRequest) error {
 
 	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
 		if req.ContinueInterruptedTurn {
-			return s.continueInterruptedTurn(req.InterruptedTurnID, initialInput)
+			return submitLaunchRequestInput(s, req, initialInput)
 		}
 		if snapshot := s.Snapshot(); snapshot.BusyExternal {
 			s.appendSystemNotice("This Codex session is already active in another process. The embedded prompt was not sent; use /new-codex for a separate session.")
 			return nil
 		}
-		return s.SubmitInput(initialInput)
+		return submitLaunchRequestInput(s, req, initialInput)
 	}
 	return nil
 }

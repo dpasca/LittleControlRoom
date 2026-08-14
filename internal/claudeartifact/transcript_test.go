@@ -1,6 +1,84 @@
 package claudeartifact
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestTurnTrackerUsesStructuredTerminalStateAndPendingTasks(t *testing.T) {
+	startedAt := time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(time.Minute)
+	var tracker TurnTracker
+
+	tracker.Observe(TurnObservation{
+		Type:               "user",
+		At:                 startedAt,
+		ConversationalUser: true,
+	})
+	tracker.Observe(TurnObservation{
+		Type:                "assistant",
+		At:                  startedAt.Add(30 * time.Second),
+		AssistantStopReason: "tool_use",
+		AsyncEvents: []AsyncTaskEvent{{
+			Kind:   AsyncTaskLaunched,
+			TaskID: "task-1",
+			At:     startedAt.Add(30 * time.Second),
+		}},
+	})
+	tracker.Observe(TurnObservation{
+		Type:                "assistant",
+		At:                  completedAt,
+		AssistantStopReason: "end_turn",
+	})
+
+	state := tracker.State()
+	if !state.Known || state.Completed || !state.Verified {
+		t.Fatalf("state with pending task = %#v, want known incomplete", state)
+	}
+	if !state.StartedAt.Equal(startedAt.Add(30 * time.Second)) {
+		t.Fatalf("pending task start = %v, want %v", state.StartedAt, startedAt.Add(30*time.Second))
+	}
+
+	tracker.Observe(TurnObservation{
+		Type: "queue-operation",
+		At:   completedAt.Add(time.Second),
+		AsyncEvents: []AsyncTaskEvent{{
+			Kind:   AsyncTaskUpdated,
+			TaskID: "task-1",
+			Status: "completed",
+			At:     completedAt.Add(time.Second),
+		}},
+	})
+	tracker.Observe(TurnObservation{
+		Type:    "system",
+		Subtype: "turn_duration",
+		At:      completedAt.Add(2 * time.Second),
+	})
+
+	state = tracker.State()
+	if !state.Known || !state.Completed || !state.Verified {
+		t.Fatalf("terminal state = %#v, want known completed", state)
+	}
+	if !state.StartedAt.IsZero() {
+		t.Fatalf("completed state retained start %v", state.StartedAt)
+	}
+	if !state.UpdatedAt.Equal(completedAt.Add(2 * time.Second)) {
+		t.Fatalf("completed state time = %v", state.UpdatedAt)
+	}
+}
+
+func TestTurnTrackerMarksMissingAssistantStopReasonUnverified(t *testing.T) {
+	var tracker TurnTracker
+	tracker.Observe(TurnObservation{
+		Type: "assistant",
+		At:   time.Date(2026, 8, 14, 1, 0, 0, 0, time.UTC),
+	})
+
+	state := tracker.State()
+	if !state.Known || state.Completed || state.Verified {
+		t.Fatalf("state = %#v, want known incomplete but unverified", state)
+	}
+}
 
 func TestConversationTrackerFiltersGeneratedUserChain(t *testing.T) {
 	var tracker ConversationTracker

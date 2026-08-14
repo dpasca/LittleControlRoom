@@ -1027,13 +1027,14 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 }
 
 type embeddedLaunchOptions struct {
-	forceNew                bool
-	prompt                  string
-	reveal                  bool
-	resumeID                string
-	continueInterruptedTurn bool
-	interruptedTurnID       string
-	restartWarmup           bool
+	forceNew                 bool
+	prompt                   string
+	reveal                   bool
+	resumeID                 string
+	continueInterruptedTurn  bool
+	interruptedTurnID        string
+	interruptedTurnStartedAt time.Time
+	restartWarmup            bool
 }
 
 func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) codexapp.LaunchRequest {
@@ -1045,6 +1046,7 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		Prompt:                     options.prompt,
 		ContinueInterruptedTurn:    options.continueInterruptedTurn,
 		InterruptedTurnID:          options.interruptedTurnID,
+		InterruptedTurnStartedAt:   options.interruptedTurnStartedAt,
 		Preset:                     m.currentCodexLaunchPreset(),
 		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
 		AppDataDir:                 m.appDataDir(),

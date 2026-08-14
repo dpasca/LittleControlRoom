@@ -46,6 +46,7 @@ type suspendedTurnResumeChoice struct {
 	Provider       codexapp.Provider
 	SessionID      string
 	ActiveTurnID   string
+	TurnStartedAt  time.Time
 	Parallel       bool
 	LastActivity   time.Time
 	Summary        string
@@ -242,6 +243,7 @@ func buildRestartIntentResumeChoices(projects []model.ProjectSummary, intents []
 			Provider:       intent.Provider.Normalized(),
 			SessionID:      strings.TrimSpace(intent.SessionID),
 			ActiveTurnID:   strings.TrimSpace(intent.ActiveTurnID),
+			TurnStartedAt:  intent.TurnStartedAt,
 			Parallel:       intent.Parallel,
 			LastActivity:   activity,
 			Summary:        strings.TrimSpace(project.LatestSessionSummary),
@@ -311,12 +313,13 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 			updated, cmd = m.resumeParallelMergeConflictResolver(project, choice)
 		} else {
 			updated, cmd = m.launchEmbeddedForProjectWithOptions(project, choice.Provider, embeddedLaunchOptions{
-				reveal:                  false,
-				resumeID:                choice.SessionID,
-				prompt:                  suspendedTurnContinuationPromptForChoice(choice),
-				continueInterruptedTurn: choice.CapturedOnQuit,
-				interruptedTurnID:       choice.ActiveTurnID,
-				restartWarmup:           true,
+				reveal:                   false,
+				resumeID:                 choice.SessionID,
+				prompt:                   suspendedTurnContinuationPromptForChoice(choice),
+				continueInterruptedTurn:  choice.CapturedOnQuit,
+				interruptedTurnID:        choice.ActiveTurnID,
+				interruptedTurnStartedAt: choice.TurnStartedAt,
+				restartWarmup:            true,
 			})
 		}
 		m = normalizeUpdateModel(updated)

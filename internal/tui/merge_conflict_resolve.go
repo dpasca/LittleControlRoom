@@ -788,12 +788,13 @@ func (m Model) resumeParallelMergeConflictResolver(project model.ProjectSummary,
 		Parallel:    true,
 	}
 	return m.launchParallelMergeConflictResolverWithOptions(project.Path, project, choice.Provider, embeddedLaunchOptions{
-		resumeID:                choice.SessionID,
-		prompt:                  suspendedTurnContinuationPromptForChoice(choice),
-		reveal:                  false,
-		continueInterruptedTurn: choice.CapturedOnQuit,
-		interruptedTurnID:       choice.ActiveTurnID,
-		restartWarmup:           true,
+		resumeID:                 choice.SessionID,
+		prompt:                   suspendedTurnContinuationPromptForChoice(choice),
+		reveal:                   false,
+		continueInterruptedTurn:  choice.CapturedOnQuit,
+		interruptedTurnID:        choice.ActiveTurnID,
+		interruptedTurnStartedAt: choice.TurnStartedAt,
+		restartWarmup:            true,
 	}, intent.Key())
 }
 
