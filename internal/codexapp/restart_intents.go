@@ -25,12 +25,13 @@ var restartIntentMu sync.Mutex
 // artifacts remain the source of truth for conversation history, while this
 // file records the user's intent to continue work after restarting LCR.
 type RestartIntent struct {
-	Provider     Provider  `json:"provider"`
-	ProjectPath  string    `json:"project_path"`
-	SessionID    string    `json:"session_id"`
-	ActiveTurnID string    `json:"active_turn_id,omitempty"`
-	Parallel     bool      `json:"parallel,omitempty"`
-	CapturedAt   time.Time `json:"captured_at"`
+	Provider      Provider  `json:"provider"`
+	ProjectPath   string    `json:"project_path"`
+	SessionID     string    `json:"session_id"`
+	ActiveTurnID  string    `json:"active_turn_id,omitempty"`
+	TurnStartedAt time.Time `json:"turn_started_at,omitempty"`
+	Parallel      bool      `json:"parallel,omitempty"`
+	CapturedAt    time.Time `json:"captured_at"`
 }
 
 func (i RestartIntent) Key() string {
@@ -52,6 +53,9 @@ func (i RestartIntent) normalized() RestartIntent {
 	i.ProjectPath = strings.TrimSpace(i.ProjectPath)
 	i.SessionID = strings.TrimSpace(i.SessionID)
 	i.ActiveTurnID = strings.TrimSpace(i.ActiveTurnID)
+	if !i.TurnStartedAt.IsZero() {
+		i.TurnStartedAt = i.TurnStartedAt.UTC()
+	}
 	i.CapturedAt = i.CapturedAt.UTC()
 	return i
 }
@@ -89,12 +93,13 @@ func restartIntentsFromSnapshots(snapshots []Snapshot, capturedAt time.Time, par
 			continue
 		}
 		intent := RestartIntent{
-			Provider:     snapshot.Provider.Normalized(),
-			ProjectPath:  snapshot.ProjectPath,
-			SessionID:    snapshot.ThreadID,
-			ActiveTurnID: snapshot.ActiveTurnID,
-			Parallel:     parallel,
-			CapturedAt:   capturedAt,
+			Provider:      snapshot.Provider.Normalized(),
+			ProjectPath:   snapshot.ProjectPath,
+			SessionID:     snapshot.ThreadID,
+			ActiveTurnID:  snapshot.ActiveTurnID,
+			TurnStartedAt: restartIntentTurnStartedAt(snapshot),
+			Parallel:      parallel,
+			CapturedAt:    capturedAt,
 		}.normalized()
 		key := intent.Key()
 		if key == "" {
@@ -113,6 +118,13 @@ func restartIntentsFromSnapshots(snapshots []Snapshot, capturedAt time.Time, par
 		return intents[i].ProjectPath < intents[j].ProjectPath
 	})
 	return intents
+}
+
+func restartIntentTurnStartedAt(snapshot Snapshot) time.Time {
+	if !snapshot.LatestTurnStartedAt.IsZero() {
+		return snapshot.LatestTurnStartedAt
+	}
+	return snapshot.BusySince
 }
 
 func restartableOwnedSnapshot(snapshot Snapshot) bool {

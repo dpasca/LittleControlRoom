@@ -13,6 +13,7 @@ import (
 
 func TestRestartIntentsFromSnapshotsKeepsOnlyLocallyOwnedInFlightTurns(t *testing.T) {
 	capturedAt := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	turnStartedAt := capturedAt.Add(-time.Minute)
 	intents := RestartIntentsFromSnapshots([]Snapshot{
 		{
 			Provider:     ProviderCodex,
@@ -21,6 +22,7 @@ func TestRestartIntentsFromSnapshotsKeepsOnlyLocallyOwnedInFlightTurns(t *testin
 			ActiveTurnID: "turn-busy",
 			Started:      true,
 			Busy:         true,
+			BusySince:    turnStartedAt,
 			Phase:        SessionPhaseRunning,
 		},
 		{
@@ -46,7 +48,7 @@ func TestRestartIntentsFromSnapshotsKeepsOnlyLocallyOwnedInFlightTurns(t *testin
 		t.Fatalf("restart intents = %#v, want only one locally-owned busy turn", intents)
 	}
 	got := intents[0]
-	if got.Provider != ProviderCodex || got.ProjectPath != "/tmp/busy" || got.SessionID != "thread-busy" || got.ActiveTurnID != "turn-busy" || !got.CapturedAt.Equal(capturedAt) {
+	if got.Provider != ProviderCodex || got.ProjectPath != "/tmp/busy" || got.SessionID != "thread-busy" || got.ActiveTurnID != "turn-busy" || !got.TurnStartedAt.Equal(turnStartedAt) || !got.CapturedAt.Equal(capturedAt) {
 		t.Fatalf("restart intent = %#v", got)
 	}
 }
@@ -88,6 +90,7 @@ func TestAcknowledgeRestartIntentsSerializesParallelSessionOpens(t *testing.T) {
 
 func TestManagerCloseAllForRestartPersistsInterruptsAndCloses(t *testing.T) {
 	dataDir := t.TempDir()
+	turnStartedAt := time.Date(2026, 7, 12, 9, 59, 0, 0, time.UTC)
 	created := map[string]*fakeSession{}
 	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
 		snapshot := Snapshot{
@@ -100,6 +103,7 @@ func TestManagerCloseAllForRestartPersistsInterruptsAndCloses(t *testing.T) {
 		}
 		if req.ProjectPath == "/tmp/busy" {
 			snapshot.Busy = true
+			snapshot.BusySince = turnStartedAt
 			snapshot.ActiveTurnID = "turn-busy"
 			snapshot.Phase = SessionPhaseRunning
 		}
@@ -147,7 +151,7 @@ func TestManagerCloseAllForRestartPersistsInterruptsAndCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRestartIntents() error = %v", err)
 	}
-	if len(loaded) != 1 || loaded[0].Key() != intents[0].Key() {
+	if len(loaded) != 1 || loaded[0].Key() != intents[0].Key() || !loaded[0].TurnStartedAt.Equal(turnStartedAt) {
 		t.Fatalf("loaded intents = %#v", loaded)
 	}
 	path, err := restartIntentPath(dataDir)

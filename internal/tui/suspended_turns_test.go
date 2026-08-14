@@ -127,11 +127,12 @@ func TestBuildRestartIntentResumeChoicesUsesProjectMetadataWithoutPromotingArtif
 		LatestTurnCompleted:      false,
 	}}
 	intents := []codexapp.RestartIntent{{
-		Provider:     codexapp.ProviderCodex,
-		ProjectPath:  "/tmp/saved",
-		SessionID:    "saved-thread",
-		ActiveTurnID: "saved-turn",
-		CapturedAt:   now.Add(-time.Minute),
+		Provider:      codexapp.ProviderCodex,
+		ProjectPath:   "/tmp/saved",
+		SessionID:     "saved-thread",
+		ActiveTurnID:  "saved-turn",
+		TurnStartedAt: now.Add(-2 * time.Minute),
+		CapturedAt:    now.Add(-time.Minute),
 	}}
 
 	choices := buildRestartIntentResumeChoices(projects, intents)
@@ -139,12 +140,14 @@ func TestBuildRestartIntentResumeChoicesUsesProjectMetadataWithoutPromotingArtif
 		t.Fatalf("choices len = %d, want only the journaled session: %#v", len(choices), choices)
 	}
 	choice := choices[0]
-	if choice.ProjectPath != "/tmp/saved" || choice.ProjectName != "saved display name" || choice.Summary != "saved summary" || choice.SessionID != "saved-thread" || !choice.CapturedOnQuit {
+	if choice.ProjectPath != "/tmp/saved" || choice.ProjectName != "saved display name" || choice.Summary != "saved summary" || choice.SessionID != "saved-thread" || !choice.TurnStartedAt.Equal(intents[0].TurnStartedAt) || !choice.CapturedOnQuit {
 		t.Fatalf("journaled choice = %#v", choice)
 	}
 }
 
 func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
+	turnAStartedAt := time.Date(2026, 5, 21, 11, 58, 0, 0, time.UTC)
+	turnBStartedAt := turnAStartedAt.Add(time.Minute)
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
@@ -167,8 +170,8 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	}
 
 	updated, cmd := m.Update(suspendedTurnResumeChoicesMsg{choices: []suspendedTurnResumeChoice{
-		{ProjectPath: "/tmp/a", ProjectName: "a", Provider: codexapp.ProviderCodex, SessionID: "cx-a", ActiveTurnID: "turn-a", CapturedOnQuit: true},
-		{ProjectPath: "/tmp/b", ProjectName: "b", Provider: codexapp.ProviderClaudeCode, SessionID: "cc-b", ActiveTurnID: "turn-b", CapturedOnQuit: true},
+		{ProjectPath: "/tmp/a", ProjectName: "a", Provider: codexapp.ProviderCodex, SessionID: "cx-a", ActiveTurnID: "turn-a", TurnStartedAt: turnAStartedAt, CapturedOnQuit: true},
+		{ProjectPath: "/tmp/b", ProjectName: "b", Provider: codexapp.ProviderClaudeCode, SessionID: "cc-b", ActiveTurnID: "turn-b", TurnStartedAt: turnBStartedAt, CapturedOnQuit: true},
 	}})
 	if cmd != nil {
 		t.Fatalf("choices msg should not launch until the user confirms")
@@ -214,13 +217,13 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	if requests[0].ProjectPath != "/tmp/a" || requests[0].Provider != codexapp.ProviderCodex || requests[0].ResumeID != "cx-a" {
 		t.Fatalf("first request = %#v", requests[0])
 	}
-	if !requests[0].ContinueInterruptedTurn || requests[0].InterruptedTurnID != "turn-a" || requests[0].Prompt != suspendedTurnContinuationPrompt {
+	if !requests[0].ContinueInterruptedTurn || requests[0].InterruptedTurnID != "turn-a" || !requests[0].InterruptedTurnStartedAt.Equal(turnAStartedAt) || requests[0].Prompt != suspendedTurnContinuationPrompt {
 		t.Fatalf("captured first request did not start an explicit continuation: %#v", requests[0])
 	}
 	if requests[1].ProjectPath != "/tmp/b" || requests[1].Provider != codexapp.ProviderClaudeCode || requests[1].ResumeID != "cc-b" {
 		t.Fatalf("second request = %#v", requests[1])
 	}
-	if !requests[1].ContinueInterruptedTurn || requests[1].InterruptedTurnID != "turn-b" || requests[1].Prompt != suspendedTurnContinuationPrompt {
+	if !requests[1].ContinueInterruptedTurn || requests[1].InterruptedTurnID != "turn-b" || !requests[1].InterruptedTurnStartedAt.Equal(turnBStartedAt) || requests[1].Prompt != suspendedTurnContinuationPrompt {
 		t.Fatalf("captured second request did not start an explicit continuation: %#v", requests[1])
 	}
 	for i, msg := range msgs {

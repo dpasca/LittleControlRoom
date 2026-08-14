@@ -685,8 +685,9 @@ type LaunchRequest struct {
 	// graceful-shutdown journal. Reopening a provider session restores context;
 	// this flag authorizes starting a new turn that continues the interrupted
 	// work after the provider helper has restarted.
-	ContinueInterruptedTurn bool
-	InterruptedTurnID       string
+	ContinueInterruptedTurn  bool
+	InterruptedTurnID        string
+	InterruptedTurnStartedAt time.Time
 
 	// ReconnectTranscript carries the richer live transcript across an explicit
 	// helper restart. Codex resume responses can omit tool activity from an
@@ -819,6 +820,19 @@ type busyReconciler interface {
 
 type stateSnapshooter interface {
 	StateSnapshot() Snapshot
+}
+
+type savedInterruptedTurnContinuer interface {
+	continueSavedInterruptedTurn(LaunchRequest, Submission) error
+}
+
+func submitLaunchRequestInput(session Session, req LaunchRequest, input Submission) error {
+	if req.ContinueInterruptedTurn {
+		if continuer, ok := session.(savedInterruptedTurnContinuer); ok {
+			return continuer.continueSavedInterruptedTurn(req, input)
+		}
+	}
+	return session.SubmitInput(input)
 }
 
 func sessionStateSnapshot(session Session) Snapshot {
@@ -1082,7 +1096,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 			}
 		}
 		if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
-			if err := existing.SubmitInput(initialInput); err != nil {
+			if err := submitLaunchRequestInput(existing, req, initialInput); err != nil {
 				return nil, true, err
 			}
 		}

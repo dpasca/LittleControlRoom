@@ -305,9 +305,7 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 	sc := bufio.NewScanner(file)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
-	turnState := claudeTurnState{}
-	pendingAsync := map[string]struct{}{}
-	pendingAsyncStartedAt := time.Time{}
+	turnTracker := claudeartifact.TurnTracker{}
 	var conversationTracker claudeartifact.ConversationTracker
 	for sc.Scan() {
 		line := sc.Text()
@@ -337,31 +335,6 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 
 		ts := entry.parsedTimestamp()
 		asyncEvents := claudeartifact.ParseAsyncTaskEvents([]byte(line))
-		asyncUserEvent := false
-		for _, event := range asyncEvents {
-			switch event.Kind {
-			case claudeartifact.AsyncTaskLaunched:
-				if len(pendingAsync) == 0 && !ts.IsZero() {
-					pendingAsyncStartedAt = ts
-				}
-				pendingAsync[event.TaskID] = struct{}{}
-				if entry.Type == "user" {
-					asyncUserEvent = true
-					turnState.set(ts, false)
-				}
-			case claudeartifact.AsyncTaskUpdated:
-				if entry.Type == "user" {
-					asyncUserEvent = true
-					turnState.set(ts, false)
-				}
-				if claudeartifact.IsTerminalTaskStatus(event.Status) {
-					delete(pendingAsync, event.TaskID)
-					if len(pendingAsync) == 0 {
-						pendingAsyncStartedAt = time.Time{}
-					}
-				}
-			}
-		}
 		conversationalUser := conversationTracker.Observe(claudeartifact.TranscriptEntry{
 			Type:             entry.Type,
 			UUID:             entry.UUID,
@@ -371,24 +344,14 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 			PromptSource:     entry.PromptSource,
 			OriginKind:       entry.Origin.Kind,
 		})
-		switch entry.Type {
-		case "assistant":
-			turnState.set(ts, entry.assistantTurnCompleted())
-		case "progress":
-			turnState.set(ts, false)
-		case "system":
-			if entry.Subtype == "turn_duration" {
-				turnState.set(ts, true)
-			}
-		case "user":
-			if asyncUserEvent {
-				continue
-			}
-			if !conversationalUser {
-				continue
-			}
-			turnState.set(ts, false)
-		}
+		turnTracker.Observe(claudeartifact.TurnObservation{
+			Type:                entry.Type,
+			Subtype:             entry.Subtype,
+			At:                  ts,
+			ConversationalUser:  conversationalUser,
+			AssistantStopReason: entry.Message.StopReason,
+			AsyncEvents:         asyncEvents,
+		})
 	}
 
 	if auxActivity.After(res.lastEventAt) {
@@ -397,40 +360,16 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 	if res.sessionID == "" {
 		res.sessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
-	if len(pendingAsync) > 0 {
+	turnState := turnTracker.State()
+	if turnState.Known {
 		res.turnKnown = true
-		res.turnDone = false
-		res.turnStarted = pendingAsyncStartedAt
-		if res.turnStarted.IsZero() {
-			res.turnStarted = turnState.startedAt
-		}
-		return res, sc.Err()
-	}
-	if turnState.known {
-		res.turnKnown = true
-		res.turnDone = turnState.completed
-		if !turnState.completed {
-			res.turnStarted = turnState.startedAt
+		res.turnDone = turnState.Completed
+		if !turnState.Completed {
+			res.turnStarted = turnState.StartedAt
 		}
 	}
 
 	return res, sc.Err()
-}
-
-type claudeTurnState struct {
-	known     bool
-	completed bool
-	startedAt time.Time
-}
-
-func (s *claudeTurnState) set(ts time.Time, completed bool) {
-	s.known = true
-	if completed {
-		s.startedAt = time.Time{}
-	} else if s.completed || s.startedAt.IsZero() {
-		s.startedAt = ts
-	}
-	s.completed = completed
 }
 
 type claudeSessionEntry struct {
@@ -463,14 +402,6 @@ func (e claudeSessionEntry) parsedTimestamp() time.Time {
 		return time.Time{}
 	}
 	return t
-}
-
-func (e claudeSessionEntry) assistantTurnCompleted() bool {
-	if e.Type != "assistant" {
-		return false
-	}
-	stopReason := strings.ToLower(strings.TrimSpace(e.Message.StopReason))
-	return stopReason != "" && stopReason != "tool_use"
 }
 
 func claudeAuxiliaryActivity(path string) time.Time {
