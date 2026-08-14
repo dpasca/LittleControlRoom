@@ -42,6 +42,10 @@ func browserPulseStyle(style lipgloss.Style) lipgloss.Style {
 	return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true)
 }
 
+func projectListDraftAgentStyle(style lipgloss.Style) lipgloss.Style {
+	return style.Foreground(lipgloss.Color("229")).Background(lipgloss.Color("58")).Bold(true)
+}
+
 var spinnerFrames = []string{"|", "/", "-", `\`}
 
 const (

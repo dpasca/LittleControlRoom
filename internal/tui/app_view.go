@@ -1236,10 +1236,16 @@ func (m Model) renderProjectList(width, height int) string {
 		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
+		agentStyle := sourceStyleForTag(agentTag, agentLive)
 		if pendingLaunchRow && pendingLaunch != nil {
 			agentLabel = pendingLaunch.Provider.SourceTag()
 			agentTag = pendingLaunch.Provider.SourceTag()
 			agentLive = true
+			agentStyle = sourceStyleForTag(agentTag, agentLive)
+		}
+		if m.projectHasCodexDraft(p.Path) {
+			agentLabel = projectDraftAgentLabel(agentTag)
+			agentStyle = projectListDraftAgentStyle(agentStyle)
 		}
 		if liveSummary, ok := m.projectLiveEngineerAssessmentSummary(p, now); ok && !agentTaskRow && !browserAttentionRow && !pendingLaunchRow {
 			statusText = "working"
@@ -1319,7 +1325,7 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(lipgloss.NewStyle().Width(10)).Render(last),
 			" ",
-			cellStyle(sourceStyleForTag(agentTag, agentLive).Width(projectListAgentWidth).Align(lipgloss.Left)).Render(truncateText(agentLabel, projectListAgentWidth)),
+			cellStyle(agentStyle.Width(projectListAgentWidth).Align(lipgloss.Left)).Render(truncateText(agentLabel, projectListAgentWidth)),
 			" ",
 			cellStyle(todoListIndicatorStyle.Width(projectListTODOWidth).Align(lipgloss.Right)).Render(todoCount),
 			" ",

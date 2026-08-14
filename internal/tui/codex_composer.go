@@ -333,6 +333,10 @@ func (m *Model) currentCodexDraft() codexDraft {
 	return m.currentCodexDraftFor(m.codexComposerProjectPath())
 }
 
+func (m *Model) projectHasCodexDraft(projectPath string) bool {
+	return !m.currentCodexDraftFor(projectPath).Empty()
+}
+
 func (m Model) codexComposerProjectPath() string {
 	if projectPath := m.codexPendingOpenProject(); m.codexPendingOpenVisible() && projectPath != "" {
 		return projectPath

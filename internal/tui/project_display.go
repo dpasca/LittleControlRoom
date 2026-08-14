@@ -208,6 +208,14 @@ func projectTODOCountLabel(count int) string {
 	return strconv.Itoa(count)
 }
 
+func projectDraftAgentLabel(agentTag string) string {
+	agentTag = strings.TrimSpace(agentTag)
+	if agentTag == "" {
+		return "draft"
+	}
+	return agentTag + " draft"
+}
+
 func projectListColumnWidths(totalWidth int) (int, int) {
 	const baseWidth = 56
 

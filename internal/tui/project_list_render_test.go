@@ -456,6 +456,65 @@ func TestRenderProjectListIncludesAssessmentColumn(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListHighlightsEmbeddedSessionDraft(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+	})
+
+	projects := []model.ProjectSummary{
+		{
+			Name:                "draft-project",
+			Path:                "/tmp/draft-project",
+			Status:              model.StatusIdle,
+			PresentOnDisk:       true,
+			LatestSessionFormat: "modern",
+		},
+		{
+			Name:                "plain-project",
+			Path:                "/tmp/plain-project",
+			Status:              model.StatusIdle,
+			PresentOnDisk:       true,
+			LatestSessionFormat: "modern",
+		},
+	}
+	m := Model{
+		projects: projects,
+		selected: 1,
+		codexDrafts: map[string]codexDraft{
+			"/tmp/draft-project": {Text: "Finish describing the change"},
+			"/tmp/plain-project": {Text: "  \n\t"},
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	rendered := m.renderProjectList(120, 8)
+	var draftRow, plainRow string
+	for _, line := range strings.Split(rendered, "\n") {
+		plain := ansi.Strip(line)
+		switch {
+		case strings.Contains(plain, "draft-project"):
+			draftRow = line
+		case strings.Contains(plain, "plain-project"):
+			plainRow = line
+		}
+	}
+	if draftRow == "" || plainRow == "" {
+		t.Fatalf("renderProjectList() missing expected rows: %q", rendered)
+	}
+	if !strings.Contains(ansi.Strip(draftRow), "CX draft") {
+		t.Fatalf("draft row should label the embedded engineer draft: %q", ansi.Strip(draftRow))
+	}
+	if !strings.Contains(draftRow, "\x1b[48;5;58m") {
+		t.Fatalf("draft row should highlight the AGENT cell: %q", draftRow)
+	}
+	if strings.Contains(ansi.Strip(plainRow), "draft") {
+		t.Fatalf("whitespace-only input should not mark the project as having a draft: %q", ansi.Strip(plainRow))
+	}
+}
+
 func TestRenderProjectListPrefersPendingGitSummary(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
