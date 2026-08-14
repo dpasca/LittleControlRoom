@@ -320,10 +320,48 @@ func TestManagedBrowserRevealFailureRestoresActionableDialog(t *testing.T) {
 		t.Fatal("browser reveal failure should reopen an actionable browser dialog")
 	}
 	rendered := ansi.Strip(got.renderBrowserAttentionContent(76))
-	for _, want := range []string{"activation failed", "retry browser", "browser settings", "return to session"} {
+	for _, want := range []string{"activation failed", "R  retry browser", "browser settings", "Enter  return to session"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser failure dialog is missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Enter  retry browser") {
+		t.Fatalf("browser failure dialog should not make Enter repeat the failed reveal:\n%s", rendered)
+	}
+
+	updated, cmd = got.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatal("returning to the visible session after reveal failure queued an unexpected command")
+	}
+	if got.browserAttention != nil {
+		t.Fatal("Enter should leave the failed browser reveal dialog")
+	}
+	if got.codexVisibleProject != projectPath {
+		t.Fatalf("visible project = %q, want %q", got.codexVisibleProject, projectPath)
+	}
+}
+
+func TestManagedBrowserRevealFailureRequiresExplicitRetry(t *testing.T) {
+	const projectPath = "/tmp/demo"
+	snapshot := browserAttentionDialogSnapshot(projectPath)
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexSnapshots:      map[string]codexapp.Snapshot{projectPath: snapshot},
+		browserAttention: &browserAttentionNotification{
+			ProjectPath:              projectPath,
+			ProjectName:              "demo",
+			SessionID:                snapshot.ThreadID,
+			Provider:                 codexapp.ProviderCodex,
+			Activity:                 snapshot.BrowserActivity,
+			ManagedBrowserSessionKey: snapshot.ManagedBrowserSessionKey,
+			Problem:                  "browser reveal failed",
+		},
+	}
+
+	_, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if cmd == nil {
+		t.Fatal("explicit browser retry should queue a reveal command")
 	}
 }
 

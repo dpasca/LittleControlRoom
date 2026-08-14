@@ -345,27 +345,25 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.dismissBrowserAttentionNotification()
 		return m, nil
 	case "enter":
+		if notify.revealFailed() {
+			return m.returnToBrowserAttentionSession(*notify)
+		}
 		if notify.canOpenBrowser() {
 			return m.openBrowserAttentionLogin(*notify)
 		}
-		m.dismissBrowserAttentionNotification()
-		if m.codexVisible() && normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(notify.ProjectPath) {
-			m.status = notify.Provider.Label() + " browser wait remains available in the Browser sidebar."
-			return m, nil
+		return m.returnToBrowserAttentionSession(*notify)
+	case "r":
+		if notify.revealFailed() && notify.canOpenBrowser() {
+			return m.openBrowserAttentionLogin(*notify)
 		}
-		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
+		return m, nil
 	case "o":
 		if notify.canOpenBrowser() {
 			return m.openBrowserAttentionLogin(*notify)
 		}
 		return m, nil
 	case "s":
-		m.dismissBrowserAttentionNotification()
-		if m.codexVisible() && normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(notify.ProjectPath) {
-			m.status = notify.Provider.Label() + " browser wait remains available in the Browser sidebar."
-			return m, nil
-		}
-		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
+		return m.returnToBrowserAttentionSession(*notify)
 	case "b":
 		m.dismissBrowserAttentionNotification()
 		if m.codexVisible() {
@@ -381,8 +379,21 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) returnToBrowserAttentionSession(notify browserAttentionNotification) (tea.Model, tea.Cmd) {
+	m.dismissBrowserAttentionNotification()
+	if m.codexVisible() && normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(notify.ProjectPath) {
+		m.status = notify.Provider.Label() + " browser wait remains available in the Browser sidebar."
+		return m, nil
+	}
+	return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
+}
+
 func (n browserAttentionNotification) canOpenBrowser() bool {
 	return strings.TrimSpace(n.ManagedBrowserSessionKey) != ""
+}
+
+func (n browserAttentionNotification) revealFailed() bool {
+	return strings.TrimSpace(n.Problem) != ""
 }
 
 func managedBrowserFlowSupported(provider codexapp.Provider) bool {
@@ -525,6 +536,21 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 	}
 	lines = append(lines, "")
 	if notify.canOpenBrowser() {
+		if notify.revealFailed() {
+			lines = append(lines, renderWrappedDialogTextLines(
+				detailMutedStyle,
+				width,
+				"The browser page is still attached to this session, but Little Control Room could not reveal its window. Return to the session, retry explicitly, or review Browser settings.",
+			)...)
+			lines = append(lines,
+				"",
+				renderDialogAction("Enter", m.browserAttentionSessionActionLabel(*notify), commitActionKeyStyle, commitActionTextStyle),
+				renderDialogAction("R", "retry browser", pushActionKeyStyle, pushActionTextStyle),
+				renderDialogAction("B", "browser settings", pushActionKeyStyle, pushActionTextStyle),
+				renderDialogAction("Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),
+			)
+			return strings.Join(lines, "\n")
+		}
 		handoffCopy := "Little Control Room can reveal the managed browser window or focus it for this same session. The Browser sidebar and ctrl+o remain available after you dismiss this dialog."
 		if !m.codexVisible() || normalizeProjectPath(m.codexVisibleProject) != normalizeProjectPath(notify.ProjectPath) {
 			handoffCopy = "Little Control Room can reveal the managed browser window or focus it for this same session, then bring the embedded session forward so you can keep an eye on it."
@@ -562,9 +588,6 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 }
 
 func (m Model) browserAttentionBrowserActionLabel(notify browserAttentionNotification) string {
-	if strings.TrimSpace(notify.Problem) != "" {
-		return "retry browser"
-	}
 	state, ok := m.cachedManagedBrowserState(notify.ManagedBrowserSessionKey)
 	if ok && managedBrowserStateFreshForUI(state, m.currentTime()) && !state.Normalize().Hidden {
 		return "focus browser"
