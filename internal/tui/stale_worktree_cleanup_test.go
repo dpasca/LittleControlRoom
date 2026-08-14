@@ -229,6 +229,45 @@ func TestStaleWorktreeCleanupContinuesAfterSkippedAndFailedItems(t *testing.T) {
 	if cmd == nil || !strings.Contains(got.status, "0 removed, 1 skipped, 1 failed") {
 		t.Fatalf("final command/status = %v / %q", cmd, got.status)
 	}
+	if severity := topStatusSeverityForMessage(got.status, got.err); severity != topStatusSeverityDanger {
+		t.Fatalf("failed cleanup top status severity = %v, want danger", severity)
+	}
+}
+
+func TestStaleWorktreeCleanupSuccessfulRemovalUsesSteadyGreenStatus(t *testing.T) {
+	withANSI256DarkBackground(t)
+
+	candidate := staleWorktreeCleanupTestCandidate("/tmp/demo--removed", "feature/removed", time.Now().Add(-48*time.Hour))
+	m := Model{
+		staleWorktreeCleanup: &staleWorktreeCleanupDialogState{
+			Removing: true,
+			Queue:    []service.StaleWorktreeCleanupCandidate{candidate},
+		},
+	}
+
+	updated, cmd := m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: staleWorktreeCleanupResult{
+		Candidate: candidate,
+		Finalize: service.FinalizeMergedWorktreeResult{
+			WorktreeRemoved: true,
+		},
+	}})
+	got := updated.(Model)
+	if cmd == nil || got.status != "Stale worktree cleanup finished successfully: 1 removed, 0 skipped" {
+		t.Fatalf("final command/status = %v / %q", cmd, got.status)
+	}
+	if severity := topStatusSeverityForMessage(got.status, got.err); severity != topStatusSeveritySuccess {
+		t.Fatalf("top status severity = %v, want success", severity)
+	}
+
+	statusA := got.renderTopStatusMessage(got.status, got.status)
+	got.spinnerFrame = 1
+	statusB := got.renderTopStatusMessage(got.status, got.status)
+	if statusA != statusB {
+		t.Fatalf("successful cleanup status should not flash, got %q vs %q", statusA, statusB)
+	}
+	if want := topStatusSuccessBadgeStyle.Render(got.status); statusA != want {
+		t.Fatalf("successful cleanup status did not use green success style: got %q, want %q", statusA, want)
+	}
 }
 
 func TestStaleWorktreeCleanupRechecksLiveStateAfterGitRevalidation(t *testing.T) {

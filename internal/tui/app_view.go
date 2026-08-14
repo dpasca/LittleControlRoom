@@ -589,6 +589,7 @@ type topStatusSeverity int
 
 const (
 	topStatusSeverityNormal topStatusSeverity = iota
+	topStatusSeveritySuccess
 	topStatusSeverityWarning
 	topStatusSeverityDanger
 )
@@ -600,6 +601,8 @@ func (m Model) renderTopStatusMessage(rawStatus, displayStatus string) string {
 	}
 
 	switch topStatusSeverityForMessage(rawStatus, m.err) {
+	case topStatusSeveritySuccess:
+		return renderTopStatusSuccessMessage(displayStatus)
 	case topStatusSeverityWarning:
 		if !m.topStatusWarningPulseActive(rawStatus) {
 			return renderTopStatusWarningStableMessage(displayStatus)
@@ -622,6 +625,9 @@ func topStatusSeverityForMessage(status string, err error) topStatusSeverity {
 	status = strings.TrimSpace(status)
 	if status == "" {
 		return topStatusSeverityNormal
+	}
+	if strings.HasPrefix(status, staleWorktreeCleanupSuccessStatusPrefix) {
+		return topStatusSeveritySuccess
 	}
 
 	lowerStatus := strings.ToLower(status)
@@ -647,6 +653,14 @@ func topStatusSeverityForMessage(status string, err error) topStatusSeverity {
 	default:
 		return topStatusSeverityNormal
 	}
+}
+
+func renderTopStatusSuccessMessage(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return topStatusSuccessBadgeStyle.Render(text)
 }
 
 func topStatusShowsRecoveryProgress(status string) bool {

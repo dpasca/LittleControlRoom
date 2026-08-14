@@ -16,6 +16,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const staleWorktreeCleanupSuccessStatusPrefix = "Stale worktree cleanup finished successfully:"
+
 type staleWorktreeCleanupDialogState struct {
 	Audit        service.StaleWorktreeCleanupAudit
 	Selected     int
@@ -267,8 +269,15 @@ func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg
 	dialog.Removing = false
 	dialog.Finished = true
 	removed, skipped, failed := staleWorktreeCleanupResultCounts(dialog.Results)
-	m.status = fmt.Sprintf("Stale worktree cleanup finished: %d removed, %d skipped, %d failed", removed, skipped, failed)
+	m.status = staleWorktreeCleanupFinishedStatus(removed, skipped, failed)
 	return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+}
+
+func staleWorktreeCleanupFinishedStatus(removed, skipped, failed int) string {
+	if failed == 0 {
+		return fmt.Sprintf("%s %d removed, %d skipped", staleWorktreeCleanupSuccessStatusPrefix, removed, skipped)
+	}
+	return fmt.Sprintf("Stale worktree cleanup finished: %d removed, %d skipped, %d failed", removed, skipped, failed)
 }
 
 func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
