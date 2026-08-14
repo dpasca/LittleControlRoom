@@ -779,6 +779,33 @@ func TestClaudeLoadTranscriptAggregatesUniqueMessagesAcrossCompaction(t *testing
 	}
 }
 
+func TestClaudeSessionCloseNotifiesObservers(t *testing.T) {
+	notifications := 0
+	session := &claudeCodeSession{
+		projectPath: "/tmp/demo",
+		started:     true,
+		closedCh:    make(chan struct{}),
+		notify:      func() { notifications++ },
+	}
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if notifications != 1 {
+		t.Fatalf("notifications = %d, want 1 so observers drop the closed session", notifications)
+	}
+	if !session.Snapshot().Closed {
+		t.Fatal("Snapshot() should report the session as closed")
+	}
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if notifications != 1 {
+		t.Fatalf("notifications = %d after repeat close, want 1", notifications)
+	}
+}
+
 func TestClaudeRateLimitEventsPopulateUsageWindows(t *testing.T) {
 	session := &claudeCodeSession{}
 	fiveHourReset := time.Date(2026, 8, 1, 3, 0, 0, 0, time.UTC).Unix()

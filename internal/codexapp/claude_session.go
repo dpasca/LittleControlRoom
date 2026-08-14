@@ -1352,6 +1352,11 @@ func (s *claudeCodeSession) Close() error {
 	s.mu.Unlock()
 	_ = s.approvalServer.Close()
 
+	// Observers only learn the session is gone through this signal. Without it
+	// an idle close leaves the last live snapshot cached, so the dashboard keeps
+	// the session badge lit.
+	s.notifyAsync()
+
 	if cmd != nil {
 		return terminateAppServerCommand(cmd)
 	}

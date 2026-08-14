@@ -148,6 +148,83 @@ func TestVisibleClaudeCtrlCImmediatelyDimsClosedSession(t *testing.T) {
 	}
 }
 
+func TestVisibleClaudeCtrlCDimsClosedSessionInCachedRenderPath(t *testing.T) {
+	now := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
+	projectPath := "/tmp/demo-claude-cached"
+	sessionID := "session-cached"
+	snapshot := codexapp.Snapshot{
+		Provider:       codexapp.ProviderClaudeCode,
+		ProjectPath:    projectPath,
+		ThreadID:       sessionID,
+		Started:        true,
+		Status:         "Claude Code session ready",
+		LastActivityAt: now.Add(-time.Minute),
+	}
+	session := &fakeCodexSession{projectPath: projectPath, snapshot: snapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderClaudeCode,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Path:                     projectPath,
+		PresentOnDisk:            true,
+		LatestSessionSource:      model.SessionSourceClaudeCode,
+		LatestSessionID:          sessionID,
+		LatestRawSessionID:       sessionID,
+		LatestSessionFormat:      "claude_code",
+		LatestSessionLastEventAt: now.Add(-time.Minute),
+		LatestTurnStartedAt:      now.Add(-2 * time.Minute),
+		LatestTurnStateKnown:     true,
+		LatestTurnCompleted:      false,
+	}
+	m := Model{
+		startupScanCompleted: true,
+		allProjects:          []model.ProjectSummary{project},
+		projects:             []model.ProjectSummary{project},
+		detail:               model.ProjectDetail{Summary: project},
+		codexManager:         manager,
+		codexVisibleProject:  projectPath,
+		codexHiddenProject:   projectPath,
+		codexInput:           newCodexTextarea(),
+		codexViewport:        viewport.New(0, 0),
+		// The real app delivers snapshots into this cache, and render paths read
+		// only from it. Ctrl+C must not leave a live-looking entry behind.
+		codexSnapshots: map[string]codexapp.Snapshot{projectPath: snapshot},
+		width:          100,
+		height:         24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+c should close the idle Claude Code session")
+	}
+	action, ok := cmd().(codexActionMsg)
+	if !ok {
+		t.Fatalf("close command returned an unexpected message")
+	}
+	updated, _ = got.Update(action)
+	got = updated.(Model)
+
+	got.renderCachedSessionStateOnly = true
+	if cached, ok := got.liveCodexSnapshot(projectPath); ok {
+		t.Fatalf("liveCodexSnapshot() = %+v live, want no live snapshot after ctrl+c close", cached)
+	}
+	label, tag, live := got.projectAgentDisplay(got.projects[0], now)
+	if live {
+		t.Fatalf("projectAgentDisplay() = %q/%q live, want closed Claude session dimmed", label, tag)
+	}
+	if tag != "CC" || label != "CC" {
+		t.Fatalf("projectAgentDisplay() = %q/%q, want dim CC", label, tag)
+	}
+}
+
 func TestVisibleCodexCtrlCMarksClosedSessionSeenAndPersistsIt(t *testing.T) {
 	t.Parallel()
 

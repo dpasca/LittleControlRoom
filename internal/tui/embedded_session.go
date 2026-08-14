@@ -333,6 +333,10 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 		if m.codexHiddenProject == msg.projectPath {
 			m.codexHiddenProject = ""
 		}
+		// The manager already dropped the session, and render paths read only
+		// from the snapshot cache. Leaving the last live snapshot behind keeps
+		// the project list badge lit as if the session were still open.
+		m.dropCodexSnapshot(msg.projectPath)
 		refresh := invalidateProjectScan(m.visibleDetailPathForProject(msg.projectPath), false)
 		return m, batchCmds(
 			m.recordEmbeddedSessionSettledCmd(msg.projectPath, msg.closedSnapshot),
