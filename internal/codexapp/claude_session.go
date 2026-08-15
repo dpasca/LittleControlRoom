@@ -230,10 +230,11 @@ type claudeStreamEnvelope struct {
 }
 
 type claudeStreamMessage struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Role    string `json:"role"`
-	Content []struct {
+	ID         string `json:"id"`
+	Model      string `json:"model"`
+	Role       string `json:"role"`
+	StopReason string `json:"stop_reason"`
+	Content    []struct {
 		Type      string          `json:"type"`
 		Text      string          `json:"text"`
 		Thinking  string          `json:"thinking"`
@@ -1754,7 +1755,10 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.handleClaudeCompactBoundaryLocked(claudeCompactMetadataFromEnvelope(env))
 		}
 	case "assistant":
-		s.handleClaudeAssistantLocked(env.Message, env.UUID)
+		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID)
+		if claudeartifact.AssistantTurnCompleted(firstNonEmptyTrimmed(assistantStopReason, env.StopReason)) {
+			stdinToClose = s.finishClaudeSubmissionFromAssistantLocked(time.Now())
+		}
 	case "user":
 		s.handleClaudeUserLocked(env.Message)
 	case "rate_limit_event":
@@ -1814,10 +1818,10 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	s.notifyAsync()
 }
 
-func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string) {
+func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string) string {
 	var msg claudeStreamMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
-		return
+		return ""
 	}
 	if model := concreteClaudeModel(msg.Model); model != "" {
 		s.model = model
@@ -1901,6 +1905,35 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, env
 			}
 		}
 	}
+	return strings.TrimSpace(msg.StopReason)
+}
+
+func (s *claudeCodeSession) finishClaudeSubmissionFromAssistantLocked(completedAt time.Time) io.WriteCloser {
+	// Some Claude Code stream-json runs persist and emit the terminal assistant
+	// message but never follow it with a result envelope while stdin remains
+	// open. Treat the structured end-of-turn stop reason as the final-submission
+	// boundary so Claude receives EOF and can exit. A queued submission, browser
+	// handoff, compaction, or provider-declared background task still owns the
+	// stream and must settle through its normal lifecycle.
+	if s.compactCommand != nil ||
+		s.browserHandoffPending ||
+		s.pendingSubmissions != 1 ||
+		s.runningBackgroundTaskCountLocked() > 0 ||
+		s.stdin == nil {
+		return nil
+	}
+
+	s.pendingSubmissions = 0
+	s.latestTurnStartedAt = time.Time{}
+	s.latestTurnStateAt = completedAt
+	s.latestTurnStateKnown = true
+	s.latestTurnCompleted = true
+	s.latestTurnVerified = true
+	stdin := s.stdin
+	s.stdin = nil
+	s.setClaudeBrowserActivityIdleLocked()
+	s.updateStatusLocked()
+	return stdin
 }
 
 func (s *claudeCodeSession) applyClaudeUsageLocked(messageID string, usage claudeTokenUsage) {

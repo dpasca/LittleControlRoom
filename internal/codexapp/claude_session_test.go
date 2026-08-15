@@ -2103,6 +2103,156 @@ func TestClaudeResultMovesSessionToFinishingWhenTurnDrains(t *testing.T) {
 	}
 }
 
+func TestClaudeTerminalAssistantDrainsFinalSubmissionWithoutResult(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 1,
+		stdin:              stdin,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg-final","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}`)
+
+	if session.pendingSubmissions != 0 {
+		t.Fatalf("pendingSubmissions = %d, want 0", session.pendingSubmissions)
+	}
+	if !stdin.closed {
+		t.Fatal("terminal assistant did not close stream input")
+	}
+	if session.stdin != nil {
+		t.Fatalf("session.stdin = %#v, want nil after terminal assistant", session.stdin)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Phase != SessionPhaseFinishing || snapshot.Status != claudeFinishingStatus {
+		t.Fatalf("snapshot phase=%q status=%q, want finishing", snapshot.Phase, snapshot.Status)
+	}
+	if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted {
+		t.Fatalf("latest turn state = known:%t completed:%t, want completed", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted)
+	}
+}
+
+func TestClaudeToolUseAssistantKeepsFinalSubmissionOpen(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		projectPath:        "/tmp/demo",
+		busy:               true,
+		pendingSubmissions: 1,
+		stdin:              stdin,
+		status:             claudeThinkingStatus,
+		assistantBlocks:    make(map[string]map[string]struct{}),
+		toolCalls:          make(map[string]claudeToolCall),
+		toolResults:        make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg-tool","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu-1","name":"Bash","input":{"command":"make test"}}]}}`)
+
+	if session.pendingSubmissions != 1 || stdin.closed || session.stdin != stdin {
+		t.Fatalf("tool-use boundary drained submission: pending=%d closed=%t stdin=%#v", session.pendingSubmissions, stdin.closed, session.stdin)
+	}
+	if snapshot := session.Snapshot(); snapshot.Phase != SessionPhaseRunning || snapshot.LatestTurnCompleted {
+		t.Fatalf("snapshot phase=%q completed=%t, want running turn", snapshot.Phase, snapshot.LatestTurnCompleted)
+	}
+}
+
+func TestClaudeTerminalAssistantPreservesStatesThatStillOwnStream(t *testing.T) {
+	tests := []struct {
+		name               string
+		pendingSubmissions int
+		browserHandoff     bool
+		compactCommand     *claudeCompactCommand
+		backgroundTasks    map[string]BackgroundTaskSnapshot
+	}{
+		{name: "queued follow-up", pendingSubmissions: 2},
+		{name: "browser handoff", pendingSubmissions: 1, browserHandoff: true},
+		{name: "compaction", pendingSubmissions: 1, compactCommand: &claudeCompactCommand{}},
+		{
+			name:               "background task",
+			pendingSubmissions: 1,
+			backgroundTasks: map[string]BackgroundTaskSnapshot{
+				"task-1": {ID: "task-1", Status: "running"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin := &recordingWriteCloser{}
+			session := &claudeCodeSession{
+				projectPath:           "/tmp/demo",
+				busy:                  true,
+				pendingSubmissions:    tt.pendingSubmissions,
+				browserHandoffPending: tt.browserHandoff,
+				compactCommand:        tt.compactCommand,
+				stdin:                 stdin,
+				status:                claudeThinkingStatus,
+				assistantBlocks:       make(map[string]map[string]struct{}),
+				toolCalls:             make(map[string]claudeToolCall),
+				toolResults:           make(map[string]struct{}),
+				backgroundTasks:       tt.backgroundTasks,
+			}
+
+			session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg-final","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}`)
+
+			if session.pendingSubmissions != tt.pendingSubmissions || stdin.closed || session.stdin != stdin {
+				t.Fatalf("owned stream drained: pending=%d closed=%t stdin=%#v", session.pendingSubmissions, stdin.closed, session.stdin)
+			}
+		})
+	}
+}
+
+func TestClaudeTerminalAssistantLetsProcessExitWithoutResultEnvelope(t *testing.T) {
+	binDir := t.TempDir()
+	claudePath := filepath.Join(binDir, "claude")
+	script := `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+	printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}'
+	exit 0
+fi
+IFS= read -r payload || exit 2
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"ses-terminal","model":"claude-opus-5","permissionMode":"dontAsk"}'
+printf '%s\n' '{"type":"assistant","message":{"id":"msg-final","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}'
+while IFS= read -r trailing; do :; done
+`
+	if err := os.WriteFile(claudePath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake Claude CLI: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	session := &claudeCodeSession{
+		projectPath:     t.TempDir(),
+		claudeHome:      t.TempDir(),
+		preset:          codexcli.PresetSafe,
+		safetySettings:  `{"hooks":{"PreToolUse":[]}}`,
+		status:          claudeFreshReadyStatus,
+		closedCh:        make(chan struct{}),
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	if err := session.Submit("finish this turn"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for session.Snapshot().Busy && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Busy || snapshot.Phase != SessionPhaseIdle {
+		t.Fatalf("snapshot busy=%t phase=%q status=%q, want settled session", snapshot.Busy, snapshot.Phase, snapshot.Status)
+	}
+	if snapshot.LastError != "" {
+		t.Fatalf("LastError = %q, want clean completion", snapshot.LastError)
+	}
+}
+
 func TestClaudeResultKeepsStreamOpenUntilBackgroundTaskSettles(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &claudeCodeSession{
