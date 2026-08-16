@@ -1,13 +1,19 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
+	"lcroom/internal/store"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -69,6 +75,123 @@ func TestBuildRestartIntentResumeChoicesKeepsAllCapturedIntentsAndIgnoresArtifac
 	}
 	if choices := buildRestartIntentResumeChoices(projects, nil); len(choices) != 0 {
 		t.Fatalf("artifact-only unfinished project produced restart choices: %#v", choices)
+	}
+}
+
+func TestPartitionSettledRestartIntentsRequiresExactFreshCompletedSession(t *testing.T) {
+	capturedAt := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	turnStartedAt := capturedAt.Add(-time.Hour)
+	intents := []codexapp.RestartIntent{
+		{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/settled", SessionID: "session-settled", TurnStartedAt: turnStartedAt, CapturedAt: capturedAt},
+		{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/older", SessionID: "session-older", TurnStartedAt: turnStartedAt, CapturedAt: capturedAt},
+		{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/different", SessionID: "session-captured", TurnStartedAt: turnStartedAt, CapturedAt: capturedAt},
+		{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/active", SessionID: "session-active", TurnStartedAt: turnStartedAt, CapturedAt: capturedAt},
+	}
+	projects := []model.ProjectSummary{
+		{
+			Path:                     "/tmp/settled",
+			LatestSessionSource:      model.SessionSourceClaudeCode,
+			LatestRawSessionID:       "session-settled",
+			LatestSessionLastEventAt: capturedAt.Add(-time.Minute),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      true,
+		},
+		{
+			Path:                     "/tmp/older",
+			LatestSessionSource:      model.SessionSourceClaudeCode,
+			LatestRawSessionID:       "session-older",
+			LatestSessionLastEventAt: turnStartedAt.Add(-time.Minute),
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      true,
+		},
+		{
+			Path:                     "/tmp/different",
+			LatestSessionSource:      model.SessionSourceClaudeCode,
+			LatestRawSessionID:       "session-other",
+			LatestSessionLastEventAt: capturedAt,
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      true,
+		},
+		{
+			Path:                     "/tmp/active",
+			LatestSessionSource:      model.SessionSourceClaudeCode,
+			LatestRawSessionID:       "session-active",
+			LatestSessionLastEventAt: capturedAt,
+			LatestTurnStateKnown:     true,
+			LatestTurnCompleted:      false,
+		},
+	}
+
+	pending, settledKeys := partitionSettledRestartIntents(projects, intents)
+	if len(pending) != 3 {
+		t.Fatalf("pending intents = %#v, want older, different, and active sessions", pending)
+	}
+	if len(settledKeys) != 1 || settledKeys[0] != intents[0].Key() {
+		t.Fatalf("settled keys = %#v, want %q", settledKeys, intents[0].Key())
+	}
+}
+
+func TestLoadSuspendedTurnChoicesAcknowledgesCompletedExactSession(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(filepath.Join(dataDir, "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	capturedAt := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
+	projectPath := "/tmp/completed-restart"
+	sessionID := "session-completed"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:      projectPath,
+		Name:      "completed restart",
+		Status:    model.StatusIdle,
+		InScope:   true,
+		UpdatedAt: capturedAt,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceClaudeCode,
+			SessionID:            sessionID,
+			RawSessionID:         sessionID,
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			Format:               "claude_code",
+			LastEventAt:          capturedAt.Add(-time.Minute),
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	intent := codexapp.RestartIntent{
+		Provider:      codexapp.ProviderClaudeCode,
+		ProjectPath:   projectPath,
+		SessionID:     sessionID,
+		TurnStartedAt: capturedAt.Add(-time.Hour),
+		CapturedAt:    capturedAt,
+	}
+	if err := codexapp.WriteRestartIntents(dataDir, []codexapp.RestartIntent{intent}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = filepath.Join(dataDir, "test.sqlite")
+	m := Model{
+		ctx:            ctx,
+		svc:            service.New(cfg, st, events.NewBus(), nil),
+		appDataDirPath: dataDir,
+	}
+
+	msg, ok := m.loadSuspendedTurnResumeChoicesCmd()().(suspendedTurnResumeChoicesMsg)
+	if !ok {
+		t.Fatal("load command did not return suspendedTurnResumeChoicesMsg")
+	}
+	if msg.err != nil || len(msg.choices) != 0 {
+		t.Fatalf("completed restart choices = %#v, err=%v", msg.choices, msg.err)
+	}
+	remaining, err := codexapp.ReadRestartIntents(dataDir)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("completed restart journal = %#v, err=%v", remaining, err)
 	}
 }
 

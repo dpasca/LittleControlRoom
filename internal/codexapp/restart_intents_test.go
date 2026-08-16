@@ -53,6 +53,46 @@ func TestRestartIntentsFromSnapshotsKeepsOnlyLocallyOwnedInFlightTurns(t *testin
 	}
 }
 
+func TestRestartIntentsFromSnapshotsSkipsKnownCompletedTurnWhileHelperFinishes(t *testing.T) {
+	capturedAt := time.Date(2026, 8, 16, 11, 20, 0, 0, time.UTC)
+	intents := RestartIntentsFromSnapshots([]Snapshot{{
+		Provider:             ProviderClaudeCode,
+		ProjectPath:          "/tmp/completed",
+		ThreadID:             "session-completed",
+		Started:              true,
+		Busy:                 true,
+		Phase:                SessionPhaseFinishing,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		LatestTurnStartedAt:  capturedAt.Add(-time.Minute),
+	}}, capturedAt)
+
+	if len(intents) != 0 {
+		t.Fatalf("restart intents = %#v, want no continuation for a known completed turn", intents)
+	}
+}
+
+func TestRestartIntentsFromSnapshotsKeepsKnownCompletedTurnWithPendingInteraction(t *testing.T) {
+	capturedAt := time.Date(2026, 8, 16, 11, 20, 0, 0, time.UTC)
+	intents := RestartIntentsFromSnapshots([]Snapshot{{
+		Provider:             ProviderClaudeCode,
+		ProjectPath:          "/tmp/pending",
+		ThreadID:             "session-pending",
+		Started:              true,
+		Busy:                 true,
+		Phase:                SessionPhaseFinishing,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		PendingToolInput: &ToolInputRequest{
+			ID: "question-pending",
+		},
+	}}, capturedAt)
+
+	if len(intents) != 1 {
+		t.Fatalf("restart intents = %#v, want pending interaction preserved", intents)
+	}
+}
+
 func TestAcknowledgeRestartIntentsSerializesParallelSessionOpens(t *testing.T) {
 	dataDir := t.TempDir()
 	intents := []RestartIntent{

@@ -180,9 +180,11 @@ func (m Model) loadSuspendedTurnResumeChoicesCmd() tea.Cmd {
 				err:     errors.Join(intentErr, err),
 			}
 		}
+		pending, settledKeys := partitionSettledRestartIntents(projects, intents)
+		acknowledgeErr := codexapp.AcknowledgeRestartIntents(dataDir, settledKeys)
 		return suspendedTurnResumeChoicesMsg{
-			choices: buildRestartIntentResumeChoices(projects, intents),
-			err:     intentErr,
+			choices: buildRestartIntentResumeChoices(projects, pending),
+			err:     errors.Join(intentErr, acknowledgeErr),
 		}
 	}
 }
@@ -255,6 +257,46 @@ func buildRestartIntentResumeChoices(projects []model.ProjectSummary, intents []
 		return captured[i].LastActivity.After(captured[j].LastActivity)
 	})
 	return captured
+}
+
+func partitionSettledRestartIntents(projects []model.ProjectSummary, intents []codexapp.RestartIntent) ([]codexapp.RestartIntent, []string) {
+	projectByPath := make(map[string]model.ProjectSummary, len(projects))
+	for _, project := range projects {
+		projectByPath[normalizeProjectPath(project.Path)] = project
+	}
+
+	pending := make([]codexapp.RestartIntent, 0, len(intents))
+	settledKeys := make([]string, 0, len(intents))
+	for _, intent := range intents {
+		project, ok := projectByPath[normalizeProjectPath(intent.ProjectPath)]
+		if !ok || !restartIntentSettledByProject(intent, project) {
+			pending = append(pending, intent)
+			continue
+		}
+		if key := intent.Key(); key != "" {
+			settledKeys = append(settledKeys, key)
+		}
+	}
+	return pending, settledKeys
+}
+
+func restartIntentSettledByProject(intent codexapp.RestartIntent, project model.ProjectSummary) bool {
+	if codexProviderFromSessionSource(project.LatestSessionSource) != intent.Provider.Normalized() ||
+		strings.TrimSpace(project.ExternalLatestSessionID()) != strings.TrimSpace(intent.SessionID) ||
+		!project.LatestTurnStateKnown ||
+		!project.LatestTurnCompleted {
+		return false
+	}
+
+	// The completed evidence must be new enough to cover the turn captured at
+	// shutdown. This prevents an older completed turn from invalidating a newer
+	// prompt that had not reached the provider artifact yet.
+	completedAt := project.LatestSessionLastEventAt
+	capturedTurnAt := intent.TurnStartedAt
+	if capturedTurnAt.IsZero() {
+		capturedTurnAt = intent.CapturedAt
+	}
+	return !completedAt.IsZero() && (capturedTurnAt.IsZero() || !completedAt.Before(capturedTurnAt))
 }
 
 func (m Model) updateSuspendedTurnResumeDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

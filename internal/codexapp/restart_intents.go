@@ -137,10 +137,16 @@ func restartableOwnedSnapshot(snapshot Snapshot) bool {
 	if snapshot.Provider.Normalized() == "" {
 		return false
 	}
-	if snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
 		return true
 	}
-	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+	// A provider helper may remain alive briefly after its durable lifecycle
+	// record has already completed the turn. Do not turn that process-exit window
+	// into a continuation intent unless provider-owned background work remains.
+	if snapshot.LatestTurnStateKnown && snapshot.LatestTurnCompleted && len(snapshot.BackgroundTasks) == 0 {
+		return false
+	}
+	if snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
 		return true
 	}
 	switch snapshot.Phase {

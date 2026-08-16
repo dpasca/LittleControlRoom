@@ -33,6 +33,11 @@ source of truth for conversation content.
 Sessions reported as active in another process (`BusyExternal`) are never
 captured or interrupted by this flow.
 
+A helper can remain in its process-exit or `finishing` phase briefly after the
+provider has durably recorded that the turn completed. LCR treats that explicit
+completed lifecycle as authoritative and does not journal a continuation unless
+a pending interaction or provider-owned background task still needs recovery.
+
 ## Startup restore
 
 At the next launch, the Interrupted Turns dialog reads only the restart
@@ -40,15 +45,22 @@ journal. Every row was owned and captured by LCR before graceful shutdown.
 **Continue All** reopens each exact provider session and starts a new
 continuation turn in the background.
 
+Before showing the dialog, LCR also compares each journal row with persisted
+lifecycle evidence for that exact project, provider, and session. If completed
+evidence is new enough to cover the turn captured at shutdown, LCR removes the
+settled row instead of offering a false continuation. Older evidence, evidence
+for another session, and unknown lifecycle state never invalidate a journaled
+turn.
+
 A generic provider artifact whose latest turn merely looks unfinished is not
 enough to enter restart recovery. It may belong to another live process, or its
 completion marker may be delayed or absent. Such sessions remain visible in
 the normal project/session UI for deliberate manual inspection, but they do
 not trigger the startup dialog.
 
-Choosing **Skip** defers the saved continuation; the restart intent remains so
-LCR can offer it again on a later launch. An intent is removed after its saved
-session restores successfully.
+Choosing **Skip** defers each remaining saved continuation; its restart intent
+remains so LCR can offer it again on a later launch. A remaining intent is
+removed after its saved session restores successfully.
 
 LCR starts restored provider helpers one at a time in the background. Codex
 thread resume can initialize credentials and configured MCP services before it

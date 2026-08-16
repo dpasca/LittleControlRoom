@@ -4,6 +4,7 @@ package projectrun
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -30,7 +31,12 @@ func terminateManagedCommand(cmd *exec.Cmd) error {
 	if cmd == nil || cmd.Process == nil {
 		return ErrNotRunning
 	}
-	return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	// The process group can exit after Manager snapshots it as running but
+	// before shutdown sends SIGTERM. That race is already a successful stop.
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	return nil
 }
 
 func currentProcessGroups() (map[int]int, error) {
