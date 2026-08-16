@@ -70,6 +70,23 @@ func (m Model) projectPendingBrowserAttention(projectPath string) (projectBrowse
 	return m.browserAttentionFromSnapshot(snapshot)
 }
 
+func (m Model) projectBrowserAttentionNeedsAcknowledgement(projectPath string) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return false
+	}
+	snapshot, ok := m.cachedLiveCodexSnapshot(projectPath)
+	if !ok {
+		return false
+	}
+	state, ok := m.browserAttentionFromSnapshot(snapshot)
+	if !ok {
+		return false
+	}
+	notify := newBrowserAttentionNotification(projectPath, snapshot, state)
+	return m.browserAttentionAcknowledged[normalizeProjectPath(projectPath)] != notify.fingerprint()
+}
+
 func browserAttentionListSummary(state projectBrowserAttentionState) string {
 	source := state.Activity.Normalize().SourceLabel()
 	if source == "" {
@@ -299,6 +316,23 @@ func (m *Model) acknowledgeBrowserAttention(notify browserAttentionNotification)
 	m.browserAttentionAcknowledged[projectKey] = notify.fingerprint()
 }
 
+func (m *Model) acknowledgeProjectBrowserAttentionFromSnapshot(projectPath string, snapshot codexapp.Snapshot) {
+	projectKey := normalizeProjectPath(projectPath)
+	if projectKey == "" {
+		return
+	}
+	if m.browserAttention != nil && normalizeProjectPath(m.browserAttention.ProjectPath) == projectKey {
+		m.acknowledgeBrowserAttention(*m.browserAttention)
+		m.browserAttention = nil
+		return
+	}
+	state, ok := browserAttentionFromSnapshot(snapshot)
+	if !ok {
+		return
+	}
+	m.acknowledgeBrowserAttention(newBrowserAttentionNotification(projectPath, snapshot, state))
+}
+
 func (m *Model) restoreBrowserAttentionAfterRevealFailure(msg browserOpenMsg) {
 	projectPath := normalizeProjectPath(firstNonEmptyString(msg.projectPath, msg.managedBrowserRef.ProjectPath))
 	if projectPath == "" {
@@ -471,6 +505,7 @@ func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (t
 	model = leaseModel.(Model)
 	if openCmd == nil {
 		notify.Problem = strings.TrimSpace(model.status)
+		delete(model.browserAttentionAcknowledged, normalizeProjectPath(notify.ProjectPath))
 		model.browserAttention = &notify
 		return model, revealCmd
 	}

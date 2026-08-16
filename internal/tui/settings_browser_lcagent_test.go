@@ -1195,6 +1195,12 @@ func TestBrowserAttentionEnterShowsBlockedStatusWhenLeaseOwnedElsewhere(t *testi
 	if !strings.Contains(got.status, "Interactive browser is already reserved by Codex / owner-demo") {
 		t.Fatalf("status = %q, want blocked browser ownership status", got.status)
 	}
+	if got.browserAttention == nil || !got.browserAttention.revealFailed() {
+		t.Fatal("blocked browser reveal should restore the actionable attention dialog")
+	}
+	if _, ok := got.browserAttentionAcknowledged[normalizeProjectPath("/tmp/demo")]; ok {
+		t.Fatal("blocked browser reveal should clear the provisional acknowledgement")
+	}
 }
 
 func TestOpenManagedBrowserLoginReleasesLeaseOnBrowserOpenFailure(t *testing.T) {

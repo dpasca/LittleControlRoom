@@ -490,6 +490,9 @@ func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrat
 	if got.status != "Showing the managed browser window..." {
 		t.Fatalf("status = %q, want managed browser reveal notice", got.status)
 	}
+	if got.browserAttentionAcknowledged[normalizeProjectPath(projectPath)] == "" {
+		t.Fatal("ctrl+o should acknowledge the browser handoff before managed state hydration")
+	}
 	msg := cmd()
 	openMsg, ok := msg.(browserOpenMsg)
 	if !ok {

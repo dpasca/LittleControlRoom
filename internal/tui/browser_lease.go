@@ -118,6 +118,15 @@ func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Pro
 		m.status = m.managedBrowserLeaseBlockedStatus(result.Owner)
 		return m, nil
 	}
+	m.acknowledgeProjectBrowserAttentionFromSnapshot(projectPath, codexapp.Snapshot{
+		Started:                  true,
+		ProjectPath:              projectPath,
+		ThreadID:                 threadID,
+		Provider:                 provider,
+		BrowserActivity:          activity,
+		ManagedBrowserSessionKey: managedSessionKey,
+		CurrentBrowserPageURL:    loginURL,
+	})
 	m.status = openingStatus
 	return m, m.revealManagedBrowserCmd(managedSessionKey, ref, successStatus)
 }

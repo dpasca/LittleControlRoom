@@ -34,7 +34,7 @@ It is intentionally different from `STATUS.md`:
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Embedded Codex, OpenCode, and Claude Code can now make an explicit, structured `lcr_runtime/request_browser_attention` handoff after Playwright reaches a human-only step. The handoff carries a bounded user-facing instruction and is cleared by the next successfully submitted user message rather than by parsing assistant prose. Codex and OpenCode also reconstruct unresolved handoffs from provider history; Claude preserves the live process while its handoff is pending.
 - Runtime-skill availability and managed-Playwright availability are gated independently, so `Classic browser behavior` does not advertise a managed-browser handoff that cannot succeed.
-- Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
+- Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal. The project-row pulse stops once the current handoff is acknowledged, while the static wait details remain until the provider resumes; changed instructions or reveal failures demand attention again.
 - Browser waits now raise the centered attention dialog even while the affected embedded session is visible, unless another provider input dialog already owns the foreground. Dismissing it acknowledges that specific handoff while leaving the Browser sidebar and `ctrl+o` available; a changed instruction or failed reveal can surface it again.
 - Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `ctrl+o`.
 - `ctrl+o` now reveals or focuses a live attached managed Codex browser based on fresh managed browser state or live Codex browser activity, even when the session has not reported a current page URL, so hidden login windows do not become unreachable.
@@ -87,7 +87,7 @@ Make browser automation feel quiet and predictable by default:
 
 - Browser status is visible in the `Browser` settings section.
 - The settings view now shows the interactive browser lease owner plus any waiting managed login flows.
-- Project rows switch the assessment status to `browser`, show the Playwright/browser source in the summary column, pulse with browser-specific styling, and add a footer alert while any cached embedded session is waiting on browser input.
+- Project rows switch the assessment status to `browser`, show the Playwright/browser source in the summary column, pulse with browser-specific styling until the current handoff is acknowledged, and retain the static row plus footer alert while the embedded session remains waiting on browser input.
 - The selected project's detail pane shows a dedicated `Browser` field and attention reason for live browser waits.
 - Codex Playwright activity is tracked live enough to distinguish:
   - idle

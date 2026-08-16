@@ -1229,7 +1229,7 @@ func (m *Model) pruneTransientHighlights(now time.Time) {
 }
 
 func (m Model) projectBrowserPulseActive(projectPath string) bool {
-	if _, ok := m.projectPendingBrowserAttention(projectPath); !ok {
+	if !m.projectBrowserAttentionNeedsAcknowledgement(projectPath) {
 		return false
 	}
 	return m.spinnerFrame%2 == 0

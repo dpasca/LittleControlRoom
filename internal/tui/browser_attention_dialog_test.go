@@ -108,6 +108,70 @@ func TestBrowserAttentionDialogAcknowledgementLastsUntilWaitResolves(t *testing.
 	}
 }
 
+func TestBrowserAttentionAcknowledgementStopsProjectPulseUntilHandoffChanges(t *testing.T) {
+	const projectPath = "/tmp/demo"
+	snapshot := browserAttentionDialogSnapshot(projectPath)
+	m := Model{
+		browserAttentionAcknowledged: make(map[string]string),
+		codexSnapshots:               map[string]codexapp.Snapshot{projectPath: snapshot},
+		renderCachedSessionStateOnly: true,
+		spinnerFrame:                 0,
+	}
+
+	m.detectBrowserAttentionNotification(projectPath, snapshot)
+	if !m.projectBrowserPulseActive(projectPath) {
+		t.Fatal("a new browser handoff should pulse the project row")
+	}
+	m.dismissBrowserAttentionNotification()
+	if m.projectBrowserPulseActive(projectPath) {
+		t.Fatal("acknowledging the current browser handoff should stop the project-row pulse")
+	}
+	if _, ok := m.projectPendingBrowserAttention(projectPath); !ok {
+		t.Fatal("acknowledgement should retain the static browser-wait status until the provider resumes")
+	}
+	if got := m.footerBrowserAttentionLabel(); got != "1 browser wait" {
+		t.Fatalf("footerBrowserAttentionLabel() = %q, want static browser wait", got)
+	}
+
+	snapshot.BrowserActivity.AttentionMessage = "Approve the security prompt in the managed browser."
+	m.codexSnapshots[projectPath] = snapshot
+	if !m.projectBrowserPulseActive(projectPath) {
+		t.Fatal("a changed browser handoff should pulse again")
+	}
+}
+
+func TestStartingManagedBrowserRevealAcknowledgesProjectPulse(t *testing.T) {
+	const projectPath = "/tmp/demo"
+	snapshot := browserAttentionDialogSnapshot(projectPath)
+	m := Model{
+		browserAttentionAcknowledged: make(map[string]string),
+		codexSnapshots:               map[string]codexapp.Snapshot{projectPath: snapshot},
+		renderCachedSessionStateOnly: true,
+		spinnerFrame:                 0,
+	}
+	if !m.projectBrowserPulseActive(projectPath) {
+		t.Fatal("test browser handoff should initially pulse")
+	}
+
+	updated, cmd := m.openManagedBrowserLogin(
+		projectPath,
+		snapshot.Provider,
+		snapshot.ThreadID,
+		snapshot.ManagedBrowserSessionKey,
+		snapshot.BrowserActivity,
+		snapshot.CurrentBrowserPageURL,
+		"Showing the managed browser window...",
+		"Managed browser window is ready.",
+	)
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("managed browser reveal should queue an open command")
+	}
+	if got.projectBrowserPulseActive(projectPath) {
+		t.Fatal("opening the managed browser should acknowledge the project-row pulse")
+	}
+}
+
 func TestBrowserAttentionAcknowledgementSurvivesTransientRevealUnavailability(t *testing.T) {
 	const projectPath = "/tmp/demo"
 	snapshot := browserAttentionDialogSnapshot(projectPath)

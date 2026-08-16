@@ -520,6 +520,23 @@ func TestBrowserAttentionHighlightsProjectListRow(t *testing.T) {
 	if plainRendered == flashRendered {
 		t.Fatalf("browser pulse should change the ANSI styling")
 	}
+
+	acknowledged := plain
+	state, ok := acknowledged.projectPendingBrowserAttention(project.Path)
+	if !ok {
+		t.Fatal("test browser wait should be available for acknowledgement")
+	}
+	acknowledged.acknowledgeBrowserAttention(newBrowserAttentionNotification(project.Path, session.snapshot, state))
+	acknowledged.spinnerFrame = 1
+	acknowledgedRendered := acknowledged.renderProjectList(140, 6)
+	acknowledged.spinnerFrame = 0
+	acknowledgedPulseFrame := acknowledged.renderProjectList(140, 6)
+	if acknowledgedRendered != acknowledgedPulseFrame {
+		t.Fatal("acknowledged browser attention should leave a static project row instead of continuing to pulse")
+	}
+	if !strings.Contains(ansi.Strip(acknowledgedRendered), "browser: playwright/browser_navigate") {
+		t.Fatal("acknowledged browser attention should retain the passive browser-wait summary")
+	}
 }
 
 func TestProjectTabsMarkActionableCategoryAttention(t *testing.T) {

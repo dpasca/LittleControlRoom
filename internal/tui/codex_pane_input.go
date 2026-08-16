@@ -436,10 +436,12 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = "Checking the managed browser window..."
 		}
+		projectPath := firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject)
+		m.acknowledgeProjectBrowserAttentionFromSnapshot(projectPath, snapshot)
 		m.markManagedBrowserStateChecking(sessionKey)
 		return m, m.probeAndRevealManagedBrowserCmd(
 			sessionKey,
-			managedBrowserLeaseRef(embeddedProvider(snapshot), firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject), snapshot.ThreadID),
+			managedBrowserLeaseRef(embeddedProvider(snapshot), projectPath, snapshot.ThreadID),
 			"Managed browser window is ready. Continue there, then return here when you want Codex to keep going.",
 		)
 	case "enter":
