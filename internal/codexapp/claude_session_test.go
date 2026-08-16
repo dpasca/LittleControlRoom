@@ -2253,6 +2253,125 @@ while IFS= read -r trailing; do :; done
 	}
 }
 
+func TestClaudeReconcileDrainsQueuedSubmissionsFromCompletedTranscript(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	firstStartedAt := time.Date(2026, 8, 16, 3, 40, 0, 0, time.UTC)
+	queuedStartedAt := firstStartedAt.Add(3 * time.Hour)
+	completedAt := queuedStartedAt.Add(45 * time.Second)
+	lines := []string{
+		fmt.Sprintf(`{"type":"user","timestamp":%q,"uuid":"prompt-first","promptSource":"sdk","origin":{"kind":"human"},"message":{"role":"user","content":"first turn"}}`, firstStartedAt.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"assistant","timestamp":%q,"uuid":"answer-first","parentUuid":"prompt-first","message":{"id":"message-first","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"First done."}]}}`, firstStartedAt.Add(time.Minute).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"user","timestamp":%q,"uuid":"prompt-queued","parentUuid":"answer-first","promptSource":"sdk","origin":{"kind":"human"},"message":{"role":"user","content":"queued follow-up"}}`, queuedStartedAt.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"assistant","timestamp":%q,"uuid":"answer-queued-thinking","parentUuid":"prompt-queued","message":{"id":"message-queued","role":"assistant","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"Finished."}]}}`, completedAt.Add(-time.Second).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"assistant","timestamp":%q,"uuid":"answer-queued-text","parentUuid":"answer-queued-thinking","message":{"id":"message-queued","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Queued turn done."}]}}`, completedAt.Format(time.RFC3339Nano)),
+		`{"type":"last-prompt"}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		claudeHome:          dir,
+		sessionFile:         sessionFile,
+		started:             true,
+		busy:                true,
+		busySince:           firstStartedAt,
+		latestSubmittedAt:   queuedStartedAt,
+		latestTurnStartedAt: queuedStartedAt,
+		pendingSubmissions:  2,
+		stdin:               stdin,
+		status:              claudeThinkingStatus,
+		assistantBlocks:     make(map[string]map[string]struct{}),
+		toolCalls:           make(map[string]claudeToolCall),
+		toolResults:         make(map[string]struct{}),
+		backgroundTasks:     make(map[string]BackgroundTaskSnapshot),
+	}
+
+	if err := session.ReconcileBusyState(); err != nil {
+		t.Fatalf("ReconcileBusyState() error = %v", err)
+	}
+
+	if session.pendingSubmissions != 0 {
+		t.Fatalf("pendingSubmissions = %d, want 0", session.pendingSubmissions)
+	}
+	if !stdin.closed || session.stdin != nil {
+		t.Fatalf("completed transcript did not close stream input: closed=%t stdin=%#v", stdin.closed, session.stdin)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Phase != SessionPhaseFinishing || snapshot.Status != claudeFinishingStatus {
+		t.Fatalf("snapshot phase=%q status=%q, want finishing", snapshot.Phase, snapshot.Status)
+	}
+	if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted || !snapshot.LatestTurnStartedAt.IsZero() {
+		t.Fatalf(
+			"latest turn state = known:%t completed:%t started:%v, want verified completion",
+			snapshot.LatestTurnStateKnown,
+			snapshot.LatestTurnCompleted,
+			snapshot.LatestTurnStartedAt,
+		)
+	}
+}
+
+func TestClaudeReconcileDoesNotDrainNewerUnpersistedSubmission(t *testing.T) {
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "session.jsonl")
+	previousStartedAt := time.Date(2026, 8, 16, 3, 40, 0, 0, time.UTC)
+	previousCompletedAt := previousStartedAt.Add(time.Minute)
+	activeStartedAt := previousCompletedAt.Add(3 * time.Hour)
+	lines := []string{
+		fmt.Sprintf(`{"type":"user","timestamp":%q,"uuid":"prompt-previous","promptSource":"sdk","origin":{"kind":"human"},"message":{"role":"user","content":"previous turn"}}`, previousStartedAt.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"assistant","timestamp":%q,"uuid":"answer-previous","parentUuid":"prompt-previous","message":{"id":"message-previous","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Previous turn done."}]}}`, previousCompletedAt.Format(time.RFC3339Nano)),
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdin := &recordingWriteCloser{}
+	session := &claudeCodeSession{
+		claudeHome:           dir,
+		sessionFile:          sessionFile,
+		started:              true,
+		busy:                 true,
+		busySince:            activeStartedAt,
+		latestSubmittedAt:    activeStartedAt,
+		latestTurnStartedAt:  activeStartedAt,
+		latestTurnStateAt:    activeStartedAt,
+		latestTurnStateKnown: true,
+		latestTurnVerified:   true,
+		pendingSubmissions:   1,
+		stdin:                stdin,
+		status:               claudeThinkingStatus,
+		assistantBlocks:      make(map[string]map[string]struct{}),
+		toolCalls:            make(map[string]claudeToolCall),
+		toolResults:          make(map[string]struct{}),
+		backgroundTasks:      make(map[string]BackgroundTaskSnapshot),
+	}
+
+	if err := session.ReconcileBusyState(); err != nil {
+		t.Fatalf("ReconcileBusyState() error = %v", err)
+	}
+
+	if session.pendingSubmissions != 1 || stdin.closed || session.stdin != stdin {
+		t.Fatalf(
+			"older completion drained active submission: pending=%d closed=%t stdin=%#v",
+			session.pendingSubmissions,
+			stdin.closed,
+			session.stdin,
+		)
+	}
+	snapshot := session.Snapshot()
+	if !snapshot.Busy || snapshot.Phase != SessionPhaseRunning || snapshot.LatestTurnCompleted {
+		t.Fatalf("snapshot busy=%t phase=%q completed=%t, want active newer turn", snapshot.Busy, snapshot.Phase, snapshot.LatestTurnCompleted)
+	}
+	if !snapshot.LatestTurnStartedAt.Equal(activeStartedAt) {
+		t.Fatalf("LatestTurnStartedAt = %v, want %v", snapshot.LatestTurnStartedAt, activeStartedAt)
+	}
+	if !session.latestSubmittedAt.Equal(activeStartedAt) {
+		t.Fatalf("latestSubmittedAt = %v, want %v", session.latestSubmittedAt, activeStartedAt)
+	}
+}
+
 func TestClaudeResultKeepsStreamOpenUntilBackgroundTaskSettles(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &claudeCodeSession{

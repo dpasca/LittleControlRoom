@@ -165,6 +165,13 @@ is not sufficient to retain ownership: Claude Code can emit its final result,
 exit the headless `claude -p` process, and clean up a child background task
 before it records a terminal notification.
 
+Conversely, the headless process can remain alive after the durable session
+JSONL records an explicit terminal assistant stop, without emitting the matching
+terminal boundary on stdout. LCR periodically reloads the transcript and may
+release its final submitted turn only when that verified terminal record is not
+older than the locally captured submission. A terminal record from an earlier
+turn must not close a newer prompt that has not reached the JSONL yet.
+
 For that reason, every LCR-owned embedded Claude process is launched with
 `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. Bash commands and tests then remain
 foreground work owned by the Claude turn, so LCR does not mistake an

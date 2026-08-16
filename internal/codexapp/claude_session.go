@@ -91,6 +91,7 @@ type claudeCodeSession struct {
 	compacting           bool
 	compactCommand       *claudeCompactCommand
 	busySince            time.Time
+	latestSubmittedAt    time.Time
 	latestTurnStartedAt  time.Time
 	latestTurnStateAt    time.Time
 	latestTurnStateKnown bool
@@ -576,6 +577,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		}
 	}
 	s.clearUnresolvedBackgroundTasksLocked()
+	previousLatestSubmittedAt := s.latestSubmittedAt
 
 	var (
 		ctx         context.Context
@@ -638,6 +640,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 	s.lastError = ""
 	if mode == claudeSubmissionNormal {
+		s.latestSubmittedAt = submittedAt
 		s.latestTurnStartedAt = submittedAt
 		s.latestTurnStateAt = submittedAt
 		s.latestTurnStateKnown = true
@@ -661,6 +664,11 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			s.mu.Lock()
 			if s.pendingSubmissions > 0 {
 				s.pendingSubmissions--
+			}
+			if s.pendingSubmissions > 0 {
+				s.latestSubmittedAt = previousLatestSubmittedAt
+			} else {
+				s.latestSubmittedAt = time.Time{}
 			}
 			s.updateStatusLocked()
 			s.mu.Unlock()
@@ -1443,15 +1451,20 @@ func (s *claudeCodeSession) WaitClosed(timeout time.Duration) bool {
 // RefreshBusyElsewhere implements busyElsewhereRefresher.
 func (s *claudeCodeSession) RefreshBusyElsewhere() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := s.loadTranscriptLocked(); err != nil && !s.canUseStreamedTranscriptLocked(err) {
+		s.mu.Unlock()
 		return fmt.Errorf("refresh Claude Code session transcript: %w", err)
 	}
+	stdinToClose := s.finishClaudeSubmissionFromTranscriptLocked()
 	s.refreshActiveLocked()
 	if !s.busy && !s.externalTurnActive {
 		s.markBackgroundTasksUnresolvedLocked()
 	}
 	s.updateStatusLocked()
+	s.mu.Unlock()
+	if stdinToClose != nil {
+		_ = stdinToClose.Close()
+	}
 	s.notifyAsync()
 	return nil
 }
@@ -1494,6 +1507,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	compactCommand := s.compactCommand
 	s.busy = false
 	s.pendingSubmissions = 0
+	s.latestSubmittedAt = time.Time{}
 	s.cmd = nil
 	s.stdin = nil
 	s.cancel = nil
@@ -1783,6 +1797,9 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 		if s.pendingSubmissions > 0 {
 			s.pendingSubmissions--
 		}
+		if s.pendingSubmissions == 0 {
+			s.latestSubmittedAt = time.Time{}
+		}
 		if interruptedResult && s.pendingSubmissions <= 0 {
 			s.lastError = ""
 			s.lastSystemNotice = claudeInterruptNotice
@@ -1924,6 +1941,7 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromAssistantLocked(completedA
 	}
 
 	s.pendingSubmissions = 0
+	s.latestSubmittedAt = time.Time{}
 	s.latestTurnStartedAt = time.Time{}
 	s.latestTurnStateAt = completedAt
 	s.latestTurnStateKnown = true
@@ -1934,6 +1952,62 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromAssistantLocked(completedA
 	s.setClaudeBrowserActivityIdleLocked()
 	s.updateStatusLocked()
 	return stdin
+}
+
+func (s *claudeCodeSession) finishClaudeSubmissionFromTranscriptLocked() io.WriteCloser {
+	// Claude's stream-JSON process can remain alive without emitting a result
+	// envelope or a terminal stop reason on stdout even after its durable JSONL
+	// transcript records the turn's explicit end_turn. The manager periodically
+	// reloads that transcript, so use the verified terminal record to release the
+	// same final-submission ownership as the live stream path.
+	//
+	// latestSubmittedAt is deliberately separate from latestTurnStartedAt because
+	// loadTranscriptLocked replaces the latter with the artifact's view. Keeping
+	// the newest local submission stable across reloads prevents an older
+	// completed turn from closing a queued prompt that Claude has accepted but not
+	// persisted yet.
+	if !s.busy ||
+		s.pendingSubmissions <= 0 ||
+		s.latestSubmittedAt.IsZero() {
+		return nil
+	}
+	if !s.latestTurnStateKnown ||
+		!s.latestTurnCompleted ||
+		!s.latestTurnVerified ||
+		s.latestTurnStateAt.IsZero() {
+		s.preserveLatestClaudeSubmissionLocked()
+		return nil
+	}
+	if s.latestTurnStateAt.Before(s.latestSubmittedAt) {
+		s.preserveLatestClaudeSubmissionLocked()
+		return nil
+	}
+	if s.stdin == nil ||
+		s.compactCommand != nil ||
+		s.browserHandoffPending ||
+		s.runningBackgroundTaskCountLocked() > 0 {
+		return nil
+	}
+
+	s.pendingSubmissions = 0
+	s.latestSubmittedAt = time.Time{}
+	stdin := s.stdin
+	s.stdin = nil
+	s.setClaudeBrowserActivityIdleLocked()
+	s.updateStatusLocked()
+	return stdin
+}
+
+func (s *claudeCodeSession) preserveLatestClaudeSubmissionLocked() {
+	if s.latestSubmittedAt.IsZero() ||
+		(!s.latestTurnStartedAt.IsZero() && !s.latestTurnStartedAt.Before(s.latestSubmittedAt)) {
+		return
+	}
+	s.latestTurnStartedAt = s.latestSubmittedAt
+	s.latestTurnStateAt = s.latestSubmittedAt
+	s.latestTurnStateKnown = true
+	s.latestTurnCompleted = false
+	s.latestTurnVerified = true
 }
 
 func (s *claudeCodeSession) applyClaudeUsageLocked(messageID string, usage claudeTokenUsage) {
