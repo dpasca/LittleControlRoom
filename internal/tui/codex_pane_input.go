@@ -264,7 +264,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				inv.Kind == codexslash.KindReview ||
 				inv.Kind == codexslash.KindGoal ||
 				inv.Kind == codexslash.KindPermissions) {
-				m.status = label + " session is closed. Use /resume, /new, /handoff, or /reconnect to reopen it."
+				m.status = label + " session is closed. Use /resume, /new, /handoff, /lcagent-handoff, or /reconnect to reopen it."
 				return m, nil
 			}
 			switch inv.Kind {
@@ -290,6 +290,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "Saving a continuation brief and starting a fresh embedded " + label + " session..."
 				m.beginNewCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.handoffVisibleCodexSessionCmd(snapshot, inv.HandoffNote)
+			case codexslash.KindLCAgentHandoff:
+				m.status = "Saving a continuation brief and starting a fresh embedded LCAgent session..."
+				m.beginNewCodexPendingOpen(m.codexVisibleProject, codexapp.ProviderLCAgent)
+				return m, m.handoffVisibleCodexSessionToProviderCmd(snapshot, inv.HandoffNote, codexapp.ProviderLCAgent)
 			case codexslash.KindPause:
 				switch {
 				case snapshot.BusyExternal:
@@ -475,11 +479,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, batchCmds(focusCmd, refreshCmd)
 			}
-			m.status = label + " is rechecking the current turn state. If this persists, use /reconnect, /handoff, or /sessions before sending another prompt."
+			m.status = label + " is rechecking the current turn state. If this persists, use /reconnect, /handoff, /lcagent-handoff, or /sessions before sending another prompt."
 			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
-			m.status = label + " looks stuck or disconnected. Interrupt with ctrl+c, use /reconnect, or use /handoff to continue in a fresh session."
+			m.status = label + " looks stuck or disconnected. Interrupt with ctrl+c, use /reconnect, /handoff for the same provider, or /lcagent-handoff to continue in LCAgent."
 			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Busy && !codexSnapshotCanSubmitBusyInput(snapshot) {

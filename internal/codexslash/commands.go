@@ -11,24 +11,25 @@ import (
 type Kind string
 
 const (
-	KindNew         Kind = "new"
-	KindResume      Kind = "resume"
-	KindStatus      Kind = "status"
-	KindShowStatus  Kind = "show-status"
-	KindModel       Kind = "model"
-	KindReconnect   Kind = "reconnect"
-	KindHandoff     Kind = "handoff"
-	KindPause       Kind = "pause"
-	KindCompact     Kind = "compact"
-	KindContext     Kind = "context"
-	KindReview      Kind = "review"
-	KindDevLCReview Kind = "dev-lcreview"
-	KindPermissions Kind = "permissions"
-	KindChat        Kind = "chat"
-	KindSkills      Kind = "skills"
-	KindGoal        Kind = "goal"
-	KindSettings    Kind = "settings"
-	KindTerminal    Kind = "terminal"
+	KindNew            Kind = "new"
+	KindResume         Kind = "resume"
+	KindStatus         Kind = "status"
+	KindShowStatus     Kind = "show-status"
+	KindModel          Kind = "model"
+	KindReconnect      Kind = "reconnect"
+	KindHandoff        Kind = "handoff"
+	KindLCAgentHandoff Kind = "lcagent-handoff"
+	KindPause          Kind = "pause"
+	KindCompact        Kind = "compact"
+	KindContext        Kind = "context"
+	KindReview         Kind = "review"
+	KindDevLCReview    Kind = "dev-lcreview"
+	KindPermissions    Kind = "permissions"
+	KindChat           Kind = "chat"
+	KindSkills         Kind = "skills"
+	KindGoal           Kind = "goal"
+	KindSettings       Kind = "settings"
+	KindTerminal       Kind = "terminal"
 )
 
 type Spec = slashcmd.Spec
@@ -69,6 +70,7 @@ var specs = []Spec{
 	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 	{Name: "handoff", Usage: "/handoff [note]", Summary: "Save a host-generated continuation brief and start a fresh embedded session"},
+	{Name: "lcagent-handoff", Usage: "/lcagent-handoff [note]", Summary: "Save a host-generated continuation brief and continue in a fresh LCAgent session"},
 	{Name: "pause", Usage: "/pause", Summary: "Interrupt the active turn locally without sending another model request"},
 	{Name: "suspend", Usage: "/suspend", Summary: "Alias for /pause", Hidden: true},
 	{Name: "compact", Usage: "/compact [instructions]", Summary: "Compact conversation history, optionally preserving a specific focus"},
@@ -151,6 +153,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/handoff",
 			Display: "/handoff [note]",
 			Summary: "Save a mechanical continuation brief locally, then start a fresh embedded session from it",
+		}}
+	case "lcagent-handoff":
+		return []Suggestion{{
+			Insert:  "/lcagent-handoff",
+			Display: "/lcagent-handoff [note]",
+			Summary: "Save a mechanical continuation brief locally, then continue in a fresh LCAgent session",
 		}}
 	case "pause", "suspend":
 		return []Suggestion{{
@@ -383,6 +391,13 @@ func Parse(input string) (Invocation, error) {
 			Kind:        KindHandoff,
 			HandoffNote: note,
 			Canonical:   slashcmd.CanonicalCommand("handoff", note),
+		}, nil
+	case "lcagent-handoff":
+		note := strings.TrimSpace(rawArgs)
+		return Invocation{
+			Kind:        KindLCAgentHandoff,
+			HandoffNote: note,
+			Canonical:   slashcmd.CanonicalCommand("lcagent-handoff", note),
 		}, nil
 	case "pause", "suspend":
 		if strings.TrimSpace(rawArgs) != "" {

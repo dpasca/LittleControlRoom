@@ -686,6 +686,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("/reconnect", "recover"),
 			footerNavAction("/handoff", "fresh"),
+			footerNavAction("/lcagent-handoff", "LCAgent"),
 			footerNavAction("/sessions", "inspect"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseStalled:
@@ -693,6 +694,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("/reconnect", "recover"),
 			footerNavAction("/handoff", "fresh"),
+			footerNavAction("/lcagent-handoff", "LCAgent"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseFinishing:
 		actions = []footerAction{

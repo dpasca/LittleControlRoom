@@ -47,6 +47,20 @@ func TestSuggestionsIncludeHandoffCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeLCAgentHandoffCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/lcagent-handoff" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /lcagent-handoff: %#v", suggestions)
+	}
+}
+
 func TestSuggestionsIncludePauseCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
@@ -229,6 +243,30 @@ func TestParseHandoffCommandWithOptionalNote(t *testing.T) {
 	}
 	if inv.Kind != KindHandoff || inv.HandoffNote != "" || inv.Canonical != "/handoff" {
 		t.Fatalf("Parse(/handoff) = %#v, want empty-note handoff", inv)
+	}
+}
+
+func TestParseLCAgentHandoffCommandWithOptionalNote(t *testing.T) {
+	inv, err := Parse("/lcagent-handoff preserve the release investigation")
+	if err != nil {
+		t.Fatalf("Parse(/lcagent-handoff ...) error = %v", err)
+	}
+	if inv.Kind != KindLCAgentHandoff {
+		t.Fatalf("Parse(/lcagent-handoff ...) kind = %q, want %q", inv.Kind, KindLCAgentHandoff)
+	}
+	if inv.HandoffNote != "preserve the release investigation" {
+		t.Fatalf("LCAgent handoff note = %q", inv.HandoffNote)
+	}
+	if inv.Canonical != "/lcagent-handoff preserve the release investigation" {
+		t.Fatalf("LCAgent handoff canonical = %q", inv.Canonical)
+	}
+
+	inv, err = Parse("/lcagent-handoff")
+	if err != nil {
+		t.Fatalf("Parse(/lcagent-handoff) error = %v", err)
+	}
+	if inv.Kind != KindLCAgentHandoff || inv.HandoffNote != "" || inv.Canonical != "/lcagent-handoff" {
+		t.Fatalf("Parse(/lcagent-handoff) = %#v, want empty-note LCAgent handoff", inv)
 	}
 }
 

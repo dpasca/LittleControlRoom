@@ -82,6 +82,22 @@ func TestVisibleCodexSlashHandoffSuggestionRenders(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashLCAgentHandoffSuggestionRenders(t *testing.T) {
+	input := newCodexTextarea()
+	input.SetValue("/lcagent-handoff")
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+		width:               100,
+		height:              24,
+	}
+
+	rendered := ansi.Strip(strings.Join(m.renderCodexSlashBlocks(100), "\n"))
+	if !strings.Contains(rendered, "/lcagent-handoff [note]") || !strings.Contains(rendered, "fresh LCAgent session") {
+		t.Fatalf("rendered LCAgent handoff suggestion = %q", rendered)
+	}
+}
+
 func TestVisibleCodexSlashPermissionsSummaryNotClippedByEllipsis(t *testing.T) {
 	input := newCodexTextarea()
 	input.SetValue("/permissions ")
@@ -1017,6 +1033,122 @@ func TestVisibleCodexSlashHandoffSavesBriefAndStartsFreshSession(t *testing.T) {
 	}
 	if !strings.Contains(fresh.Prompt, paths[0]) {
 		t.Fatalf("fresh prompt should point to %q: %q", paths[0], fresh.Prompt)
+	}
+}
+
+func TestVisibleCodexSlashLCAgentHandoffSavesBriefAndSwitchesProvider(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
+	dataDir := t.TempDir()
+	capturedAt := time.Date(2026, time.August, 16, 13, 40, 47, 0, time.UTC)
+	var requests []codexapp.LaunchRequest
+	source := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:       codexapp.ProviderCodex,
+			Started:        true,
+			ThreadID:       "codex-source",
+			LastError:      "This content was flagged for possible cybersecurity risk.",
+			LastActivityAt: capturedAt.Add(-time.Minute),
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: "Write the release handoff and commit the verified fix."},
+				{Kind: codexapp.TranscriptAgent, Text: "The focused regression and Android build passed."},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, _ func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		if len(requests) == 1 {
+			return source, nil
+		}
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider,
+				Started:  true,
+				ThreadID: "lcagent-fresh",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/lcagent-handoff preserve the verified crash diagnosis")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		appDataDirPath:      dataDir,
+		nowFn:               func() time.Time { return capturedAt },
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("enter should run the host-side /lcagent-handoff command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderLCAgent || !got.codexPendingOpen.newSession {
+		t.Fatalf("LCAgent handoff pending open = %#v, want fresh LCAgent", got.codexPendingOpen)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("LCAgent handoff cmd returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("LCAgent handoff open error = %v", opened.err)
+	}
+	if opened.provider != codexapp.ProviderLCAgent || opened.snapshot.ThreadID != "lcagent-fresh" {
+		t.Fatalf("opened LCAgent handoff = provider %q snapshot %#v", opened.provider, opened.snapshot)
+	}
+	if !strings.Contains(opened.status, "Handoff saved to ") || !strings.Contains(opened.status, "Prompt sent to fresh embedded LCAgent") {
+		t.Fatalf("LCAgent handoff success status = %q", opened.status)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want initial Codex and fresh LCAgent", len(requests))
+	}
+	fresh := requests[1]
+	if fresh.Provider != codexapp.ProviderLCAgent || !fresh.ForceNew || fresh.ResumeID != "" {
+		t.Fatalf("LCAgent handoff launch = provider %q ForceNew=%t ResumeID=%q", fresh.Provider, fresh.ForceNew, fresh.ResumeID)
+	}
+	if !source.snapshot.Closed {
+		t.Fatal("source Codex session should close after the handoff brief is saved")
+	}
+
+	paths, err := filepath.Glob(filepath.Join(dataDir, "embedded-sessions", "handoffs", "*", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("LCAgent handoff files = %#v, want one durable brief", paths)
+	}
+	raw, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := string(raw)
+	for _, want := range []string{
+		"Provider: \"Codex\"",
+		"preserve the verified crash diagnosis",
+		"Write the release handoff and commit the verified fix.",
+		"The focused regression and Android build passed.",
+		"possible cybersecurity risk",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("LCAgent handoff brief should contain %q:\n%s", want, brief)
+		}
+	}
+	if !strings.Contains(fresh.Prompt, paths[0]) {
+		t.Fatalf("fresh LCAgent prompt should point to %q: %q", paths[0], fresh.Prompt)
 	}
 }
 

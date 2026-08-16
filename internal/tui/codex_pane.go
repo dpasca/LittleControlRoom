@@ -2056,20 +2056,28 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 }
 
 func (m *Model) handoffVisibleCodexSessionCmd(source codexapp.Snapshot, note string) tea.Cmd {
+	return m.handoffVisibleCodexSessionToProviderCmd(source, note, embeddedProvider(source))
+}
+
+func (m *Model) handoffVisibleCodexSessionToProviderCmd(source codexapp.Snapshot, note string, targetProvider codexapp.Provider) tea.Cmd {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
 		return nil
 	}
-	provider := embeddedProvider(source)
-	source.Provider = provider
+	sourceProvider := embeddedProvider(source)
+	targetProvider = targetProvider.Normalized()
+	if targetProvider == "" {
+		targetProvider = sourceProvider
+	}
+	source.Provider = sourceProvider
 	source.ProjectPath = projectPath
 	handoff, err := codexapp.NewSessionHandoff(m.appDataDir(), source, note, m.currentTime())
 	if err != nil {
-		requestID := m.codexPendingOpenRequestID(projectPath, provider)
+		requestID := m.codexPendingOpenRequestID(projectPath, targetProvider)
 		return func() tea.Msg {
 			return codexSessionOpenedMsg{
 				projectPath:   projectPath,
-				provider:      provider,
+				provider:      targetProvider,
 				openRequestID: requestID,
 				err:           err,
 			}
@@ -2077,7 +2085,7 @@ func (m *Model) handoffVisibleCodexSessionCmd(source codexapp.Snapshot, note str
 	}
 
 	req := codexapp.LaunchRequest{
-		Provider:         provider,
+		Provider:         targetProvider,
 		ProjectPath:      projectPath,
 		ForceNew:         true,
 		Prompt:           handoff.LaunchPrompt(),
@@ -2108,7 +2116,7 @@ func (m *Model) handoffVisibleCodexSessionCmd(source codexapp.Snapshot, note str
 				opened.err = fmt.Errorf(
 					"handoff saved to %s, but the fresh %s session could not be opened: %w",
 					handoff.Path(),
-					provider.Label(),
+					targetProvider.Label(),
 					opened.err,
 				)
 			}
