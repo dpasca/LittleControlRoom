@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
 	"lcroom/internal/todocapture"
@@ -52,6 +54,9 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 		!strings.Contains(string(responses[1].Result), `"read_process_output"`) ||
 		!strings.Contains(string(responses[1].Result), `"stop_process"`) ||
 		!strings.Contains(string(responses[1].Result), `"request_browser_attention"`) ||
+		!strings.Contains(string(responses[1].Result), `"list_lcr_queries"`) ||
+		!strings.Contains(string(responses[1].Result), `"describe_lcr_query"`) ||
+		!strings.Contains(string(responses[1].Result), `"run_lcr_query"`) ||
 		!strings.Contains(string(responses[1].Result), `"list_control_capabilities"`) ||
 		!strings.Contains(string(responses[1].Result), `"describe_control_capability"`) ||
 		!strings.Contains(string(responses[1].Result), `"propose_control_operation"`) ||
@@ -60,6 +65,9 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	}
 	if strings.Contains(string(responses[1].Result), string(control.CapabilityProjectCreateAndStartEngineer)) {
 		t.Fatalf("tools/list eagerly exposes capability names instead of deferring them: %s", responses[1].Result)
+	}
+	if strings.Contains(string(responses[1].Result), string(agentquery.QueryPortfolioOverview)) {
+		t.Fatalf("tools/list eagerly exposes query names instead of deferring them: %s", responses[1].Result)
 	}
 }
 
@@ -201,6 +209,74 @@ func TestRuntimeMCPProgressiveControlProposal(t *testing.T) {
 	conflicting.Arguments = json.RawMessage(strings.Replace(string(conflicting.Arguments), "Create the initial project", "Create a different project", 1))
 	if report, isErr := server.proposeControlOperation(context.Background(), conflicting); !isErr || !strings.Contains(fmt.Sprint(report["error"]), "already bound") {
 		t.Fatalf("conflicting idempotency retry = %#v, error=%t", report, isErr)
+	}
+}
+
+func TestRuntimeMCPProgressiveQueriesUseStructuredBoundsAndPrivacy(t *testing.T) {
+	ctx := t.Context()
+	originPath := filepath.Join(t.TempDir(), "origin")
+	privatePath := filepath.Join(t.TempDir(), "private")
+	publicPath := filepath.Join(t.TempDir(), "public")
+	st, err := store.Open(filepath.Join(t.TempDir(), "queries.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for _, state := range []model.ProjectState{
+		{Path: originPath, Name: "Origin", InScope: true, PresentOnDisk: true, AttentionScore: 30, UpdatedAt: time.Now()},
+		{Path: publicPath, Name: "Public", InScope: true, PresentOnDisk: true, AttentionScore: 20, UpdatedAt: time.Now()},
+		{Path: privatePath, Name: "Private secret", InScope: true, PresentOnDisk: true, AttentionScore: 10, UpdatedAt: time.Now()},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	category, err := st.CreateProjectCategory(ctx, "Private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetProjectCategoryPrivate(ctx, category.Name, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetResourceCategory(ctx, model.CategoryResourceProject, privatePath, category.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	server, err := New(Options{
+		ProjectPath: originPath,
+		Provider:    "codex",
+		SessionKey:  "query-session",
+		QueryScope:  agentquery.ScopePortfolio,
+		Store:       st,
+		Manager:     projectrun.NewManager(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.manager.CloseAll() })
+
+	domains := callRuntimeToolForMap(t, server, "list_lcr_queries", `{}`)
+	if queries, ok := domains["queries"].([]any); !ok || len(queries) != 0 {
+		t.Fatalf("domain discovery queries = %#v, want no eager query summaries", domains["queries"])
+	}
+	projectQueries := callRuntimeToolForMap(t, server, "list_lcr_queries", `{"domain":"project"}`)
+	if !strings.Contains(mustJSON(t, projectQueries), string(agentquery.QueryProjectSearch)) {
+		t.Fatalf("project query catalog = %#v, want project.search", projectQueries)
+	}
+	described := callRuntimeToolForMap(t, server, "describe_lcr_query", `{"name":"project.list"}`)
+	if !strings.Contains(mustJSON(t, described), `"input_schema"`) || !strings.Contains(mustJSON(t, described), `"persisted_snapshot"`) {
+		t.Fatalf("query description = %#v, want exact schema and freshness", described)
+	}
+	result := callRuntimeToolForMap(t, server, "run_lcr_query", `{"query":"project.list","arguments":{"limit":10}}`)
+	if result["total"] != float64(2) || result["scope"] != string(agentquery.ScopePortfolio) {
+		t.Fatalf("project list query = %#v, want two visible portfolio projects", result)
+	}
+	encoded := mustJSON(t, result)
+	if strings.Contains(encoded, privatePath) || strings.Contains(encoded, "Private secret") {
+		t.Fatalf("private project leaked through query: %s", encoded)
+	}
+	if !strings.Contains(encoded, `"as_of"`) || !strings.Contains(encoded, "private_categories_hidden_except_origin_project") {
+		t.Fatalf("query metadata missing freshness/privacy contract: %s", encoded)
 	}
 }
 

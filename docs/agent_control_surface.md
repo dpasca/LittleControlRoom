@@ -1,5 +1,10 @@
 # Progressive Agent Control Surface
 
+This is the write-side companion to the read-only
+[Progressive Agent Query Surface](agent_query_surface.md). Queries return
+bounded persisted state directly; controls queue typed operations for explicit
+operator confirmation.
+
 Little Control Room gives embedded Codex, OpenCode, and Claude Code sessions
 access to its typed control registry without publishing one MCP tool per action.
 The stable MCP surface has four control tools:

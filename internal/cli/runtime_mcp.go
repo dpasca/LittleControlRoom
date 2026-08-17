@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/control"
 	"lcroom/internal/runtimemcp"
 	"lcroom/internal/todocapture"
@@ -24,6 +25,7 @@ type runtimeMCPOptions struct {
 	dbPath               string
 	todoCaptureMode      todocapture.CaptureMode
 	controlScope         control.AuthorityScope
+	queryScope           agentquery.Scope
 }
 
 func runRuntimeMCP(args []string) int {
@@ -44,6 +46,7 @@ func runRuntimeMCP(args []string) int {
 		DBPath:               opts.dbPath,
 		TodoCaptureMode:      opts.todoCaptureMode,
 		ControlScope:         opts.controlScope,
+		QueryScope:           opts.queryScope,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "runtime-mcp error: %v\n", err)
 		return 1
@@ -59,9 +62,10 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 	sessionKey := fs.String("session-key", "", "runtime MCP session key")
 	browserSessionKey := fs.String("browser-session-key", "", "managed browser session key")
 	claudeApprovalSocket := fs.String("claude-approval-socket", "", "embedded Claude Code approval socket")
-	dbPath := fs.String("db-path", "", "LCR SQLite database path for project TODO capture")
+	dbPath := fs.String("db-path", "", "LCR SQLite database path for queries, controls, and project TODO capture")
 	todoCaptureMode := fs.String("todo-capture-mode", string(todocapture.ModeOff), "project TODO capture mode")
 	controlScope := fs.String("control-scope", string(control.AuthorityScopeProject), "control authority scope: project, portfolio, or host")
+	queryScope := fs.String("query-scope", string(agentquery.ScopeProject), "read-only query scope: project or portfolio")
 	if err := fs.Parse(args); err != nil {
 		return runtimeMCPOptions{}, err
 	}
@@ -73,6 +77,10 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 	if parsedControlScope == "" {
 		return runtimeMCPOptions{}, fmt.Errorf("--control-scope must be project, portfolio, or host")
 	}
+	parsedQueryScope := agentquery.NormalizeScope(*queryScope)
+	if parsedQueryScope == "" {
+		return runtimeMCPOptions{}, fmt.Errorf("--query-scope must be project or portfolio")
+	}
 	opts := runtimeMCPOptions{
 		projectPath:          strings.TrimSpace(*projectPath),
 		provider:             strings.TrimSpace(*provider),
@@ -83,6 +91,7 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 		dbPath:               strings.TrimSpace(*dbPath),
 		todoCaptureMode:      parsedMode,
 		controlScope:         parsedControlScope,
+		queryScope:           parsedQueryScope,
 	}
 	if opts.projectPath == "" {
 		return runtimeMCPOptions{}, fmt.Errorf("--project-path is required")

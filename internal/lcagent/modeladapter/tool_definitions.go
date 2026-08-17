@@ -24,6 +24,7 @@ type ToolOptions struct {
 	AdminWrite              bool
 	BrowserAvailable        bool
 	VisionAnalysisEnabled   bool
+	LCRQueriesEnabled       bool
 	WorkspaceOnlyReads      bool
 	ReadOnly                bool
 	TodoCaptureMode         todocapture.CaptureMode
@@ -240,6 +241,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	}
 	if todocapture.NormalizeCaptureMode(opts.TodoCaptureMode).Enabled() {
 		defs = append(defs, projectTodoToolDefinitions(opts.TodoCaptureMode)...)
+	}
+	if opts.LCRQueriesEnabled {
+		defs = append(defs, lcrQueryToolDefinitions()...)
 	}
 	defs = append(defs,
 		ToolDefinition{
@@ -515,13 +519,63 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		filtered := defs[:0]
 		for _, def := range defs {
 			switch def.Function.Name {
-			case "read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "final_response":
+			case "read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "list_lcr_queries", "describe_lcr_query", "run_lcr_query", "final_response":
 				filtered = append(filtered, def)
 			}
 		}
 		defs = filtered
 	}
 	return defs
+}
+
+func lcrQueryToolDefinitions() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "list_lcr_queries",
+				Description: "Discover Little Control Room state-query domains without loading individual query schemas. Pass one exact domain to reveal compact query summaries.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"domain": map[string]any{"type": "string", "enum": []string{"portfolio", "project", "assessment", "work"}, "description": "Optional exact domain. Omit it to list domains only."},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "describe_lcr_query",
+				Description: "Load the strict input schema, output envelope, and disclosure metadata for one query returned by list_lcr_queries.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "minLength": 1, "description": "Exact query name returned by list_lcr_queries."},
+					},
+					"required": []string{"name"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "run_lcr_query",
+				Description: "Run one described Little Control Room state query with bounded structured arguments.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"query":     map[string]any{"type": "string", "minLength": 1, "description": "Exact query name previously described."},
+						"arguments": map[string]any{"type": "object", "description": "Arguments matching the described query input_schema."},
+					},
+					"required": []string{"query", "arguments"},
+				},
+			},
+		},
+	}
 }
 
 func projectTodoToolDefinitions(mode todocapture.CaptureMode) []ToolDefinition {

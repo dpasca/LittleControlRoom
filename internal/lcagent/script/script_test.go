@@ -16,11 +16,13 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
+	"lcroom/internal/store"
 )
 
 func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
@@ -124,6 +126,62 @@ func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
 	for _, want := range []string{`"type":"verification_check"`, `"command":"cat README.md"`, `"status":"passed"`, `"verification_status":"verified"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunnerExposesProgressiveLCRQueriesThroughNativeTools(t *testing.T) {
+	ctx := context.Background()
+	origin := t.TempDir()
+	st, err := store.Open(filepath.Join(t.TempDir(), "lcr.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, state := range []lcrmodel.ProjectState{
+		{Path: origin, Name: "Origin", InScope: true, Status: lcrmodel.StatusIdle, UpdatedAt: time.Now()},
+		{Path: "/repos/public-other", Name: "Public Other", InScope: true, Status: lcrmodel.StatusIdle, UpdatedAt: time.Now()},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executor, err := agentquery.NewExecutor(agentquery.Options{
+		Reader:            st,
+		OriginProjectPath: origin,
+		Scope:             agentquery.ScopePortfolio,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{Session: writer, SessionID: sessionID, LCRQueries: executor}
+
+	listed, err := runner.RunTool(ctx, Action{Type: "tool_call", Tool: "list_lcr_queries", Args: raw(`{"domain":"project"}`)})
+	if err != nil || !listed.Success {
+		t.Fatalf("list_lcr_queries result=%#v err=%v", listed, err)
+	}
+	if !strings.Contains(listed.Output, "project.list") || strings.Contains(listed.Output, "input_schema") {
+		t.Fatalf("list output should contain compact summaries only:\n%s", listed.Output)
+	}
+
+	described, err := runner.RunTool(ctx, Action{Type: "tool_call", Tool: "describe_lcr_query", Args: raw(`{"name":"project.list"}`)})
+	if err != nil || !strings.Contains(described.Output, "input_schema") {
+		t.Fatalf("describe_lcr_query result=%#v err=%v", described, err)
+	}
+
+	run, err := runner.RunTool(ctx, Action{Type: "tool_call", Tool: "run_lcr_query", Args: raw(`{"query":"project.list","arguments":{"limit":10}}`)})
+	if err != nil || !run.Success {
+		t.Fatalf("run_lcr_query result=%#v err=%v", run, err)
+	}
+	for _, want := range []string{"Origin", "Public Other", `"freshness": "persisted_snapshot"`} {
+		if !strings.Contains(run.Output, want) {
+			t.Fatalf("run output missing %q:\n%s", want, run.Output)
 		}
 	}
 }

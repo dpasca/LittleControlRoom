@@ -47,6 +47,9 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 	for _, want := range []string{
 		claudePlaywrightMCPAllowedTools,
 		claudeRuntimeMCPBrowserAttentionTool,
+		claudeRuntimeMCPListQueriesTool,
+		claudeRuntimeMCPDescribeQueryTool,
+		claudeRuntimeMCPRunQueryTool,
 		claudeRuntimeMCPListTODOsTool,
 		claudeRuntimeMCPAddTODOTool,
 	} {
@@ -73,6 +76,7 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 		"runtime-mcp",
 		"--provider", string(ProviderClaudeCode),
 		"--project-path", "/tmp/demo-worktree",
+		"--query-scope", "portfolio",
 		"--data-dir", "/tmp/lcroom-data",
 		"--browser-session-key", "browser-session",
 		"--claude-approval-socket", "/tmp/claude-approval.sock",

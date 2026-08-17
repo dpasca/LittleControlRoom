@@ -16,6 +16,7 @@ type SystemPromptOptions struct {
 	AdminWrite              bool
 	BrowserAvailable        bool
 	VisionAnalysisEnabled   bool
+	LCRQueriesEnabled       bool
 	HostOS                  string
 	HostArch                string
 	WorkspaceOnlyReads      bool
@@ -53,6 +54,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		fmt.Sprintf("- admin write available: %s", yesNo(opts.AdminWrite)),
 		fmt.Sprintf("- public web search available: %s", yesNo(opts.WebSearchEnabled)),
 		fmt.Sprintf("- vision image analysis available: %s", yesNo(opts.VisionAnalysisEnabled)),
+		fmt.Sprintf("- Little Control Room state queries available: %s", yesNo(opts.LCRQueriesEnabled)),
 	}
 	lines = append(lines, hostEnvironmentPromptLines(opts)...)
 	lines = append(lines,
@@ -80,6 +82,13 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use read_file for targeted ranges. Reading from line 1 helps with imports/package context, but prefer outline/search-located ranges.",
 		readScoutingLine,
 	)
+	if opts.LCRQueriesEnabled {
+		lines = append(lines,
+			"For cross-project LCR state, use the progressive query catalog: call list_lcr_queries without a domain, then with one exact domain, then describe_lcr_query before run_lcr_query.",
+			"Follow next_cursor for more results. Query responses are bounded persisted snapshots with as_of timestamps, not live TUI state.",
+			"The LCR query catalog excludes other private-category projects, Help Chat transcripts, raw event payloads, and arbitrary repository files.",
+		)
+	}
 	if opts.WebSearchEnabled {
 		lines = append(lines,
 			"Use web_search for current public info/docs when workspace evidence is not enough; cite result URLs in final_response when web evidence affects the answer.",

@@ -79,6 +79,11 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 			t.Fatalf("overlay runtime skill text missing progressive control guidance for %s: %s", want, runtimeText)
 		}
 	}
+	for _, want := range []string{"list_lcr_queries", "describe_lcr_query", "run_lcr_query", "persisted snapshots", "Private-category"} {
+		if !strings.Contains(runtimeText, want) {
+			t.Fatalf("overlay runtime skill text missing progressive query guidance for %s: %s", want, runtimeText)
+		}
+	}
 	if strings.Contains(runtimeText, "original runtime skill") {
 		t.Fatalf("overlay runtime skill should not mirror original runtime skill: %s", runtimeText)
 	}

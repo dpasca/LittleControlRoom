@@ -257,6 +257,7 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 		`"--provider","codex"`,
 		`"--project-path","/tmp/demo"`,
 		`"--control-scope","portfolio"`,
+		`"--query-scope","portfolio"`,
 		`"--data-dir","/tmp/lcr-data"`,
 		`"--db-path","/tmp/lcr-data/custom.sqlite"`,
 		`"--todo-capture-mode","explicit_only"`,

@@ -21,6 +21,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/commandguard"
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
@@ -67,6 +68,7 @@ type Runner struct {
 	Approvals            ApprovalBroker
 	Processes            ProcessBroker
 	ProjectTodos         ProjectTodoBroker
+	LCRQueries           *agentquery.Executor
 	TodoCaptureMode      todocapture.CaptureMode
 	Skills               skillcatalog.Catalog
 	SessionID            string
@@ -1035,6 +1037,19 @@ type loadSkillArgs struct {
 	Name string `json:"name"`
 }
 
+type listLCRQueriesArgs struct {
+	Domain string `json:"domain"`
+}
+
+type describeLCRQueryArgs struct {
+	Name string `json:"name"`
+}
+
+type runLCRQueryArgs struct {
+	Query     string          `json:"query"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
 func DecodeFinalResponseArgs(raw json.RawMessage) (Action, error) {
 	var args finalResponseArgs
 	if err := decodeStrictJSON(raw, &args); err != nil {
@@ -1234,6 +1249,42 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 	}
 	switch action.Tool {
+	case "list_lcr_queries":
+		var args listLCRQueriesArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRQueries == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR queries are not available for this LCAgent run"}
+			break
+		}
+		report, err := agentquery.ListReport(args.Domain, r.LCRQueries.Scope(), true)
+		result = lcrQueryToolResult(report, err)
+	case "describe_lcr_query":
+		var args describeLCRQueryArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRQueries == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR queries are not available for this LCAgent run"}
+			break
+		}
+		report, err := agentquery.DescribeReport(args.Name, r.LCRQueries.Scope(), "run_lcr_query")
+		result = lcrQueryToolResult(report, err)
+	case "run_lcr_query":
+		var args runLCRQueryArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRQueries == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR queries are not available for this LCAgent run"}
+			break
+		}
+		report, err := r.LCRQueries.Execute(ctx, agentquery.Name(strings.TrimSpace(args.Query)), args.Arguments)
+		result = lcrQueryToolResult(report, err)
 	case "read_file":
 		var args readFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -1660,6 +1711,17 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 	return result, nil
 }
 
+func lcrQueryToolResult(report map[string]any, err error) tools.ToolResult {
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error()}
+	}
+	encoded, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("encode LCR query result: %v", err)}
+	}
+	return tools.ToolResult{Success: true, Output: string(encoded)}
+}
+
 func (r *Runner) runCaptureScreenshot(ctx context.Context, args captureScreenshotArgs) tools.ToolResult {
 	path, err := r.captureScreenshotPath(args.Path)
 	if err != nil {
@@ -1984,7 +2046,10 @@ func isInspectionEvidenceTool(tool string) bool {
 		"web_search",
 		"browser_snapshot",
 		"browser_current_page",
-		"browser_screenshot":
+		"browser_screenshot",
+		"list_lcr_queries",
+		"describe_lcr_query",
+		"run_lcr_query":
 		return true
 	default:
 		return false

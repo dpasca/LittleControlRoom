@@ -148,6 +148,11 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 			t.Fatalf("overlay runtime skill = %q, want progressive control guidance for %s", runtimeText, want)
 		}
 	}
+	for _, want := range []string{"list_lcr_queries", "describe_lcr_query", "run_lcr_query", "persisted snapshots", "Private-category"} {
+		if !strings.Contains(runtimeText, want) {
+			t.Fatalf("overlay runtime skill = %q, want progressive query guidance for %s", runtimeText, want)
+		}
+	}
 	if !strings.Contains(runtimeText, "later write or external-action steps from the same requested workflow") {
 		t.Fatalf("overlay runtime skill = %q, want canceled-workflow stop guidance", runtimeText)
 	}

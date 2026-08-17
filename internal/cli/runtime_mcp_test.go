@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/control"
 )
 
@@ -24,6 +25,25 @@ func TestParseRuntimeMCPOptionsKeepsBrowserAndRuntimeSessionKeysDistinct(t *test
 	}
 	if got, want := opts.claudeApprovalSocket, "/tmp/approval.sock"; got != want {
 		t.Fatalf("Claude approval socket = %q, want %q", got, want)
+	}
+}
+
+func TestParseRuntimeMCPOptionsParsesQueryScope(t *testing.T) {
+	opts, err := parseRuntimeMCPOptions([]string{
+		"--project-path", "/tmp/demo",
+		"--query-scope", "portfolio",
+	})
+	if err != nil {
+		t.Fatalf("parseRuntimeMCPOptions() error = %v", err)
+	}
+	if opts.queryScope != agentquery.ScopePortfolio {
+		t.Fatalf("query scope = %q, want portfolio", opts.queryScope)
+	}
+	if _, err := parseRuntimeMCPOptions([]string{
+		"--project-path", "/tmp/demo",
+		"--query-scope", "everything",
+	}); err == nil {
+		t.Fatal("invalid query scope was accepted")
 	}
 }
 

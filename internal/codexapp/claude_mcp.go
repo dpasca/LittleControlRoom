@@ -56,6 +56,9 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 			Args:    append([]string(nil), args...),
 		}
 		allowedTools = append(allowedTools,
+			claudeRuntimeMCPListQueriesTool,
+			claudeRuntimeMCPDescribeQueryTool,
+			claudeRuntimeMCPRunQueryTool,
 			claudeRuntimeMCPListControlsTool,
 			claudeRuntimeMCPDescribeControlTool,
 			claudeRuntimeMCPProposeControlTool,

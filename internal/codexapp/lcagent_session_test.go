@@ -52,6 +52,7 @@ func TestLCAgentCommandSpecFallsBackToProjectSourceCheckout(t *testing.T) {
 func TestLCAgentSessionLaunchesConfiguredCommandAndStreamsTranscript(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "lcr.sqlite")
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
 	envPath := filepath.Join(t.TempDir(), "openrouter.env")
 	if err := os.WriteFile(envPath, []byte("OPENROUTER_API_KEY=test\n"), 0o600); err != nil {
@@ -87,6 +88,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		Provider:              ProviderLCAgent,
 		ProjectPath:           root,
 		AppDataDir:            dataDir,
+		AppDBPath:             dbPath,
 		LCAgentPath:           exe,
 		LCAgentEnvFile:        envPath,
 		LCAgentProvider:       "deepseek",
@@ -151,6 +153,8 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--auto", "medium",
 		"--output", "stream-json",
 		"--approval-mode", "ask",
+		"--lcr-db-path", dbPath,
+		"--lcr-query-scope", "portfolio",
 		"--lcr-todo-capture-mode", string(todocapture.ModeExplicit),
 		"--require-final-response-tool",
 		"--admin-write",

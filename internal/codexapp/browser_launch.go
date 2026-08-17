@@ -183,6 +183,7 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 		"--provider", string(provider),
 		"--project-path", projectPath,
 		"--control-scope", "portfolio",
+		"--query-scope", "portfolio",
 	}
 	if dataDir := strings.TrimSpace(req.AppDataDir); dataDir != "" {
 		args = append(args, "--data-dir", dataDir)

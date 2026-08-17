@@ -48,6 +48,7 @@ type lcagentRunOptions struct {
 type lcagentSession struct {
 	projectPath         string
 	dataDir             string
+	appDBPath           string
 	execPath            string
 	envFile             string
 	openAIAPIKey        string
@@ -220,6 +221,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	session := &lcagentSession{
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
+		appDBPath:                strings.TrimSpace(req.AppDBPath),
 		execPath:                 strings.TrimSpace(req.LCAgentPath),
 		envFile:                  strings.TrimSpace(req.LCAgentEnvFile),
 		openAIAPIKey:             strings.TrimSpace(req.LCAgentOpenAIAPIKey),
@@ -1676,6 +1678,12 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 		"--require-final-response-tool",
 	)
+	if strings.TrimSpace(s.appDBPath) != "" {
+		args = append(args,
+			"--lcr-db-path", s.appDBPath,
+			"--lcr-query-scope", "portfolio",
+		)
+	}
 	if s.todoCaptureHandler != nil && s.todoCaptureMode.Enabled() {
 		args = append(args, "--lcr-todo-capture-mode", string(s.todoCaptureMode))
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
@@ -44,6 +45,7 @@ type Options struct {
 	DBPath               string
 	TodoCaptureMode      todocapture.CaptureMode
 	ControlScope         control.AuthorityScope
+	QueryScope           agentquery.Scope
 	Input                io.Reader
 	Output               io.Writer
 	Manager              *projectrun.Manager
@@ -65,6 +67,8 @@ type Server struct {
 	todoMode             todocapture.CaptureMode
 	todoHandler          todocapture.Handler
 	controlScope         control.AuthorityScope
+	queryScope           agentquery.Scope
+	queryExecutor        *agentquery.Executor
 	stateStore           *store.Store
 	ownStore             bool
 	protocolVersion      string
@@ -120,6 +124,22 @@ func New(opts Options) (*Server, error) {
 	if controlScope == "" {
 		controlScope = control.AuthorityScopeProject
 	}
+	queryScope := agentquery.NormalizeScope(string(opts.QueryScope))
+	if queryScope == "" {
+		queryScope = agentquery.ScopeProject
+	}
+	var queryExecutor *agentquery.Executor
+	if stateStore != nil {
+		var queryErr error
+		queryExecutor, queryErr = agentquery.NewExecutor(agentquery.Options{
+			Reader:            stateStore,
+			OriginProjectPath: projectPath,
+			Scope:             queryScope,
+		})
+		if queryErr != nil {
+			return nil, fmt.Errorf("initialize runtime MCP query service: %w", queryErr)
+		}
+	}
 	return &Server{
 		projectPath:          projectPath,
 		provider:             strings.TrimSpace(opts.Provider),
@@ -134,6 +154,8 @@ func New(opts Options) (*Server, error) {
 		todoMode:             todoMode,
 		todoHandler:          todoHandler,
 		controlScope:         controlScope,
+		queryScope:           queryScope,
+		queryExecutor:        queryExecutor,
 		stateStore:           stateStore,
 		ownStore:             ownStore,
 		protocolVersion:      defaultProtocolVersion,
@@ -191,7 +213,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 				"version": "0.1.0",
 			},
 		}
-		instructions := "Little Control Room exposes project runtime tools plus a progressively discoverable control catalog. Use list_control_capabilities, then describe_control_capability before propose_control_operation. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
+		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded persisted snapshots and never include private-category projects outside the originating project. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
 		if s.todoMode.Enabled() {
 			instructions += "\n\n" + todocapture.AgentInstructions(s.todoMode)
 		}
@@ -235,6 +257,27 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		args = json.RawMessage(`{}`)
 	}
 	switch name {
+	case "list_lcr_queries":
+		var req listLCRQueriesArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode list_lcr_queries args: %w", err)
+		}
+		report, isErr := s.listLCRQueries(req)
+		return s.jsonToolResult(report, isErr)
+	case "describe_lcr_query":
+		var req describeLCRQueryArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode describe_lcr_query args: %w", err)
+		}
+		report, isErr := s.describeLCRQuery(req)
+		return s.jsonToolResult(report, isErr)
+	case "run_lcr_query":
+		var req runLCRQueryArgs
+		if err := decodeStrictToolArgs(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode run_lcr_query args: %w", err)
+		}
+		report, isErr := s.runLCRQuery(ctx, req)
+		return s.jsonToolResult(report, isErr)
 	case "list_control_capabilities":
 		var req listControlCapabilitiesArgs
 		if err := decodeStrictToolArgs(args, &req); err != nil {
@@ -348,6 +391,52 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 	default:
 		return toolCallResult{}, fmt.Errorf("unknown runtime tool: %s", name)
 	}
+}
+
+func (s *Server) listLCRQueries(req listLCRQueriesArgs) (map[string]any, bool) {
+	report, err := agentquery.ListReport(req.Domain, s.queryScope, s.queryExecutor != nil)
+	if err != nil {
+		return map[string]any{
+			"success": false,
+			"error":   err.Error(),
+			"domains": agentquery.DomainSummaries(),
+		}, true
+	}
+	return report, false
+}
+
+func (s *Server) describeLCRQuery(req describeLCRQueryArgs) (map[string]any, bool) {
+	report, err := agentquery.DescribeReport(req.Name, s.queryScope, "run_lcr_query")
+	if err != nil {
+		return map[string]any{"success": false, "error": err.Error()}, true
+	}
+	return report, false
+}
+
+func (s *Server) runLCRQuery(ctx context.Context, req runLCRQueryArgs) (map[string]any, bool) {
+	if s.queryExecutor == nil {
+		return map[string]any{
+			"success": false,
+			"error":   "LCR queries are unavailable because this MCP server has no LCR state store",
+		}, true
+	}
+	name := agentquery.Name(strings.TrimSpace(req.Query))
+	if _, ok := agentquery.CapabilityByName(name); !ok {
+		return map[string]any{
+			"success": false,
+			"error":   "unknown LCR query; call list_lcr_queries first",
+		}, true
+	}
+	report, err := s.queryExecutor.Execute(ctx, name, req.Arguments)
+	if err != nil {
+		return map[string]any{
+			"success": false,
+			"query":   name,
+			"error":   err.Error(),
+			"hint":    "Call describe_lcr_query and match its input_schema exactly.",
+		}, true
+	}
+	return report, false
 }
 
 func (s *Server) listControlCapabilities(req listControlCapabilitiesArgs) (map[string]any, bool) {
@@ -988,7 +1077,8 @@ func observedListenerSummary(projectPath string, instance procinspect.ProjectIns
 }
 
 func runtimeTools(todoMode todocapture.CaptureMode, structuredTools, claudeApprovalEnabled bool) []mcpTool {
-	tools := controlCatalogTools(structuredTools)
+	tools := queryCatalogTools(structuredTools)
+	tools = append(tools, controlCatalogTools(structuredTools)...)
 	tools = append(tools,
 		mcpTool{
 			Name:        "list_processes",
@@ -1134,6 +1224,87 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools, claudeAppro
 		}
 	}
 	return append(tools, listTool, addTool)
+}
+
+func queryCatalogTools(structuredTools bool) []mcpTool {
+	tools := []mcpTool{
+		{
+			Name:        "list_lcr_queries",
+			Description: "Discover Little Control Room read-only query domains without loading their schemas. With no domain, returns only domain summaries; with one exact domain, returns compact query summaries allowed by this session's query scope.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"domain": map[string]any{
+						"type":        "string",
+						"enum":        []string{string(agentquery.DomainPortfolio), string(agentquery.DomainProject), string(agentquery.DomainAssessment), string(agentquery.DomainWork)},
+						"description": "Optional exact query domain. Omit to receive only domain summaries, then call again with the relevant domain.",
+					},
+				},
+			},
+		},
+		{
+			Name:        "describe_lcr_query",
+			Description: "Load one LCR query's strict input schema, output envelope, scope, sensitivity, and freshness contract. Call after list_lcr_queries and before run_lcr_query.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Exact query name returned by list_lcr_queries.",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "run_lcr_query",
+			Description: "Run one previously described read-only LCR query. Results are bounded structured persisted snapshots with freshness and privacy metadata; this tool never performs a control action.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Exact query name previously loaded with describe_lcr_query.",
+					},
+					"arguments": map[string]any{
+						"type":        "object",
+						"description": "Arguments matching the selected query's exact input_schema.",
+					},
+				},
+				"required": []string{"query", "arguments"},
+			},
+		},
+	}
+	if !structuredTools {
+		return tools
+	}
+	for i := range tools {
+		tools[i].OutputSchema = genericObjectOutputSchema()
+		tools[i].Annotations = &mcpToolAnnotations{
+			Title:           queryToolTitle(tools[i].Name),
+			ReadOnlyHint:    true,
+			DestructiveHint: false,
+			IdempotentHint:  true,
+			OpenWorldHint:   false,
+		}
+	}
+	return tools
+}
+
+func queryToolTitle(name string) string {
+	switch name {
+	case "list_lcr_queries":
+		return "List LCR queries"
+	case "describe_lcr_query":
+		return "Describe LCR query"
+	case "run_lcr_query":
+		return "Run LCR query"
+	default:
+		return name
+	}
 }
 
 func controlCatalogTools(structuredTools bool) []mcpTool {
@@ -1508,6 +1679,19 @@ type readProcessOutputArgs struct {
 
 type listControlCapabilitiesArgs struct {
 	Domain string `json:"domain"`
+}
+
+type listLCRQueriesArgs struct {
+	Domain string `json:"domain"`
+}
+
+type describeLCRQueryArgs struct {
+	Name string `json:"name"`
+}
+
+type runLCRQueryArgs struct {
+	Query     string          `json:"query"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 type describeControlCapabilityArgs struct {

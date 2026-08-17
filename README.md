@@ -36,8 +36,9 @@ many repos. It is used internally, but it is not a commercial product.
   hunting.
 - **Ships without leaving.** Diff, commit, push, pull, and background merge
   conflict resolution.
-- **Lets agents talk back to LCR.** An embedded MCP server lets Codex, Claude
-  Code, and OpenCode file TODOs and propose actions that you confirm in the TUI.
+- **Lets agents see and talk back to LCR.** Progressive query and control
+  catalogs let embedded agents inspect bounded cross-project state, file TODOs,
+  and propose actions that you confirm in the TUI.
 
 ## Quick start
 
@@ -167,14 +168,18 @@ opens a batch review with every safe candidate selected by default.
 
 ### Agents that can reach back into LCR
 
-Embedded sessions get an `lcr_runtime` MCP server. Through it, Codex, Claude Code,
-and OpenCode can file duplicate-checked, repository-scoped TODOs when work is
-explicitly deferred, inspect and start managed processes, and progressively
-discover typed LCR actions — including project creation — then queue them for
-explicit confirmation in the TUI. Schemas load on demand, so the full action
-catalog never has to sit in the model's context.
+Embedded Codex, Claude Code, and OpenCode sessions get an `lcr_runtime` MCP
+server; LCAgent gets an equivalent native read adapter. Through the progressive
+query catalog, agents can inspect bounded persisted project, assessment, and
+delegated-work state across the non-private portfolio. The MCP surface also lets
+agents file duplicate-checked repository TODOs, inspect and start managed
+processes, and progressively discover typed LCR actions — including project
+creation — then queue them for explicit confirmation in the TUI. Schemas load
+on demand, so the full query or action catalog never has to sit in the model's
+context.
 
-See [Progressive Agent Control Surface](docs/agent_control_surface.md).
+See [Progressive Agent Query Surface](docs/agent_query_surface.md) and
+[Progressive Agent Control Surface](docs/agent_control_surface.md).
 
 ## Ports and stray processes
 

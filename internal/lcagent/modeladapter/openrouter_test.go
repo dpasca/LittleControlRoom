@@ -218,6 +218,46 @@ func TestToolsWithOptionsExposeWebSearchWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestToolsWithOptionsExposeProgressiveLCRQueriesWhenEnabled(t *testing.T) {
+	disabled := toolNames(ToolsWithOptions(ToolOptions{}))
+	for _, name := range []string{"list_lcr_queries", "describe_lcr_query", "run_lcr_query"} {
+		if disabled[name] {
+			t.Fatalf("default tools unexpectedly expose %s", name)
+		}
+	}
+
+	enabled := ToolsWithOptions(ToolOptions{LCRQueriesEnabled: true})
+	for _, name := range []string{"list_lcr_queries", "describe_lcr_query", "run_lcr_query"} {
+		spec := toolSpec(t, enabled, name)
+		if strings.TrimSpace(spec.Description) == "" {
+			t.Fatalf("%s has no description", name)
+		}
+	}
+	listProps := toolSpec(t, enabled, "list_lcr_queries").Parameters["properties"].(map[string]any)
+	domain := listProps["domain"].(map[string]any)
+	if _, ok := domain["enum"]; !ok {
+		t.Fatalf("list_lcr_queries domain has no bounded enum: %#v", domain)
+	}
+	if _, ok := toolSpec(t, enabled, "run_lcr_query").Parameters["properties"].(map[string]any)["project_path"]; ok {
+		t.Fatal("run_lcr_query eagerly exposed a capability-specific project_path schema")
+	}
+}
+
+func TestSystemPromptIncludesProgressiveLCRQueryGuidance(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{LCRQueriesEnabled: true})
+	for _, want := range []string{
+		"Little Control Room state queries available: yes",
+		"call list_lcr_queries without a domain",
+		"describe_lcr_query before run_lcr_query",
+		"bounded persisted snapshots",
+		"excludes other private-category projects",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("LCR query prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
 	tools := ToolsWithOptions(ToolOptions{ManagedProcessesEnabled: true})
 	startSpec := toolSpec(t, tools, "start_process")

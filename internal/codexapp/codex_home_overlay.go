@@ -71,7 +71,7 @@ exit 2
 
 const shadowRuntimeSkillMarkdownBase = `---
 name: "runtime"
-description: "Use Little Control Room MCP tools for local runtimes and TODOs, or to discover and propose confirmable LCR project, work, agent-task, Git, and app controls."
+description: "Use Little Control Room MCP tools for local runtimes and TODOs, or to progressively query and control LCR project, portfolio, and work state."
 ---
 
 # Embedded Runtime Skill
@@ -86,6 +86,16 @@ Use its runtime tools for local app/server/watch processes:
 - Set ` + "`replace_existing`" + ` true only when a fresh managed instance is needed.
 - Call ` + "`stop_process`" + ` only when the user asks to stop a managed runtime or when cleaning up a temporary process you started.
 - Call ` + "`read_process_output`" + ` to fetch the captured tail output and exit state of a managed runtime, for example to check whether the last /run or start_process command crashed.
+
+## Progressive LCR state queries
+
+For current project, portfolio, assessment, delegated-task, or goal-run state:
+
+1. Call ` + "`list_lcr_queries`" + ` with no domain to see only the available domains, then call it again with one exact domain.
+2. Select one query and call ` + "`describe_lcr_query`" + ` to load only its strict input schema, output envelope, scope, sensitivity, and freshness contract.
+3. Call ` + "`run_lcr_query`" + ` with arguments matching that schema. Follow ` + "`next_cursor`" + ` only when more records are needed.
+
+Query results are bounded persisted snapshots, not guaranteed mirrors of transient TUI memory. Private-category projects and tasks are hidden except when they belong to this session's originating project. Do not infer that Help Chat transcripts, raw event payloads, or arbitrary cross-project files are available through this catalog.
 
 ## Progressive LCR control discovery
 
