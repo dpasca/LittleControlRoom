@@ -87,42 +87,42 @@ func TestPartitionSettledRestartIntentsRequiresExactFreshCompletedSession(t *tes
 		{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/different", SessionID: "session-captured", TurnStartedAt: turnStartedAt, CapturedAt: capturedAt},
 		{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/active", SessionID: "session-active", TurnStartedAt: turnStartedAt, CapturedAt: capturedAt},
 	}
-	projects := []model.ProjectSummary{
+	sessions := []model.SessionEvidence{
 		{
-			Path:                     "/tmp/settled",
-			LatestSessionSource:      model.SessionSourceClaudeCode,
-			LatestRawSessionID:       "session-settled",
-			LatestSessionLastEventAt: capturedAt.Add(-time.Minute),
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      true,
+			ProjectPath:          "/tmp/settled",
+			Source:               model.SessionSourceClaudeCode,
+			RawSessionID:         "session-settled",
+			LastEventAt:          capturedAt.Add(-time.Minute),
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
 		},
 		{
-			Path:                     "/tmp/older",
-			LatestSessionSource:      model.SessionSourceClaudeCode,
-			LatestRawSessionID:       "session-older",
-			LatestSessionLastEventAt: turnStartedAt.Add(-time.Minute),
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      true,
+			ProjectPath:          "/tmp/older",
+			Source:               model.SessionSourceClaudeCode,
+			RawSessionID:         "session-older",
+			LastEventAt:          turnStartedAt.Add(-time.Minute),
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
 		},
 		{
-			Path:                     "/tmp/different",
-			LatestSessionSource:      model.SessionSourceClaudeCode,
-			LatestRawSessionID:       "session-other",
-			LatestSessionLastEventAt: capturedAt,
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      true,
+			ProjectPath:          "/tmp/different",
+			Source:               model.SessionSourceClaudeCode,
+			RawSessionID:         "session-other",
+			LastEventAt:          capturedAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
 		},
 		{
-			Path:                     "/tmp/active",
-			LatestSessionSource:      model.SessionSourceClaudeCode,
-			LatestRawSessionID:       "session-active",
-			LatestSessionLastEventAt: capturedAt,
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      false,
+			ProjectPath:          "/tmp/active",
+			Source:               model.SessionSourceClaudeCode,
+			RawSessionID:         "session-active",
+			LastEventAt:          capturedAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
 		},
 	}
 
-	pending, settledKeys := partitionSettledRestartIntents(projects, intents)
+	pending, settledKeys := partitionSettledRestartIntents(sessions, intents)
 	if len(pending) != 3 {
 		t.Fatalf("pending intents = %#v, want older, different, and active sessions", pending)
 	}
@@ -131,7 +131,7 @@ func TestPartitionSettledRestartIntentsRequiresExactFreshCompletedSession(t *tes
 	}
 }
 
-func TestLoadSuspendedTurnChoicesAcknowledgesCompletedExactSession(t *testing.T) {
+func TestLoadSuspendedTurnChoicesAcknowledgesCompletedExactSessionForForgottenProject(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	st, err := store.Open(filepath.Join(dataDir, "test.sqlite"))
@@ -144,11 +144,13 @@ func TestLoadSuspendedTurnChoicesAcknowledgesCompletedExactSession(t *testing.T)
 	projectPath := "/tmp/completed-restart"
 	sessionID := "session-completed"
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
-		Path:      projectPath,
-		Name:      "completed restart",
-		Status:    model.StatusIdle,
-		InScope:   true,
-		UpdatedAt: capturedAt,
+		Path:          projectPath,
+		Name:          "completed restart",
+		Status:        model.StatusIdle,
+		Forgotten:     true,
+		PresentOnDisk: false,
+		InScope:       true,
+		UpdatedAt:     capturedAt.Add(2 * time.Hour),
 		Sessions: []model.SessionEvidence{{
 			Source:               model.SessionSourceClaudeCode,
 			SessionID:            sessionID,
@@ -156,19 +158,28 @@ func TestLoadSuspendedTurnChoicesAcknowledgesCompletedExactSession(t *testing.T)
 			ProjectPath:          projectPath,
 			DetectedProjectPath:  projectPath,
 			Format:               "claude_code",
-			LastEventAt:          capturedAt.Add(-time.Minute),
+			LastEventAt:          capturedAt.Add(time.Hour),
 			LatestTurnStateKnown: true,
 			LatestTurnCompleted:  true,
+		}, {
+			Source:               model.SessionSourceClaudeCode,
+			SessionID:            "newer-unrelated-session",
+			RawSessionID:         "newer-unrelated-session",
+			ProjectPath:          projectPath,
+			DetectedProjectPath:  projectPath,
+			Format:               "claude_code",
+			LastEventAt:          capturedAt.Add(2 * time.Hour),
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
 		}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	intent := codexapp.RestartIntent{
-		Provider:      codexapp.ProviderClaudeCode,
-		ProjectPath:   projectPath,
-		SessionID:     sessionID,
-		TurnStartedAt: capturedAt.Add(-time.Hour),
-		CapturedAt:    capturedAt,
+		Provider:    codexapp.ProviderClaudeCode,
+		ProjectPath: projectPath,
+		SessionID:   sessionID,
+		CapturedAt:  capturedAt,
 	}
 	if err := codexapp.WriteRestartIntents(dataDir, []codexapp.RestartIntent{intent}); err != nil {
 		t.Fatal(err)

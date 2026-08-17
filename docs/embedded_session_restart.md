@@ -46,11 +46,11 @@ journal. Every row was owned and captured by LCR before graceful shutdown.
 continuation turn in the background.
 
 Before showing the dialog, LCR also compares each journal row with persisted
-lifecycle evidence for that exact project, provider, and session. If completed
-evidence is new enough to cover the turn captured at shutdown, LCR removes the
-settled row instead of offering a false continuation. Older evidence, evidence
-for another session, and unknown lifecycle state never invalidate a journaled
-turn.
+lifecycle evidence for that exact project, provider, and session, including
+retained evidence for a forgotten or removed worktree. If completed evidence is
+new enough to cover the turn captured at shutdown, LCR removes the settled row
+instead of offering a false continuation. Older evidence, evidence for another
+session, and unknown lifecycle state never invalidate a journaled turn.
 
 A generic provider artifact whose latest turn merely looks unfinished is not
 enough to enter restart recovery. It may belong to another live process, or its

@@ -1026,32 +1026,90 @@ func (s *Store) listSessions(ctx context.Context, path string) ([]model.SessionE
 
 	out := []model.SessionEvidence{}
 	for rows.Next() {
-		var (
-			s                   model.SessionEvidence
-			source              string
-			startedAt           sql.NullInt64
-			lastEventAt         int64
-			latestTurnStartedAt sql.NullInt64
-			turnKnown           int
-			turnDone            int
-		)
-		if err := rows.Scan(&s.SessionID, &source, &s.RawSessionID, &s.ProjectPath, &s.DetectedProjectPath, &s.SessionFile, &s.Format, &s.SnapshotHash, &startedAt, &lastEventAt, &s.ErrorCount, &latestTurnStartedAt, &turnKnown, &turnDone); err != nil {
+		session, err := scanProjectSessionEvidence(rows)
+		if err != nil {
 			return nil, err
 		}
-		s.Source = model.NormalizeSessionSource(model.SessionSource(source))
-		if startedAt.Valid {
-			s.StartedAt = time.Unix(startedAt.Int64, 0)
-		}
-		s.LastEventAt = time.Unix(lastEventAt, 0)
-		if latestTurnStartedAt.Valid {
-			s.LatestTurnStartedAt = time.Unix(latestTurnStartedAt.Int64, 0)
-		}
-		s.LatestTurnStateKnown = turnKnown != 0
-		s.LatestTurnCompleted = turnDone != 0
-		s = model.NormalizeSessionEvidenceIdentity(s)
-		out = append(out, s)
+		out = append(out, session)
 	}
 	return out, rows.Err()
+}
+
+// FindProjectSessionEvidence loads one exact provider session without applying
+// project visibility filters. Restart recovery uses retained evidence even when
+// its linked worktree has since been forgotten or removed.
+func (s *Store) FindProjectSessionEvidence(
+	ctx context.Context,
+	projectPath string,
+	source model.SessionSource,
+	sessionID string,
+) (model.SessionEvidence, bool, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	source, canonicalSessionID, rawSessionID := model.NormalizeSessionIdentity(source, "", sessionID, "")
+	if projectPath == "" || source == model.SessionSourceUnknown || rawSessionID == "" {
+		return model.SessionEvidence{}, false, nil
+	}
+
+	row := s.db.QueryRowContext(ctx, `
+		SELECT session_id, source, raw_session_id, project_path, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed
+		FROM project_sessions
+		WHERE project_path = ?
+		  AND source = ?
+		  AND (session_id = ? OR raw_session_id = ?)
+		ORDER BY CASE WHEN session_id = ? THEN 0 ELSE 1 END
+		LIMIT 1
+	`, projectPath, string(source), canonicalSessionID, rawSessionID, canonicalSessionID)
+	session, err := scanProjectSessionEvidence(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.SessionEvidence{}, false, nil
+	}
+	if err != nil {
+		return model.SessionEvidence{}, false, err
+	}
+	return session, true, nil
+}
+
+func scanProjectSessionEvidence(scanner interface {
+	Scan(dest ...any) error
+}) (model.SessionEvidence, error) {
+	var (
+		session             model.SessionEvidence
+		source              string
+		startedAt           sql.NullInt64
+		lastEventAt         int64
+		latestTurnStartedAt sql.NullInt64
+		turnKnown           int
+		turnDone            int
+	)
+	if err := scanner.Scan(
+		&session.SessionID,
+		&source,
+		&session.RawSessionID,
+		&session.ProjectPath,
+		&session.DetectedProjectPath,
+		&session.SessionFile,
+		&session.Format,
+		&session.SnapshotHash,
+		&startedAt,
+		&lastEventAt,
+		&session.ErrorCount,
+		&latestTurnStartedAt,
+		&turnKnown,
+		&turnDone,
+	); err != nil {
+		return model.SessionEvidence{}, err
+	}
+	session.Source = model.NormalizeSessionSource(model.SessionSource(source))
+	if startedAt.Valid {
+		session.StartedAt = time.Unix(startedAt.Int64, 0)
+	}
+	session.LastEventAt = time.Unix(lastEventAt, 0)
+	if latestTurnStartedAt.Valid {
+		session.LatestTurnStartedAt = time.Unix(latestTurnStartedAt.Int64, 0)
+	}
+	session.LatestTurnStateKnown = turnKnown != 0
+	session.LatestTurnCompleted = turnDone != 0
+	return model.NormalizeSessionEvidenceIdentity(session), nil
 }
 
 func (s *Store) listArtifacts(ctx context.Context, path string) ([]model.ArtifactEvidence, error) {

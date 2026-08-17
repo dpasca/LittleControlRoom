@@ -173,18 +173,29 @@ func (m Model) loadSuspendedTurnResumeChoicesCmd() tea.Cmd {
 				err:     intentErr,
 			}
 		}
-		projects, err := svc.Store().ListProjects(ctx, true)
-		if err != nil {
-			return suspendedTurnResumeChoicesMsg{
-				choices: buildRestartIntentResumeChoices(nil, intents),
-				err:     errors.Join(intentErr, err),
+		projects, projectErr := svc.Store().ListProjects(ctx, true)
+		sessions := make([]model.SessionEvidence, 0, len(intents))
+		var sessionErr error
+		for _, intent := range intents {
+			session, found, err := svc.Store().FindProjectSessionEvidence(
+				ctx,
+				intent.ProjectPath,
+				modelSessionSourceFromCodexProvider(intent.Provider),
+				intent.SessionID,
+			)
+			if err != nil {
+				sessionErr = errors.Join(sessionErr, fmt.Errorf("load saved %s session %s: %w", intent.Provider.Label(), shortID(intent.SessionID), err))
+				continue
+			}
+			if found {
+				sessions = append(sessions, session)
 			}
 		}
-		pending, settledKeys := partitionSettledRestartIntents(projects, intents)
+		pending, settledKeys := partitionSettledRestartIntents(sessions, intents)
 		acknowledgeErr := codexapp.AcknowledgeRestartIntents(dataDir, settledKeys)
 		return suspendedTurnResumeChoicesMsg{
 			choices: buildRestartIntentResumeChoices(projects, pending),
-			err:     errors.Join(intentErr, acknowledgeErr),
+			err:     errors.Join(intentErr, projectErr, sessionErr, acknowledgeErr),
 		}
 	}
 }
@@ -259,17 +270,24 @@ func buildRestartIntentResumeChoices(projects []model.ProjectSummary, intents []
 	return captured
 }
 
-func partitionSettledRestartIntents(projects []model.ProjectSummary, intents []codexapp.RestartIntent) ([]codexapp.RestartIntent, []string) {
-	projectByPath := make(map[string]model.ProjectSummary, len(projects))
-	for _, project := range projects {
-		projectByPath[normalizeProjectPath(project.Path)] = project
+func partitionSettledRestartIntents(sessions []model.SessionEvidence, intents []codexapp.RestartIntent) ([]codexapp.RestartIntent, []string) {
+	sessionByKey := make(map[string]model.SessionEvidence, len(sessions))
+	for _, session := range sessions {
+		key := restartSessionEvidenceKey(
+			session.ProjectPath,
+			codexProviderFromSessionSource(session.Source),
+			session.ExternalID(),
+		)
+		if key != "" {
+			sessionByKey[key] = session
+		}
 	}
 
 	pending := make([]codexapp.RestartIntent, 0, len(intents))
 	settledKeys := make([]string, 0, len(intents))
 	for _, intent := range intents {
-		project, ok := projectByPath[normalizeProjectPath(intent.ProjectPath)]
-		if !ok || !restartIntentSettledByProject(intent, project) {
+		session, ok := sessionByKey[restartSessionEvidenceKey(intent.ProjectPath, intent.Provider, intent.SessionID)]
+		if !ok || !restartIntentSettledBySession(intent, session) {
 			pending = append(pending, intent)
 			continue
 		}
@@ -280,18 +298,28 @@ func partitionSettledRestartIntents(projects []model.ProjectSummary, intents []c
 	return pending, settledKeys
 }
 
-func restartIntentSettledByProject(intent codexapp.RestartIntent, project model.ProjectSummary) bool {
-	if codexProviderFromSessionSource(project.LatestSessionSource) != intent.Provider.Normalized() ||
-		strings.TrimSpace(project.ExternalLatestSessionID()) != strings.TrimSpace(intent.SessionID) ||
-		!project.LatestTurnStateKnown ||
-		!project.LatestTurnCompleted {
+func restartSessionEvidenceKey(projectPath string, provider codexapp.Provider, sessionID string) string {
+	projectPath = normalizeProjectPath(projectPath)
+	provider = provider.Normalized()
+	sessionID = strings.TrimSpace(sessionID)
+	if projectPath == "" || provider == "" || sessionID == "" {
+		return ""
+	}
+	return projectPath + "\x00" + string(provider) + "\x00" + sessionID
+}
+
+func restartIntentSettledBySession(intent codexapp.RestartIntent, session model.SessionEvidence) bool {
+	if restartSessionEvidenceKey(session.ProjectPath, codexProviderFromSessionSource(session.Source), session.ExternalID()) !=
+		restartSessionEvidenceKey(intent.ProjectPath, intent.Provider, intent.SessionID) ||
+		!session.LatestTurnStateKnown ||
+		!session.LatestTurnCompleted {
 		return false
 	}
 
 	// The completed evidence must be new enough to cover the turn captured at
 	// shutdown. This prevents an older completed turn from invalidating a newer
 	// prompt that had not reached the provider artifact yet.
-	completedAt := project.LatestSessionLastEventAt
+	completedAt := session.LastEventAt
 	capturedTurnAt := intent.TurnStartedAt
 	if capturedTurnAt.IsZero() {
 		capturedTurnAt = intent.CapturedAt
