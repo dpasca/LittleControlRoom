@@ -83,11 +83,14 @@ tail events still take precedence.
 The embedded `Open Links` picker combines structured generated-image, viewed-image,
 and file-tool paths with explicit Markdown links and concrete path-shaped text.
 Conversational text may advertise paths in inline-code spans. Raw command results
-may instead contribute explicit Markdown links and standalone artifact paths; their
-language-level backticks are not interpreted as Markdown. The command input itself
-is never scanned. Unexpanded template paths such as `${fileName}`, comment-shaped
-lines, and absolute lines whose terminal component contains only punctuation are
-source-code syntax rather than openable-link evidence and are excluded.
+may contribute explicit Markdown links, but standalone artifact paths printed by a
+command do not become picker rows. Those paths are retained only as supporting
+evidence for resolving an explicitly mentioned project-relative path to a known
+absolute path. Language-level backticks in command results are not interpreted as
+Markdown, and the command input itself is never scanned. Unexpanded template paths
+such as `${fileName}`, comment-shaped lines, and absolute lines whose terminal
+component contains only punctuation are source-code syntax rather than openable-link
+evidence and are excluded.
 
 Full-transcript discovery runs progressively outside the TUI render path. While
 that scan is incomplete, its occurrences are reconciled one-for-one with links

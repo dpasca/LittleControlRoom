@@ -2936,9 +2936,12 @@ func TestCodexArtifactPickerListsViewedImageToolTargets(t *testing.T) {
 		ProjectPath: dir,
 		Entries:     entries,
 	}
-	progressiveTargets, _, _, complete := scanCodexArtifactLinksChunk(dir, entries, 0, 0)
+	progressiveTargets, pathEvidence, _, _, complete := scanCodexArtifactLinksChunk(dir, entries, 0, 0)
 	if !complete || len(progressiveTargets) != len(paths) {
 		t.Fatalf("progressive viewed image targets = %#v, complete=%t; want %d images", progressiveTargets, complete, len(paths))
+	}
+	if len(pathEvidence) != 0 {
+		t.Fatalf("viewed image path evidence = %#v, want none", pathEvidence)
 	}
 
 	m := Model{
@@ -2969,7 +2972,7 @@ func TestCodexArtifactPickerListsViewedImageToolTargets(t *testing.T) {
 	}
 }
 
-func TestCodexArtifactPickerUsesClaudeFileToolsAndIgnoresBashInputs(t *testing.T) {
+func TestCodexArtifactPickerUsesClaudeFileToolsAndKeepsCommandPathsAsEvidence(t *testing.T) {
 	projectPath := t.TempDir()
 	readPaths := []string{
 		filepath.Join(projectPath, "v1_head_f200.png"),
@@ -3004,11 +3007,11 @@ func TestCodexArtifactPickerUsesClaudeFileToolsAndIgnoresBashInputs(t *testing.T
 		},
 	}
 
-	targets, _, _, complete := scanCodexArtifactLinksChunk(projectPath, entries, 0, 0)
+	targets, pathEvidence, _, _, complete := scanCodexArtifactLinksChunk(projectPath, entries, 0, 0)
 	if !complete {
 		t.Fatalf("Claude artifact scan should complete in one chunk")
 	}
-	wantPaths := []string{readPaths[0], readPaths[1], productPath}
+	wantPaths := []string{readPaths[0], readPaths[1]}
 	if len(targets) != len(wantPaths) {
 		t.Fatalf("Claude artifact targets = %#v, want %d", targets, len(wantPaths))
 	}
@@ -3020,6 +3023,55 @@ func TestCodexArtifactPickerUsesClaudeFileToolsAndIgnoresBashInputs(t *testing.T
 	for _, target := range targets {
 		if target.Path == commandInput {
 			t.Fatalf("Bash input path should not appear in the artifact picker: %#v", targets)
+		}
+	}
+	if len(pathEvidence) != 1 || pathEvidence[0].Path != productPath {
+		t.Fatalf("Claude command path evidence = %#v, want only %q", pathEvidence, productPath)
+	}
+}
+
+func TestCodexArtifactPickerDoesNotListBulkCommandPathOutput(t *testing.T) {
+	projectPath := t.TempDir()
+	bulkPaths := make([]string, 0, 256)
+	for index := 0; index < 256; index++ {
+		bulkPaths = append(bulkPaths, filepath.Join(projectPath, "frames", fmt.Sprintf("frame_%05d.png", index)))
+	}
+	linkedPath := filepath.Join(projectPath, "review", "contact-sheet.png")
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind:        codexapp.TranscriptCommand,
+				CommandText: "find frames -type f -print",
+				Text:        "$ find frames -type f -print\n" + strings.Join(bulkPaths, "\n"),
+			},
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Review the [contact sheet](" + linkedPath + ").",
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(100, 20),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	got := drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, snapshot))
+
+	if targets := codexArtifactOpenTargets(snapshot); len(targets) != 1 || targets[0].Path != linkedPath {
+		t.Fatalf("synchronous picker targets = %#v, want only explicit contact-sheet link", targets)
+	}
+	targets := got.cachedProgressiveCodexOpenTargets(snapshot)
+	if len(targets) != 1 || targets[0].Path != linkedPath {
+		t.Fatalf("picker targets = %#v, want only explicit contact-sheet link", targets)
+	}
+	state := got.codexArtifactLinkScans[projectPath]
+	if len(state.pathEvidence) != len(bulkPaths) {
+		t.Fatalf("command path evidence count = %d, want %d", len(state.pathEvidence), len(bulkPaths))
+	}
+	for _, target := range targets {
+		if strings.Contains(target.Path, "frame_") {
+			t.Fatalf("bulk command frame leaked into picker targets: %#v", targets)
 		}
 	}
 }

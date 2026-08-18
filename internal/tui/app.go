@@ -395,7 +395,9 @@ type codexArtifactLinkScanState struct {
 	nextEntry      int
 	nextTextOffset int
 	targets        []codexArtifactOpenTarget
-	sourceEntries  []codexapp.TranscriptEntry
+	// pathEvidence resolves explicit relative targets but is never shown by itself.
+	pathEvidence  []codexArtifactOpenTarget
+	sourceEntries []codexapp.TranscriptEntry
 }
 
 type actionMsg struct {
@@ -439,16 +441,18 @@ type codexArtifactPreviewMsg struct {
 }
 
 type codexArtifactLinkScanMsg struct {
-	projectPath    string
-	scanSeq        int64
-	transcriptRev  uint64
-	nextEntry      int
-	nextTextOffset int
-	complete       bool
-	rebased        bool
-	baseTargets    []codexArtifactOpenTarget
-	targets        []codexArtifactOpenTarget
-	sourceEntries  []codexapp.TranscriptEntry
+	projectPath      string
+	scanSeq          int64
+	transcriptRev    uint64
+	nextEntry        int
+	nextTextOffset   int
+	complete         bool
+	rebased          bool
+	baseTargets      []codexArtifactOpenTarget
+	basePathEvidence []codexArtifactOpenTarget
+	targets          []codexArtifactOpenTarget
+	pathEvidence     []codexArtifactOpenTarget
+	sourceEntries    []codexapp.TranscriptEntry
 }
 
 type runtimeActionMsg struct {
