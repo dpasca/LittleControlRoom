@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -548,8 +549,11 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 		detailField("Project", detailValueStyle.Render(projectName)),
 		detailField("Provider", detailValueStyle.Render(notify.Provider.Label())),
 		detailField("Source", detailWarningStyle.Render(source)),
-		"",
 	}
+	if requested := formatBrowserAttentionRequestedAt(m.currentTime(), notify.Activity.Normalize().LastEventAt); requested != "" {
+		lines = append(lines, detailField("Requested", detailMutedStyle.Render(requested)))
+	}
+	lines = append(lines, "")
 	instruction := strings.TrimSpace(notify.AttentionMessage)
 	if instruction != "" {
 		lines = append(lines, detailSectionStyle.Render("What needs your attention"))
@@ -620,6 +624,34 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 		)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatBrowserAttentionRequestedAt(now, requestedAt time.Time) string {
+	if requestedAt.IsZero() {
+		return ""
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	location := now.Location()
+	if location == nil {
+		location = time.Local
+	}
+	absolute := requestedAt.In(location).Format("2006-01-02 15:04 MST")
+	age := now.Sub(requestedAt)
+	if age < 0 {
+		return absolute
+	}
+	switch {
+	case age < time.Minute:
+		return absolute + " (just now)"
+	case age < time.Hour:
+		return fmt.Sprintf("%s (%dm ago)", absolute, int(age/time.Minute))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%s (%dh ago)", absolute, int(age/time.Hour))
+	default:
+		return fmt.Sprintf("%s (%dd ago)", absolute, int(age/(24*time.Hour)))
+	}
 }
 
 func (m Model) browserAttentionBrowserActionLabel(notify browserAttentionNotification) string {

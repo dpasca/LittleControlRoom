@@ -422,20 +422,28 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 	s.syncHistorySummaryNoticeLocked()
 	currentBrowserPageURL := s.currentBrowserPageURL
 	browserHandoffPending := s.browserHandoffPending
+	browserHandoffAt := s.browserHandoffAt
 	browserHandoffMessage := s.browserHandoffMessage
 	if !thread.HistorySummaryOnly {
 		currentBrowserPageURL = ""
 		browserHandoffPending = false
+		browserHandoffAt = time.Time{}
 		browserHandoffMessage = ""
 	}
 	for _, turn := range thread.Turns {
+		turnActivityAt := unixSecondsTime(turn.CompletedAt)
+		if turnActivityAt.IsZero() {
+			turnActivityAt = unixSecondsTime(turn.StartedAt)
+		}
 		for _, item := range turn.Items {
 			if strings.TrimSpace(decodeRawString(item["type"])) == "userMessage" {
 				browserHandoffPending = false
+				browserHandoffAt = time.Time{}
 				browserHandoffMessage = ""
 			}
 			if isManagedBrowserAttentionToolCall(item) {
 				browserHandoffPending = true
+				browserHandoffAt = turnActivityAt
 				browserHandoffMessage = managedBrowserAttentionMessage(item)
 			}
 			itemID := strings.TrimSpace(decodeRawString(item["id"]))
@@ -456,11 +464,10 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 	}
 	s.browserHandoffPending = browserHandoffPending
 	s.browserHandoffMessage = browserHandoffMessage
-	if browserHandoffPending {
-		s.browserHandoffAt = time.Now()
-	} else {
-		s.browserHandoffAt = time.Time{}
+	if browserHandoffPending && browserHandoffAt.IsZero() {
+		browserHandoffAt = time.Now()
 	}
+	s.browserHandoffAt = browserHandoffAt
 	s.refreshBrowserActivityLocked(time.Now())
 	return currentBrowserPageURL
 }

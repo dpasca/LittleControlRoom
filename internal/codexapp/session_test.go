@@ -379,6 +379,7 @@ func TestSubAgentNotificationsDoNotReplaceOrMutateRootThread(t *testing.T) {
 }
 
 func TestHydrateResumedThreadRestoresOnlyUnresolvedBrowserHandoff(t *testing.T) {
+	handoffAt := time.Date(2026, 8, 18, 20, 50, 25, 0, time.UTC)
 	policy := browserctl.Policy{
 		ManagementMode:     browserctl.ManagementModeManaged,
 		DefaultBrowserMode: browserctl.BrowserModeHeadless,
@@ -397,8 +398,9 @@ func TestHydrateResumedThreadRestoresOnlyUnresolvedBrowserHandoff(t *testing.T) 
 		ID:     "thread_browser_handoff_resume",
 		Status: resumedThreadStatus{Type: "idle"},
 		Turns: []resumedTurn{{
-			ID:     "turn_browser_handoff",
-			Status: "completed",
+			ID:          "turn_browser_handoff",
+			Status:      "completed",
+			CompletedAt: handoffAt.Unix(),
 			Items: []map[string]json.RawMessage{
 				{
 					"id":      json.RawMessage(`"item_user"`),
@@ -423,6 +425,9 @@ func TestHydrateResumedThreadRestoresOnlyUnresolvedBrowserHandoff(t *testing.T) 
 	}
 	if got, want := snapshot.BrowserActivity.AttentionMessage, "Sign in to Gitea in the managed browser."; got != want {
 		t.Fatalf("restored browser message = %q, want %q", got, want)
+	}
+	if got := snapshot.BrowserActivity.LastEventAt; !got.Equal(handoffAt) {
+		t.Fatalf("restored browser request time = %v, want %v", got, handoffAt)
 	}
 
 	thread.Turns = append(thread.Turns, resumedTurn{

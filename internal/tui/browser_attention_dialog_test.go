@@ -34,17 +34,22 @@ func browserAttentionDialogSnapshot(projectPath string) codexapp.Snapshot {
 
 func TestBrowserAttentionDialogSurfacesInsideVisibleSession(t *testing.T) {
 	const projectPath = "/tmp/demo"
+	location := time.FixedZone("JST", 9*60*60)
+	now := time.Date(2026, 8, 19, 5, 58, 0, 0, location)
+	snapshot := browserAttentionDialogSnapshot(projectPath)
+	snapshot.BrowserActivity.LastEventAt = now.Add(-8 * time.Minute)
 	m := Model{
 		codexVisibleProject:          projectPath,
 		browserAttentionAcknowledged: make(map[string]string),
+		nowFn:                        func() time.Time { return now },
 	}
 
-	m.detectBrowserAttentionNotification(projectPath, browserAttentionDialogSnapshot(projectPath))
+	m.detectBrowserAttentionNotification(projectPath, snapshot)
 	if m.browserAttention == nil {
 		t.Fatal("visible browser wait should open the browser attention dialog")
 	}
 	rendered := ansi.Strip(m.renderBrowserAttentionContent(76))
-	for _, want := range []string{"Browser needs attention", "Complete the account sign-in", "return to session", "browser settings", "ctrl+o"} {
+	for _, want := range []string{"Browser needs attention", "Requested", "2026-08-19 05:50 JST (8m ago)", "Complete the account sign-in", "return to session", "browser settings", "ctrl+o"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("visible browser attention dialog is missing %q:\n%s", want, rendered)
 		}
