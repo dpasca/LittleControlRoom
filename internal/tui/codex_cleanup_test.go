@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -229,6 +231,39 @@ func TestCodexCleanupReportsVerifiedReclaimedSpace(t *testing.T) {
 	rendered := ansi.Strip(got.renderCodexCleanupOverlay("", 110, 32))
 	if !strings.Contains(rendered, "Verified reclaimed space") || !strings.Contains(rendered, "2 descendants") || !strings.Contains(rendered, "2.0 KiB") {
 		t.Fatalf("verified cleanup report:\n%s", rendered)
+	}
+}
+
+func TestCodexCleanupReportFitsViewportWithLongWorktreeNames(t *testing.T) {
+	const (
+		bodyH       = 32
+		panelW      = 112
+		panelInnerW = panelW - 4
+	)
+	now := time.Now()
+	group := codexCleanupTestGroup(now)
+	dialog := &codexCleanupDialogState{Finished: true}
+	for index := 0; index < 40; index++ {
+		item := group
+		item.WorktreePath = fmt.Sprintf("/tmp/%s-%02d", strings.Repeat("long-worktree-name-", 8), index)
+		dialog.Results = append(dialog.Results, codexCleanupDeleteResult{
+			Group: item,
+			Result: service.DeleteCodexCleanupWorktreeResult{
+				DeletedRootThreads:     1,
+				DeletedDescendants:     2,
+				VerifiedReclaimedBytes: item.RecoverableBytes,
+				Verified:               true,
+			},
+		})
+	}
+
+	content := renderCodexCleanupContent(dialog, panelInnerW, bodyH, 0, now)
+	panel := renderDialogPanel(panelW, panelInnerW, content)
+	if got, wantMax := lipgloss.Height(panel), bodyH-2; got > wantMax {
+		t.Fatalf("Codex cleanup report panel height = %d, want <= %d:\n%s", got, wantMax, ansi.Strip(panel))
+	}
+	if rendered := ansi.Strip(panel); !strings.Contains(rendered, "2 descendants · 2.0 KiB verified") {
+		t.Fatalf("Codex cleanup report should preserve verification details after truncating long names:\n%s", rendered)
 	}
 }
 

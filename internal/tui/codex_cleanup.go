@@ -647,14 +647,17 @@ func renderCodexCleanupResults(dialog *codexCleanupDialogState, width, bodyH int
 	}
 	lines = append(lines, "")
 	for _, item := range dialog.Results {
-		status := fmt.Sprintf("%s · %d root%s + %d descendant%s · %s verified",
-			filepath.Base(item.Group.WorktreePath), item.Result.DeletedRootThreads, pluralSuffix(item.Result.DeletedRootThreads),
+		detail := fmt.Sprintf("%d root%s + %d descendant%s · %s verified",
+			item.Result.DeletedRootThreads, pluralSuffix(item.Result.DeletedRootThreads),
 			item.Result.DeletedDescendants, pluralSuffix(item.Result.DeletedDescendants),
 			formatUpdateBytes(item.Result.VerifiedReclaimedBytes))
+		statusWidth := max(1, width-2)
+		status := codexCleanupResultStatus(filepath.Base(item.Group.WorktreePath), detail, statusWidth)
 		if item.Result.Verified {
 			lines = append(lines, detailValueStyle.Render("✓ "+status))
 		} else if item.Canceled {
-			lines = append(lines, detailWarningStyle.Render("• "+status+" · stopped before full group completion"))
+			status = codexCleanupResultStatus(filepath.Base(item.Group.WorktreePath), detail+" · stopped before full group completion", statusWidth)
+			lines = append(lines, detailWarningStyle.Render("• "+status))
 		} else {
 			lines = append(lines, detailWarningStyle.Render("! "+status))
 		}
@@ -667,6 +670,18 @@ func renderCodexCleanupResults(dialog *codexCleanupDialogState, width, bodyH int
 	}
 	lines = append(lines, "", renderDialogAction("Enter/Esc", "close report", cancelActionKeyStyle, cancelActionTextStyle))
 	return clampDialogContent(strings.Join(lines, "\n"), max(10, bodyH-4), 3, detailMutedStyle.Render("… earlier results clipped …"))
+}
+
+func codexCleanupResultStatus(name, detail string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	suffix := " · " + detail
+	suffixWidth := lipgloss.Width(suffix)
+	if suffixWidth >= width {
+		return truncateText(detail, width)
+	}
+	return truncateText(name, width-suffixWidth) + suffix
 }
 
 func codexCleanupVerifiedTotal(results []codexCleanupDeleteResult) (int64, bool) {
