@@ -50,6 +50,7 @@ func TestTopicsIncludeCuratedWorkflowsAndKeybindings(t *testing.T) {
 		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "chat"), TopicKindKeybinding, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "project-todos"), TopicKindKeybinding, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "start-todo-work"), TopicKindWorkflow, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "demo-recording"), TopicKindWorkflow, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"), TopicKindWorkflow, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-restore-deleted-session"), TopicKindWorkflow, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-update-from-parent"), TopicKindWorkflow, SurfaceMainTUI},

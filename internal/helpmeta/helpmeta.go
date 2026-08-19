@@ -177,6 +177,25 @@ func CuratedTopics() []Topic {
 			SourceRefs: []string{"tui.todoDialogLegendLine", "tui.renderTodoCopyDialogOverlay", "tui.startTodoInProjectPath"},
 		},
 		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "demo-recording"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Launch Little Control Room with demo recording",
+			Summary: "Launch the regular LCR TUI with rendered-view recording enabled. If no output path is supplied, LCR creates a timestamped .lcrdemo recording in the current directory.",
+			Usage: []string{
+				"lcroom demo record [recording.lcrdemo]",
+				"lcroom tui --demo-record <recording.lcrdemo>",
+				"make tui-record",
+			},
+			ManualSteps: []string{
+				"Run lcroom demo record [recording.lcrdemo] to launch the regular TUI and capture its rendered views.",
+				"From a source checkout, run make tui-record; set DEMO_RECORDING_PATH or DEMO_RECORDING_DIR when you want to choose the destination.",
+				"Use lcroom tui --demo-record <recording.lcrdemo> when you want the equivalent direct TUI flag.",
+				"Exit the TUI normally so the current recording chunk is finalized before editing, playing, or exporting it.",
+			},
+			SourceRefs: []string{"cli.runDemoRecord", "cli.printUsage", "Makefile:tui-record", "docs/reference.md#demo-recordings"},
+		},
+		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"),
 			Kind:    TopicKindWorkflow,
 			Surface: SurfaceMainTUI,

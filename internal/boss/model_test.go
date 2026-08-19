@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/events"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/pixelart"
 	"lcroom/internal/service"
@@ -557,7 +558,7 @@ func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
 	}
 }
 
-func TestEmbeddedHelpLogWindowDoesNotShowChatToolActivity(t *testing.T) {
+func TestEmbeddedHelpShowsLiveProgressWithoutAddingItToEngineerLog(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 17, 9, 10, 11, 0, time.Local)
@@ -566,6 +567,11 @@ func TestEmbeddedHelpLogWindowDoesNotShowChatToolActivity(t *testing.T) {
 	m.height = 24
 	m.nowFn = func() time.Time { return now }
 	m.sending = true
+	m.applyAssistantStreamEvent(AssistantStreamEvent{
+		Kind:          AssistantStreamProgress,
+		Progress:      "routing request",
+		ProgressState: "running",
+	})
 	m.applyAssistantStreamEvent(AssistantStreamEvent{
 		Kind:      AssistantStreamToolCall,
 		ToolCall:  "project_detail /tmp/alpha",
@@ -579,10 +585,13 @@ func TestEmbeddedHelpLogWindowDoesNotShowChatToolActivity(t *testing.T) {
 	})
 
 	rendered := ansi.Strip(m.renderTranscript(112))
-	for _, hidden := range []string{"Tool calls", "project_detail /tmp/alpha"} {
-		if strings.Contains(rendered, hidden) {
-			t.Fatalf("Chat should hide live tool activity %q:\n%s", hidden, rendered)
+	for _, want := range []string{"Activity", "working: routing request", "tool: project_detail /tmp/alpha", "done: project_detail /tmp/alpha"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("Chat live activity missing %q:\n%s", want, rendered)
 		}
+	}
+	if status := m.StatusText(); !strings.Contains(status, "done: project_detail /tmp/alpha") {
+		t.Fatalf("Chat status = %q, want latest activity", status)
 	}
 
 	m.input.SetValue("/log")
@@ -609,10 +618,62 @@ func TestEmbeddedHelpLogWindowDoesNotShowChatToolActivity(t *testing.T) {
 			t.Fatalf("/log window missing %q:\n%s", want, rendered)
 		}
 	}
-	for _, unwanted := range []string{"project_detail /tmp/alpha", "tool:", "done:"} {
-		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("/log window should not show Chat tool diagnostic %q:\n%s", unwanted, rendered)
+	engineerEntries := ansi.Strip(got.renderEngineerLogEntries(90))
+	for _, unwanted := range []string{"project_detail /tmp/alpha", "routing request", "tool:", "done:"} {
+		if strings.Contains(engineerEntries, unwanted) {
+			t.Fatalf("engineer event entries should not include Chat activity %q:\n%s", unwanted, engineerEntries)
 		}
+	}
+}
+
+func TestEmbeddedHelpStreamReportsRoutingProgress(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{
+				Kind:   bossActionAnswer,
+				Answer: "Ready.",
+			}),
+		}},
+	}
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.assistant = &Assistant{
+		queryRouter: router,
+		model:       "gpt-test",
+	}
+
+	started, ok := m.askAssistantStreamCmd(
+		context.Background(),
+		7,
+		[]ChatMessage{{Role: "user", Content: "hello"}},
+		StateSnapshot{},
+		ViewContext{},
+	)().(assistantStreamStartedMsg)
+	if !ok {
+		t.Fatalf("askAssistantStreamCmd() did not return assistantStreamStartedMsg")
+	}
+	var progress []string
+	var answer string
+	for envelope := range started.events {
+		if envelope.done {
+			continue
+		}
+		switch envelope.event.Kind {
+		case AssistantStreamProgress:
+			progress = append(progress, envelope.event.ProgressState+":"+envelope.event.Progress)
+		case AssistantStreamTextDelta:
+			answer += envelope.event.Delta
+		}
+	}
+	if got, want := strings.Join(progress, "|"), "running:routing request|done:routing request"; got != want {
+		t.Fatalf("progress events = %q, want %q", got, want)
+	}
+	if answer != "Ready." {
+		t.Fatalf("streamed answer = %q, want Ready.", answer)
+	}
+	if got := len(router.reqs); got != 1 {
+		t.Fatalf("router calls = %d, want 1", got)
 	}
 }
 

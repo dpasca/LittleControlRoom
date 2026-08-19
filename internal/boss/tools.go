@@ -102,6 +102,7 @@ type bossAction struct {
 type bossToolResult struct {
 	Name        string
 	Text        string
+	UserAnswer  string
 	UserReceipt string
 	Usage       model.LLMUsage
 	Internal    bool
@@ -305,7 +306,54 @@ func (e *QueryExecutor) helpReference(action bossAction) bossToolResult {
 	for _, topic := range topics {
 		lines = append(lines, "- "+formatHelpReferenceTopic(topic))
 	}
-	return clippedToolResult(bossActionHelpReference, strings.Join(lines, "\n"))
+	result := clippedToolResult(bossActionHelpReference, strings.Join(lines, "\n"))
+	result.UserAnswer = formatHelpReferenceAnswer(topics)
+	return result
+}
+
+func formatHelpReferenceAnswer(topics []helpmeta.Topic) string {
+	if len(topics) == 0 {
+		return ""
+	}
+	topic := topics[0]
+	lines := make([]string, 0, 3)
+	if summary := strings.TrimSpace(topic.Summary); summary != "" {
+		lines = append(lines, summary)
+	}
+	if len(topic.Usage) > 0 {
+		usage := make([]string, 0, len(topic.Usage))
+		for _, value := range topic.Usage {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if strings.Contains(value, "`") {
+				usage = append(usage, strconv.Quote(value))
+			} else {
+				usage = append(usage, "`"+value+"`")
+			}
+		}
+		if len(usage) > 0 {
+			lines = append(lines, "Use "+joinHelpReferenceUsage(usage)+".")
+		}
+	}
+	if len(lines) == 0 && len(topic.ManualSteps) > 0 {
+		lines = append(lines, strings.TrimSpace(topic.ManualSteps[0]))
+	}
+	return strings.Join(lines, "\n\n")
+}
+
+func joinHelpReferenceUsage(values []string) string {
+	switch len(values) {
+	case 0:
+		return ""
+	case 1:
+		return values[0]
+	case 2:
+		return values[0] + " or " + values[1]
+	default:
+		return strings.Join(values[:len(values)-1], ", ") + ", or " + values[len(values)-1]
+	}
 }
 
 func helpReferenceTopics(query string, limit int) []helpmeta.Topic {

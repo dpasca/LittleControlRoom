@@ -468,7 +468,13 @@ func (m Model) StatusText() string {
 		status = "ready"
 	}
 	if m.sending {
-		status = "thinking " + spinnerDots(m.spinnerFrame)
+		status = "thinking"
+		if strings.TrimSpace(m.streamingAssistantText) != "" {
+			status = "answering"
+		} else if len(m.streamingToolCalls) > 0 {
+			status = strings.TrimSpace(m.streamingToolCalls[len(m.streamingToolCalls)-1])
+		}
+		status = strings.TrimSpace(status + " " + spinnerDots(m.spinnerFrame))
 	}
 	return status
 }
@@ -1077,15 +1083,23 @@ func (m *Model) applyAssistantStreamEvent(event AssistantStreamEvent) {
 		}
 	case AssistantStreamToolCall:
 		line := formatAssistantToolCallStatus(event)
-		if line == "" {
-			return
-		}
-		m.streamingToolCalls = append(m.streamingToolCalls, line)
-		if len(m.streamingToolCalls) > 6 {
-			m.streamingToolCalls = append([]string(nil), m.streamingToolCalls[len(m.streamingToolCalls)-6:]...)
-		}
-		m.status = line
+		m.appendAssistantActivity(line)
+	case AssistantStreamProgress:
+		line := formatAssistantProgressStatus(event)
+		m.appendAssistantActivity(line)
 	}
+}
+
+func (m *Model) appendAssistantActivity(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	m.streamingToolCalls = append(m.streamingToolCalls, line)
+	if len(m.streamingToolCalls) > 6 {
+		m.streamingToolCalls = append([]string(nil), m.streamingToolCalls[len(m.streamingToolCalls)-6:]...)
+	}
+	m.status = line
 }
 
 func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
@@ -1221,25 +1235,22 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 	return func() tea.Msg {
 		ctx, cancel := childContext(parent, 120*time.Second)
 		defer cancel()
-		if resp, handled, err := assistant.replyStructuredHandle(ctx, AssistantRequest{
-			Snapshot:  snapshot,
-			View:      view,
-			Messages:  messages,
-			SessionID: m.sessionID,
-			HelpChat:  m.helpChat,
-		}, nil); handled || err != nil {
-			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
-		}
-		if resp, handled, err := assistant.tryHelpChatFastAnswer(ctx, AssistantRequest{
+		request := AssistantRequest{
 			StateBrief: BuildStateBrief(snapshot, time.Now()),
 			Snapshot:   snapshot,
 			View:       view,
 			Messages:   messages,
 			SessionID:  m.sessionID,
 			HelpChat:   m.helpChat,
-		}, nil); handled || err != nil {
+		}
+		if resp, handled, err := assistant.replyStructuredHandle(ctx, request, nil); handled || err != nil {
 			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
 		}
+		resp, handled, preparedRequest, err := assistant.preflightHelpChat(ctx, request, nil)
+		if handled || err != nil {
+			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
+		}
+		request = preparedRequest
 		stateErr := error(nil)
 		stateRefreshed := false
 		if svc != nil {
@@ -1251,14 +1262,10 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 				stateErr = err
 			}
 		}
-		resp, err := assistant.Reply(ctx, AssistantRequest{
-			StateBrief: BuildStateBrief(snapshot, time.Now()),
-			Snapshot:   snapshot,
-			View:       view,
-			Messages:   messages,
-			SessionID:  m.sessionID,
-			HelpChat:   m.helpChat,
-		})
+		request.StateBrief = BuildStateBrief(snapshot, time.Now())
+		request.Snapshot = snapshot
+		request.View = view
+		resp, err = assistant.Reply(ctx, request)
 		return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed}
 	}
 }
@@ -1279,52 +1286,74 @@ func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messa
 				case <-ctx.Done():
 				}
 			}
-			if resp, handled, err := assistant.replyStructuredHandle(ctx, AssistantRequest{
-				Snapshot:  snapshot,
-				View:      view,
-				Messages:  messages,
-				SessionID: m.sessionID,
-				HelpChat:  m.helpChat,
-			}, emit); handled || err != nil {
-				select {
-				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
-				case <-ctx.Done():
-				}
-				return
-			}
-			if resp, handled, err := assistant.tryHelpChatFastAnswer(ctx, AssistantRequest{
+			request := AssistantRequest{
 				StateBrief: BuildStateBrief(snapshot, time.Now()),
 				Snapshot:   snapshot,
 				View:       view,
 				Messages:   messages,
 				SessionID:  m.sessionID,
 				HelpChat:   m.helpChat,
-			}, emit); handled || err != nil {
+			}
+			if resp, handled, err := assistant.replyStructuredHandle(ctx, request, emit); handled || err != nil {
 				select {
 				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
 				case <-ctx.Done():
 				}
 				return
 			}
+			if m.helpChat {
+				emitProgress(emit, "routing request", "running")
+			}
+			resp, handled, preparedRequest, err := assistant.preflightHelpChat(ctx, request, emit)
+			if m.helpChat {
+				state := "done"
+				if err != nil {
+					state = "error"
+				}
+				emitProgress(emit, "routing request", state)
+			}
+			if handled || err != nil {
+				select {
+				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			request = preparedRequest
 			stateErr := error(nil)
 			stateRefreshed := false
 			if svc != nil {
+				if m.helpChat {
+					emitProgress(emit, "refreshing LCR state", "running")
+				}
 				refreshed, err := LoadStateSnapshot(ctx, svc, time.Now(), options)
 				if err == nil {
 					snapshot = refreshed
 					stateRefreshed = true
+					if m.helpChat {
+						emitProgress(emit, "refreshing LCR state", "done")
+					}
 				} else {
 					stateErr = err
+					if m.helpChat {
+						emitProgress(emit, "refreshing LCR state", "error")
+					}
 				}
 			}
-			resp, err := assistant.ReplyStream(ctx, AssistantRequest{
-				StateBrief: BuildStateBrief(snapshot, time.Now()),
-				Snapshot:   snapshot,
-				View:       view,
-				Messages:   messages,
-				SessionID:  m.sessionID,
-				HelpChat:   m.helpChat,
-			}, emit)
+			request.StateBrief = BuildStateBrief(snapshot, time.Now())
+			request.Snapshot = snapshot
+			request.View = view
+			if m.helpChat {
+				emitProgress(emit, "planning response", "running")
+			}
+			resp, err = assistant.ReplyStream(ctx, request, emit)
+			if m.helpChat {
+				state := "done"
+				if err != nil {
+					state = "error"
+				}
+				emitProgress(emit, "planning response", state)
+			}
 			select {
 			case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:
 			case <-ctx.Done():
@@ -2533,8 +2562,11 @@ func (m Model) renderStreamingAssistantMessage(content string, toolCalls []strin
 	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel())
 }
 
-func renderHelpStreamingAssistantMessage(content string, _ []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string) string {
+func renderHelpStreamingAssistantMessage(content string, activity []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string) string {
 	var blocks []string
+	if activityBlock := renderTemporaryActivityWithStyle(activity, width, helpChatToolCallStyle, "Activity"); activityBlock != "" {
+		blocks = append(blocks, activityBlock)
+	}
 	if strings.TrimSpace(content) != "" {
 		blocks = append(blocks, renderHelpAssistantMessage(content, width, projectHighlights, prefix, nil))
 	}
@@ -2593,12 +2625,16 @@ func renderTemporaryToolCalls(toolCalls []string, width int) string {
 }
 
 func renderTemporaryToolCallsWithStyle(toolCalls []string, width int, style lipgloss.Style) string {
-	if len(toolCalls) == 0 {
+	return renderTemporaryActivityWithStyle(toolCalls, width, style, "Tool calls")
+}
+
+func renderTemporaryActivityWithStyle(activity []string, width int, style lipgloss.Style, title string) string {
+	if len(activity) == 0 {
 		return ""
 	}
-	start := maxInt(0, len(toolCalls)-4)
-	lines := []string{"Tool calls"}
-	for _, call := range toolCalls[start:] {
+	start := maxInt(0, len(activity)-4)
+	lines := []string{strings.TrimSpace(title)}
+	for _, call := range activity[start:] {
 		if text := strings.TrimSpace(call); text != "" {
 			lines = append(lines, "  "+text)
 		}
@@ -2623,6 +2659,23 @@ func formatAssistantToolCallStatus(event AssistantStreamEvent) string {
 		return "error: " + call
 	default:
 		return "tool: " + call
+	}
+}
+
+func formatAssistantProgressStatus(event AssistantStreamEvent) string {
+	progress := strings.TrimSpace(event.Progress)
+	if progress == "" {
+		return ""
+	}
+	switch strings.TrimSpace(event.ProgressState) {
+	case "running":
+		return "working: " + progress
+	case "done":
+		return "done: " + progress
+	case "error":
+		return "error: " + progress
+	default:
+		return progress
 	}
 }
 

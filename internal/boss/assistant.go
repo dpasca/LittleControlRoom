@@ -51,7 +51,8 @@ type AssistantRequest struct {
 
 	PlannerDomain string
 
-	PromptContext BossPromptContext
+	PromptContext         BossPromptContext
+	preparedReadOnlyRoute *assistantPreparedReadOnlyRoute
 }
 
 type AssistantResponse struct {
@@ -68,13 +69,23 @@ type AssistantStreamEventKind string
 const (
 	AssistantStreamTextDelta AssistantStreamEventKind = "text_delta"
 	AssistantStreamToolCall  AssistantStreamEventKind = "tool_call"
+	AssistantStreamProgress  AssistantStreamEventKind = "progress"
 )
 
 type AssistantStreamEvent struct {
-	Kind      AssistantStreamEventKind
-	Delta     string
-	ToolCall  string
-	ToolState string
+	Kind          AssistantStreamEventKind
+	Delta         string
+	ToolCall      string
+	ToolState     string
+	Progress      string
+	ProgressState string
+}
+
+type assistantPreparedReadOnlyRoute struct {
+	response     llm.JSONSchemaResponse
+	route        bossReadOnlyRoute
+	contextUsage model.LLMUsage
+	contextModel string
 }
 
 type Assistant struct {
@@ -282,28 +293,50 @@ func (a *Assistant) replyStructuredHandle(ctx context.Context, req AssistantRequ
 }
 
 func (a *Assistant) tryHelpChatFastAnswer(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, bool, error) {
+	response, handled, _, err := a.preflightHelpChat(ctx, req, emit)
+	return response, handled, err
+}
+
+func (a *Assistant) preflightHelpChat(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, bool, AssistantRequest, error) {
 	if a == nil || !req.HelpChat || a.queryRouter == nil {
-		return AssistantResponse{}, false, nil
+		return AssistantResponse{}, false, req, nil
 	}
 	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
 	if err != nil {
-		return AssistantResponse{}, false, err
+		return AssistantResponse{}, false, req, err
 	}
 	routeResponse, route, err := a.planReadOnlyQueryRoute(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return AssistantResponse{}, false, err
+			return AssistantResponse{}, false, req, err
 		}
-		return AssistantResponse{}, false, nil
+		return AssistantResponse{}, false, req, nil
+	}
+	req.preparedReadOnlyRoute = &assistantPreparedReadOnlyRoute{
+		response:     routeResponse,
+		route:        route,
+		contextUsage: contextUsage,
+		contextModel: contextModel,
 	}
 	usage := routeResponse.Usage
 	addLLMUsage(&usage, contextUsage)
-	if normalizeBossActionKind(route.Kind) != bossActionAnswer {
-		return AssistantResponse{}, false, nil
+	answer := ""
+	switch normalizeBossActionKind(route.Kind) {
+	case bossActionAnswer:
+		answer = strings.TrimSpace(route.Answer)
+	case bossActionHelpReference:
+		if strings.TrimSpace(route.Query) == "" {
+			break
+		}
+		action, ok := bossActionFromReadOnlyRoute(route)
+		if ok && a.query != nil {
+			result := a.executeReadOnlyQueryAction(ctx, action, req, emit)
+			addLLMUsage(&usage, result.Usage)
+			answer = strings.TrimSpace(result.UserAnswer)
+		}
 	}
-	answer := strings.TrimSpace(route.Answer)
 	if answer == "" {
-		return AssistantResponse{}, false, nil
+		return AssistantResponse{}, false, req, nil
 	}
 	emitAssistantDelta(emit, answer)
 	return AssistantResponse{
@@ -311,7 +344,7 @@ func (a *Assistant) tryHelpChatFastAnswer(ctx context.Context, req AssistantRequ
 		Model:         firstNonEmpty(strings.TrimSpace(routeResponse.Model), contextModel),
 		Usage:         usage,
 		PromptContext: req.PromptContext,
-	}, true, nil
+	}, true, req, nil
 }
 
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
@@ -337,6 +370,10 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		return AssistantResponse{}, err
 	}
 	req = preparedReq
+	if prepared := req.preparedReadOnlyRoute; prepared != nil {
+		contextUsage = prepared.contextUsage
+		contextModel = prepared.contextModel
+	}
 	addLLMUsage(&totalUsage, contextUsage)
 	if strings.TrimSpace(contextModel) != "" {
 		usedModel = strings.TrimSpace(contextModel)
@@ -478,6 +515,10 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		return AssistantResponse{}, err
 	}
 	req = preparedReq
+	if prepared := req.preparedReadOnlyRoute; prepared != nil {
+		contextUsage = prepared.contextUsage
+		contextModel = prepared.contextModel
+	}
 	addLLMUsage(&totalUsage, contextUsage)
 	if strings.TrimSpace(contextModel) != "" {
 		usedModel = strings.TrimSpace(contextModel)
@@ -681,15 +722,26 @@ func (a *Assistant) tryStructuredHandleQueryRoute(ctx context.Context, req Assis
 }
 
 func (a *Assistant) tryReadOnlyQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (llm.JSONSchemaResponse, *bossToolResult, bool, string, bossReadOnlyRoute, error) {
-	if a == nil || a.queryRouter == nil || a.query == nil {
+	if a == nil || a.query == nil {
 		return llm.JSONSchemaResponse{}, nil, false, "", bossReadOnlyRoute{}, nil
 	}
-	response, route, err := a.planReadOnlyQueryRoute(ctx, req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return response, nil, false, "", route, err
+	var response llm.JSONSchemaResponse
+	var route bossReadOnlyRoute
+	if prepared := req.preparedReadOnlyRoute; prepared != nil {
+		response = prepared.response
+		route = prepared.route
+	} else {
+		if a.queryRouter == nil {
+			return llm.JSONSchemaResponse{}, nil, false, "", bossReadOnlyRoute{}, nil
 		}
-		return response, nil, false, "", route, nil
+		var err error
+		response, route, err = a.planReadOnlyQueryRoute(ctx, req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return response, nil, false, "", route, err
+			}
+			return response, nil, false, "", route, nil
+		}
 	}
 	if req.HelpChat && normalizeBossActionKind(route.Kind) == bossActionAnswer {
 		if answer := strings.TrimSpace(route.Answer); answer != "" {
@@ -1062,6 +1114,17 @@ func emitToolCall(emit func(AssistantStreamEvent), call, state string) {
 		Kind:      AssistantStreamToolCall,
 		ToolCall:  strings.TrimSpace(call),
 		ToolState: strings.TrimSpace(state),
+	})
+}
+
+func emitProgress(emit func(AssistantStreamEvent), progress, state string) {
+	if emit == nil || strings.TrimSpace(progress) == "" {
+		return
+	}
+	emit(AssistantStreamEvent{
+		Kind:          AssistantStreamProgress,
+		Progress:      strings.TrimSpace(progress),
+		ProgressState: strings.TrimSpace(state),
 	})
 }
 

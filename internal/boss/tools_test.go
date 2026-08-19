@@ -258,6 +258,27 @@ func TestQueryExecutorHelpReferenceFindsCommandAndCapabilityTopics(t *testing.T)
 			t.Fatalf("help reference keybinding result missing %q:\n%s", want, keybindingResult.Text)
 		}
 	}
+
+	recordingResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "how do I launc LCR with recording again?",
+		Limit: 8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference recording) error = %v", err)
+	}
+	for _, want := range []string{
+		"main_tui.workflow.demo-recording",
+		"lcroom demo record [recording.lcrdemo]",
+		"make tui-record",
+	} {
+		if !strings.Contains(recordingResult.Text, want) {
+			t.Fatalf("help reference recording result missing %q:\n%s", want, recordingResult.Text)
+		}
+		if !strings.Contains(recordingResult.UserAnswer, want) && want != "main_tui.workflow.demo-recording" {
+			t.Fatalf("direct recording answer missing %q:\n%s", want, recordingResult.UserAnswer)
+		}
+	}
 }
 
 func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {

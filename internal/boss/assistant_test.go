@@ -1676,6 +1676,121 @@ func TestHelpChatFastAnswerUsesRouterBeforePlanner(t *testing.T) {
 	}
 }
 
+func TestHelpChatFastAnswerUsesGeneratedRecordingReference(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "utility-test",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{
+				Kind:  bossActionHelpReference,
+				Query: "launch LCR recording",
+			}),
+			Usage: model.LLMUsage{InputTokens: 8, OutputTokens: 3, TotalTokens: 11},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	var events []AssistantStreamEvent
+	resp, handled, err := assistant.tryHelpChatFastAnswer(context.Background(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "how do I launc LCR with recording again?",
+		}},
+	}, func(event AssistantStreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("tryHelpChatFastAnswer() error = %v", err)
+	}
+	if !handled {
+		t.Fatalf("tryHelpChatFastAnswer() handled = false, want generated help answer")
+	}
+	for _, want := range []string{"lcroom demo record [recording.lcrdemo]", "make tui-record", "lcroom tui --demo-record"} {
+		if !strings.Contains(resp.Content, want) {
+			t.Fatalf("recording answer missing %q:\n%s", want, resp.Content)
+		}
+	}
+	if got := len(router.reqs); got != 1 {
+		t.Fatalf("router calls = %d, want 1", got)
+	}
+	if got := len(planner.reqs); got != 0 {
+		t.Fatalf("planner calls = %d, want none", got)
+	}
+	var toolStates []string
+	for _, event := range events {
+		if event.Kind == AssistantStreamToolCall {
+			toolStates = append(toolStates, event.ToolState+":"+event.ToolCall)
+		}
+	}
+	if strings.Join(toolStates, "|") != `running:help_reference "launch LCR recording"|done:help_reference "launch LCR recording"` {
+		t.Fatalf("tool events = %#v", toolStates)
+	}
+}
+
+func TestHelpChatPreflightRouteIsReusedByFullPlanner(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "utility-test",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass, PlannerDomain: bossPlannerDomainGeneral}),
+			Usage:      model.LLMUsage{TotalTokens: 5},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "planner-test",
+			OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "I can handle that."}),
+			Usage:      model.LLMUsage{TotalTokens: 7},
+		}},
+	}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+	request := AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "Please prepare a change that needs planning.",
+		}},
+	}
+
+	_, handled, prepared, err := assistant.preflightHelpChat(context.Background(), request, nil)
+	if err != nil {
+		t.Fatalf("preflightHelpChat() error = %v", err)
+	}
+	if handled {
+		t.Fatalf("preflightHelpChat() handled a pass route")
+	}
+	resp, err := assistant.Reply(context.Background(), prepared)
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "I can handle that." {
+		t.Fatalf("content = %q", resp.Content)
+	}
+	if got := len(router.reqs); got != 1 {
+		t.Fatalf("router calls = %d, want one reused preflight route", got)
+	}
+	if got := len(planner.reqs); got != 1 {
+		t.Fatalf("planner calls = %d, want 1", got)
+	}
+	if got, want := resp.Usage.TotalTokens, int64(12); got != want {
+		t.Fatalf("usage total = %d, want %d", got, want)
+	}
+}
+
 func TestAssistantPlannerUserTextSteersFreshExternalResearchToEngineer(t *testing.T) {
 	t.Parallel()
 
