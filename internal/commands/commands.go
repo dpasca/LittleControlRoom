@@ -15,6 +15,7 @@ const (
 	KindChat            Kind = "chat"
 	KindAIStats         Kind = "ai-stats"
 	KindPerf            Kind = "perf"
+	KindRecord          Kind = "record"
 	KindErrors          Kind = "errors"
 	KindRefresh         Kind = "refresh"
 	KindClean           Kind = "clean"
@@ -116,6 +117,15 @@ const (
 	ToggleToggle ToggleMode = "toggle"
 )
 
+type RecordAction string
+
+const (
+	RecordToggle RecordAction = "toggle"
+	RecordStart  RecordAction = "start"
+	RecordStop   RecordAction = "stop"
+	RecordStatus RecordAction = "status"
+)
+
 type FocusTarget string
 
 const (
@@ -137,6 +147,8 @@ type Invocation struct {
 	Toggle         ToggleMode
 	Focus          FocusTarget
 	Duration       time.Duration
+	Record         RecordAction
+	RecordingPath  string
 	Message        string
 	Prompt         string
 	Command        string
@@ -153,6 +165,7 @@ var specs = []Spec{
 	{Name: "help", Usage: "/help", Summary: "Alias for /chat", Hidden: true},
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
+	{Name: "record", Usage: "/record [start [path]|stop|status]", Summary: "Start or stop a demo recording without restarting LCR"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "clean", Usage: "/clean", Summary: "Review and remove merged worktrees that have been safely stale for 24 hours"},
@@ -324,6 +337,19 @@ func SuggestionsWithCategories(input string, categoryNames []string) []Suggestio
 		return slashcmd.EnumSuggestions("/filter ", argPrefix,
 			choice("clear", "Remove the active project-name filter"),
 		)
+	case "record":
+		if len(fields) > 2 || (len(fields) == 2 && hasTrailingSpace && strings.EqualFold(fields[1], "start")) {
+			return nil
+		}
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return slashcmd.EnumSuggestions("/record ", argPrefix,
+			choice("start", "Start recording to the default demo-recordings directory"),
+			choice("stop", "Stop and finalize the active recording"),
+			choice("status", "Show whether demo recording is active"),
+		)
 	case "sessions":
 		argPrefix := ""
 		if len(fields) > 1 {
@@ -432,6 +458,8 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /perf")
 		}
 		return Invocation{Kind: KindPerf, Canonical: "/perf"}, nil
+	case "record":
+		return parseRecordCommand(rawArgs)
 	case "error", "errors", "log":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /errors")
@@ -844,6 +872,40 @@ func parseNonAIFoldersMode(raw string) (ToggleMode, error) {
 		return ToggleOff, nil
 	default:
 		return "", fmt.Errorf("usage: /non-ai-folders on|off")
+	}
+}
+
+func parseRecordCommand(raw string) (Invocation, error) {
+	action, rest := slashcmd.SplitCommandBody(strings.TrimSpace(raw))
+	action = strings.ToLower(strings.TrimSpace(action))
+	rest = strings.TrimSpace(rest)
+	switch action {
+	case "":
+		return Invocation{Kind: KindRecord, Record: RecordToggle, Canonical: "/record"}, nil
+	case "start", "on":
+		return Invocation{
+			Kind:          KindRecord,
+			Record:        RecordStart,
+			RecordingPath: rest,
+			Canonical:     slashcmd.CanonicalCommand("record", "start "+rest),
+		}, nil
+	case "stop", "off":
+		if rest != "" {
+			return Invocation{}, fmt.Errorf("usage: /record [start [path]|stop|status]")
+		}
+		return Invocation{Kind: KindRecord, Record: RecordStop, Canonical: "/record stop"}, nil
+	case "status":
+		if rest != "" {
+			return Invocation{}, fmt.Errorf("usage: /record [start [path]|stop|status]")
+		}
+		return Invocation{Kind: KindRecord, Record: RecordStatus, Canonical: "/record status"}, nil
+	case "toggle":
+		if rest != "" {
+			return Invocation{}, fmt.Errorf("usage: /record [start [path]|stop|status]")
+		}
+		return Invocation{Kind: KindRecord, Record: RecordToggle, Canonical: "/record"}, nil
+	default:
+		return Invocation{}, fmt.Errorf("usage: /record [start [path]|stop|status]")
 	}
 }
 

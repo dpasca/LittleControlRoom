@@ -1713,7 +1713,7 @@ func TestHelpChatFastAnswerUsesGeneratedRecordingReference(t *testing.T) {
 	if !handled {
 		t.Fatalf("tryHelpChatFastAnswer() handled = false, want generated help answer")
 	}
-	for _, want := range []string{"lcroom demo record [recording.lcrdemo]", "make tui-record", "lcroom tui --demo-record"} {
+	for _, want := range []string{"/record", "/record stop", "lcroom demo record [recording.lcrdemo]", "make tui-record", "lcroom tui --demo-record"} {
 		if !strings.Contains(resp.Content, want) {
 			t.Fatalf("recording answer missing %q:\n%s", want, resp.Content)
 		}

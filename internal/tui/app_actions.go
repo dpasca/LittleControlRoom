@@ -74,6 +74,7 @@ var (
 	detailDangerStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
 	detailConflictStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
 	detailAttentionValueStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	demoRecordingBadgeStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
 	topStatusSuccessBadgeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("42")).Bold(true).Padding(0, 1)
 	topStatusWarningBadgeStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
 	topStatusWarningPulseBadgeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("172")).Bold(true).Padding(0, 1)
@@ -476,6 +477,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openAIStatsDialog()
 	case commands.KindPerf:
 		return m, m.openPerfDialog()
+	case commands.KindRecord:
+		return m.handleDemoRecordingCommand(inv)
 	case commands.KindErrors:
 		return m.openErrorLog()
 	case commands.KindRefresh:

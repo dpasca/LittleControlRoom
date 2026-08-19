@@ -201,6 +201,8 @@ func TestCodexHostSlashCommandAllowsRuntimeSuiteAndCommit(t *testing.T) {
 		{raw: "/run-edit", kind: commands.KindRunEdit},
 		{raw: "/runtime", kind: commands.KindRuntime},
 		{raw: "/stop", kind: commands.KindStop},
+		{raw: "/record", kind: commands.KindRecord},
+		{raw: "/record stop", kind: commands.KindRecord},
 		{raw: "/commit", kind: commands.KindCommit},
 		{raw: "/commit Ship embedded project commands", kind: commands.KindCommit},
 	}

@@ -22,13 +22,25 @@ In the setup/status view, the Project reports card names `OpenAI API / gpt-5.6-l
 
 ## Capture ordinary daily work
 
-Run the normal TUI directly from the current source tree with recording enabled:
+For ordinary daily use, start the normal TUI and begin capture only when the
+interesting work is about to start:
+
+```text
+/record
+```
+
+The `REC` badge confirms capture is active. Run `/record stop` when the useful
+section is complete; LCR writes timestamped recordings under
+`~/.little-control-room/demo-recordings/` by default.
+
+For a dedicated recording profile, launch the source TUI with capture already
+enabled:
 
 ```sh
 make tui-record
 ```
 
-This uses the same config, database, project scope, Codex home, and interval flags as `make tui`; it does not depend on an installed or prebuilt binary. Before launching it, use `/settings` in the normal LCR instance to select OpenAI/GPT-5.6 for the main agent surfaces, GPT-5.6 Luna for background and utility inference, and disable the unfinished mobile surface. Then quit LCR normally so the recorder can acquire the normal database without enabling multi-instance mode.
+This uses the same config, database, project scope, Codex home, and interval flags as `make tui`; it does not depend on an installed or prebuilt binary. Before launching it, use `/settings` in the normal LCR instance to select OpenAI/GPT-5.6 for the main agent surfaces, GPT-5.6 Luna for background and utility inference, and disable the unfinished mobile surface. Then quit LCR normally so the dedicated process can acquire the normal database without enabling multi-instance mode.
 
 By default, recordings are timestamped and stored under `~/.little-control-room/demo-recordings/`. Terminal and tmux resize events are retained. Override the directory or exact destination when needed:
 

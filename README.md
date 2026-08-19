@@ -310,7 +310,9 @@ rather than pretending to be a sandbox:
 
 - **[Mobile Preview](docs/mobile.md)** — monitor running agents from your phone
   over your LAN. Read-only by default, pairing required, still a preview.
-- **[Demo recording](docs/reference.md#demo-recordings)** — `lcroom demo record`
+- **[Demo recording](docs/reference.md#demo-recordings)** — `/record` starts and
+  stops capture in the running TUI; `lcroom demo record` remains available for
+  launch-time capture.
   captures hours of TUI activity as compressed text frames instead of pixel video,
   with a non-destructive clip editor and asciicast export. Private categories and
   embedded sessions for private projects are masked at capture time.
@@ -349,9 +351,10 @@ that implementation. GPT-5.6 Luna also ran the final automated privacy review of
 the demo; that review supplements, rather than replaces, a human full-resolution
 check.
 
-To exercise the recording extension directly from this branch, use
-`make tui-record`. See [the Build Week demo notes](docs/build_week_demo.md) for the
-isolated profile, privacy boundary, storage paths, and editor behavior.
+To exercise the recording extension directly from this branch, run `/record` in
+the normal TUI, or use `make tui-record` for an isolated launch-time profile. See
+[the Build Week demo notes](docs/build_week_demo.md) for the privacy boundary,
+storage paths, and editor behavior.
 
 ## Contacts
 

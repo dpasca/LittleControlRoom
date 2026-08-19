@@ -61,14 +61,16 @@ type Model struct {
 	privacyMode               bool
 	privacyPatterns           []string
 
-	loading              bool
-	status               string
-	err                  error
-	actionNoticeDialog   *actionNoticeDialogState
-	quitConfirm          *quitConfirmState
-	gracefulQuitInFlight bool
-	relaunchAfterUpdate  bool
-	installedUpdate      string
+	loading                 bool
+	status                  string
+	err                     error
+	demoRecordingController DemoRecordingController
+	demoRecordingBusy       bool
+	actionNoticeDialog      *actionNoticeDialogState
+	quitConfirm             *quitConfirmState
+	gracefulQuitInFlight    bool
+	relaunchAfterUpdate     bool
+	installedUpdate         string
 
 	selfUpdater               selfUpdateManager
 	selfUpdateCheckInFlight   bool
@@ -1614,6 +1616,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case gracefulQuitFinishedMsg:
 		return m.applyGracefulQuitFinishedMsg(msg)
+	case demoRecordingStartedMsg:
+		return m.applyDemoRecordingStartedMsg(msg)
+	case demoRecordingStoppedMsg:
+		return m.applyDemoRecordingStoppedMsg(msg)
 	case terminalHealthCheckMsg:
 		return m.applyTerminalHealthCheckMsg(msg)
 	case terminalRepairFinishedMsg:

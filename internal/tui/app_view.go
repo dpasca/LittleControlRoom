@@ -515,6 +515,9 @@ func (m Model) renderTopStatusLine(width int) string {
 	if restartWarmupNotice != "" {
 		statusParts = append(statusParts, restartWarmupNotice)
 	}
+	if m.demoRecordingActive() {
+		statusParts = append(statusParts, demoRecordingBadgeStyle.Render("REC"))
+	}
 	if strings.TrimSpace(status) != "" {
 		statusParts = append(statusParts, m.renderTopStatusMessage(rawStatus, status))
 	}

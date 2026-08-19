@@ -54,6 +54,42 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "record toggle",
+			raw:  "/record",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRecord || inv.Record != RecordToggle || inv.Canonical != "/record" {
+					t.Fatalf("record invocation = %#v", inv)
+				}
+			},
+		},
+		{
+			name: "record start with path",
+			raw:  "/record start /tmp/LCR demo.lcrdemo",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRecord || inv.Record != RecordStart || inv.RecordingPath != "/tmp/LCR demo.lcrdemo" {
+					t.Fatalf("record start invocation = %#v", inv)
+				}
+			},
+		},
+		{
+			name: "record stop",
+			raw:  "/record stop",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRecord || inv.Record != RecordStop || inv.Canonical != "/record stop" {
+					t.Fatalf("record stop invocation = %#v", inv)
+				}
+			},
+		},
+		{
+			name: "record status",
+			raw:  "/record status",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRecord || inv.Record != RecordStatus || inv.Canonical != "/record status" {
+					t.Fatalf("record status invocation = %#v", inv)
+				}
+			},
+		},
+		{
 			name: "refresh",
 			raw:  "/refresh",
 			check: func(t *testing.T, inv Invocation) {
@@ -1145,6 +1181,16 @@ func TestSuggestionsCommandArguments(t *testing.T) {
 	}
 	if got[0].Insert != "/sort recent" {
 		t.Fatalf("suggestion = %q, want /sort recent", got[0].Insert)
+	}
+}
+
+func TestSuggestionsRecordArguments(t *testing.T) {
+	got := Suggestions("/record st")
+	if len(got) != 3 {
+		t.Fatalf("Suggestions(/record st) len = %d, want 3: %#v", len(got), got)
+	}
+	if got[0].Insert != "/record start" || got[1].Insert != "/record stop" || got[2].Insert != "/record status" {
+		t.Fatalf("Suggestions(/record st) = %#v", got)
 	}
 }
 

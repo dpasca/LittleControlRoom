@@ -289,6 +289,23 @@ LCR can record the rendered Bubble Tea view as compact text frames, edit clips
 without modifying the source session, and export a selected clip as an
 [asciicast v3](https://docs.asciinema.org/manual/asciicast/v3/) file:
 
+```text
+/record
+/record status
+/record stop
+```
+
+Run `/record` from the dashboard or an embedded engineer pane to start capture
+without restarting LCR. A `REC` badge remains visible while recording is active.
+Bare `/record` toggles capture; `/record start` and `/record stop` are the
+explicit forms. By default, LCR creates a timestamped `.lcrdemo` directory under
+its configured `demo-recordings` data directory. To choose the destination, use
+`/record start /path/to/walkthrough.lcrdemo`. Existing paths are never
+overwritten. Exiting LCR normally finalizes an active recording too.
+
+The launch-time commands remain available for scripts and dedicated recording
+profiles:
+
 ```sh
 lcroom demo record walkthrough.lcrdemo
 lcroom demo edit walkthrough.lcrdemo
@@ -297,9 +314,8 @@ lcroom demo export walkthrough.lcrdemo --clip 1 --output walkthrough.cast
 ```
 
 `demo record` launches the regular TUI and accepts the same configuration flags
-after the optional output path. When the path is omitted, LCR creates a
-timestamped `.lcrdemo` directory in the current directory. Existing paths are
-never overwritten.
+after the optional output path. When its path is omitted, LCR creates a
+timestamped `.lcrdemo` directory in the current directory.
 
 The source recording is not a pixel video. It contains complete Bubble Tea
 views encoded as independently readable, one-minute gzip chunks. The first
@@ -352,7 +368,7 @@ is visible, the saved frame is replaced before capture with the fixed message
 visible surfaces can still contain project names, prompts, diffs, paths, or
 sensitive output, so review every clip before sharing it.
 
-The equivalent direct TUI flag is:
+The equivalent launch-time TUI flag is:
 
 ```sh
 lcroom tui --demo-record walkthrough.lcrdemo
@@ -511,6 +527,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/ignore`: Hide the selected project's exact name.
 - `/ignored`: Review ignored names and paths, then restore them.
 - `/remove` (aliases `/delete`, `/forget`): Confirm, then make the selected item go away safely. For regular projects, hides only the selected path.
+- `/record [start [path]|stop|status]`: Start, finalize, or inspect a rendered-view demo recording without restarting LCR. Bare `/record` toggles capture.
 - `/privacy on|off|toggle|settings`: Toggle demo privacy mode or open privacy settings.
 
 ### Diagnostics and maintenance
@@ -545,6 +562,7 @@ work here and target the project shown in the pane.
 - `/review`: Ask embedded Codex to review uncommitted changes.
 - `/clean`: Leave the embedded pane visible behind the global stale-worktree cleanup dialog.
 - `/codex-gc`: Leave the embedded pane visible behind the global Codex session-storage cleanup dialog.
+- `/record [start [path]|stop|status]`: Control the same global demo recorder without leaving the embedded session.
 - `/permissions [low|medium]`: LCAgent only. Explain or change the current session's next-turn autonomy.
 - `/chat`: Hide the embedded pane and open Chat over the main dashboard.
 
@@ -629,7 +647,7 @@ same tracked TODO, worktree, and engineer launch.
 - `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
 - `/new-lcagent` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-permission commands, a Medium shortcut for the current run, `/permissions` to explain or change session permissions, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
 - The fresh-session commands were previously named `/codex-new`, `/claude-new`, `/opencode-new`, and `/lcagent-new`. Those names still work as hidden aliases, alongside `/codex-start`, `/cc-start`, `/oc-start`, and `/lca-start`; only the `/new-*` form is listed in help and completion, where it groups with `/new-project` and `/new-task`.
-- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/handoff [note]`, `/lcagent-handoff [note]`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/pause` (`/suspend` alias), `/model`, `/status`, `/context`, `/permissions`, `/compact [instructions]`, `/review`, `/clean`, `/codex-gc`, and `/chat`. `/handoff` mechanically saves bounded cached context before replacing the source session, so a brief-write failure leaves that session untouched; `/lcagent-handoff` uses the same brief but deliberately switches the fresh session to LCAgent. `/pause` interrupts the active turn locally without sending another model request, so it is safe to use when the connection is about to disappear. `/context` opens the provider status report with current context usage when available. Project commands `/run`, `/start`, `/restart`, `/run-edit`, `/stop`, and `/commit [message]` are also available and always target the project shown in the embedded pane. Run-command, external-stop, commit-preview, and cleanup dialogs render over the live session; `/runtime` hides the session and focuses that project's runtime pane. Embedded providers expose LCR's local command subset, not every native slash command from the provider CLI.
+- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/handoff [note]`, `/lcagent-handoff [note]`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/pause` (`/suspend` alias), `/model`, `/status`, `/context`, `/permissions`, `/compact [instructions]`, `/review`, `/clean`, `/codex-gc`, `/record`, and `/chat`. `/handoff` mechanically saves bounded cached context before replacing the source session, so a brief-write failure leaves that session untouched; `/lcagent-handoff` uses the same brief but deliberately switches the fresh session to LCAgent. `/pause` interrupts the active turn locally without sending another model request, so it is safe to use when the connection is about to disappear. `/context` opens the provider status report with current context usage when available. `/record` controls the global demo recorder without leaving the pane. Project commands `/run`, `/start`, `/restart`, `/run-edit`, `/stop`, and `/commit [message]` are also available and always target the project shown in the embedded pane. Run-command, external-stop, commit-preview, and cleanup dialogs render over the live session; `/runtime` hides the session and focuses that project's runtime pane. Embedded providers expose LCR's local command subset, not every native slash command from the provider CLI.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/sessions` with no session ID opens a picker for saved sessions from the current project and provider; `/sessions <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.

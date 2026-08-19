@@ -269,6 +269,8 @@ func TestQueryExecutorHelpReferenceFindsCommandAndCapabilityTopics(t *testing.T)
 	}
 	for _, want := range []string{
 		"main_tui.workflow.demo-recording",
+		"/record",
+		"/record stop",
 		"lcroom demo record [recording.lcrdemo]",
 		"make tui-record",
 	} {

@@ -1031,20 +1031,19 @@ func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (s
 
 func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool, demoRecordingPath string) (int, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
-	var recorder *demorecord.Recorder
+	recordingController := demorecord.NewController()
 	if strings.TrimSpace(demoRecordingPath) != "" {
-		var err error
-		recorder, err = demorecord.NewRecorder(demoRecordingPath, demorecord.RecorderOptions{})
+		recordingPath, err := recordingController.Start(demoRecordingPath)
 		if err != nil {
 			cancel()
 			fmt.Fprintf(os.Stderr, "start demo recording: %v\n", err)
 			return 1, false
 		}
-		fmt.Printf("demo recording started: %s\n", recorder.Path())
-		defer func() {
-			_ = recorder.Close()
-		}()
+		fmt.Printf("demo recording started: %s\n", recordingPath)
 	}
+	defer func() {
+		_ = recordingController.Close()
+	}()
 	codexManager := codexapp.NewManager()
 	runtimeManager := projectrun.NewManager()
 	var mobileServer *server.RunningServer
@@ -1080,20 +1079,17 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 
 	m := tui.NewWithManagers(runCtx, svc, codexManager, runtimeManager)
 	m.SetMobileServerStatus(mobileStatus)
+	m.SetDemoRecordingController(recordingController)
 	m.EnableUIStallWatchdog()
-	var programModel tea.Model = m
-	if recorder != nil {
-		programModel = demorecord.WrapModel(programModel, recorder)
-	}
+	programModel := demorecord.WrapModel(m, recordingController)
 	p := tea.NewProgram(programModel, tea.WithAltScreen())
 	finalModel, err := p.Run()
-	recordingErr := error(nil)
-	if recorder != nil {
-		recordingErr = recorder.Close()
+	recordingPath, stoppedRecording, recordingErr := recordingController.Stop()
+	if stoppedRecording {
 		if recordingErr != nil {
 			fmt.Fprintf(os.Stderr, "finalize demo recording: %v\n", recordingErr)
 		} else {
-			fmt.Printf("demo recording saved: %s\n", recorder.Path())
+			fmt.Printf("demo recording saved: %s\n", recordingPath)
 		}
 	}
 	if err != nil {

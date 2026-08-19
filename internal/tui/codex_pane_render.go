@@ -778,6 +778,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	if notice := m.renderExternalControlPendingNotice(); notice != "" {
 		segments = append(segments, notice)
 	}
+	if notice := m.renderDemoRecordingFooterNotice(); notice != "" {
+		segments = append(segments, notice)
+	}
 	if composerStatus := m.renderCodexComposerFocusStatus(); composerStatus != "" {
 		segments = append(segments, composerStatus)
 	}
