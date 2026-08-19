@@ -100,6 +100,43 @@ func TestAuditCodexSessionStorageGroupsEligibleThreadTrees(t *testing.T) {
 	}
 }
 
+func TestAuditCodexSessionStorageUsesSevenDayWindowWithoutUserEventIndexHint(t *testing.T) {
+	t.Parallel()
+
+	fixture := newCodexCleanupFixture(t)
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	eligiblePath := fixture.addDeletedWorktree(t, "week-old", now.Add(-14*24*time.Hour), false)
+	fixture.addThread(t, cleanupThreadFixture{
+		ID:           "thread-week-old",
+		CWD:          eligiblePath,
+		LastActivity: now.Add(-8 * 24 * time.Hour),
+	})
+	if _, err := fixture.codexDB.Exec(`UPDATE threads SET has_user_event = 0 WHERE id = 'thread-week-old'`); err != nil {
+		t.Fatalf("clear stale user-event index hint: %v", err)
+	}
+
+	recentPath := fixture.addDeletedWorktree(t, "under-a-week", now.Add(-14*24*time.Hour), false)
+	fixture.addThread(t, cleanupThreadFixture{
+		ID:           "thread-under-a-week",
+		CWD:          recentPath,
+		LastActivity: now.Add(-6 * 24 * time.Hour),
+	})
+
+	audit, err := fixture.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Now: now})
+	if err != nil {
+		t.Fatalf("AuditCodexSessionStorage() error = %v", err)
+	}
+	if !audit.RecentCutoff.Equal(now.Add(-7 * 24 * time.Hour)) {
+		t.Fatalf("recent cutoff = %v, want seven-day cutoff", audit.RecentCutoff)
+	}
+	if len(audit.Groups) != 1 || audit.Groups[0].WorktreePath != eligiblePath {
+		t.Fatalf("eligible groups = %#v, want week-old tree only", audit.Groups)
+	}
+	if audit.Excluded.Recent != 1 || audit.Excluded.Uncertain != 0 {
+		t.Fatalf("exclusions = %#v, want under-a-week tree recent and no uncertainty", audit.Excluded)
+	}
+}
+
 func TestAuditCodexSessionStorageExcludesWholeTreeForPinnedDescendant(t *testing.T) {
 	t.Parallel()
 

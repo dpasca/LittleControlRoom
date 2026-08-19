@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	CodexCleanupRecentWindow         = 30 * 24 * time.Hour
+	CodexCleanupRecentWindow         = 7 * 24 * time.Hour
 	CodexCleanupDeletedWorktreeGrace = 7 * 24 * time.Hour
 	defaultCodexCleanupAuditInterval = 24 * time.Hour
 )
@@ -342,7 +342,11 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			audit.Excluded.Uncertain++
 			continue
 		}
-		if unresolvedDescendantLineage || unknownByCWD[cwd] || !thread.HasUserEvent {
+		// Current Codex indexes can leave has_user_event at zero even when the
+		// rollout contains structured user messages. Root and descendant identity
+		// is established from rollout lineage above, so the index hint must not
+		// make every otherwise safe tree ineligible.
+		if unresolvedDescendantLineage || unknownByCWD[cwd] {
 			audit.Excluded.Uncertain++
 			continue
 		}

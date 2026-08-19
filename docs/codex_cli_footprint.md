@@ -266,7 +266,7 @@ A root thread is eligible only when all of the following can be established:
    member of the Codex thread tree is pinned, and no tree member is loaded by an
    LCR-managed Codex app-server. Archived LCR records and worktrees with an open
    project TODO are also excluded.
-3. Every root and descendant has at least 30 days of inactivity, while the LCR
+3. Every root and descendant has at least 7 days of inactivity, while the LCR
    worktree tombstone has been missing for at least 7 days.
 4. The worktree is not on a conventional external-volume path or a different
    mounted filesystem from the configured Codex home.
@@ -274,6 +274,11 @@ A root thread is eligible only when all of the following can be established:
    missing worktree `cwd`, and one regular rollout under `sessions/` or
    `archived_sessions/`. Ambiguous lineage, paths, files, roots, or database
    state exclude the whole tree.
+
+The Codex index's `has_user_event` value is not cleanup authority. Current
+Codex databases can leave that column at zero even when the rollout contains
+structured user messages; cleanup instead establishes root and descendant
+identity from the rollout's `session_meta` lineage.
 
 The audit queries the complete thread index, but bounds rollout-file I/O to
 threads whose `cwd` exactly matches a retained deletion record and descendants
