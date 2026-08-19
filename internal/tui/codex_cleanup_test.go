@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,128 @@ func TestCodexCleanupRequiresSelectionAndSeparatePermanentConfirmation(t *testin
 	got = updated.(Model)
 	if cmd == nil || !got.codexCleanup.Deleting || got.codexCleanup.QueueIndex != 0 {
 		t.Fatalf("D confirmation did not start one guarded deletion: %#v cmd=%v", got.codexCleanup, cmd)
+	}
+	if got.codexCleanup.Cancel == nil {
+		t.Fatal("D confirmation did not retain a cancellation handle for the background deletion")
+	}
+	got.codexCleanup.Cancel()
+}
+
+func TestCodexCleanupSelectsAndClearsAllGroups(t *testing.T) {
+	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	first := codexCleanupTestGroup(now)
+	second := first
+	second.WorktreePath = "/tmp/demo--another-cleanup"
+	second.WorktreeName = "demo--another-cleanup"
+	second.Revision = "another-preview-revision"
+	second.Threads = append([]service.CodexCleanupThread(nil), first.Threads...)
+	second.Threads[0].ID = "thread-root-another"
+
+	m := Model{codexCleanup: &codexCleanupDialogState{
+		Audit:  service.CodexCleanupAudit{Groups: []service.CodexCleanupWorktreeGroup{first, second}},
+		Chosen: make(map[string]bool),
+	}}
+	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got := updated.(Model)
+	if cmd != nil || len(selectedCodexCleanupGroups(got.codexCleanup)) != 2 || !allCodexCleanupGroupsSelected(got.codexCleanup) {
+		t.Fatalf("select-all state = %#v, cmd=%v", got.codexCleanup.Chosen, cmd)
+	}
+	rendered := ansi.Strip(got.renderCodexCleanupOverlay("", 120, 38))
+	if !strings.Contains(rendered, "clear all") {
+		t.Fatalf("selected cleanup actions do not offer clear all:\n%s", rendered)
+	}
+
+	updated, cmd = got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	got = updated.(Model)
+	if cmd != nil || len(selectedCodexCleanupGroups(got.codexCleanup)) != 0 || allCodexCleanupGroupsSelected(got.codexCleanup) {
+		t.Fatalf("clear-all state = %#v, cmd=%v", got.codexCleanup.Chosen, cmd)
+	}
+	if got.status != "Cleared all Codex cleanup selections" {
+		t.Fatalf("clear-all status = %q", got.status)
+	}
+}
+
+func TestCodexCleanupCanRunInBackgroundReopenAndAbort(t *testing.T) {
+	group := codexCleanupTestGroup(time.Now())
+	canceled := false
+	m := Model{codexCleanup: &codexCleanupDialogState{
+		Deleting: true,
+		Queue:    []service.CodexCleanupWorktreeGroup{group},
+		Cancel:   func() { canceled = true },
+	}}
+
+	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	got := updated.(Model)
+	if cmd != nil || !got.codexCleanup.Backgrounded || !got.codexCleanup.Deleting || got.codexCleanupVisible() {
+		t.Fatalf("background cleanup state = %#v, cmd=%v", got.codexCleanup, cmd)
+	}
+	footer := ansi.Strip(got.renderFooterCodexCleanupSegment())
+	if !strings.Contains(footer, "Codex GC 1/1") {
+		t.Fatalf("background cleanup footer = %q", footer)
+	}
+
+	updated, cmd = got.dispatchCommand(commands.Invocation{Kind: commands.KindCodexGC})
+	got = updated.(Model)
+	if cmd != nil || got.codexCleanup.Backgrounded || !got.codexCleanupVisible() || !got.codexCleanup.Deleting {
+		t.Fatalf("reopened cleanup state = %#v, cmd=%v", got.codexCleanup, cmd)
+	}
+
+	updated, cmd = got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if cmd != nil || !canceled || !got.codexCleanup.CancelRequested || !got.codexCleanup.Deleting {
+		t.Fatalf("abort cleanup state = canceled:%v dialog:%#v cmd=%v", canceled, got.codexCleanup, cmd)
+	}
+	progress := ansi.Strip(got.renderCodexCleanupOverlay("", 110, 32))
+	if !strings.Contains(progress, "Aborting Codex session cleanup") || !strings.Contains(progress, "no queued worktree will start") {
+		t.Fatalf("abort progress does not explain stop semantics:\n%s", progress)
+	}
+}
+
+func TestCodexCleanupAbortStopsQueueAndKeepsVerifiedReport(t *testing.T) {
+	now := time.Now()
+	first := codexCleanupTestGroup(now)
+	second := first
+	second.WorktreePath = "/tmp/demo--queued-cleanup"
+	second.WorktreeName = "demo--queued-cleanup"
+	m := Model{codexCleanup: &codexCleanupDialogState{
+		Backgrounded:    true,
+		Deleting:        true,
+		CancelRequested: true,
+		Queue:           []service.CodexCleanupWorktreeGroup{first, second},
+		QueueIndex:      0,
+	}}
+
+	updated, cmd := m.applyCodexCleanupDelete(codexCleanupDeleteMsg{
+		group: first,
+		result: service.DeleteCodexCleanupWorktreeResult{
+			WorktreePath:           first.WorktreePath,
+			DeletedRootThreads:     1,
+			DeletedDescendants:     2,
+			VerifiedReclaimedBytes: first.RecoverableBytes,
+			ExpectedBytes:          first.RecoverableBytes,
+			Verified:               true,
+		},
+		err: context.Canceled,
+	})
+	got := updated.(Model)
+	if cmd != nil || got.codexCleanup.Deleting || !got.codexCleanup.Finished || !got.codexCleanup.Aborted {
+		t.Fatalf("aborted cleanup state = %#v, cmd=%v", got.codexCleanup, cmd)
+	}
+	if got.codexCleanup.QueueIndex != 1 || len(got.codexCleanup.Results) != 1 || !got.codexCleanup.Results[0].Canceled {
+		t.Fatalf("aborted cleanup results = %#v", got.codexCleanup)
+	}
+	if len(got.errorLogEntries) != 0 || !strings.Contains(got.status, "/codex-gc opens the report") {
+		t.Fatalf("aborted cleanup status/log = %q / %#v", got.status, got.errorLogEntries)
+	}
+	report := ansi.Strip(renderCodexCleanupContent(got.codexCleanup, 100, 32, 0, now))
+	for _, want := range []string{"Cleanup aborted", "1 queued worktree group did not start", "2.0 KiB", "2 descendants"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("aborted cleanup report missing %q:\n%s", want, report)
+		}
+	}
+	footer := ansi.Strip(got.renderFooterCodexCleanupSegment())
+	if !strings.Contains(footer, "Codex GC stopped") {
+		t.Fatalf("aborted cleanup footer = %q", footer)
 	}
 }
 

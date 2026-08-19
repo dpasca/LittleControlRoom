@@ -102,7 +102,8 @@ func (m Model) renderFooter(width int) string {
 	filterSegment := m.renderFooterProjectFilterSegment()
 	integritySegment := m.renderFooterRepositoryIntegritySegment()
 	modelHealthSegment := m.renderFooterModelHealthSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, modelHealthSegment, assessmentSegment, usageSegment)
+	codexCleanupSegment := m.renderFooterCodexCleanupSegment()
+	supplementSegments := footerSupplementSegments(codexCleanupSegment, filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, modelHealthSegment, assessmentSegment, usageSegment)
 	if m.quitConfirm != nil {
 		return m.renderModalFooter(width, "Quit: Tab or arrows choose, Enter confirm, Esc stay", supplementSegments...)
 	}
@@ -235,18 +236,20 @@ func (m Model) renderFooter(width int) string {
 			return m.renderModalFooter(width, "Stale worktrees: ↑↓ inspect, Space toggle, Enter remove, R refresh, Esc cancel", supplementSegments...)
 		}
 	}
-	if m.codexCleanup != nil {
+	if m.codexCleanupVisible() {
 		switch {
 		case m.codexCleanup.Loading:
 			return m.renderModalFooter(width, "Codex cleanup: auditing only, Esc close", supplementSegments...)
+		case m.codexCleanup.Deleting && m.codexCleanup.CancelRequested:
+			return m.renderModalFooter(width, "Codex cleanup: aborting active request; B background", supplementSegments...)
 		case m.codexCleanup.Deleting:
-			return m.renderModalFooter(width, "Codex cleanup: permanent deletion and verification in progress", supplementSegments...)
+			return m.renderModalFooter(width, "Codex cleanup: deleting in background, B hide, Esc abort", supplementSegments...)
 		case m.codexCleanup.Finished:
 			return m.renderModalFooter(width, "Codex cleanup report: Enter/Esc close", supplementSegments...)
 		case m.codexCleanup.Confirming:
 			return m.renderModalFooter(width, "Codex cleanup warning: D permanently delete, Esc back", supplementSegments...)
 		default:
-			return m.renderModalFooter(width, "Codex cleanup: ↑↓ inspect, Space select, Enter review, R refresh, Esc cancel", supplementSegments...)
+			return m.renderModalFooter(width, "Codex cleanup: ↑↓ inspect, Space toggle, A all/none, Enter review, R refresh, Esc cancel", supplementSegments...)
 		}
 	}
 	if m.worktreeMergeRecoveryDialog != nil {

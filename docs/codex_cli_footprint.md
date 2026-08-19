@@ -256,7 +256,8 @@ other residue preserves the original Git failure and remains untouched.
 LCR's `/codex-gc` workflow audits global Codex storage without using a missing
 directory alone as deletion authority. A read-only audit runs when the TUI or
 server starts and then once per day; it only refreshes an in-memory report and
-never deletes a thread. Opening `/codex-gc` always runs another fresh audit.
+never deletes a thread. Opening `/codex-gc` runs another fresh audit unless it
+is reopening an active background deletion or its unread completion report.
 
 A root thread is eligible only when all of the following can be established:
 
@@ -294,15 +295,23 @@ the rollout files that can be recovered. The preview revision includes the
 selected tree identities plus rollout paths, sizes, and modification times.
 
 Deletion is reachable only after selecting one or more worktree groups with
-Space, opening a separate permanent-deletion warning with Enter, and pressing
-`D`. LCR repeats the complete audit and compares the preview revision before
-each group. It then calls Codex app-server `thread/delete` for each selected
-root; the Codex API performs the root-and-descendant cascade. Direct SQLite or
-rollout-file deletion is not used.
+Space, or explicitly toggling all groups with `A`, opening a separate
+permanent-deletion warning with Enter, and pressing `D`. LCR repeats the
+complete audit and compares the preview revision before each group. It then
+calls Codex app-server `thread/delete` for each selected root; the Codex API
+performs the root-and-descendant cascade. Direct SQLite or rollout-file
+deletion is not used.
 
 After every app-server response, LCR verifies that every selected root and
 descendant row is absent from `state_5.sqlite` and that each previewed rollout
 file is absent. Progress and partial failures remain visible. Reclaimed space is
 reported as verified logical rollout bytes only after those absence checks; it
 does not claim filesystem block-level savings on sparse, compressed, or
-copy-on-write storage.
+copy-on-write storage. The deletion job runs off the TUI update path: `B` hides
+it while `/codex-gc` reopens its progress or report. Esc cancels the active
+app-server client and prevents later queued groups from starting. A cancellation
+cannot restore a thread already deleted, so LCR gives the in-flight group a
+separate bounded post-cancel verification pass and reports only bytes it can
+still prove were reclaimed. Each destructive group also shares the repository
+family's worktree-operation lock, preventing an in-process create or restore
+from changing the missing-path evidence between the repeat audit and deletion.

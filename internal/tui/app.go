@@ -1803,7 +1803,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.staleWorktreeCleanup != nil {
 			return m.updateStaleWorktreeCleanupMode(msg)
 		}
-		if m.codexCleanup != nil {
+		if m.codexCleanupVisible() {
 			return m.updateCodexCleanupMode(msg)
 		}
 		if m.worktreeRestore != nil {

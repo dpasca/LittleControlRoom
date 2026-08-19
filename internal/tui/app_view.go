@@ -111,7 +111,7 @@ func (m Model) View() string {
 		if m.staleWorktreeCleanup != nil {
 			return m.renderStaleWorktreeCleanupOverlay(body, width, height)
 		}
-		if m.codexCleanup != nil {
+		if m.codexCleanupVisible() {
 			return m.renderCodexCleanupOverlay(body, width, height)
 		}
 		if m.attentionDialog != nil {
@@ -345,7 +345,7 @@ func (m Model) View() string {
 	if m.staleWorktreeCleanup != nil {
 		body = m.renderStaleWorktreeCleanupOverlay(body, layout.width, layout.height)
 	}
-	if m.codexCleanup != nil {
+	if m.codexCleanupVisible() {
 		body = m.renderCodexCleanupOverlay(body, layout.width, layout.height)
 	}
 	if m.worktreeMergeConfirm != nil {

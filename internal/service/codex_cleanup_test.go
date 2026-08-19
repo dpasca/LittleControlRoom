@@ -291,9 +291,10 @@ func TestDeleteCodexCleanupWorktreeUsesAppServerBoundaryAndVerifiesFiles(t *test
 	}
 
 	result, err := fixture.service.DeleteCodexCleanupWorktree(context.Background(), DeleteCodexCleanupWorktreeRequest{
-		WorktreePath:  group.WorktreePath,
-		RootThreadIDs: []string{"thread-root"},
-		Revision:      group.Revision,
+		WorktreePath:    group.WorktreePath,
+		RootProjectPath: group.RootProjectPath,
+		RootThreadIDs:   []string{"thread-root"},
+		Revision:        group.Revision,
 	})
 	if err != nil {
 		t.Fatalf("DeleteCodexCleanupWorktree() error = %v", err)
@@ -329,15 +330,50 @@ func TestDeleteCodexCleanupWorktreeRejectsChangedPreview(t *testing.T) {
 	}
 
 	_, err = fixture.service.DeleteCodexCleanupWorktree(context.Background(), DeleteCodexCleanupWorktreeRequest{
-		WorktreePath:  group.WorktreePath,
-		RootThreadIDs: []string{"thread-root"},
-		Revision:      group.Revision,
+		WorktreePath:    group.WorktreePath,
+		RootProjectPath: group.RootProjectPath,
+		RootThreadIDs:   []string{"thread-root"},
+		Revision:        group.Revision,
 	})
 	if err == nil || !strings.Contains(err.Error(), "no longer eligible") {
 		t.Fatalf("changed-preview error = %v", err)
 	}
 	if called {
 		t.Fatal("deleter was called after the safety preview changed")
+	}
+}
+
+func TestDeleteCodexCleanupWorktreeWaitsForRepositoryWorktreeOperations(t *testing.T) {
+	fixture := newCodexCleanupFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	worktreePath := fixture.addDeletedWorktree(t, "worktree-operation", now.Add(-20*24*time.Hour), false)
+	fixture.addThread(t, cleanupThreadFixture{ID: "thread-root", CWD: worktreePath, LastActivity: now.Add(-90 * 24 * time.Hour)})
+	audit, err := fixture.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Now: now})
+	if err != nil || len(audit.Groups) != 1 {
+		t.Fatalf("initial audit = %#v, %v", audit, err)
+	}
+	group := audit.Groups[0]
+	unlock := fixture.service.worktreeCreateLocks.Lock(group.RootProjectPath)
+	defer unlock()
+	deleteCalled := false
+	fixture.service.codexThreadDeleter = func(context.Context, string, []string) ([]string, error) {
+		deleteCalled = true
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	_, err = fixture.service.DeleteCodexCleanupWorktree(ctx, DeleteCodexCleanupWorktreeRequest{
+		WorktreePath:    group.WorktreePath,
+		RootProjectPath: group.RootProjectPath,
+		RootThreadIDs:   []string{"thread-root"},
+		Revision:        group.Revision,
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("worktree-operation lock error = %v", err)
+	}
+	if deleteCalled {
+		t.Fatal("deleter ran while a repository worktree operation held the family lock")
 	}
 }
 
@@ -362,15 +398,52 @@ func TestDeleteCodexCleanupWorktreeVerifiesDeletionAfterLostResponse(t *testing.
 	}
 
 	result, err := fixture.service.DeleteCodexCleanupWorktree(context.Background(), DeleteCodexCleanupWorktreeRequest{
-		WorktreePath:  group.WorktreePath,
-		RootThreadIDs: []string{"thread-root"},
-		Revision:      group.Revision,
+		WorktreePath:    group.WorktreePath,
+		RootProjectPath: group.RootProjectPath,
+		RootThreadIDs:   []string{"thread-root"},
+		Revision:        group.Revision,
 	})
 	if err == nil || !strings.Contains(err.Error(), "response lost") {
 		t.Fatalf("lost-response error = %v", err)
 	}
 	if !result.Verified || result.DeletedRootThreads != 1 || result.VerifiedReclaimedBytes != group.RecoverableBytes {
 		t.Fatalf("verified lost-response result = %#v", result)
+	}
+}
+
+func TestDeleteCodexCleanupWorktreeVerifiesCompletedDeletionAfterCancellation(t *testing.T) {
+	fixture := newCodexCleanupFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	worktreePath := fixture.addDeletedWorktree(t, "canceled-response", now.Add(-20*24*time.Hour), false)
+	rolloutPath := fixture.addThread(t, cleanupThreadFixture{ID: "thread-root", CWD: worktreePath, LastActivity: now.Add(-90 * 24 * time.Hour)})
+	audit, err := fixture.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Now: now})
+	if err != nil || len(audit.Groups) != 1 {
+		t.Fatalf("initial audit = %#v, %v", audit, err)
+	}
+	group := audit.Groups[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	fixture.service.codexThreadDeleter = func(deleteCtx context.Context, _ string, _ []string) ([]string, error) {
+		if _, err := fixture.codexDB.Exec(`DELETE FROM threads WHERE id = 'thread-root'`); err != nil {
+			t.Fatalf("delete fake Codex row: %v", err)
+		}
+		if err := os.Remove(rolloutPath); err != nil {
+			t.Fatalf("remove fake rollout: %v", err)
+		}
+		cancel()
+		return nil, deleteCtx.Err()
+	}
+
+	result, err := fixture.service.DeleteCodexCleanupWorktree(ctx, DeleteCodexCleanupWorktreeRequest{
+		WorktreePath:    group.WorktreePath,
+		RootProjectPath: group.RootProjectPath,
+		RootThreadIDs:   []string{"thread-root"},
+		Revision:        group.Revision,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled delete error = %v", err)
+	}
+	if !result.Verified || result.DeletedRootThreads != 1 || result.VerifiedReclaimedBytes != group.RecoverableBytes {
+		t.Fatalf("verified canceled-delete result = %#v", result)
 	}
 }
 

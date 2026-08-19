@@ -21,6 +21,7 @@ const (
 	CodexCleanupRecentWindow         = 7 * 24 * time.Hour
 	CodexCleanupDeletedWorktreeGrace = 7 * 24 * time.Hour
 	defaultCodexCleanupAuditInterval = 24 * time.Hour
+	codexCleanupVerificationTimeout  = 20 * time.Second
 )
 
 const codexCleanupReason = "LCR removed this linked worktree and its saved working directory is still missing"
@@ -102,6 +103,7 @@ type CodexCleanupRolloutFile struct {
 
 type DeleteCodexCleanupWorktreeRequest struct {
 	WorktreePath    string
+	RootProjectPath string
 	RootThreadIDs   []string
 	Revision        string
 	LoadedThreadIDs []string
@@ -779,7 +781,11 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	if s == nil || s.store == nil {
 		return result, fmt.Errorf("service unavailable")
 	}
-	if result.WorktreePath == "" || strings.TrimSpace(request.Revision) == "" {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rootProjectPath := normalizeCleanupPath(request.RootProjectPath)
+	if result.WorktreePath == "" || rootProjectPath == "" || strings.TrimSpace(request.Revision) == "" {
 		return result, fmt.Errorf("cleanup preview identity is required")
 	}
 	requestedIDs := sortedUniqueStrings(request.RootThreadIDs)
@@ -787,6 +793,16 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	if len(requestedIDs) == 0 {
 		return result, fmt.Errorf("explicit Codex thread selection is required")
 	}
+
+	// Background cleanup may overlap ordinary TUI use. Serialize against
+	// creating or restoring another worktree in this repository family so the
+	// missing-path safety evidence cannot change between the repeat audit and
+	// the destructive app-server request.
+	unlockWorktree, err := s.worktreeCreateLocks.LockContext(ctx, rootProjectPath)
+	if err != nil {
+		return result, fmt.Errorf("wait for repository worktree operations before Codex cleanup: %w", err)
+	}
+	defer unlockWorktree()
 
 	audit, err := s.AuditCodexSessionStorage(ctx, CodexCleanupAuditOptions{LoadedThreadIDs: request.LoadedThreadIDs})
 	if err != nil {
@@ -801,6 +817,9 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	}
 	if group.WorktreePath == "" {
 		return result, fmt.Errorf("selected worktree is no longer eligible; no sessions were deleted")
+	}
+	if normalizeCleanupPath(group.RootProjectPath) != rootProjectPath {
+		return result, fmt.Errorf("cleanup preview changed; review the refreshed audit before deleting")
 	}
 	currentIDs := make([]string, 0, len(group.Threads))
 	for _, thread := range group.Threads {
@@ -819,7 +838,13 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	result.DeletedThreadIDs = append([]string(nil), deletedIDs...)
 	result.ExpectedBytes = group.RecoverableBytes
 
-	remaining, listErr := codexstate.ListThreadsIncludingUnknownCWD(ctx, s.Config().CodexHome)
+	// Cancellation stops the destructive app-server client, but it must not skip
+	// the postcondition check: the current thread/delete request may have reached
+	// Codex just before its response was interrupted. Give verification its own
+	// short bound so callers can report exactly what was already removed.
+	verificationCtx, cancelVerification := context.WithTimeout(context.WithoutCancel(ctx), codexCleanupVerificationTimeout)
+	defer cancelVerification()
+	remaining, listErr := codexstate.ListThreadsIncludingUnknownCWD(verificationCtx, s.Config().CodexHome)
 	remainingSet := make(map[string]struct{}, len(remaining))
 	for _, thread := range remaining {
 		remainingSet[strings.TrimSpace(thread.ID)] = struct{}{}

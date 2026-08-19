@@ -243,8 +243,9 @@ func CuratedTopics() []Topic {
 			ManualSteps: []string{
 				"Run /codex-gc and wait for the fresh read-only audit; the periodic background audit never deletes sessions.",
 				"Review each worktree group's age, Git evidence, spawned descendants, reason, and recoverable rollout size.",
-				"Press Space to explicitly select groups, then Enter to open the irreversible-deletion warning.",
+				"Press Space to toggle individual groups or A to select or deselect all, then Enter to open the irreversible-deletion warning.",
 				"Press D only after reviewing the warning. LCR repeats the audit, calls Codex app-server thread/delete, and reports verified reclaimed rollout bytes.",
+				"While deletion runs, press B to use the rest of the TUI and reopen progress with /codex-gc. Esc aborts the active request and skips queued groups; completed deletions remain permanent and are still verified.",
 			},
 			Related: []string{
 				CommandTopicID(SurfaceMainTUI, "codex-gc"),
