@@ -11,9 +11,9 @@ into every model turn. The stable surface has three tools:
 | `run_lcr_query` | Validate and run one described query with bounded structured arguments. |
 
 Codex, OpenCode, and Claude Code receive these tools through the `lcr_runtime`
-MCP server. LCAgent exposes native tools with the same names over the same
-transport-neutral registry and executor. The registry, not either adapter, is
-the source of truth.
+MCP server. LCAgent and Help Chat expose native tools with the same names over
+the same transport-neutral registry and executor. The registry, not any
+adapter, is the source of truth.
 
 ## Agent workflow
 
@@ -59,6 +59,9 @@ Portfolio scope is not unrestricted database access.
   assessments, TODOs, sessions, delegated tasks, and referenced goal runs.
 - The originating project remains visible to its own embedded agent even when
   that project is private.
+- Help Chat is a trusted host surface rather than an originating embedded
+  project. With privacy mode off, it receives host visibility; with privacy
+  mode on, every private-category project is hidden with no origin exception.
 - A private delegated task is visible only when it references the originating
   project. Goal runs fail closed when a referenced project or task cannot be
   proven visible.
@@ -91,9 +94,9 @@ generated runtime guidance / LCAgent system prompt
                       |
                       v
           three list/describe/run tools
-             /                    \
-      runtime MCP              LCAgent native
-             \                    /
+        /              |                \
+ runtime MCP     LCAgent native    Help Chat native
+        \              |                /
                       v
        internal/agentquery registry + executor
                       |

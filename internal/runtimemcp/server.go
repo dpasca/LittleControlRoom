@@ -440,55 +440,26 @@ func (s *Server) runLCRQuery(ctx context.Context, req runLCRQueryArgs) (map[stri
 }
 
 func (s *Server) listControlCapabilities(req listControlCapabilitiesArgs) (map[string]any, bool) {
-	domain := control.NormalizeCapabilityDomain(req.Domain)
-	if strings.TrimSpace(req.Domain) != "" && domain == "" {
+	report, err := control.ListReport(req.Domain, s.controlScope, s.stateStore != nil)
+	if err != nil {
 		return map[string]any{
 			"success": false,
-			"error":   "unsupported control capability domain",
+			"error":   err.Error(),
 			"domains": control.DomainSummaries(),
 		}, true
 	}
-	return map[string]any{
-		"success":               true,
-		"authority_scope":       s.controlScope,
-		"proposals_available":   s.stateStore != nil,
-		"domains":               control.DomainSummaries(),
-		"capabilities":          control.CapabilitySummaries(domain, s.controlScope),
-		"next_step":             "Call describe_control_capability with one exact capability name before proposing it.",
-		"confirmation_contract": "Every available control capability is proposed first and executed only after explicit operator confirmation in Little Control Room.",
-	}, false
+	return report, false
 }
 
 func (s *Server) describeControlCapability(req describeControlCapabilityArgs) (map[string]any, bool) {
-	name := control.CapabilityName(strings.TrimSpace(req.Name))
-	capability, ok := control.CapabilityByName(name)
-	if !ok {
+	report, err := control.DescribeReport(req.Name, s.controlScope, "propose_control_operation")
+	if err != nil {
 		return map[string]any{
 			"success": false,
-			"error":   "unknown control capability",
+			"error":   err.Error(),
 		}, true
 	}
-	if !control.AuthorityAllows(s.controlScope, capability.Scope) {
-		return map[string]any{
-			"success":         false,
-			"error":           "control capability is outside this embedded session's authority",
-			"capability":      capability.Name,
-			"required_scope":  capability.Scope,
-			"available_scope": s.controlScope,
-		}, true
-	}
-	return map[string]any{
-		"success":    true,
-		"capability": capability,
-		"proposal": map[string]any{
-			"tool": "propose_control_operation",
-			"arguments": map[string]any{
-				"capability": capability.Name,
-				"arguments":  "Use an object matching capability.input_schema.",
-				"request_id": "Optional stable idempotency key for an exact retry.",
-			},
-		},
-	}, false
+	return report, false
 }
 
 func (s *Server) proposeControlOperation(ctx context.Context, req proposeControlOperationArgs) (map[string]any, bool) {
@@ -573,34 +544,7 @@ func (s *Server) proposeControlOperation(ctx context.Context, req proposeControl
 }
 
 func controlProposalInvocation(operationID string, capability control.CapabilityName, arguments json.RawMessage) (control.Invocation, error) {
-	if len(strings.TrimSpace(string(arguments))) == 0 {
-		arguments = json.RawMessage(`{}`)
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(arguments, &payload); err != nil {
-		return control.Invocation{}, errors.New("arguments must be a JSON object matching the described input schema")
-	}
-	if payload == nil {
-		payload = map[string]json.RawMessage{}
-	}
-	requestID, err := json.Marshal(operationID)
-	if err != nil {
-		return control.Invocation{}, err
-	}
-	payload["request_id"] = requestID
-	normalizedArguments, err := json.Marshal(payload)
-	if err != nil {
-		return control.Invocation{}, err
-	}
-	invocation, err := control.ValidateInvocation(control.Invocation{
-		RequestID:  operationID,
-		Capability: capability,
-		Args:       normalizedArguments,
-	})
-	if err != nil {
-		return control.Invocation{}, err
-	}
-	return invocation, nil
+	return control.BuildProposedInvocation(operationID, capability, arguments)
 }
 
 func firstNonEmpty(values ...string) string {

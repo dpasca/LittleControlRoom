@@ -8,10 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/bossrun"
 	"lcroom/internal/brand"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
+	"lcroom/internal/lcagent"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -89,14 +91,17 @@ type assistantPreparedReadOnlyRoute struct {
 }
 
 type Assistant struct {
-	runner       llm.TextRunner
-	planner      llm.JSONSchemaRunner
-	queryRouter  llm.JSONSchemaRunner
-	query        *QueryExecutor
-	model        string
-	utilityModel string
-	backend      config.AIBackend
-	dataDir      string
+	agentModel       lcagent.ConversationModel
+	agentProvider    string
+	agentQueryReader agentquery.Reader
+	runner           llm.TextRunner
+	planner          llm.JSONSchemaRunner
+	queryRouter      llm.JSONSchemaRunner
+	query            *QueryExecutor
+	model            string
+	utilityModel     string
+	backend          config.AIBackend
+	dataDir          string
 }
 
 func NewAssistant(svc *service.Service) *Assistant {
@@ -104,16 +109,20 @@ func NewAssistant(svc *service.Service) *Assistant {
 		return &Assistant{}
 	}
 	runner, modelName, backend := svc.NewBossTextRunner()
+	agentModel, agentModelName, agentProvider, agentBackend, _ := svc.NewBossConversationModel()
 	planner, plannerModel, plannerBackend := svc.NewBossJSONRunner()
 	queryRouter, utilityModel, _ := svc.NewBossUtilityJSONRunner()
 	if strings.TrimSpace(modelName) == "" {
-		modelName = plannerModel
+		modelName = firstNonEmpty(strings.TrimSpace(agentModelName), plannerModel)
 	}
 	if queryRouter == nil {
 		queryRouter = planner
 	}
 	if strings.TrimSpace(utilityModel) == "" {
 		utilityModel = modelName
+	}
+	if backend == config.AIBackendUnset {
+		backend = agentBackend
 	}
 	if backend == config.AIBackendUnset {
 		backend = plannerBackend
@@ -131,19 +140,22 @@ func NewAssistant(svc *service.Service) *Assistant {
 		query.dataDir = strings.TrimSpace(svc.Config().DataDir)
 	}
 	return &Assistant{
-		runner:       runner,
-		planner:      planner,
-		queryRouter:  queryRouter,
-		query:        query,
-		model:        strings.TrimSpace(modelName),
-		utilityModel: strings.TrimSpace(utilityModel),
-		backend:      backend,
-		dataDir:      strings.TrimSpace(svc.Config().DataDir),
+		agentModel:       agentModel,
+		agentProvider:    strings.TrimSpace(agentProvider),
+		agentQueryReader: svc.Store(),
+		runner:           runner,
+		planner:          planner,
+		queryRouter:      queryRouter,
+		query:            query,
+		model:            strings.TrimSpace(modelName),
+		utilityModel:     strings.TrimSpace(utilityModel),
+		backend:          backend,
+		dataDir:          strings.TrimSpace(svc.Config().DataDir),
 	}
 }
 
 func (a *Assistant) Configured() bool {
-	return a != nil && (a.runner != nil || a.planner != nil) && (!a.requiresExplicitModel() || strings.TrimSpace(a.model) != "")
+	return a != nil && (a.agentModel != nil || a.runner != nil || a.planner != nil) && (!a.requiresExplicitModel() || strings.TrimSpace(a.model) != "")
 }
 
 func (a *Assistant) Label() string {
@@ -176,7 +188,7 @@ func (a *Assistant) Label() string {
 }
 
 func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
-	if a == nil || (a.runner == nil && a.planner == nil) {
+	if a == nil || (a.agentModel == nil && a.runner == nil && a.planner == nil) {
 		backend := config.AIBackendUnset
 		if a != nil {
 			backend = a.backend
@@ -186,6 +198,9 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+	}
+	if req.HelpChat && a.agentModel != nil {
+		return a.replyWithLCAgent(ctx, req, nil)
 	}
 	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithTools(ctx, req)
@@ -194,7 +209,7 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 }
 
 func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
-	if a == nil || (a.runner == nil && a.planner == nil) {
+	if a == nil || (a.agentModel == nil && a.runner == nil && a.planner == nil) {
 		backend := config.AIBackendUnset
 		if a != nil {
 			backend = a.backend
@@ -204,6 +219,9 @@ func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit 
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+	}
+	if req.HelpChat && a.agentModel != nil {
+		return a.replyWithLCAgent(ctx, req, emit)
 	}
 	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithToolsStream(ctx, req, emit)
@@ -298,7 +316,15 @@ func (a *Assistant) tryHelpChatFastAnswer(ctx context.Context, req AssistantRequ
 }
 
 func (a *Assistant) preflightHelpChat(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, bool, AssistantRequest, error) {
-	if a == nil || !req.HelpChat || a.queryRouter == nil {
+	if a == nil || !req.HelpChat {
+		return AssistantResponse{}, false, req, nil
+	}
+	// The LCAgent path performs progressive tool selection in one conversation
+	// loop. Do not spend a separate model call on the legacy utility router.
+	if a.agentModel != nil {
+		return AssistantResponse{}, false, req, nil
+	}
+	if a.queryRouter == nil {
 		return AssistantResponse{}, false, req, nil
 	}
 	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)

@@ -44,6 +44,7 @@ type OpenRouterConfig struct {
 	MaxTurns        int
 	RequestTimeout  time.Duration
 	ReasoningEffort string
+	DisableThinking bool
 	Temperature     *float64
 	OmitTemperature bool
 	ProviderOnly    []string
@@ -174,6 +175,16 @@ type CompletionOptions struct {
 	ReasoningMaxTokens  int
 	ReasoningEffort     string
 	DisableThinking     bool
+}
+
+// ResetConversation clears provider-side continuation state. Call this before
+// starting an independent host conversation; tool turns within one run should
+// retain the response id for efficient Responses API continuation.
+func (c *Client) ResetConversation() {
+	if c == nil {
+		return
+	}
+	c.previousResponseID = ""
 }
 
 type ImageInput struct {

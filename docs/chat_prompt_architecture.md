@@ -1,79 +1,96 @@
-# Chat Prompt Architecture
+# Chat Agent Architecture
 
-Chat keeps its stable behavioral contract small and loads Little Control Room
-state and control policy only when a turn needs them.
+Chat keeps a stable conversational and safety contract while loading Little
+Control Room state, help, and control schemas only when a turn needs them.
 
-## Turn routing
+## Help Chat runtime
 
-The existing utility-model read-only router also returns a structured
-`planner_domain`:
+Help Chat runs `internal/lcagent.AgentRuntime` in process. The runtime owns one
+provider-neutral model/tool loop and receives the Chat backend and model selected
+by the existing `boss_*` settings. It resets provider continuation state at each
+independent Chat run, retains it across tool turns within that run, and serializes
+overlapping runs so switching or interrupting sessions cannot cross-link provider
+response IDs.
 
-- `inspection`
-- `project_work`
-- `agent_task`
-- `project_lifecycle`
-- `settings`
-- `git`
-- `goal`
-- `general`
+The host supplies an exact lean tool profile. General coding, shell, write,
+browser, and generic MCP tools are not present.
 
-This is semantic model routing. Do not replace it with keyword, regex, or
-pattern gates. `general` is the compatibility fallback for genuinely broad
-turns and for older or non-conforming structured responses.
+| Tool group | Tools | Source of truth |
+| --- | --- | --- |
+| Persisted LCR state | `list_lcr_queries`, `describe_lcr_query`, `run_lcr_query` | `internal/agentquery` |
+| Confirmable LCR controls | `list_control_capabilities`, `describe_control_capability`, `propose_control_operation` | `internal/control` |
+| App help | `lookup_lcr_help` | generated `internal/helpmeta` corpus |
+| Host-only inspection | current TUI, live processes, Chat-session recall, linked context, skills, Repository Scout | existing Chat query adapters |
+| Durable goals | `propose_goal` | `internal/bossrun` normalization and host confirmation |
 
-The fast router receives the compacted same-session Chat summary and recent
-conversation tail. It does not receive the current portfolio snapshot or TUI
-view. Those are available through read-only queries. The fast router cannot
-launch `project_scout` directly: repository-file questions pass to the main
-planner, which resolves aliases or partial project names through current
-project evidence before inspecting one checkout. This keeps a conversational
-alias from being expanded into a plausible but unverified repository name.
+The progressive list/describe/run or list/describe/propose sequence keeps full
+query and control schemas out of the always-visible tool definitions. Tool names
+and argument schemas are exact; the model does semantic selection without a
+keyword or regex gate.
 
-## Scoped planner input
+For a simple app-usage question, the agent calls `lookup_lcr_help`. When the
+generated topic has a direct answer, that local result may terminate the turn
+without paying for a second synthesis request. This is how launch-time and
+in-app recording commands remain discoverable even when a model does not recall
+them.
 
-For a non-`general` domain, the main planner receives:
+## Progress and streaming
 
-1. the stable Chat behavior and evidence contract;
-2. the current conversation context;
-3. read-only query results gathered for this turn;
-4. an internal `control_reference` result for action-capable domains; and
-5. a JSON schema containing only fields and action kinds relevant to the
-   selected domain.
+The reusable runtime emits UI-neutral lifecycle events for:
 
-Current portfolio and TUI state are not ambient scoped-planner context. The
-planner uses `current_tui`, `project_detail`, `todo_report`,
-`agent_task_report`, `search_context`, `context_command`, `project_scout`, or
-another read-only query when it needs current evidence or identifiers.
+- model request start, periodic progress, completion, retry, and failure;
+- tool start, completion, and failure; and
+- final text.
 
-## Control reference
+Help Chat maps those events onto the existing Bubble Tea activity stream. A
+provider call emits a visible start immediately and a heartbeat every two
+seconds, so a slow request does not leave the overlay blank. Tool arguments and
+provider internals are not rendered. The final answer is emitted once after the
+host appends any evidence receipts.
 
-`control_reference` is assembled from `control.Capabilities()` so capability
-name, description, risk, confirmation requirement, host effects, and input
-fields retain one source of truth. Domain policy adds only routing distinctions
-that the raw capability schema cannot express, such as:
+## State, privacy, and evidence
 
-- new repository versus work in a loaded project;
-- new tracked work versus a same-task follow-up;
-- project TODO versus delegated agent task;
-- regular project archive versus scratch-task archive; and
-- commit preview versus the later operator-confirmed commit or push.
+The compact app-state brief and current Chat tail remain explicit conversation
+messages. Long sessions retain the existing file-backed checkpoint and utility-
+model compaction path.
 
-The reference is internal planning evidence. It is shown as a tool event while
-streaming, but it is excluded from user receipts and fallback answers.
+Persisted state goes through the shared query executor:
 
-## Safety boundaries
+- privacy mode off uses trusted host disclosure, including private categories;
+- privacy mode on hides every private-category project without an originating-
+  project exception; and
+- raw events, arbitrary SQL, Help Chat transcripts, and repository files are not
+  implicit query capabilities.
 
-The following remain independent of optional context retrieval:
+Live TUI state, Chat recall, exact linked transcript excerpts, processes, and
+repository-file evidence use separately named host tools. Repository Scout keeps
+its workspace-only read policy, durable trace, mechanical evidence ranges, usage
+accounting, and host-appended route receipt.
 
-- every write/external control is a proposal requiring confirmation;
-- `control.ValidateInvocation` normalizes and validates payloads;
-- Chat validates model actions against the selected planner domain;
-- the TUI validates loaded-project/new-project assumptions against the fresh
-  state snapshot before presenting a proposal; and
-- repository, deployment, migration, and external-current claims still require
-  direct evidence.
+## Control and goal boundary
 
-When adding a capability, update the control registry first. Add domain routing
-policy only when the capability schema and host validation cannot express the
-choice. Add a new planner domain only when an existing domain would expose a
-materially unrelated policy or schema surface.
+The agent cannot execute a mutation. `propose_control_operation` validates one
+typed invocation from the shared registry and returns a terminal host outcome.
+The existing Chat UI then:
+
+1. revalidates loaded/new-project assumptions against the fresh state snapshot;
+2. renders the existing capability-specific confirmation dialog; and
+3. executes only after explicit operator confirmation.
+
+Prompt-bearing proposals preserve the user's source, metric, timeframe, scope,
+negations, and exclusions in a lossless task packet. Existing semantic policy
+review still distinguishes category organization, backlog TODO capture, and
+repository work requested now. Goal proposals follow the same terminal handoff
+and are normalized by `internal/bossrun` before the host presents them.
+
+## Compatibility path
+
+Non-Help Chat turns retain the older utility-router and structured-planner path.
+That path remains model-based and schema-bound; `general` is its broad fallback.
+Keeping it separate lets Help Chat adopt the reusable LCAgent loop without
+changing unrelated Chat behavior or its established tests in the same step.
+
+When adding a Help Chat capability, update the transport-neutral query or control
+registry first when one exists. Add a host-only tool only for data that cannot be
+represented by the persisted query contract, and keep confirmation, privacy,
+and evidence enforcement in host code rather than prompt text alone.

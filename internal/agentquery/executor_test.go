@@ -133,6 +133,44 @@ func TestExecutorRechecksProjectPrivacyOnDetailRead(t *testing.T) {
 	}
 }
 
+func TestExecutorHostDisclosureMatchesChatPrivacyMode(t *testing.T) {
+	reader := newFakeReader([]model.ProjectSummary{
+		{Path: "/repos/public", Name: "Public", InScope: true},
+		{Path: "/repos/private", Name: "Private", InScope: true, CategoryPrivate: true},
+	})
+	visible, err := NewExecutor(Options{
+		Reader:     reader,
+		Scope:      ScopePortfolio,
+		Disclosure: DisclosureHost,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutor(host) error = %v", err)
+	}
+	visibleResult, err := visible.Execute(t.Context(), QueryProjectList, nil)
+	if err != nil {
+		t.Fatalf("host project list: %v", err)
+	}
+	if visibleResult["total"] != 2 || visibleResult["privacy_filter"] != "host_visibility_private_categories_included" {
+		t.Fatalf("host result = %#v", visibleResult)
+	}
+
+	hidden, err := NewExecutor(Options{
+		Reader:     reader,
+		Scope:      ScopePortfolio,
+		Disclosure: DisclosureHidePrivate,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutor(hide private) error = %v", err)
+	}
+	hiddenResult, err := hidden.Execute(t.Context(), QueryProjectList, nil)
+	if err != nil {
+		t.Fatalf("private project list: %v", err)
+	}
+	if hiddenResult["total"] != 1 || hiddenResult["privacy_filter"] != "private_categories_hidden" {
+		t.Fatalf("hidden result = %#v", hiddenResult)
+	}
+}
+
 type fakeReader struct {
 	projects    map[string]model.ProjectSummary
 	projectList []model.ProjectSummary

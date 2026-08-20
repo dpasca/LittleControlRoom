@@ -578,6 +578,13 @@ func lcrQueryToolDefinitions() []ToolDefinition {
 	}
 }
 
+// LCRQueryToolDefinitions returns the progressive, transport-neutral Little
+// Control Room query tools for in-process agent hosts. The regular LCAgent
+// coding profile and embedded Chat must expose the same contracts.
+func LCRQueryToolDefinitions() []ToolDefinition {
+	return lcrQueryToolDefinitions()
+}
+
 func projectTodoToolDefinitions(mode todocapture.CaptureMode) []ToolDefinition {
 	captureKinds := []string{string(todocapture.CaptureExplicitRequest)}
 	if todocapture.NormalizeCaptureMode(mode) == todocapture.ModeExplicitAndClearDeferrals {

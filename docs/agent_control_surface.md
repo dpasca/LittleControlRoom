@@ -19,6 +19,13 @@ The stable MCP surface has four control tools:
 This is the portable progressive-disclosure layer. Direct, frequently used
 runtime and repository-TODO tools remain available alongside it.
 
+Help Chat uses the same registry through a native in-process profile. It exposes
+`list_control_capabilities`, `describe_control_capability`, and
+`propose_control_operation`; it does not need `get_control_operation` because a
+valid proposal is a terminal LCAgent outcome handed directly to Chat's existing
+host confirmation dialog. The native adapter validates the same typed
+invocation and never executes it.
+
 ## Agent workflow
 
 For a request such as creating a project, the embedded agent:
@@ -40,11 +47,12 @@ not the capability schemas; the registry remains the schema source of truth.
 
 ```text
 generated runtime skill
-          |
-          v
-four MCP discovery/operation tools
-          |
-          v
+          |                         Help Chat LCAgent
+          v                                  |
+four MCP discovery/operation tools     three native tools
+          |                                  |
+          +----------------+-----------------+
+                           v
 internal/control registry and strict invocation validation
           |
           v
@@ -69,7 +77,10 @@ Follow-on host dialogs stay on that same surface. For example, confirming
 `git.prepare_commit` opens the normal commit preview over the embedded session
 and gives the preview input priority without hiding or closing the session.
 Help Chat proposals reuse the same stateless structured-dialog renderer, but
-Help Chat owns only proposals created by its own conversation.
+Help Chat owns only proposals created by its own conversation. Its in-process
+path does not enqueue an MCP operation: the typed invocation is returned to the
+host model directly, then the same snapshot validation and explicit confirmation
+rules apply.
 
 A canceled or failed operation ends the originating agent's current write-side
 workflow. The runtime result tells the agent to stop rather than retry the

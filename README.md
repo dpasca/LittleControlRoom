@@ -219,7 +219,9 @@ be copied with `c`, and **Add TODO** turns a failure into an editable TODO.
 
 Help Chat (`` ` `` or `/chat`) is an assistant over the dashboard. It can answer
 questions about your projects, propose confirmable actions, and delegate work to
-an engineer session. It needs its own backend, configured in the `Chat` card in
+an engineer session. Its lean in-process LCAgent loop uses shared LCR query and
+control tools, and shows model/tool activity plus periodic progress while a slow
+backend is working. It needs its own backend, configured in the `Chat` card in
 `/setup`. Treat it as **experimental**: it works, but it has not been exercised
 much yet and its behavior may still change.
 

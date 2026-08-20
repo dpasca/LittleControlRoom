@@ -50,6 +50,17 @@ func TestBossRunnersNeverEmitCrossProviderModel(t *testing.T) {
 	if !modelcatalog.IsKnown(modelcatalog.ProviderDeepSeek, jsonModel) {
 		t.Fatalf("json model %q is not valid for deepseek", jsonModel)
 	}
+
+	agentModel, agentModelName, provider, agentBackend, err := svc.NewBossConversationModel()
+	if err != nil {
+		t.Fatalf("NewBossConversationModel() error = %v", err)
+	}
+	if agentModel == nil || agentModel.Model() != config.DefaultDeepSeekProModel {
+		t.Fatalf("conversation model = %#v (%q), want corrected DeepSeek helm model", agentModel, agentModelName)
+	}
+	if provider != modelcatalog.ProviderDeepSeek || agentBackend != config.AIBackendDeepSeek {
+		t.Fatalf("conversation route = %s/%s", provider, agentBackend)
+	}
 }
 
 // A deliberately configured, valid model must survive untouched.

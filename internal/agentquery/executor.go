@@ -37,10 +37,25 @@ type Reader interface {
 	GetGoalRun(context.Context, string) (bossrun.GoalRecord, error)
 }
 
+type DisclosurePolicy string
+
+const (
+	// DisclosureOriginProject is the default embedded-agent policy: private
+	// projects are hidden except for the caller's own originating project.
+	DisclosureOriginProject DisclosurePolicy = "origin_project"
+	// DisclosureHidePrivate is for a host-level surface with privacy mode on:
+	// every private-category project is hidden and there is no origin exception.
+	DisclosureHidePrivate DisclosurePolicy = "hide_private"
+	// DisclosureHost is for an explicitly trusted host surface with privacy mode
+	// off. It may inspect private-category projects under host UI policy.
+	DisclosureHost DisclosurePolicy = "host"
+)
+
 type Executor struct {
 	reader            Reader
 	originProjectPath string
 	scope             Scope
+	disclosure        DisclosurePolicy
 	nowFn             func() time.Time
 }
 
@@ -48,6 +63,7 @@ type Options struct {
 	Reader            Reader
 	OriginProjectPath string
 	Scope             Scope
+	Disclosure        DisclosurePolicy
 	Now               func() time.Time
 }
 
@@ -56,7 +72,20 @@ func NewExecutor(options Options) (*Executor, error) {
 		return nil, errors.New("LCR query reader is required")
 	}
 	originProjectPath := cleanPath(options.OriginProjectPath)
-	if originProjectPath == "" {
+	disclosure := options.Disclosure
+	if disclosure == "" {
+		disclosure = DisclosureOriginProject
+	}
+	switch disclosure {
+	case DisclosureOriginProject:
+		// Embedded sessions need a trusted origin for the one private-project
+		// exception in their disclosure contract.
+	case DisclosureHidePrivate, DisclosureHost:
+		// Host surfaces intentionally have no originating project.
+	default:
+		return nil, fmt.Errorf("unsupported LCR query disclosure policy %q", disclosure)
+	}
+	if disclosure == DisclosureOriginProject && originProjectPath == "" {
 		return nil, errors.New("origin project path is required")
 	}
 	scope := NormalizeScope(string(options.Scope))
@@ -71,6 +100,7 @@ func NewExecutor(options Options) (*Executor, error) {
 		reader:            options.Reader,
 		originProjectPath: originProjectPath,
 		scope:             scope,
+		disclosure:        disclosure,
 		nowFn:             nowFn,
 	}, nil
 }
@@ -131,12 +161,28 @@ func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMes
 	result["as_of"] = formatTime(e.nowFn())
 	result["freshness"] = capability.Freshness
 	result["scope"] = e.scope
-	result["origin_project_path"] = e.originProjectPath
-	result["privacy_filter"] = "private_categories_hidden_except_origin_project"
+	if e.originProjectPath != "" {
+		result["origin_project_path"] = e.originProjectPath
+	}
+	result["privacy_filter"] = e.PrivacyContract()
 	if _, ok := result["truncated"]; !ok {
 		result["truncated"] = false
 	}
 	return result, nil
+}
+
+func (e *Executor) PrivacyContract() string {
+	if e == nil {
+		return "unavailable"
+	}
+	switch e.disclosure {
+	case DisclosureHost:
+		return "host_visibility_private_categories_included"
+	case DisclosureHidePrivate:
+		return "private_categories_hidden"
+	default:
+		return "private_categories_hidden_except_origin_project"
+	}
 }
 
 type portfolioOverviewArgs struct {
@@ -608,10 +654,23 @@ func (e *Executor) resolveProject(ctx context.Context, requestedPath string) (st
 }
 
 func (e *Executor) projectVisible(project model.ProjectSummary) bool {
-	return !project.CategoryPrivate || cleanPath(project.Path) == e.originProjectPath
+	switch e.disclosure {
+	case DisclosureHost:
+		return true
+	case DisclosureHidePrivate:
+		return !project.CategoryPrivate
+	default:
+		return !project.CategoryPrivate || cleanPath(project.Path) == e.originProjectPath
+	}
 }
 
 func (e *Executor) taskVisible(task model.AgentTask) bool {
+	switch e.disclosure {
+	case DisclosureHost:
+		return true
+	case DisclosureHidePrivate:
+		return !task.CategoryPrivate
+	}
 	if !task.CategoryPrivate {
 		return true
 	}
