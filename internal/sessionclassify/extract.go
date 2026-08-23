@@ -86,7 +86,7 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 	)
 	switch classification.SessionFormat {
 	case "modern", "legacy":
-		items, err = extractCodexTranscript(classification.SessionFile)
+		items, err = extractCodexTranscript(ctx, classification.SessionFile)
 	case "opencode_db":
 		items, err = extractOpenCodeTranscript(ctx, classification.SessionFile)
 	case "claude_code":
@@ -141,7 +141,7 @@ func RecoverSessionTurnState(session *model.SessionEvidence) error {
 func ExtractPreview(ctx context.Context, session model.SessionEvidence) (SessionPreview, error) {
 	switch session.Format {
 	case "modern", "legacy":
-		return extractCodexPreview(session.SessionFile)
+		return extractCodexPreview(ctx, session.SessionFile)
 	case "opencode_db":
 		return extractOpenCodePreview(ctx, session.SessionFile)
 	case "claude_code":
@@ -157,8 +157,8 @@ func PreviewFromTranscript(items []TranscriptItem) SessionPreview {
 	return previewFromTranscript(items)
 }
 
-func extractCodexPreview(path string) (SessionPreview, error) {
-	items, err := extractCodexTranscript(path)
+func extractCodexPreview(ctx context.Context, path string) (SessionPreview, error) {
+	items, err := extractCodexTranscript(ctx, path)
 	if err != nil {
 		return SessionPreview{}, err
 	}
@@ -261,7 +261,7 @@ func NewGitStatusSnapshot(repoDirty bool, repoSyncStatus model.RepoSyncStatus, r
 	return snapshot
 }
 
-func extractCodexTranscript(path string) ([]TranscriptItem, error) {
+func extractCodexTranscript(ctx context.Context, path string) ([]TranscriptItem, error) {
 	lines, err := readTailLines(path, codexTailBytes)
 	if err != nil {
 		return nil, err
@@ -287,7 +287,49 @@ func extractCodexTranscript(path string) ([]TranscriptItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return finalizeTranscript(append(headItems, tailItems...)), nil
+	items := finalizeTranscript(append(headItems, tailItems...))
+	if transcriptContainsRole(items, "user") {
+		return items, nil
+	}
+
+	// Oversized structured records can cover both fixed byte windows: an
+	// injected user-context record may hide the first visible prompt from the
+	// head window while a later tool result hides all conversation from the
+	// tail window. Only in that rare case, stream from the beginning until a
+	// bounded number of actual conversational events have been recovered.
+	recoveredHeadItems, err := extractCodexInitialTranscript(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return finalizeTranscript(append(recoveredHeadItems, tailItems...)), nil
+}
+
+func extractCodexInitialTranscript(ctx context.Context, path string) ([]TranscriptItem, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open session file: %w", err)
+	}
+	defer file.Close()
+
+	items := make([]TranscriptItem, 0, previewItemLimit)
+	scanner := newSessionScanner(file)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item, ok := extractCodexTranscriptItem(scanner.Text())
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+		if len(items) >= previewItemLimit {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan session file: %w", err)
+	}
+	return finalizeTranscript(items), nil
 }
 
 func transcriptContainsRole(items []TranscriptItem, role string) bool {

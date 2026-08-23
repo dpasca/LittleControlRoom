@@ -195,6 +195,44 @@ func TestExtractSnapshotModernRecoversConversationBeforeLargeToolOutput(t *testi
 	}
 }
 
+func TestExtractSnapshotModernRecoversConversationBetweenOversizedRecords(t *testing.T) {
+	t.Parallel()
+
+	fixture := filepath.Join(t.TempDir(), "rollout-oversized-context-and-tool-output.jsonl")
+	largeContext := strings.Repeat("x", codexHeadBytes+1024)
+	largeToolOutput := strings.Repeat("y", codexTailBytes+1024)
+	lines := []string{
+		`{"timestamp":"2026-08-23T07:54:19Z","type":"session_meta","payload":{"id":"oversized-records","cwd":"/tmp/oversized-records"}}`,
+		fmt.Sprintf(`{"timestamp":"2026-08-23T07:54:20Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":%q}]}}`, largeContext),
+		`{"timestamp":"2026-08-23T07:54:21Z","type":"event_msg","payload":{"type":"user_message","message":"Inspect the magma shader regression."}}`,
+		`{"timestamp":"2026-08-23T07:54:22Z","type":"event_msg","payload":{"type":"agent_message","message":"I am tracing the fissure intensity calculation."}}`,
+		fmt.Sprintf(`{"timestamp":"2026-08-23T07:54:23Z","type":"response_item","payload":{"type":"custom_tool_call_output","output":%q}}`, largeToolOutput),
+	}
+	if err := os.WriteFile(fixture, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write oversized-record fixture: %v", err)
+	}
+
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionID:       "oversized-records",
+		ProjectPath:     "/tmp/oversized-records",
+		SessionFile:     fixture,
+		SessionFormat:   "modern",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if len(snapshot.Transcript) != 2 {
+		t.Fatalf("transcript = %#v, want user and assistant items", snapshot.Transcript)
+	}
+	if got := snapshot.Transcript[0]; got.Role != "user" || got.Text != "Inspect the magma shader regression." {
+		t.Fatalf("user transcript = %#v", got)
+	}
+	if got := snapshot.Transcript[1]; got.Role != "assistant" || got.Text != "I am tracing the fissure intensity calculation." {
+		t.Fatalf("assistant transcript = %#v", got)
+	}
+}
+
 func TestExtractCodexTranscriptItemUsesUserVisibleEventsForUserTurns(t *testing.T) {
 	t.Parallel()
 
