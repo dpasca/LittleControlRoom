@@ -12,8 +12,8 @@ the old turn by itself. See the [Codex app-server API overview](https://learn.ch
 
 ## Graceful LCR shutdown
 
-When an exit action (`q`, `Ctrl+C` from the main dashboard, or `/quit`)
-closes the TUI, LCR:
+When the user confirms a dashboard exit (`q` or `Ctrl+C`), runs `/quit`, or
+accepts an installed-update restart, LCR:
 
 1. snapshots embedded sessions outside the Bubble Tea update/render path;
 2. records only locally owned in-flight turns in
@@ -47,10 +47,16 @@ continuation turn in the background.
 
 Before showing the dialog, LCR also compares each journal row with persisted
 lifecycle evidence for that exact project, provider, and session, including
-retained evidence for a forgotten or removed worktree. If completed evidence is
-new enough to cover the turn captured at shutdown, LCR removes the settled row
-instead of offering a false continuation. Older evidence, evidence for another
-session, and unknown lifecycle state never invalidate a journaled turn.
+retained evidence for a forgotten or removed worktree. Completed evidence that
+is new enough to cover the captured turn and was already durable before the
+restart intent was captured removes a settled row instead of offering a false
+continuation. Evidence from the capture second or later remains pending because
+LCR's own shutdown interrupt also writes a terminal provider record. The
+Codex and Claude recovery paths recheck the exact captured turn after
+confirmation, avoiding a duplicate continuation if the turn actually completed
+in the shutdown race; other providers receive the same cautious continuation
+prompt described below. Older unrelated evidence, evidence for another session,
+and unknown lifecycle state never invalidate a journaled turn.
 
 A generic provider artifact whose latest turn merely looks unfinished is not
 enough to enter restart recovery. It may belong to another live process, or its

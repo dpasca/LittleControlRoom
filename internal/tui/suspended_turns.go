@@ -316,15 +316,23 @@ func restartIntentSettledBySession(intent codexapp.RestartIntent, session model.
 		return false
 	}
 
-	// The completed evidence must be new enough to cover the turn captured at
-	// shutdown. This prevents an older completed turn from invalidating a newer
-	// prompt that had not reached the provider artifact yet.
+	// Only completion evidence that was already durable before LCR captured the
+	// restart intent can settle it here. Interrupting an owned turn during the
+	// graceful-shutdown pass writes a terminal provider record too, so evidence
+	// from the capture second or later is ambiguous and must remain available to
+	// startup recovery after the user confirms it.
+	// Store timestamps currently have second precision; truncating the capture
+	// boundary avoids discarding an interrupt recorded in that same second.
 	completedAt := session.LastEventAt
-	capturedTurnAt := intent.TurnStartedAt
-	if capturedTurnAt.IsZero() {
-		capturedTurnAt = intent.CapturedAt
+	capturedAt := intent.CapturedAt
+	if completedAt.IsZero() || capturedAt.IsZero() {
+		return false
 	}
-	return !completedAt.IsZero() && (capturedTurnAt.IsZero() || !completedAt.Before(capturedTurnAt))
+	turnStartedAt := intent.TurnStartedAt
+	if !turnStartedAt.IsZero() && completedAt.Before(turnStartedAt.UTC().Truncate(time.Second)) {
+		return false
+	}
+	return completedAt.Before(capturedAt.UTC().Truncate(time.Second))
 }
 
 func (m Model) updateSuspendedTurnResumeDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
