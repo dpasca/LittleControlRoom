@@ -2442,19 +2442,36 @@ func TestRenderDiffFileListSeparatesStagedAndUnstagedSections(t *testing.T) {
 	}
 }
 
-func TestRenderDiffFileRowSelectedUsesCompactCodeSpacing(t *testing.T) {
-	rendered := ansi.Strip(renderDiffFileRow(service.DiffFilePreview{
-		Path:     "README.md",
-		Summary:  "README.md",
-		Code:     "M",
-		Kind:     scanner.GitChangeModified,
-		Unstaged: true,
-	}, true, 28))
-	if strings.Contains(rendered, "M   modified") {
-		t.Fatalf("selected diff row should not add extra padding before the state label: %q", rendered)
+func TestRenderDiffFileRowSelectedOmitsStateWord(t *testing.T) {
+	tests := []struct {
+		kind      scanner.GitChangeKind
+		kindCode  string
+		stateWord string
+	}{
+		{kind: scanner.GitChangeModified, kindCode: "M", stateWord: "modified"},
+		{kind: scanner.GitChangeAdded, kindCode: "A", stateWord: "added"},
+		{kind: scanner.GitChangeDeleted, kindCode: "D", stateWord: "deleted"},
+		{kind: scanner.GitChangeRenamed, kindCode: "R", stateWord: "renamed"},
+		{kind: scanner.GitChangeCopied, kindCode: "C", stateWord: "copied"},
+		{kind: scanner.GitChangeType, kindCode: "T", stateWord: "type"},
+		{kind: scanner.GitChangeUnmerged, kindCode: "U", stateWord: "unmerged"},
+		{kind: scanner.GitChangeUntracked, kindCode: "?", stateWord: "untracked"},
 	}
-	if !strings.Contains(rendered, "M modified") {
-		t.Fatalf("selected diff row should keep the compact code-to-state spacing: %q", rendered)
+
+	for _, tt := range tests {
+		t.Run(tt.stateWord, func(t *testing.T) {
+			rendered := ansi.Strip(renderDiffFileRow(service.DiffFilePreview{
+				Path:    "README.md",
+				Summary: "README.md",
+				Kind:    tt.kind,
+			}, true, 28))
+			if strings.Contains(rendered, tt.stateWord) {
+				t.Fatalf("selected diff row should omit state word %q: %q", tt.stateWord, rendered)
+			}
+			if !strings.Contains(rendered, tt.kindCode+" README.md") {
+				t.Fatalf("selected diff row should keep compact kind code and filename: %q", rendered)
+			}
+		})
 	}
 }
 
