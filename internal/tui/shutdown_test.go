@@ -53,16 +53,22 @@ func TestQuitKeyOpensConfirmationWithStaySelected(t *testing.T) {
 	}
 }
 
-func TestControlCStillBeginsGracefulQuitImmediately(t *testing.T) {
+func TestControlCOpensQuitConfirmationWithStaySelected(t *testing.T) {
 	m := Model{appDataDirPath: t.TempDir()}
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyCtrlC})
 	got := updated.(Model)
-	if cmd == nil || !got.gracefulQuitInFlight {
-		t.Fatalf("ctrl+c should begin graceful shutdown immediately")
+	if cmd != nil {
+		t.Fatalf("ctrl+c should not begin shutdown before confirmation")
 	}
-	if got.quitConfirm != nil {
-		t.Fatalf("ctrl+c should not open the q-key confirmation")
+	if got.quitConfirm == nil {
+		t.Fatalf("ctrl+c should open the quit confirmation")
+	}
+	if got.quitConfirm.Selected != quitConfirmFocusStay {
+		t.Fatalf("default quit confirmation selection = %d, want stay", got.quitConfirm.Selected)
+	}
+	if got.gracefulQuitInFlight {
+		t.Fatalf("graceful shutdown should not start while confirmation is open")
 	}
 }
 

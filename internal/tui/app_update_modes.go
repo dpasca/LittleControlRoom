@@ -26,9 +26,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.String() {
-	case "ctrl+c":
-		return m.beginGracefulQuit()
-	case "q":
+	case "ctrl+c", "q":
 		m.openQuitConfirm()
 		return m, nil
 	case "/":
