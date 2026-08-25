@@ -354,6 +354,9 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	if strings.TrimSpace(detail.Summary.WorktreeInitialBranch) != "feat/worktree-launch" {
 		t.Fatalf("tracked worktree initial branch = %q, want %q", detail.Summary.WorktreeInitialBranch, "feat/worktree-launch")
 	}
+	if detail.Summary.WorktreeOriginTodoID != item.ID {
+		t.Fatalf("tracked worktree origin TODO = %d, want %d", detail.Summary.WorktreeOriginTodoID, item.ID)
+	}
 }
 
 func TestCreateTodoWorktreeRepairsStaleRootSubmoduleMetadataBeforeRecordingParent(t *testing.T) {
@@ -1920,6 +1923,91 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 	if _, err := os.Stat(result.WorktreePath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("finalized worktree still exists: %v", err)
+	}
+}
+
+func TestFinalizeWorktreeRemovalCompletesLinkedTodoBeforeRemovingUnmergedCheckout(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Close the TODO when its clean worktree is explicitly removed",
+		"fix/clear-removed-worktree-todo",
+		"fix-clear-removed-worktree-todo",
+	)
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 0)
+	if err != nil {
+		t.Fatalf("get linked worktree: %v", err)
+	}
+	todoID := detail.Summary.WorktreeOriginTodoID
+	if todoID <= 0 {
+		t.Fatalf("linked worktree origin TODO = %d, want positive id", todoID)
+	}
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FIX.txt"), []byte("keep the branch commit\n"), 0o644); err != nil {
+		t.Fatalf("write worktree change: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FIX.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "record unmerged fix")
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("refresh unmerged worktree: %v", err)
+	}
+	detail, err = st.GetProjectDetail(ctx, result.WorktreePath, 0)
+	if err != nil {
+		t.Fatalf("get refreshed worktree: %v", err)
+	}
+	if detail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged || detail.Summary.RepoDirty {
+		t.Fatalf("worktree state before removal = %#v, want clean and unmerged", detail.Summary)
+	}
+
+	finalized, err := svc.FinalizeWorktreeRemoval(ctx, result.WorktreePath, FinalizeWorktreeRemovalOptions{
+		MarkLinkedTodoDone: true,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeWorktreeRemoval() error = %v", err)
+	}
+	if finalized.LinkedTodoID != todoID || !finalized.LinkedTodoMarkedDone || !finalized.WorktreeRemoved {
+		t.Fatalf("FinalizeWorktreeRemoval() result = %#v", finalized)
+	}
+	todo, err := st.GetTodo(ctx, todoID)
+	if err != nil {
+		t.Fatalf("get completed TODO: %v", err)
+	}
+	if !todo.Done {
+		t.Fatalf("removed worktree left its linked TODO open: %#v", todo)
+	}
+	if _, err := os.Stat(result.WorktreePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("finalized worktree still exists: %v", err)
+	}
+	branches, err := gitLocalBranchSet(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("list retained branches: %v", err)
+	}
+	if !branches[result.BranchName] {
+		t.Fatalf("removed worktree branch %q was not retained", result.BranchName)
 	}
 }
 

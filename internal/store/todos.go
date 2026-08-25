@@ -29,6 +29,15 @@ type ReviewedTodoResult struct {
 	CurrentRevision string
 }
 
+// TodoWorkProjectLink is an explicit open-TODO assignment to the project path
+// where its engineer session is running. Linked-worktree scans use these rows
+// to repair origin metadata lost by older or partially successful launches.
+type TodoWorkProjectLink struct {
+	TodoID          int64
+	TodoProjectPath string
+	WorkProjectPath string
+}
+
 var ErrRuntimePolicyDenied = errors.New("runtime policy no longer permits this operation")
 
 // ListOpenTodosForReview returns the exact open-TODO snapshot an external
@@ -1032,6 +1041,35 @@ func (s *Store) ClearTodoWorkForProjectPath(ctx context.Context, workProjectPath
 		return 0, err
 	}
 	return int(rowsAffected), nil
+}
+
+func (s *Store) ListOpenTodoWorkProjectLinks(ctx context.Context) ([]TodoWorkProjectLink, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_path, work_project_path
+		FROM project_todos
+		WHERE done = 0
+		  AND work_project_path != ''
+		ORDER BY id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	links := make([]TodoWorkProjectLink, 0)
+	for rows.Next() {
+		var link TodoWorkProjectLink
+		if err := rows.Scan(&link.TodoID, &link.TodoProjectPath, &link.WorkProjectPath); err != nil {
+			return nil, err
+		}
+		link.TodoProjectPath = filepath.Clean(strings.TrimSpace(link.TodoProjectPath))
+		link.WorkProjectPath = filepath.Clean(strings.TrimSpace(link.WorkProjectPath))
+		if link.TodoID <= 0 || link.TodoProjectPath == "" || link.TodoProjectPath == "." || link.WorkProjectPath == "" || link.WorkProjectPath == "." {
+			continue
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
 }
 
 func (s *Store) TodoProjectPathsForWorkSession(ctx context.Context, workProjectPath string, provider model.SessionSource, sessionID string) ([]string, error) {

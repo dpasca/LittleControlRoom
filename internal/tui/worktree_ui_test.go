@@ -2708,6 +2708,119 @@ func TestMergedWorktreeRemoveDefaultsToCompletingLinkedTodo(t *testing.T) {
 	}
 }
 
+func TestCleanUnmergedWorktreeRemoveDefaultsToCompletingLinkedTodo(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--fix-stale-todo"
+	root := model.ProjectSummary{
+		Name:             "repo",
+		Path:             rootPath,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+	}
+	child := model.ProjectSummary{
+		Name:                 "repo--fix-stale-todo",
+		Path:                 childPath,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+		WorktreeOriginTodoID: 43,
+		RepoBranch:           "fix/stale-todo",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, child},
+		visibility:  visibilityAllFolders,
+		sortMode:    sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	if cmd := m.openWorktreeRemoveConfirmForSelection(); cmd != nil {
+		t.Fatalf("opening remove confirmation should not queue work")
+	}
+	confirm := m.worktreeRemoveConfirm
+	if confirm == nil {
+		t.Fatal("unmerged linked worktree should open remove confirmation")
+	}
+	if confirm.LinkedTodoID != 43 || !confirm.MarkTodoDone {
+		t.Fatalf("clean unmerged worktree TODO cleanup defaults = %#v", confirm)
+	}
+	rendered := strings.Join(strings.Fields(ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 96, 30))), " ")
+	for _, want := range []string{
+		"Pending merge",
+		"may still have commits to merge",
+		"[x] Mark linked TODO done",
+		"ref will remain available",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("unmerged remove confirmation missing %q in %q", want, rendered)
+		}
+	}
+
+	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
+	updated, cmd := m.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("removing a clean unmerged TODO worktree should queue finalization")
+	}
+	if got.worktreeRemoveConfirm != nil {
+		t.Fatal("finalization should dismiss the remove confirmation")
+	}
+	if got.status != worktreeFinalizeRemoveSummary {
+		t.Fatalf("status = %q, want %q", got.status, worktreeFinalizeRemoveSummary)
+	}
+}
+
+func TestDirtyWorktreeRemoveKeepsLinkedTodoCompletionOptIn(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--dirty-task"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:                 "repo--dirty-task",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				WorktreeOriginTodoID: 44,
+				RepoBranch:           "fix/dirty-task",
+				RepoDirty:            true,
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	if cmd := m.openWorktreeRemoveConfirmForSelection(); cmd != nil {
+		t.Fatalf("opening remove confirmation should not queue work")
+	}
+	confirm := m.worktreeRemoveConfirm
+	if confirm == nil || confirm.LinkedTodoID != 44 || confirm.MarkTodoDone {
+		t.Fatalf("dirty worktree TODO cleanup defaults = %#v, want linked but unchecked", confirm)
+	}
+	rendered := ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 96, 32))
+	for _, want := range []string{
+		"has uncommitted changes",
+		"[ ] Mark linked TODO done",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("dirty remove confirmation missing %q in %q", want, rendered)
+		}
+	}
+}
+
 func TestWorktreeFinalizeStatusReportsMissingLinkedTodo(t *testing.T) {
 	got := worktreeFinalizeStatus("Merged mobile-interface into master", service.FinalizeMergedWorktreeResult{
 		LinkedTodoID:      578,

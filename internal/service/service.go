@@ -1438,6 +1438,21 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		knownPathVariants = append(knownPathVariants, resolveProjectPath(cleanPath, aliases))
 	}
 	pathVariantResolver := newKnownPathVariantResolver(knownPathVariants)
+	progress.setPhase("loading TODO worktree links")
+	todoWorkProjectLinks, err := s.store.ListOpenTodoWorkProjectLinks(ctx)
+	if err != nil {
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("load TODO worktree links: %w", err))
+	}
+	todoWorkProjectLinksByPath := make(map[string][]store.TodoWorkProjectLink)
+	for _, link := range todoWorkProjectLinks {
+		workProjectPath := pathVariantResolver.preferred(resolveProjectPath(link.WorkProjectPath, aliases))
+		if workProjectPath == "" || workProjectPath == "." {
+			continue
+		}
+		link.WorkProjectPath = workProjectPath
+		link.TodoProjectPath = pathVariantResolver.preferred(resolveProjectPath(link.TodoProjectPath, aliases))
+		todoWorkProjectLinksByPath[workProjectPath] = append(todoWorkProjectLinksByPath[workProjectPath], link)
+	}
 	normalizeWorktreeInfoPaths := func(info scanner.GitWorktreeInfo) scanner.GitWorktreeInfo {
 		if strings.TrimSpace(info.RootPath) != "" {
 			info.RootPath = pathVariantResolver.preferred(info.RootPath)
@@ -1822,6 +1837,10 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			OpenTodoCount:              old.OpenTODOCount,
 		})
 
+		worktreeOriginTodoID := old.WorktreeOriginTodoID
+		if worktreeOriginTodoID <= 0 && presentOnDisk && !staleLinkedWorktree && worktreeKind == model.WorktreeKindLinked {
+			worktreeOriginTodoID = uniqueTodoWorktreeOriginID(path, worktreeRootPath, todoWorkProjectLinksByPath)
+		}
 		state := model.ProjectState{
 			Path:                       path,
 			Name:                       projectName,
@@ -1835,7 +1854,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			WorktreeParentBranch:       worktreeParentBranch,
 			WorktreeInitialBranch:      old.WorktreeInitialBranch,
 			WorktreeMergeStatus:        worktreeMergeStatus,
-			WorktreeOriginTodoID:       old.WorktreeOriginTodoID,
+			WorktreeOriginTodoID:       worktreeOriginTodoID,
 			RepoBranch:                 repoBranch,
 			RepoDirty:                  repoDirty,
 			RepoConflict:               repoConflict,
@@ -2136,6 +2155,26 @@ func isRecentSessionActivity(now time.Time, activity *model.DetectorProjectActiv
 		return false
 	}
 	return now.Sub(lastActivity) <= window
+}
+
+func uniqueTodoWorktreeOriginID(worktreePath, rootPath string, linksByPath map[string][]store.TodoWorkProjectLink) int64 {
+	worktreePath = filepath.Clean(strings.TrimSpace(worktreePath))
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if worktreePath == "" || worktreePath == "." || rootPath == "" || rootPath == "." {
+		return 0
+	}
+
+	var todoID int64
+	for _, link := range linksByPath[worktreePath] {
+		if link.TodoID <= 0 || !samePath(rootPath, link.TodoProjectPath) {
+			continue
+		}
+		if todoID > 0 && todoID != link.TodoID {
+			return 0
+		}
+		todoID = link.TodoID
+	}
+	return todoID
 }
 
 func manuallyTrackedActivityPaths(projects map[string]model.ProjectSummary) map[string]struct{} {
@@ -3991,12 +4030,19 @@ func (s *Service) MarkTodoWorkStarted(ctx context.Context, projectPath string, i
 	if at.IsZero() {
 		at = time.Now()
 	}
+	todo, err := s.store.GetTodo(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := s.store.AttachTodoWorkSession(ctx, id, workProjectPath, source, normalizedSessionID, model.TodoWorkStateWorking, at); err != nil {
 		return err
 	}
 	rootProjectPath := workProjectPath
-	if todo, err := s.store.GetTodo(ctx, id); err == nil && strings.TrimSpace(todo.ProjectPath) != "" {
+	if strings.TrimSpace(todo.ProjectPath) != "" {
 		rootProjectPath = strings.TrimSpace(todo.ProjectPath)
+	}
+	if _, err := s.repairTodoWorktreeOriginLink(ctx, workProjectPath, todo); err != nil {
+		return fmt.Errorf("repair TODO worktree link: %w", err)
 	}
 	s.refreshProjectStatusAsync(rootProjectPath)
 	if workProjectPath != "" && workProjectPath != rootProjectPath {
@@ -4006,6 +4052,29 @@ func (s *Service) MarkTodoWorkStarted(ctx context.Context, projectPath string, i
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: rootProjectPath, Payload: map[string]string{"action": "todo_work_started"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: rootProjectPath, Type: string(events.ActionApplied), Payload: "todo_work_started"})
 	return nil
+}
+
+func (s *Service) repairTodoWorktreeOriginLink(ctx context.Context, workProjectPath string, todo model.TodoItem) (bool, error) {
+	workProjectPath = filepath.Clean(strings.TrimSpace(workProjectPath))
+	if s == nil || s.store == nil || workProjectPath == "" || workProjectPath == "." || todo.ID <= 0 {
+		return false, nil
+	}
+	unlockProjectState := s.lockProjectStateMutation(workProjectPath)
+	defer unlockProjectState()
+	summary, err := s.store.GetProjectSummary(ctx, workProjectPath, true)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if summary.WorktreeKind != model.WorktreeKindLinked || summary.WorktreeOriginTodoID > 0 {
+		return false, nil
+	}
+	if !samePath(summary.WorktreeRootPath, todo.ProjectPath) {
+		return false, nil
+	}
+	return s.store.SetWorktreeOriginTodoIDIfUnset(ctx, workProjectPath, todo.ID)
 }
 
 func (s *Service) DeleteTodo(ctx context.Context, projectPath string, id int64) error {

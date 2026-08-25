@@ -218,6 +218,73 @@ func (s *Store) SetWorktreeOriginTodoID(ctx context.Context, path string, todoID
 	return err
 }
 
+// SetTodoWorktreeMetadata records the durable relationship created by a TODO
+// worktree launch in one write. The relationship is intentionally persisted
+// before slower follow-up refreshes so a partially successful launch can still
+// complete its originating TODO when the checkout is later removed.
+func (s *Store) SetTodoWorktreeMetadata(ctx context.Context, path, initialBranch, parentBranch, runCommand string, todoID int64) error {
+	path = filepath.Clean(strings.TrimSpace(path))
+	initialBranch = strings.TrimSpace(initialBranch)
+	parentBranch = strings.TrimSpace(parentBranch)
+	runCommand = strings.TrimSpace(runCommand)
+	if path == "" || path == "." {
+		return errors.New("worktree path is required")
+	}
+	if initialBranch == "" {
+		return errors.New("worktree initial branch is required")
+	}
+	if todoID <= 0 {
+		return errors.New("worktree origin TODO is required")
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET worktree_initial_branch = ?,
+			worktree_parent_branch = ?,
+			worktree_merge_status = '',
+			worktree_origin_todo_id = ?,
+			run_command = CASE WHEN ? != '' THEN ? ELSE run_command END,
+			updated_at = ?
+		WHERE path = ?
+		  AND worktree_kind = ?
+	`, initialBranch, parentBranch, todoID, runCommand, runCommand, time.Now().Unix(), path, string(model.WorktreeKindLinked))
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetWorktreeOriginTodoIDIfUnset repairs an older or partially created linked
+// worktree without replacing an origin relationship that is already known.
+func (s *Store) SetWorktreeOriginTodoIDIfUnset(ctx context.Context, path string, todoID int64) (bool, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." || todoID <= 0 {
+		return false, nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET worktree_origin_todo_id = ?, updated_at = ?
+		WHERE path = ?
+		  AND worktree_kind = ?
+		  AND worktree_origin_todo_id = 0
+	`, todoID, time.Now().Unix(), path, string(model.WorktreeKindLinked))
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rowsAffected > 0, nil
+}
+
 func (s *Store) SetProjectWorktreeInfo(ctx context.Context, path, rootPath string, kind model.WorktreeKind) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET worktree_root_path = ?, worktree_kind = ?, worktree_merge_status = '', updated_at = ? WHERE path = ?`, strings.TrimSpace(rootPath), string(kind), time.Now().Unix(), path)
 	return err

@@ -87,8 +87,9 @@ When the task is done, Little Control Room should support a simple local-only fi
 - record the originating TODO id on the linked worktree explicitly instead of inferring it from branch or folder names later
 - let the user explicitly merge the linked worktree branch back into that recorded parent branch
 - after a successful merge-back, offer to mark the originating TODO done
-- when removing an already-merged linked worktree, offer the same TODO completion by default so answer-only or investigation sessions do not leave stale open items
+- when removing a linked worktree, offer originating-TODO completion even when its branch is not merged; default it on for clean checkouts and leave it opt-in when force-removing dirty work
 - if requested TODO completion fails, keep the worktree available so the user can retry instead of losing the linked cleanup path
+- persist the TODO/worktree relationship before ancillary launch bookkeeping, and repair a missing origin link from an explicit TODO work-session assignment
 - require the root checkout to already be on the recorded parent branch
 - require both the root checkout and the linked worktree to be clean before merging
 - allow unrelated sibling worktrees in the same repo family to stay dirty without blocking that merge

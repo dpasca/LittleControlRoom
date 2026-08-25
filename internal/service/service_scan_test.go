@@ -2607,6 +2607,85 @@ func TestScanOnceForgetsMissingLinkedWorktreeWithLostMetadata(t *testing.T) {
 	}
 }
 
+func TestUniqueTodoWorktreeOriginIDRejectsAmbiguousAssignments(t *testing.T) {
+	worktreePath := "/tmp/repo--feature"
+	rootPath := "/tmp/repo"
+	links := map[string][]store.TodoWorkProjectLink{
+		worktreePath: {
+			{TodoID: 41, TodoProjectPath: rootPath, WorkProjectPath: worktreePath},
+		},
+	}
+	if got := uniqueTodoWorktreeOriginID(worktreePath, rootPath, links); got != 41 {
+		t.Fatalf("unique TODO origin = %d, want 41", got)
+	}
+	links[worktreePath] = append(links[worktreePath], store.TodoWorkProjectLink{
+		TodoID:          42,
+		TodoProjectPath: rootPath,
+		WorkProjectPath: worktreePath,
+	})
+	if got := uniqueTodoWorktreeOriginID(worktreePath, rootPath, links); got != 0 {
+		t.Fatalf("ambiguous TODO origin = %d, want 0", got)
+	}
+}
+
+func TestScanOnceRepairsOriginTodoFromExplicitWorktreeAssignment(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature", worktreePath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo--feature",
+	}); err != nil {
+		t.Fatalf("track worktree: %v", err)
+	}
+	todo, err := st.AddTodo(ctx, projectPath, "Repair this worktree's missing TODO origin")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if err := st.AttachTodoWorkSession(ctx, todo.ID, worktreePath, model.SessionSourceCodex, "codex:thread-repair", model.TodoWorkStateWorking, time.Now()); err != nil {
+		t.Fatalf("attach todo work session: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 0)
+	if err != nil {
+		t.Fatalf("get worktree before scan: %v", err)
+	}
+	if detail.Summary.WorktreeOriginTodoID != 0 {
+		t.Fatalf("worktree origin TODO before repair = %d, want 0", detail.Summary.WorktreeOriginTodoID)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+
+	detail, err = st.GetProjectDetail(ctx, worktreePath, 0)
+	if err != nil {
+		t.Fatalf("get repaired worktree: %v", err)
+	}
+	if detail.Summary.WorktreeOriginTodoID != todo.ID {
+		t.Fatalf("worktree origin TODO after scan = %d, want %d", detail.Summary.WorktreeOriginTodoID, todo.ID)
+	}
+}
+
 func TestScanOnceClearsTodoWorkSessionForPrunedLinkedWorktree(t *testing.T) {
 	t.Parallel()
 

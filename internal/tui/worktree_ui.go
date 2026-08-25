@@ -2373,9 +2373,9 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		HasIdleSession:      idleSessionProvider != "",
 		IdleSessionProvider: idleSessionProvider,
 	}
-	if !state.Dirty && state.MergeStatus == model.WorktreeMergeStatusMerged && project.WorktreeOriginTodoID > 0 {
+	if project.WorktreeOriginTodoID > 0 {
 		state.LinkedTodoID = project.WorktreeOriginTodoID
-		state.MarkTodoDone = true
+		state.MarkTodoDone = !state.Dirty
 	}
 	state.Selected = worktreeRemoveConfirmKeepIndex(state)
 	m.worktreeRemoveConfirm = state
@@ -2438,7 +2438,7 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		if confirm.MarkTodoDone && confirm.LinkedTodoID > 0 {
 			m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeFinalizeRemoveSummary, worktreeFinalizeRemoveSummary)
-			return m, m.finalizeMergedWorktreeCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
+			return m, m.finalizeWorktreeRemovalCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
 		}
 		m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
 		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
@@ -2446,7 +2446,7 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 	return m, nil
 }
 
-func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force, closeIdleSession bool) tea.Cmd {
+func (m Model) finalizeWorktreeRemovalCmd(projectPath, rootPath string, force, closeIdleSession bool) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return worktreeActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
@@ -2462,9 +2462,8 @@ func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force, cl
 				err:                    err,
 			}
 		}
-		result, err := m.finalizeMergedWorktreeWithTimeout(projectPath, service.FinalizeMergedWorktreeOptions{
+		result, err := m.finalizeWorktreeRemovalWithTimeout(projectPath, service.FinalizeWorktreeRemovalOptions{
 			MarkLinkedTodoDone: true,
-			RemoveWorktree:     true,
 			ForceRemove:        force,
 		})
 		return worktreeActionMsg{
@@ -2477,6 +2476,16 @@ func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force, cl
 			err:                    err,
 		}
 	}
+}
+
+func (m Model) finalizeWorktreeRemovalWithTimeout(projectPath string, options service.FinalizeWorktreeRemovalOptions) (service.FinalizeMergedWorktreeResult, error) {
+	if m.svc == nil {
+		return service.FinalizeMergedWorktreeResult{}, fmt.Errorf("service unavailable")
+	}
+	ctx, cancel := m.actionContext(tuiWorktreeFinalizeTimeout)
+	defer cancel()
+	result, err := m.svc.FinalizeWorktreeRemoval(ctx, projectPath, options)
+	return result, timeoutActionError(err, tuiWorktreeFinalizeTimeout, "finalizing the worktree removal")
 }
 
 func (m Model) removeWorktreeCmd(projectPath, rootPath string, force, closeIdleSession bool) tea.Cmd {
@@ -2734,7 +2743,14 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if confirm.LinkedTodoID > 0 && !confirm.Busy {
 		lines = append(lines, "")
 		lines = append(lines, detailValueStyle.Render("Linked TODO"))
-		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "This checkout is already merged. Complete its originating TODO when removing it.")...)
+		todoCopy := "This checkout is already merged. Complete its originating TODO when removing it."
+		switch {
+		case confirm.Dirty:
+			todoCopy = "This checkout has uncommitted changes. Mark its originating TODO done only if force-removing the checkout also closes the task."
+		case confirm.MergeStatus != model.WorktreeMergeStatusMerged:
+			todoCopy = "This checkout may still have commits to merge. Mark its originating TODO done if removing the checkout also closes the task; the branch ref will remain available."
+		}
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, todoCopy)...)
 		lines = append(lines, "")
 		prefix := "[ ] "
 		style := detailMutedStyle

@@ -62,6 +62,10 @@ func (s *Service) RecentProjectParentPaths(ctx context.Context, limit int) ([]st
 }
 
 func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachProjectRequest) (CreateOrAttachProjectResult, error) {
+	return s.createOrAttachProject(ctx, req, nil)
+}
+
+func (s *Service) createOrAttachProject(ctx context.Context, req CreateOrAttachProjectRequest, afterTrack func(string) error) (CreateOrAttachProjectResult, error) {
 	if req.RequireNew && req.RequireExisting {
 		return CreateOrAttachProjectResult{}, fmt.Errorf("project cannot require both a new and an existing path")
 	}
@@ -128,6 +132,11 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 
 	if err := s.trackProjectPath(ctx, existing, projectPath, projectName, model.ProjectKindProject); err != nil {
 		return CreateOrAttachProjectResult{}, err
+	}
+	if afterTrack != nil {
+		if err := afterTrack(projectPath); err != nil {
+			return CreateOrAttachProjectResult{}, fmt.Errorf("persist tracked project metadata: %w", err)
+		}
 	}
 	if err := s.assignProjectCategoryIfRequested(ctx, projectPath, req.CategoryID, req.CategoryExplicit); err != nil {
 		return CreateOrAttachProjectResult{}, err

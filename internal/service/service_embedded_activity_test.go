@@ -560,7 +560,7 @@ func TestEmbeddedSessionActivityUpdatesLinkedTodoWorkState(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSessionActivityUpdatesTodoPinnedToWorktreeSession(t *testing.T) {
+func TestEmbeddedSessionActivityRepairsTodoPinnedToWorktreeSession(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -594,15 +594,14 @@ func TestEmbeddedSessionActivityUpdatesTodoPinnedToWorktreeSession(t *testing.T)
 		t.Fatalf("add todo: %v", err)
 	}
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
-		Path:                 worktreePath,
-		Name:                 "demo--feat-pinned-todo",
-		Status:               model.StatusIdle,
-		PresentOnDisk:        true,
-		InScope:              true,
-		WorktreeRootPath:     rootPath,
-		WorktreeKind:         model.WorktreeKindLinked,
-		WorktreeOriginTodoID: todo.ID,
-		UpdatedAt:            now,
+		Path:             worktreePath,
+		Name:             "demo--feat-pinned-todo",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		InScope:          true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+		UpdatedAt:        now,
 	}); err != nil {
 		t.Fatalf("seed worktree project: %v", err)
 	}
@@ -617,6 +616,13 @@ func TestEmbeddedSessionActivityUpdatesTodoPinnedToWorktreeSession(t *testing.T)
 	}
 	if started.WorkProjectPath != worktreePath || started.WorkSessionID != "codex:thread-worktree" {
 		t.Fatalf("started todo work = project:%q session:%q, want %q/codex:thread-worktree", started.WorkProjectPath, started.WorkSessionID, worktreePath)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, worktreePath, 0)
+	if err != nil {
+		t.Fatalf("get repaired worktree detail: %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeOriginTodoID != todo.ID {
+		t.Fatalf("repaired worktree origin TODO = %d, want %d", worktreeDetail.Summary.WorktreeOriginTodoID, todo.ID)
 	}
 
 	waitingAt := now.Add(2 * time.Minute)

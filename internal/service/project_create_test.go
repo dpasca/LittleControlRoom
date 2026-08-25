@@ -159,6 +159,48 @@ func TestCreateOrAttachProjectAssignsExplicitCategory(t *testing.T) {
 	}
 }
 
+func TestCreateOrAttachProjectPersistsTrackedMetadataBeforeAncillaryFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("create project directory: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := New(config.Default(), st, events.NewBus(), nil)
+
+	metadataPersisted := false
+	_, err = svc.createOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:       root,
+		Name:             "repo",
+		CategoryID:       "missing-category",
+		CategoryExplicit: true,
+	}, func(trackedPath string) error {
+		metadataPersisted = true
+		return st.SetRunCommand(ctx, trackedPath, "make run")
+	})
+	if err == nil || !strings.Contains(err.Error(), "category not found") {
+		t.Fatalf("createOrAttachProject() error = %v, want category failure", err)
+	}
+	if !metadataPersisted {
+		t.Fatal("tracked metadata callback was not run before category assignment")
+	}
+	summary, err := st.GetProjectSummary(ctx, projectPath, true)
+	if err != nil {
+		t.Fatalf("get partially configured project: %v", err)
+	}
+	if summary.RunCommand != "make run" {
+		t.Fatalf("tracked metadata after ancillary failure = %q, want make run", summary.RunCommand)
+	}
+}
+
 func TestCreateOrAttachProjectAddsExistingDirectoryWithoutInitializingGit(t *testing.T) {
 	t.Parallel()
 
