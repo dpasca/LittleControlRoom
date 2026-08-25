@@ -169,14 +169,17 @@ opens a batch review with every safe candidate selected by default.
 ### Agents that can reach back into LCR
 
 Embedded Codex, Claude Code, and OpenCode sessions get an `lcr_runtime` MCP
-server; LCAgent gets an equivalent native read adapter. Through the progressive
-query catalog, agents can inspect bounded persisted project, assessment, and
-delegated-work state across the non-private portfolio. The MCP surface also lets
-agents file duplicate-checked repository TODOs, inspect and start managed
-processes, and progressively discover typed LCR actions — including project
-creation — then queue them for explicit confirmation in the TUI. Schemas load
-on demand, so the full query or action catalog never has to sit in the model's
-context.
+server; LCAgent gets equivalent native read and confirmed-control adapters.
+Through the progressive query catalog, agents can inspect bounded persisted
+project, assessment, and delegated-work state across the non-private portfolio.
+The MCP surface also lets agents file duplicate-checked repository TODOs,
+inspect and start managed processes, and progressively discover typed LCR
+actions — including project creation — then queue them for explicit confirmation
+in the TUI. Schemas load on demand, so the full query or action catalog never has
+to sit in the model's context. Confirmed engineer-to-engineer messages are
+stored durably before delivery and can target an exact Codex, OpenCode, Claude
+Code, or LCAgent session; LCR steers eligible active Codex turns and queues
+other busy recipients until their exact session is idle.
 
 See [Progressive Agent Query Surface](docs/agent_query_surface.md) and
 [Progressive Agent Control Surface](docs/agent_control_surface.md).

@@ -221,13 +221,19 @@ func (m Model) recordExternalControlResultCmd(msg bossui.ControlInvocationResult
 	}
 	return func() tea.Msg {
 		status := control.OperationCompleted
-		if msg.Err != nil {
+		if msg.OperationPending && msg.Err == nil {
+			status = control.OperationRunning
+		} else if msg.Err != nil {
 			status = control.OperationFailed
 		}
-		result, _ := json.Marshal(map[string]any{
-			"status":   strings.TrimSpace(msg.Status),
-			"activity": msg.Activity,
-		})
+		resultPayload := map[string]any{"status": strings.TrimSpace(msg.Status)}
+		if msg.Activity != nil {
+			resultPayload["activity"] = msg.Activity
+		}
+		if msg.Delivery != nil {
+			resultPayload["delivery"] = msg.Delivery
+		}
+		result, _ := json.Marshal(resultPayload)
 		var err error
 		if svc == nil || svc.Store() == nil {
 			err = errors.New("service store unavailable")

@@ -840,10 +840,19 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 	if !req.ForceNew && sessionID != "" {
 		var existing openCodeSessionEnvelope
 		if err := s.getJSON(ctx, "/session/"+sessionID, &existing); err == nil && strings.TrimSpace(existing.ID) != "" {
+			if req.RequireResumeID && !sameCleanPath(existing.Directory, req.ProjectPath) {
+				return fmt.Errorf("%w: OpenCode session %s belongs to %s, not %s", ErrSessionChanged, sessionID, strings.TrimSpace(existing.Directory), strings.TrimSpace(req.ProjectPath))
+			}
 			resumed = true
 		} else {
+			if req.RequireResumeID {
+				return fmt.Errorf("%w: OpenCode session %s is no longer available", ErrSessionChanged, sessionID)
+			}
 			sessionID = ""
 		}
+	}
+	if req.RequireResumeID && sessionID != strings.TrimSpace(req.ResumeID) {
+		return fmt.Errorf("%w: expected resumed OpenCode session %s, got %s", ErrSessionChanged, strings.TrimSpace(req.ResumeID), sessionID)
 	}
 	launchPending := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != ""
 	if sessionID == "" {

@@ -5,9 +5,10 @@ This is the write-side companion to the read-only
 bounded persisted state directly; controls queue typed operations for explicit
 operator confirmation.
 
-Little Control Room gives embedded Codex, OpenCode, and Claude Code sessions
-access to its typed control registry without publishing one MCP tool per action.
-The stable MCP surface has four control tools:
+Little Control Room gives embedded Codex, OpenCode, Claude Code, and LCAgent
+sessions access to its typed control registry without publishing one tool per
+action. Codex, OpenCode, and Claude Code use MCP; LCAgent exposes the same
+contracts as native tools. The stable surface has four control tools:
 
 | Tool | Purpose |
 | --- | --- |
@@ -51,14 +52,18 @@ same confirmed control path. The sender first uses `project.search` and
 provider, and current session, then proposes `engineer.send_prompt` with
 `session_mode: resume_or_new`.
 
-When the sender knows the receiving Codex session, it also supplies
-`target_session_id` with `provider: codex`. The host resumes that exact idle
-session and starts a turn, or steers that exact active turn when its live state
-allows steering. If the inspected session has been replaced by the time the
-operator confirms, LCR fails the operation instead of delivering the message
-to the replacement. Exact session pinning is initially Codex-only; the existing
-project/provider routing remains available for OpenCode, Claude Code, and
-LCAgent.
+When the sender knows the receiving session, it supplies `target_session_id`
+and the matching explicit `provider`. Exact targeting works for Codex,
+OpenCode, Claude Code, and LCAgent. LCAgent accepts both its stable logical
+thread id and the run ids belonging to that thread.
+
+After confirmation, the host writes the message to SQLite before attempting a
+provider call. It resumes an exact idle target and starts a turn. An eligible
+active Codex turn can be steered; active OpenCode, Claude Code, and LCAgent
+targets remain queued until idle. If the inspected target has been replaced or
+can no longer be resumed, LCR fails the message instead of delivering it to the
+replacement. The originating control operation remains `running` while a
+message is queued and becomes terminal only after delivery or terminal failure.
 
 This gives handoff documents a delivery path: the document can hold the full
 context, while the control message tells the receiving engineer what to read
@@ -70,20 +75,28 @@ tools after the turn begins.
 ## Architecture
 
 ```text
-generated runtime skill
-          |                         Help Chat LCAgent
-          v                                  |
-four MCP discovery/operation tools     three native tools
-          |                                  |
-          +----------------+-----------------+
-                           v
+generated runtime skill                 embedded LCAgent
+          |                                    |
+          v                                    v
+four MCP discovery/operation tools    four native control tools
+          |                                    |
+          +------------------+-----------------+
+                             v
 internal/control registry and strict invocation validation
-          |
-          v
-SQLite control_operations queue
-          |
-          v
-TUI confirmation -> existing typed control executor -> durable result
+                             |
+                             v
+                 SQLite control_operations queue
+                             |
+                             v
+                       TUI confirmation
+                             |
+              +--------------+---------------+
+              |                              |
+              v                              v
+     ordinary typed executor       SQLite engineer_messages mailbox
+                                             |
+                                             v
+                           steer / exact resume / wait for idle
 ```
 
 The isolated MCP process writes a `proposed` operation to SQLite. A background
@@ -95,7 +108,9 @@ capability-specific target and effects, including over an embedded Codex,
 OpenCode, or Claude Code pane. The modal does not open or depend on Help Chat.
 Only `Enter` after that explicit review transition moves the operation to
 `running`; cancellation and the final execution result are written back for
-the originating session to inspect.
+the originating session to inspect. For `engineer.send_prompt`, a successful
+confirmation receipt includes a mailbox message id and queued delivery state;
+it is not a claim that the recipient has already received the prompt.
 
 Follow-on host dialogs stay on that same surface. For example, confirming
 `git.prepare_commit` opens the normal commit preview over the embedded session
@@ -112,15 +127,23 @@ operation or continue later mutations or external actions through shell or
 another tool. A fresh proposal can be created on a later user turn.
 
 The confirmed `engineer.send_prompt` capability can target Codex, OpenCode,
-Claude Code, or LCAgent. It can pin a known Codex session id, and otherwise
-reuses an open idle session for the requested provider when possible. A Claude
-launch still passes through the normal `ANTHROPIC_API_KEY` billing warning;
-enabling Claude in the control executor does not bypass that operator
-acknowledgement.
+Claude Code, or LCAgent and can pin a known session id for every provider. If no
+target id is supplied, LCR binds the currently selected known recipient when
+possible. A Claude launch still passes through the normal `ANTHROPIC_API_KEY`
+billing warning; enabling Claude in the control executor does not bypass that
+operator acknowledgement.
 
 Waiting confirmations are returned to `proposed` when a new TUI host starts, so
-a restart does not strand the request. The standalone web server does not claim
-operations because it has no equivalent operator-confirmation surface.
+a restart does not strand the request. Mailbox deliveries interrupted after a
+claim are returned to `queued` and retried against the same target. The
+standalone web server does not claim operations because it has no equivalent
+operator-confirmation or mailbox-dispatch surface.
+
+Provider submission and the SQLite delivery receipt cannot be committed in one
+transaction, so the crash-boundary guarantee is at-least-once: a host failure
+after provider acceptance but before the receipt commit can repeat the prompt.
+Every delivered prompt carries its stable LCR message id so the receiving agent
+can recognize that narrow restart retry case as the same handoff.
 
 ## Authority and safety
 

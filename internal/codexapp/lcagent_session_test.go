@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -155,6 +156,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--approval-mode", "ask",
 		"--lcr-db-path", dbPath,
 		"--lcr-query-scope", "portfolio",
+		"--lcr-control-scope", "portfolio",
 		"--lcr-todo-capture-mode", string(todocapture.ModeExplicit),
 		"--require-final-response-tool",
 		"--admin-write",
@@ -1443,6 +1445,31 @@ func TestLCAgentSessionReplayUsesCanonicalThreadState(t *testing.T) {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("thread replay missing %q:\n%s", want, snapshot.Transcript)
 		}
+	}
+	matcher, ok := session.(interface{ MatchesResumeID(string) bool })
+	if !ok {
+		t.Fatal("LCAgent session does not expose resume identity aliases")
+	}
+	for _, resumeID := range []string{threadID, "lca_run_one", "lca_run_two"} {
+		if !matcher.MatchesResumeID(resumeID) {
+			t.Fatalf("MatchesResumeID(%q) = false, want canonical-thread alias", resumeID)
+		}
+	}
+	if matcher.MatchesResumeID("lca_unrelated") {
+		t.Fatal("unrelated LCAgent run matched canonical thread")
+	}
+}
+
+func TestLCAgentSessionExactResumeFailsClosedWhenTargetIsMissing(t *testing.T) {
+	_, err := newLCAgentSession(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     t.TempDir(),
+		AppDataDir:      t.TempDir(),
+		ResumeID:        "lca_missing_target",
+		RequireResumeID: true,
+	}, nil)
+	if !errors.Is(err, ErrSessionChanged) {
+		t.Fatalf("newLCAgentSession() error = %v, want ErrSessionChanged", err)
 	}
 }
 

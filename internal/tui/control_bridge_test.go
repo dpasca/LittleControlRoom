@@ -19,6 +19,8 @@ import (
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
@@ -37,6 +39,7 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-opencode",
@@ -54,8 +57,9 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 	}))
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("executeControlInvocation() cmd = nil, want embedded open command")
+		t.Fatalf("executeControlInvocation() cmd = nil, want durable queue command")
 	}
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	if got.codexPendingOpen == nil {
 		t.Fatalf("codexPendingOpen = nil, want hidden pending open")
 	}
@@ -69,7 +73,6 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 		t.Fatalf("hideOnOpen = false, want background result to stay hidden")
 	}
 
-	msgs := collectCmdMsgs(cmd)
 	var opened codexSessionOpenedMsg
 	for _, msg := range msgs {
 		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
@@ -132,6 +135,7 @@ func TestExecuteControlEngineerSendPromptTargetsExactSession(t *testing.T) {
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-exact-session",
@@ -140,7 +144,7 @@ func TestExecuteControlEngineerSendPromptTargetsExactSession(t *testing.T) {
 		codexManager: manager,
 	}
 
-	_, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+	updated, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
 		ProjectPath:     projectPath,
 		Provider:        control.ProviderCodex,
 		SessionMode:     control.SessionModeResumeOrNew,
@@ -151,7 +155,7 @@ func TestExecuteControlEngineerSendPromptTargetsExactSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("executeControlInvocation() cmd = nil, want exact-session open command")
 	}
-	_ = collectCmdMsgs(cmd)
+	_, _ = runEngineerMailboxForTest(t, updated.(Model), cmd)
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -203,6 +207,7 @@ func TestExecuteControlEngineerSendPromptRoutesLCAgentHidden(t *testing.T) {
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-lcagent",
@@ -222,6 +227,7 @@ func TestExecuteControlEngineerSendPromptRoutesLCAgentHidden(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("executeControlInvocation() cmd = nil, want embedded lcagent command")
 	}
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	if got.codexPendingOpen == nil || got.codexPendingOpen.provider != codexapp.ProviderLCAgent {
 		t.Fatalf("pending provider = %#v, want lcagent", got.codexPendingOpen)
 	}
@@ -229,7 +235,6 @@ func TestExecuteControlEngineerSendPromptRoutesLCAgentHidden(t *testing.T) {
 		t.Fatalf("pending visibility = show:%v hide:%v, want hidden background open", got.codexPendingOpen.showWhilePending, got.codexPendingOpen.hideOnOpen)
 	}
 
-	msgs := collectCmdMsgs(cmd)
 	var opened codexSessionOpenedMsg
 	for _, msg := range msgs {
 		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
@@ -270,6 +275,7 @@ func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testin
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "Control Runtime",
@@ -298,7 +304,7 @@ func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testin
 	if cmd == nil {
 		t.Fatalf("executeControlInvocation() cmd = nil, want embedded open command")
 	}
-	_ = collectCmdMsgs(cmd)
+	_, _ = runEngineerMailboxForTest(t, m, cmd)
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -335,6 +341,7 @@ func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T)
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "Control Runtime",
@@ -354,7 +361,7 @@ func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T)
 	if cmd == nil {
 		t.Fatalf("executeControlInvocation() cmd = nil, want embedded open command")
 	}
-	_ = collectCmdMsgs(cmd)
+	_, _ = runEngineerMailboxForTest(t, m, cmd)
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -390,6 +397,7 @@ func TestExecuteControlEngineerSendPromptAutoProviderUsesProjectPreference(t *te
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:                projectPath,
 			Name:                "Control Auto",
@@ -410,7 +418,7 @@ func TestExecuteControlEngineerSendPromptAutoProviderUsesProjectPreference(t *te
 	if cmd == nil {
 		t.Fatalf("executeControlInvocation() cmd = nil, want embedded open command")
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var opened codexSessionOpenedMsg
 	for _, msg := range msgs {
 		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
@@ -454,6 +462,7 @@ func TestExecuteControlEngineerSendPromptLaunchesClaudeCode(t *testing.T) {
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-claude",
@@ -472,7 +481,7 @@ func TestExecuteControlEngineerSendPromptLaunchesClaudeCode(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("executeControlInvocation() cmd = nil, want Claude launch")
 	}
-	msgs := collectCmdMsgs(cmd)
+	_, msgs := runEngineerMailboxForTest(t, m, cmd)
 	var opened codexSessionOpenedMsg
 	for _, msg := range msgs {
 		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
@@ -521,6 +530,7 @@ func TestExecuteControlEngineerSendPromptReusesExistingClaudeSession(t *testing.
 		t.Fatalf("initial manager.Open() reused=%t err=%v", reused, err)
 	}
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:                projectPath,
 			Name:                "control-claude-reuse",
@@ -540,7 +550,7 @@ func TestExecuteControlEngineerSendPromptReusesExistingClaudeSession(t *testing.
 	if cmd == nil {
 		t.Fatal("executeControlInvocation() cmd = nil, want existing Claude handoff")
 	}
-	_ = collectCmdMsgs(cmd)
+	_, _ = runEngineerMailboxForTest(t, m, cmd)
 
 	if factoryCalls != 1 {
 		t.Fatalf("factory calls = %d, want existing Claude session reused", factoryCalls)
@@ -564,6 +574,7 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 		}, nil
 	})
 	m := Model{
+		svc: newControlTestService(t),
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "cn3",
@@ -582,11 +593,11 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 			Reveal:      true,
 		}),
 	})
-	_ = updated.(Model)
+	got := updated.(Model)
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var opened codexSessionOpenedMsg
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
@@ -609,12 +620,14 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	wantStatus := "Work on cn3 is underway."
-	if result.Status != wantStatus {
-		t.Fatalf("result status = %q, want %q", result.Status, wantStatus)
+	if !strings.Contains(result.Status, "queued for the Codex engineer on cn3") {
+		t.Fatalf("result status = %q, want durable queue receipt", result.Status)
 	}
-	if result.Activity == nil || result.Activity.Kind != "project" || result.Activity.Title != "cn3" || !result.Activity.Active {
-		t.Fatalf("result activity = %#v, want active project activity", result.Activity)
+	if !result.OperationPending || result.Delivery == nil || result.Delivery.State != control.EngineerMessageQueued {
+		t.Fatalf("result delivery = %#v pending=%t, want queued durable receipt", result.Delivery, result.OperationPending)
+	}
+	if result.Activity != nil {
+		t.Fatalf("result activity = %#v, queued receipt should not claim the engineer has started", result.Activity)
 	}
 	if strings.Contains(result.Status, "Alt+Up hides it") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Chat stayed open") {
 		t.Fatalf("result status leaked embedded-pane copy: %q", result.Status)
@@ -706,7 +719,7 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("handling tracked TODO returned nil launch command")
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -717,16 +730,15 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("result err = %v", result.Err)
 	}
-	if !strings.Contains(result.Status, "Alpha #") || !strings.Contains(result.Status, "boss todo tracking") {
-		t.Fatalf("result status = %q, want project plus short TODO label", result.Status)
+	if !strings.Contains(result.Status, "queued for the Codex engineer on alpha") ||
+		!strings.Contains(result.Status, "TODO #") || !strings.Contains(result.Status, "boss todo tracking") {
+		t.Fatalf("result status = %q, want durable queue receipt with short TODO label", result.Status)
 	}
 	if strings.Contains(result.Status, "Add Boss-managed TODO tracking") {
 		t.Fatalf("result status = %q, should use the short TODO label instead of the full text", result.Status)
 	}
-	if result.Activity == nil || result.Activity.TodoID != todo.ID || result.Activity.TodoText != todo.Text ||
-		result.Activity.TodoLabel != "boss todo tracking" ||
-		!strings.Contains(result.Activity.Title, "Alpha #") || !strings.Contains(result.Activity.Title, "boss todo tracking") {
-		t.Fatalf("result activity = %#v, want active TODO context", result.Activity)
+	if !result.OperationPending || result.Delivery == nil || result.Delivery.State != control.EngineerMessageQueued {
+		t.Fatalf("result delivery = %#v pending=%t, want queued TODO handoff", result.Delivery, result.OperationPending)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
@@ -740,8 +752,7 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
-	recorded := got.recordBossTrackedTodoFromControlResult(result)
-	tracked, ok := recorded.bossTrackedTodoForSnapshot(projectPath, codexapp.Snapshot{
+	tracked, ok := got.bossTrackedTodoForSnapshot(projectPath, codexapp.Snapshot{
 		Provider: codexapp.ProviderCodex,
 		ThreadID: "thread-alpha-todo",
 	})
@@ -819,7 +830,8 @@ func TestExecuteBossControlInvocationContinuesTodoInRecordedWorktree(t *testing.
 	if cmd == nil {
 		t.Fatal("handling tracked TODO returned nil worktree continuation")
 	}
-	msgs := collectCmdMsgs(cmd)
+	got = updated.(Model)
+	_, msgs := runEngineerMailboxForTest(t, got, cmd)
 	for _, msg := range msgs {
 		if result, ok := msg.(bossui.ControlInvocationResultMsg); ok && result.Err != nil {
 			t.Fatalf("control result error = %v", result.Err)
@@ -1374,9 +1386,11 @@ func TestExecuteBossTrackedWorktreeLaunchKeepsTodoWhenWorktreeFails(t *testing.T
 	waitForControlAsyncRefreshes(t, svc)
 }
 
-func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
+func TestExecuteBossControlInvocationQueuesBehindBlockedProvider(t *testing.T) {
 	projectPath := "/tmp/control-boss-blocked"
+	svc := newControlTestService(t)
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:                     projectPath,
 			Name:                     "control-boss-blocked",
@@ -1404,7 +1418,7 @@ func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -1412,11 +1426,15 @@ func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 			break
 		}
 	}
-	if result.Err == nil {
-		t.Fatalf("result err = nil, want blocked launch error")
+	if result.Err != nil || !result.OperationPending {
+		t.Fatalf("result = %#v, want pending durable handoff", result)
 	}
-	if !strings.Contains(result.Status, "unfinished Codex session") {
-		t.Fatalf("result status = %q, want unfinished Codex session", result.Status)
+	if !strings.Contains(result.Status, "queued for the OpenCode engineer") {
+		t.Fatalf("result status = %q, want queue receipt", result.Status)
+	}
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageQueued {
+		t.Fatalf("queued message = %#v, err=%v", message, err)
 	}
 }
 
@@ -1923,6 +1941,7 @@ func TestExecuteProjectArchiveControlArchivesBatch(t *testing.T) {
 
 func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T) {
 	projectPath := "/tmp/control-active-session"
+	svc := newControlTestService(t)
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
 		snapshot: codexapp.Snapshot{
@@ -1944,6 +1963,7 @@ func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-active-session",
@@ -1966,14 +1986,16 @@ func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
 	}
-	if !strings.Contains(got.status, "Opening embedded Codex session") {
-		t.Fatalf("status = %q, want background open/steer status", got.status)
+	if !strings.Contains(got.status, "Queueing a durable message") {
+		t.Fatalf("status = %q, want durable queue status", got.status)
 	}
 	if len(liveSession.submitted) != 0 {
 		t.Fatalf("submission should happen inside the returned command, got early submissions: %#v", liveSession.submitted)
 	}
-	msgs := collectCmdMsgs(cmd)
-	if len(liveSession.submitted) != 1 || liveSession.submitted[0] != "I can log in to Appfigures if necessary." {
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
+	if len(liveSession.submitted) != 1 ||
+		!strings.Contains(liveSession.submitted[0], "LCR engineer message ") ||
+		!strings.Contains(liveSession.submitted[0], "I can log in to Appfigures if necessary.") {
 		t.Fatalf("active session submissions = %#v, want steering note", liveSession.submitted)
 	}
 	var result bossui.ControlInvocationResultMsg
@@ -1986,13 +2008,18 @@ func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T
 	if result.Err != nil {
 		t.Fatalf("result err = %v, want successful steering note", result.Err)
 	}
-	if !strings.Contains(result.Status, "Message sent to the Codex engineer session for control-active-session") {
-		t.Fatalf("result status = %q, want exact-session message status", result.Status)
+	if !result.OperationPending || result.Delivery == nil {
+		t.Fatalf("result = %#v, want durable queue receipt", result)
+	}
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageDelivered {
+		t.Fatalf("delivered message = %#v, err=%v", message, err)
 	}
 }
 
 func TestExecuteBossControlInvocationRefusesChangedTargetSession(t *testing.T) {
 	projectPath := "/tmp/control-changed-session"
+	svc := newControlTestService(t)
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
 		snapshot: codexapp.Snapshot{
@@ -2014,6 +2041,7 @@ func TestExecuteBossControlInvocationRefusesChangedTargetSession(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-changed-session",
@@ -2036,13 +2064,13 @@ func TestExecuteBossControlInvocationRefusesChangedTargetSession(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("executeBossControlInvocation() cmd = nil, want refusal result")
 	}
-	if !strings.Contains(got.status, "is not the session currently running") {
-		t.Fatalf("status = %q, want changed-target refusal", got.status)
+	if !strings.Contains(got.status, "Queueing a durable message") {
+		t.Fatalf("status = %q, want durable queue status", got.status)
 	}
 	if len(liveSession.submitted) != 0 {
 		t.Fatalf("replacement session received message: %#v", liveSession.submitted)
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -2050,13 +2078,18 @@ func TestExecuteBossControlInvocationRefusesChangedTargetSession(t *testing.T) {
 			break
 		}
 	}
-	if result.Err == nil || !strings.Contains(result.Status, "Refresh the target session state") {
-		t.Fatalf("result = %#v, want stale-target failure", result)
+	if result.Err != nil || result.Delivery == nil {
+		t.Fatalf("result = %#v, want accepted durable handoff", result)
+	}
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageFailed || !strings.Contains(message.LastError, "session changed") {
+		t.Fatalf("failed exact-target message = %#v, err=%v", message, err)
 	}
 }
 
-func TestExecuteBossControlInvocationRefusesNonSteerableActiveEmbeddedSessionPrompt(t *testing.T) {
+func TestExecuteBossControlInvocationQueuesForNonSteerableActiveEmbeddedSession(t *testing.T) {
 	projectPath := "/tmp/control-active-opencode"
+	svc := newControlTestService(t)
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
 		snapshot: codexapp.Snapshot{
@@ -2078,6 +2111,7 @@ func TestExecuteBossControlInvocationRefusesNonSteerableActiveEmbeddedSessionPro
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-active-opencode",
@@ -2099,13 +2133,13 @@ func TestExecuteBossControlInvocationRefusesNonSteerableActiveEmbeddedSessionPro
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
 	}
-	if !strings.Contains(got.status, "embedded OpenCode engineer session is already running") {
-		t.Fatalf("status = %q, want active-session refusal", got.status)
+	if !strings.Contains(got.status, "Queueing a durable message") {
+		t.Fatalf("status = %q, want durable queue status", got.status)
 	}
 	if len(liveSession.submitted) != 0 {
 		t.Fatalf("active session received submissions: %#v", liveSession.submitted)
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -2113,16 +2147,18 @@ func TestExecuteBossControlInvocationRefusesNonSteerableActiveEmbeddedSessionPro
 			break
 		}
 	}
-	if result.Err == nil {
-		t.Fatalf("result err = nil, want active-session refusal")
+	if result.Err != nil || !result.OperationPending || result.Delivery == nil {
+		t.Fatalf("result = %#v, want queued active-session handoff", result)
 	}
-	if !strings.Contains(result.Status, "embedded OpenCode engineer session is already running") {
-		t.Fatalf("result status = %q, want active-session refusal", result.Status)
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageQueued {
+		t.Fatalf("queued active-session message = %#v, err=%v", message, err)
 	}
 }
 
-func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActive(t *testing.T) {
+func TestExecuteBossControlInvocationQueuesFreshPromptWhileSameEngineerTurnActive(t *testing.T) {
 	projectPath := "/tmp/control-active-fresh-block"
+	svc := newControlTestService(t)
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
 		snapshot: codexapp.Snapshot{
@@ -2146,6 +2182,7 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActiv
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-active-fresh-block",
@@ -2167,13 +2204,13 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActiv
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
 	}
-	if !strings.Contains(got.status, "already running for project") {
-		t.Fatalf("status = %q, want fresh-turn active-session refusal", got.status)
+	if !strings.Contains(got.status, "Queueing a durable message") {
+		t.Fatalf("status = %q, want durable queue status", got.status)
 	}
 	if openCalls != 1 {
 		t.Fatalf("manager opens = %d, want only setup open", openCalls)
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -2181,16 +2218,18 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActiv
 			break
 		}
 	}
-	if result.Err == nil {
-		t.Fatalf("result err = nil, want active-session refusal")
+	if result.Err != nil || !result.OperationPending || result.Delivery == nil {
+		t.Fatalf("result = %#v, want queued fresh-session handoff", result)
 	}
-	if !strings.Contains(result.Status, "current turn to finish") {
-		t.Fatalf("result status = %q, want current-turn wait guidance", result.Status)
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageQueued {
+		t.Fatalf("queued fresh-session message = %#v, err=%v", message, err)
 	}
 }
 
-func TestExecuteBossControlInvocationDoesNotReplaceIdleEngineerSession(t *testing.T) {
+func TestExecuteBossControlInvocationQueuesFreshPromptBehindIdleEngineerSession(t *testing.T) {
 	projectPath := "/tmp/control-idle-fresh-allowed"
+	svc := newControlTestService(t)
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
 		snapshot: codexapp.Snapshot{
@@ -2223,6 +2262,7 @@ func TestExecuteBossControlInvocationDoesNotReplaceIdleEngineerSession(t *testin
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:          projectPath,
 			Name:          "control-idle-fresh-allowed",
@@ -2244,10 +2284,10 @@ func TestExecuteBossControlInvocationDoesNotReplaceIdleEngineerSession(t *testin
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want refusal result")
 	}
-	if !strings.Contains(got.status, "idle turn does not show that its task is finished") {
-		t.Fatalf("status = %q, want idle-session safety explanation", got.status)
+	if !strings.Contains(got.status, "Queueing a durable message") {
+		t.Fatalf("status = %q, want durable queue status", got.status)
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -2255,17 +2295,23 @@ func TestExecuteBossControlInvocationDoesNotReplaceIdleEngineerSession(t *testin
 			break
 		}
 	}
-	if result.Err == nil || !strings.Contains(result.Status, "dedicated worktree") {
-		t.Fatalf("result = %#v, want refusal with worktree guidance", result)
+	if result.Err != nil || !result.OperationPending || result.Delivery == nil {
+		t.Fatalf("result = %#v, want queued fresh-session handoff", result)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %#v, want no replacement launch", requests)
 	}
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageQueued {
+		t.Fatalf("queued idle-session message = %#v, err=%v", message, err)
+	}
 }
 
-func TestExecuteBossControlInvocationBlocksFreshPromptWhenLatestSameProviderTurnUnfinished(t *testing.T) {
+func TestExecuteBossControlInvocationQueuesFreshPromptWhenLatestSameProviderTurnUnfinished(t *testing.T) {
 	projectPath := "/tmp/control-latest-turn-block"
+	svc := newControlTestService(t)
 	m := Model{
+		svc: svc,
 		allProjects: []model.ProjectSummary{{
 			Path:                     projectPath,
 			Name:                     "control-latest-turn-block",
@@ -2290,10 +2336,10 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhenLatestSameProviderTurn
 	if cmd == nil {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
 	}
-	if !strings.Contains(got.status, "latest Codex engineer turn is still unfinished") {
-		t.Fatalf("status = %q, want latest-turn refusal", got.status)
+	if !strings.Contains(got.status, "Queueing a durable message") {
+		t.Fatalf("status = %q, want durable queue status", got.status)
 	}
-	msgs := collectCmdMsgs(cmd)
+	got, msgs := runEngineerMailboxForTest(t, got, cmd)
 	var result bossui.ControlInvocationResultMsg
 	for _, msg := range msgs {
 		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
@@ -2301,8 +2347,12 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhenLatestSameProviderTurn
 			break
 		}
 	}
-	if result.Err == nil || !strings.Contains(result.Status, "current turn to finish") {
-		t.Fatalf("result = %#v, want current-turn wait guidance", result)
+	if result.Err != nil || !result.OperationPending || result.Delivery == nil {
+		t.Fatalf("result = %#v, want queued fresh-session handoff", result)
+	}
+	message, err := svc.Store().GetEngineerMessage(context.Background(), result.Delivery.MessageID)
+	if err != nil || message.State != control.EngineerMessageQueued {
+		t.Fatalf("queued latest-turn message = %#v, err=%v", message, err)
 	}
 }
 
@@ -3136,6 +3186,31 @@ func newControlTestService(t *testing.T) *service.Service {
 		_ = st.Close()
 	})
 	return service.New(cfg, st, events.NewBus(), nil)
+}
+
+func runEngineerMailboxForTest(t *testing.T, m Model, cmd tea.Cmd) (Model, []tea.Msg) {
+	t.Helper()
+	pending := collectCmdMsgs(cmd)
+	seen := make([]tea.Msg, 0, len(pending))
+	for steps := 0; len(pending) > 0; steps++ {
+		if steps >= 64 {
+			t.Fatal("engineer mailbox test lifecycle did not settle")
+		}
+		msg := pending[0]
+		pending = pending[1:]
+		seen = append(seen, msg)
+		switch msg.(type) {
+		case engineerMessageQueuedMsg,
+			engineerMessagesLoadedMsg,
+			engineerMessageClaimedMsg,
+			engineerMessageDeliveryRecordedMsg,
+			engineerMessageReceiptRetryMsg:
+			updated, next := m.Update(msg)
+			m = updated.(Model)
+			pending = append(pending, collectCmdMsgs(next)...)
+		}
+	}
+	return m, seen
 }
 
 func waitForControlAsyncRefreshes(t *testing.T, svc *service.Service) {

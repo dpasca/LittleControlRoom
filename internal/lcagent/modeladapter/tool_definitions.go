@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/control"
 	"lcroom/internal/todocapture"
 )
 
@@ -25,6 +26,7 @@ type ToolOptions struct {
 	BrowserAvailable        bool
 	VisionAnalysisEnabled   bool
 	LCRQueriesEnabled       bool
+	LCRControlsEnabled      bool
 	WorkspaceOnlyReads      bool
 	ReadOnly                bool
 	TodoCaptureMode         todocapture.CaptureMode
@@ -244,6 +246,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	}
 	if opts.LCRQueriesEnabled {
 		defs = append(defs, lcrQueryToolDefinitions()...)
+	}
+	if opts.LCRControlsEnabled {
+		defs = append(defs, lcrControlToolDefinitions()...)
 	}
 	defs = append(defs,
 		ToolDefinition{
@@ -583,6 +588,78 @@ func lcrQueryToolDefinitions() []ToolDefinition {
 // coding profile and embedded Chat must expose the same contracts.
 func LCRQueryToolDefinitions() []ToolDefinition {
 	return lcrQueryToolDefinitions()
+}
+
+func lcrControlToolDefinitions() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "list_control_capabilities",
+				Description: "List Little Control Room control domains and compact capability summaries. Pass one exact domain to narrow the list.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"domain": map[string]any{"type": "string", "enum": control.CapabilityDomainStrings(false), "description": "Optional exact control domain."},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "describe_control_capability",
+				Description: "Load one control capability's exact schema, scope, risk, confirmation policy, and host effects.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"name": map[string]any{"type": "string", "minLength": 1, "description": "Exact capability name returned by list_control_capabilities."},
+					},
+					"required": []string{"name"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "propose_control_operation",
+				Description: "Propose one described LCR capability for explicit operator confirmation. This records but never directly executes the action; stop the turn after success.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"capability": map[string]any{"type": "string", "minLength": 1, "description": "Exact described capability name."},
+						"arguments":  map[string]any{"type": "object", "description": "Arguments matching capability.input_schema."},
+						"request_id": map[string]any{"type": "string", "minLength": 1, "description": "Optional stable idempotency key for an exact retry."},
+					},
+					"required": []string{"capability", "arguments"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "get_control_operation",
+				Description: "Read a control operation proposed by this LCAgent thread on a later user turn.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"operation_id": map[string]any{"type": "string", "minLength": 1},
+					},
+					"required": []string{"operation_id"},
+				},
+			},
+		},
+	}
+}
+
+// LCRControlToolDefinitions returns the same progressive control tool
+// contracts used by embedded LCAgent and other in-process agent hosts.
+func LCRControlToolDefinitions() []ToolDefinition {
+	return lcrControlToolDefinitions()
 }
 
 func projectTodoToolDefinitions(mode todocapture.CaptureMode) []ToolDefinition {

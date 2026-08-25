@@ -431,3 +431,51 @@ type Operation struct {
 	Result          json.RawMessage `json:"result,omitempty"`
 	Error           string          `json:"error,omitempty"`
 }
+
+type EngineerMessageState string
+
+const (
+	EngineerMessageQueued     EngineerMessageState = "queued"
+	EngineerMessageDelivering EngineerMessageState = "delivering"
+	EngineerMessageDelivered  EngineerMessageState = "delivered"
+	EngineerMessageFailed     EngineerMessageState = "failed"
+)
+
+func (s EngineerMessageState) Terminal() bool {
+	switch s {
+	case EngineerMessageDelivered, EngineerMessageFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+type EngineerMessage struct {
+	ID                       string               `json:"id"`
+	OperationID              string               `json:"operation_id,omitempty"`
+	ProjectPath              string               `json:"project_path"`
+	Provider                 Provider             `json:"provider"`
+	SessionMode              SessionMode          `json:"session_mode"`
+	RequestedTargetSessionID string               `json:"requested_target_session_id,omitempty"`
+	TargetSessionID          string               `json:"target_session_id,omitempty"`
+	Prompt                   string               `json:"prompt"`
+	Reveal                   bool                 `json:"reveal"`
+	TodoID                   int64                `json:"todo_id,omitempty"`
+	TodoLabel                string               `json:"todo_label,omitempty"`
+	TodoText                 string               `json:"todo_text,omitempty"`
+	State                    EngineerMessageState `json:"state"`
+	AttemptCount             int                  `json:"attempt_count"`
+	LastError                string               `json:"last_error,omitempty"`
+	CreatedAt                time.Time            `json:"created_at"`
+	UpdatedAt                time.Time            `json:"updated_at"`
+	DeliveredAt              time.Time            `json:"delivered_at,omitempty"`
+}
+
+type EngineerMessageReceipt struct {
+	MessageID       string               `json:"message_id"`
+	State           EngineerMessageState `json:"state"`
+	Provider        Provider             `json:"provider"`
+	ProjectPath     string               `json:"project_path"`
+	TargetSessionID string               `json:"target_session_id,omitempty"`
+	Status          string               `json:"status"`
+}

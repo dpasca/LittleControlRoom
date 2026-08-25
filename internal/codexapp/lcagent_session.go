@@ -90,6 +90,7 @@ type lcagentSession struct {
 	cancel                      context.CancelFunc
 	threadID                    string
 	runID                       string
+	resumeIDs                   map[string]struct{}
 	started                     bool
 	busy                        bool
 	closed                      bool
@@ -263,13 +264,25 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		browserProfileKey:        browserProfileKey,
 		browserLaunchMode:        browserLaunchMode,
 		browserActivity:          browserctl.DefaultSessionActivity(playwrightPolicy),
+		resumeIDs:                make(map[string]struct{}),
 	}
 	if replay, err := loadLCAgentReplay(req); err != nil {
+		if req.RequireResumeID {
+			return nil, fmt.Errorf("%w: LCAgent session %s is no longer available: %v", ErrSessionChanged, strings.TrimSpace(req.ResumeID), err)
+		}
 		return nil, err
 	} else if replay != nil {
 		session.applyReplay(replay)
 		if hasLaunchOverride {
 			session.stagePendingLaunchSelection(launchModel, modelProvider, launchReasoning)
+		}
+	}
+	if resumeID := strings.TrimSpace(req.ResumeID); resumeID != "" {
+		session.mu.Lock()
+		exactMatch := session.started && session.matchesResumeIDLocked(resumeID)
+		session.mu.Unlock()
+		if req.RequireResumeID && !exactMatch {
+			return nil, fmt.Errorf("%w: expected resumed LCAgent session %s", ErrSessionChanged, resumeID)
 		}
 	}
 	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
@@ -291,6 +304,38 @@ func (s *lcagentSession) ProjectPath() string {
 		return ""
 	}
 	return s.projectPath
+}
+
+func (s *lcagentSession) MatchesResumeID(resumeID string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.matchesResumeIDLocked(resumeID)
+}
+
+func (s *lcagentSession) matchesResumeIDLocked(resumeID string) bool {
+	resumeID = strings.TrimSpace(resumeID)
+	if resumeID == "" {
+		return false
+	}
+	if resumeID == strings.TrimSpace(s.threadID) || resumeID == strings.TrimSpace(s.runID) {
+		return true
+	}
+	_, ok := s.resumeIDs[resumeID]
+	return ok
+}
+
+func (s *lcagentSession) rememberResumeIDLocked(resumeID string) {
+	resumeID = strings.TrimSpace(resumeID)
+	if resumeID == "" {
+		return
+	}
+	if s.resumeIDs == nil {
+		s.resumeIDs = make(map[string]struct{})
+	}
+	s.resumeIDs[resumeID] = struct{}{}
 }
 
 func (s *lcagentSession) Snapshot() Snapshot {
@@ -466,6 +511,7 @@ func (s *lcagentSession) Compact() error {
 	s.mu.Lock()
 	if trace.SessionID != "" {
 		s.runID = trace.SessionID
+		s.rememberResumeIDLocked(trace.SessionID)
 	}
 	s.status = notice
 	s.appendEntryLocked(TranscriptStatus, notice)
@@ -1682,6 +1728,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		args = append(args,
 			"--lcr-db-path", s.appDBPath,
 			"--lcr-query-scope", "portfolio",
+			"--lcr-control-scope", "portfolio",
 		)
 	}
 	if s.todoCaptureHandler != nil && s.todoCaptureMode.Enabled() {
@@ -1907,9 +1954,11 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.mu.Lock()
 		if id != "" {
 			s.runID = id
+			s.rememberResumeIDLocked(id)
 		}
 		if threadID != "" {
 			s.threadID = threadID
+			s.rememberResumeIDLocked(threadID)
 		}
 		s.status = "LCAgent thread " + firstNonEmpty(threadID, id, "started")
 		s.touchLocked()
@@ -2917,6 +2966,11 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	defer s.mu.Unlock()
 	s.threadID = firstNonEmpty(strings.TrimSpace(replay.threadID), strings.TrimSpace(replay.sessionID))
 	s.runID = strings.TrimSpace(replay.sessionID)
+	s.rememberResumeIDLocked(s.threadID)
+	s.rememberResumeIDLocked(s.runID)
+	for _, resumeID := range replay.resumeIDs {
+		s.rememberResumeIDLocked(resumeID)
+	}
 	s.started = true
 	s.busy = false
 	s.closed = false

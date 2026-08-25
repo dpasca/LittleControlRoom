@@ -16,7 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/agentcontrol"
 	"lcroom/internal/agentquery"
+	"lcroom/internal/control"
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
@@ -183,6 +185,80 @@ func TestRunnerExposesProgressiveLCRQueriesThroughNativeTools(t *testing.T) {
 		if !strings.Contains(run.Output, want) {
 			t.Fatalf("run output missing %q:\n%s", want, run.Output)
 		}
+	}
+}
+
+func TestRunnerExposesConfirmedLCRControlsThroughNativeTools(t *testing.T) {
+	ctx := context.Background()
+	origin := t.TempDir()
+	st, err := store.Open(filepath.Join(t.TempDir(), "lcr-controls.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	executor, err := agentcontrol.NewExecutor(agentcontrol.Options{
+		Store:             st,
+		OriginProjectPath: origin,
+		Scope:             control.AuthorityScopePortfolio,
+		Source:            "lcagent",
+		Provider:          "lcagent",
+		SessionKey:        "lca-thread-sender",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{Session: writer, SessionID: sessionID, LCRControls: executor}
+
+	listed, err := runner.RunTool(ctx, Action{Type: "tool_call", Tool: "list_control_capabilities", Args: raw(`{"domain":"engineer"}`)})
+	if err != nil || !listed.Success || !strings.Contains(listed.Output, string(control.CapabilityEngineerSendPrompt)) {
+		t.Fatalf("list controls result=%#v err=%v", listed, err)
+	}
+	described, err := runner.RunTool(ctx, Action{Type: "tool_call", Tool: "describe_control_capability", Args: raw(`{"name":"engineer.send_prompt"}`)})
+	if err != nil || !described.Success || !strings.Contains(described.Output, "input_schema") {
+		t.Fatalf("describe control result=%#v err=%v", described, err)
+	}
+	proposed, err := runner.RunTool(ctx, Action{
+		Type: "tool_call",
+		Tool: "propose_control_operation",
+		Args: raw(`{
+			"capability":"engineer.send_prompt",
+			"request_id":"handoff-1",
+			"arguments":{
+				"project_path":"/repos/recipient",
+				"provider":"claude_code",
+				"session_mode":"resume_or_new",
+				"target_session_id":"claude-recipient",
+				"prompt":"Read docs/handoff.md and continue.",
+				"reveal":false
+			}
+		}`),
+	})
+	if err != nil || !proposed.Success {
+		t.Fatalf("propose control result=%#v err=%v", proposed, err)
+	}
+	var report struct {
+		Operation control.Operation `json:"operation"`
+	}
+	if err := json.Unmarshal([]byte(proposed.Output), &report); err != nil || report.Operation.ID == "" {
+		t.Fatalf("decode proposal output=%q report=%#v err=%v", proposed.Output, report, err)
+	}
+	if report.Operation.Capability != control.CapabilityEngineerSendPrompt || report.Operation.Status != control.OperationProposed {
+		t.Fatalf("proposed operation = %#v", report.Operation)
+	}
+
+	got, err := runner.RunTool(ctx, Action{
+		Type: "tool_call",
+		Tool: "get_control_operation",
+		Args: raw(`{"operation_id":` + strconv.Quote(report.Operation.ID) + `}`),
+	})
+	if err != nil || !got.Success || !strings.Contains(got.Output, `"status": "proposed"`) {
+		t.Fatalf("get control result=%#v err=%v", got, err)
 	}
 }
 

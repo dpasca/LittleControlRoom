@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/agentcontrol"
 	"lcroom/internal/agentquery"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeapproval"
@@ -67,6 +68,7 @@ type Server struct {
 	todoMode             todocapture.CaptureMode
 	todoHandler          todocapture.Handler
 	controlScope         control.AuthorityScope
+	controlExecutor      *agentcontrol.Executor
 	queryScope           agentquery.Scope
 	queryExecutor        *agentquery.Executor
 	stateStore           *store.Store
@@ -129,6 +131,7 @@ func New(opts Options) (*Server, error) {
 		queryScope = agentquery.ScopeProject
 	}
 	var queryExecutor *agentquery.Executor
+	var controlExecutor *agentcontrol.Executor
 	if stateStore != nil {
 		var queryErr error
 		queryExecutor, queryErr = agentquery.NewExecutor(agentquery.Options{
@@ -138,6 +141,17 @@ func New(opts Options) (*Server, error) {
 		})
 		if queryErr != nil {
 			return nil, fmt.Errorf("initialize runtime MCP query service: %w", queryErr)
+		}
+		controlExecutor, queryErr = agentcontrol.NewExecutor(agentcontrol.Options{
+			Store:             stateStore,
+			OriginProjectPath: projectPath,
+			Scope:             controlScope,
+			Source:            serverName,
+			Provider:          strings.TrimSpace(opts.Provider),
+			SessionKey:        strings.TrimSpace(opts.SessionKey),
+		})
+		if queryErr != nil {
+			return nil, fmt.Errorf("initialize runtime MCP control service: %w", queryErr)
 		}
 	}
 	return &Server{
@@ -154,6 +168,7 @@ func New(opts Options) (*Server, error) {
 		todoMode:             todoMode,
 		todoHandler:          todoHandler,
 		controlScope:         controlScope,
+		controlExecutor:      controlExecutor,
 		queryScope:           queryScope,
 		queryExecutor:        queryExecutor,
 		stateStore:           stateStore,
@@ -213,7 +228,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 				"version": "0.1.0",
 			},
 		}
-		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded persisted snapshots and never include private-category projects outside the originating project. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. When the user asks you to tell, hand off to, continue, trigger, or steer another embedded engineer, inspect the target session and use the engineer control capability instead of asking the operator to relay the message. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
+		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded persisted snapshots and never include private-category projects outside the originating project. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. When the user asks you to tell, hand off to, continue, trigger, or steer another embedded engineer, inspect the target session and propose engineer.send_prompt instead of asking the operator to relay the message. Supply the matching explicit provider and exact target_session_id for a known Codex, OpenCode, Claude Code, or LCAgent recipient. After confirmation LCR persists the message, steers an eligible active Codex turn, or waits to resume the exact recipient when idle. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
 		if s.todoMode.Enabled() {
 			instructions += "\n\n" + todocapture.AgentInstructions(s.todoMode)
 		}
@@ -463,61 +478,13 @@ func (s *Server) describeControlCapability(req describeControlCapabilityArgs) (m
 }
 
 func (s *Server) proposeControlOperation(ctx context.Context, req proposeControlOperationArgs) (map[string]any, bool) {
-	if s.stateStore == nil {
+	if s.controlExecutor == nil {
 		return map[string]any{
 			"success": false,
 			"error":   "control proposals are unavailable because this MCP server has no LCR state store",
 		}, true
 	}
-	capability, ok := control.CapabilityByName(control.CapabilityName(strings.TrimSpace(req.Capability)))
-	if !ok {
-		return map[string]any{
-			"success": false,
-			"error":   "unknown control capability; call list_control_capabilities first",
-		}, true
-	}
-	if !control.AuthorityAllows(s.controlScope, capability.Scope) {
-		return map[string]any{
-			"success":         false,
-			"error":           "control capability is outside this embedded session's authority",
-			"capability":      capability.Name,
-			"required_scope":  capability.Scope,
-			"available_scope": s.controlScope,
-		}, true
-	}
-	if strings.TrimSpace(req.RequestID) != "" {
-		existing, found, err := s.stateStore.FindControlOperationByClientRequest(
-			ctx,
-			serverName,
-			s.sessionKey,
-			req.RequestID,
-		)
-		if err != nil {
-			return map[string]any{"success": false, "error": err.Error()}, true
-		}
-		if found {
-			retryInvocation, validationErr := controlProposalInvocation(existing.ID, capability.Name, req.Arguments)
-			if validationErr != nil {
-				return map[string]any{
-					"success": false,
-					"error":   validationErr.Error(),
-					"hint":    "Call describe_control_capability and match its input_schema exactly.",
-				}, true
-			}
-			if existing.Capability != retryInvocation.Capability || !bytes.Equal(existing.Invocation.Args, retryInvocation.Args) {
-				return map[string]any{
-					"success": false,
-					"error":   "request_id is already bound to a different control proposal in this embedded session",
-				}, true
-			}
-			return controlOperationReport(existing, true), false
-		}
-	}
-	operationID, err := control.NewOperationID()
-	if err != nil {
-		return map[string]any{"success": false, "error": err.Error()}, true
-	}
-	invocation, err := controlProposalInvocation(operationID, capability.Name, req.Arguments)
+	report, err := s.controlExecutor.Propose(ctx, req.Capability, req.Arguments, req.RequestID)
 	if err != nil {
 		return map[string]any{
 			"success": false,
@@ -525,83 +492,25 @@ func (s *Server) proposeControlOperation(ctx context.Context, req proposeControl
 			"hint":    "Call describe_control_capability and match its input_schema exactly.",
 		}, true
 	}
-	operation, err := s.stateStore.CreateControlOperation(ctx, control.Operation{
-		ID:              operationID,
-		ClientRequestID: strings.TrimSpace(req.RequestID),
-		Capability:      capability.Name,
-		Status:          control.OperationProposed,
-		Invocation:      invocation,
-		Source:          serverName,
-		Provider:        s.provider,
-		SessionKey:      s.sessionKey,
-		ProjectPath:     s.projectPath,
-		RequestedBy:     firstNonEmpty(s.provider, "embedded_agent"),
-	})
-	if err != nil {
-		return map[string]any{"success": false, "error": err.Error()}, true
-	}
-	return controlOperationReport(operation, false), false
-}
-
-func controlProposalInvocation(operationID string, capability control.CapabilityName, arguments json.RawMessage) (control.Invocation, error) {
-	return control.BuildProposedInvocation(operationID, capability, arguments)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
+	return report, false
 }
 
 func (s *Server) getControlOperation(ctx context.Context, req getControlOperationArgs) (map[string]any, bool) {
-	if s.stateStore == nil {
+	if s.controlExecutor == nil {
 		return map[string]any{
 			"success": false,
 			"error":   "control operations are unavailable because this MCP server has no LCR state store",
 		}, true
 	}
-	operation, err := s.stateStore.GetControlOperation(ctx, req.OperationID)
+	report, err := s.controlExecutor.Get(ctx, req.OperationID)
 	if err != nil {
 		return map[string]any{"success": false, "error": err.Error()}, true
 	}
-	if operation.Source != serverName || operation.SessionKey != s.sessionKey {
-		return map[string]any{
-			"success": false,
-			"error":   "control operation belongs to a different embedded session",
-		}, true
-	}
-	return controlOperationReport(operation, false), false
+	return report, false
 }
 
 func controlOperationReport(operation control.Operation, idempotentReplay bool) map[string]any {
-	message := "The proposal was queued for Little Control Room. Stop this turn and ask the user to confirm it in LCR. On a later user turn, call get_control_operation."
-	switch operation.Status {
-	case control.OperationWaitingForConfirmation:
-		message = "The proposal is waiting for explicit operator confirmation in Little Control Room. Stop this turn and wait for a new user message."
-	case control.OperationRunning:
-		message = "The operator confirmed the proposal and Little Control Room is executing it."
-	case control.OperationCompleted:
-		message = "Little Control Room completed the confirmed operation."
-	case control.OperationFailed:
-		message = "Little Control Room could not complete the operation. Stop this turn and report the failure. Do not retry or continue later write or external-action steps from the same requested workflow through other tools."
-	case control.OperationCanceled:
-		message = "The operator canceled the proposal. Stop this turn and report the cancellation. Do not retry or continue later write or external-action steps from the same requested workflow through other tools."
-	}
-	return map[string]any{
-		"success":           true,
-		"operation":         operation,
-		"idempotent_replay": idempotentReplay,
-		"message":           message,
-		"requires_new_user_turn": operation.Status == control.OperationProposed ||
-			operation.Status == control.OperationWaitingForConfirmation ||
-			operation.Status == control.OperationFailed ||
-			operation.Status == control.OperationCanceled,
-		"operator_confirmation": operation.Status == control.OperationWaitingForConfirmation,
-		"terminal":              operation.Status.Terminal(),
-	}
+	return agentcontrol.OperationReport(operation, idempotentReplay)
 }
 
 func (s *Server) requestBrowserAttention(req requestBrowserAttentionArgs) (map[string]any, bool) {

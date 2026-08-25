@@ -84,6 +84,11 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 			t.Fatalf("overlay runtime skill text missing engineer messaging guidance for %s: %s", want, runtimeText)
 		}
 	}
+	for _, want := range []string{"OpenCode", "Claude Code", "LCAgent", "persists the message", "stay queued until idle"} {
+		if !strings.Contains(runtimeText, want) {
+			t.Fatalf("overlay runtime skill text missing provider-neutral durable messaging guidance for %s: %s", want, runtimeText)
+		}
+	}
 	for _, want := range []string{"list_lcr_queries", "describe_lcr_query", "run_lcr_query", "persisted snapshots", "Private-category"} {
 		if !strings.Contains(runtimeText, want) {
 			t.Fatalf("overlay runtime skill text missing progressive query guidance for %s: %s", want, runtimeText)

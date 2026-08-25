@@ -366,6 +366,15 @@ func (m Model) clearBossTrackedTodo(projectPath string, todoID int64) Model {
 
 func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
+		if queued, ok := msg.(engineerMessageQueuedMsg); ok {
+			result := engineerMessageControlResult(queued)
+			result.Invocation = copyControlInvocationForBoss(inv)
+			result.AnnounceInChat = true
+			return tea.BatchMsg{
+				func() tea.Msg { return msg },
+				func() tea.Msg { return result },
+			}
+		}
 		status, err := bossControlExecutionStatus(inv, msg)
 		activity := bossControlOpenedSessionActivity(inv, msg)
 		result := bossui.ControlInvocationResultMsg{
@@ -870,57 +879,19 @@ func (m Model) executeEngineerSendPromptWithTrackedTodo(input control.EngineerSe
 		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	if block, blocked := m.embeddedLaunchBlock(project, provider, input.SessionMode == control.SessionModeNew); blocked {
-		err := errors.New(block.Message)
-		m.status = block.Message
-		return controlInvocationOutcome{model: m, err: err}
-	}
-	if input.SessionMode == control.SessionModeNew {
-		if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, "project"); blocked {
-			err := errors.New(message)
-			m.status = message
-			return controlInvocationOutcome{model: m, err: err}
-		}
-	}
-	if targetSessionID := strings.TrimSpace(input.TargetSessionID); targetSessionID != "" {
-		if snapshot, ok := m.liveEmbeddedSnapshotForProject(project.Path, provider); ok &&
-			embeddedSessionBlocksProviderSwitch(snapshot) &&
-			strings.TrimSpace(snapshot.ThreadID) != targetSessionID {
-			err := fmt.Errorf("The requested %s engineer session %s is not the session currently running for this project. Refresh the target session state before sending the message.", provider.Label(), shortID(targetSessionID))
-			m.status = err.Error()
-			return controlInvocationOutcome{model: m, err: err}
-		}
-	}
-	if controlPromptTargetsNonSteerableActiveEmbeddedSession(input, m, project.Path, provider) {
-		err := fmt.Errorf("The embedded %s engineer session is already running, so I did not send the prompt into it. Start a fresh session or open the target session and send manually.", provider.Label())
-		m.status = err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-
 	input.TodoText = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoText, trackedTodo.Text))
 	input.TodoLabel = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoLabel, todoDisplayLabelFromItem(trackedTodo)))
 	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt, trackedTodo)
 	if controlPromptWillSteerActiveEmbeddedSession(input, m, project.Path, provider) {
 		prompt = m.promptWithRuntimeContext(engineerPromptWithTrackedTodo(input.Prompt, trackedTodo), m.projectRuntimeContextLines(project))
 	}
-	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
-		forceNew:        input.SessionMode == control.SessionModeNew,
-		prompt:          prompt,
-		reveal:          input.Reveal,
-		resumeID:        strings.TrimSpace(input.TargetSessionID),
-		requireResumeID: strings.TrimSpace(input.TargetSessionID) != "",
-	})
-	m = normalizeUpdateModel(updated)
-	if cmd == nil {
-		status := strings.TrimSpace(m.status)
-		if status == "" {
-			status = "engineer session launch did not start"
-		}
-		err := errors.New(status)
-		return controlInvocationOutcome{model: m, err: err}
+	inv := engineerSendPromptInvocationFromInput(input)
+	m.status = fmt.Sprintf("Queueing a durable message for the %s engineer...", provider.Label())
+	return controlInvocationOutcome{
+		model: m,
+		cmd:   m.createEngineerMessageCmd(inv, input, project, provider, prompt),
+		inv:   inv,
 	}
-	cmd = m.todoEngineerLaunchTrackingCmd(project.Path, trackedTodo.ID, cmd)
-	return controlInvocationOutcome{model: m, cmd: cmd, inv: engineerSendPromptInvocationFromInput(input)}
 }
 
 func (m Model) todoEngineerLaunchTrackingCmd(projectPath string, todoID int64, cmd tea.Cmd) tea.Cmd {

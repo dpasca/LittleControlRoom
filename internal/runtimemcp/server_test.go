@@ -52,6 +52,11 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	if !strings.Contains(string(responses[0].Result), "instead of asking the operator to relay the message") {
 		t.Fatalf("initialize result = %s, want engineer handoff guidance", responses[0].Result)
 	}
+	for _, want := range []string{"target_session_id", "OpenCode", "Claude Code", "LCAgent", "persists the message"} {
+		if !strings.Contains(string(responses[0].Result), want) {
+			t.Fatalf("initialize result = %s, want provider-neutral durable handoff guidance for %s", responses[0].Result, want)
+		}
+	}
 	if !strings.Contains(string(responses[1].Result), `"start_process"`) ||
 		!strings.Contains(string(responses[1].Result), `"list_processes"`) ||
 		!strings.Contains(string(responses[1].Result), `"read_process_output"`) ||

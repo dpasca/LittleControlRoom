@@ -340,6 +340,30 @@ func (s *Store) initSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_control_operations_client_request
 			ON control_operations(source, session_key, client_request_id)
 			WHERE client_request_id <> '';`,
+		`CREATE TABLE IF NOT EXISTS engineer_messages (
+			id TEXT PRIMARY KEY,
+			operation_id TEXT NOT NULL DEFAULT '',
+			project_path TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			session_mode TEXT NOT NULL DEFAULT 'resume_or_new',
+			requested_target_session_id TEXT NOT NULL DEFAULT '',
+			target_session_id TEXT NOT NULL DEFAULT '',
+			prompt TEXT NOT NULL,
+			reveal INTEGER NOT NULL DEFAULT 0,
+			todo_id INTEGER NOT NULL DEFAULT 0,
+			todo_label TEXT NOT NULL DEFAULT '',
+			todo_text TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			delivered_at INTEGER
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_engineer_messages_state_created ON engineer_messages(state, created_at, id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_engineer_messages_operation
+			ON engineer_messages(operation_id)
+			WHERE operation_id <> '';`,
 		`CREATE TABLE IF NOT EXISTS agent_task_resources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id TEXT NOT NULL,
@@ -362,6 +386,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+	}
+	if err := s.ensureEngineerMessagesRequestedTargetColumn(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureProjectsInScopeColumn(ctx); err != nil {
 		return err
@@ -446,6 +473,52 @@ func (s *Store) initSchema(ctx context.Context) error {
 	}
 	if _, err := s.ReconcileLinkedWorktreeArchiveState(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureEngineerMessagesRequestedTargetColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(engineer_messages)`)
+	if err != nil {
+		return fmt.Errorf("check engineer_messages schema: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan engineer_messages schema: %w", err)
+		}
+		if name == "requested_target_session_id" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read engineer_messages schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE engineer_messages ADD COLUMN requested_target_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add engineer_messages.requested_target_session_id column: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE engineer_messages
+		SET requested_target_session_id = target_session_id
+		WHERE requested_target_session_id = ''
+	`); err != nil {
+		return fmt.Errorf("backfill engineer message requested targets: %w", err)
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ type fakeSession struct {
 	reconcileCalls int
 	reconcileFn    func(*fakeSession) error
 	stagedProvider string
+	resumeIDs      map[string]struct{}
 }
 
 func (s *fakeSession) ProjectPath() string {
@@ -48,6 +49,15 @@ func (s *fakeSession) TryStateSnapshot() (Snapshot, bool) {
 
 func (s *fakeSession) TrySnapshot() (Snapshot, bool) {
 	return s.Snapshot(), true
+}
+
+func (s *fakeSession) MatchesResumeID(resumeID string) bool {
+	resumeID = strings.TrimSpace(resumeID)
+	if resumeID == strings.TrimSpace(s.snapshot.ThreadID) {
+		return true
+	}
+	_, ok := s.resumeIDs[resumeID]
+	return ok
 }
 
 func (s *fakeSession) Submit(prompt string) error {
@@ -863,6 +873,42 @@ func TestManagerOpenExactResumeRefusesDifferentLiveSession(t *testing.T) {
 	}
 }
 
+func TestManagerOpenExactResumeAcceptsLCAgentRunAlias(t *testing.T) {
+	created := 0
+	session := &fakeSession{
+		projectPath: "/tmp/lcagent-alias",
+		snapshot: Snapshot{
+			Provider: ProviderLCAgent,
+			Started:  true,
+			ThreadID: "lca_thread",
+		},
+		resumeIDs: map[string]struct{}{"lca_run_old": {}},
+	}
+	manager := NewManagerWithFactory(func(LaunchRequest, func()) (Session, error) {
+		created++
+		return session, nil
+	})
+	if _, _, err := manager.Open(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: session.projectPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	opened, reused, err := manager.Open(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     session.projectPath,
+		ResumeID:        "lca_run_old",
+		RequireResumeID: true,
+		Prompt:          "Continue the handoff.",
+	})
+	if err != nil || !reused || opened != session {
+		t.Fatalf("exact alias open = %#v, reused=%t err=%v", opened, reused, err)
+	}
+	if created != 1 || len(session.submitted) != 1 || !strings.Contains(session.submitted[0], "Continue the handoff") {
+		t.Fatalf("created=%d submissions=%#v", created, session.submitted)
+	}
+}
+
 func TestManagerOpenExactResumeRejectsFactoryMismatch(t *testing.T) {
 	created := &fakeSession{
 		projectPath: "/tmp/demo",
@@ -1386,10 +1432,18 @@ func TestLaunchRequestValidatesExactResume(t *testing.T) {
 		t.Fatalf("missing exact resume id error = %v", err)
 	}
 
-	unsupportedProvider := valid
-	unsupportedProvider.Provider = ProviderOpenCode
-	if err := unsupportedProvider.Validate(); err == nil || !strings.Contains(err.Error(), "currently supports Codex") {
-		t.Fatalf("unsupported exact resume provider error = %v", err)
+	missingProvider := valid
+	missingProvider.Provider = ""
+	if err := missingProvider.Validate(); err == nil || !strings.Contains(err.Error(), "explicit provider") {
+		t.Fatalf("missing exact resume provider error = %v", err)
+	}
+
+	for _, provider := range []Provider{ProviderCodex, ProviderOpenCode, ProviderClaudeCode, ProviderLCAgent} {
+		providerRequest := valid
+		providerRequest.Provider = provider
+		if err := providerRequest.Validate(); err != nil {
+			t.Fatalf("exact resume validation for %s error = %v", provider, err)
+		}
 	}
 }
 

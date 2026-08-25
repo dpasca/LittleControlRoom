@@ -359,7 +359,15 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := s.loadTranscriptLocked(); err != nil {
 		s.mu.Unlock()
 		_ = approvalServer.Close()
+		if req.RequireResumeID {
+			return nil, fmt.Errorf("%w: Claude Code session %s is no longer available: %v", ErrSessionChanged, strings.TrimSpace(req.ResumeID), err)
+		}
 		return nil, fmt.Errorf("load Claude Code session transcript: %w", err)
+	}
+	if req.RequireResumeID && strings.TrimSpace(s.sessionID) != strings.TrimSpace(req.ResumeID) {
+		s.mu.Unlock()
+		_ = approvalServer.Close()
+		return nil, fmt.Errorf("%w: expected resumed Claude Code session %s, got %s", ErrSessionChanged, strings.TrimSpace(req.ResumeID), strings.TrimSpace(s.sessionID))
 	}
 	s.refreshActiveLocked()
 	if !s.busy && !s.externalTurnActive {

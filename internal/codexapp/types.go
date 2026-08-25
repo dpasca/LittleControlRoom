@@ -782,8 +782,8 @@ func (r LaunchRequest) Validate() error {
 		if strings.TrimSpace(r.ResumeID) == "" {
 			return fmt.Errorf("exact session resume requires a session id")
 		}
-		if r.Provider.Normalized() != ProviderCodex {
-			return fmt.Errorf("exact session resume currently supports Codex")
+		if strings.TrimSpace(string(r.Provider)) == "" || r.Provider.Normalized() == "" {
+			return fmt.Errorf("exact session resume requires an explicit provider")
 		}
 	}
 	if r.ContinueInterruptedTurn {
@@ -841,6 +841,10 @@ type busyReconciler interface {
 
 type stateSnapshooter interface {
 	StateSnapshot() Snapshot
+}
+
+type resumeIdentityMatcher interface {
+	MatchesResumeID(string) bool
 }
 
 type savedInterruptedTurnContinuer interface {
@@ -1076,7 +1080,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		if requestedProvider == "" {
 			requestedProvider = ProviderCodex
 		}
-		if existingProvider != requestedProvider || existingThreadID != expectedThreadID {
+		if existingProvider != requestedProvider || !sessionMatchesResumeID(existing, existingState, expectedThreadID) {
 			m.mu.Unlock()
 			return nil, false, fmt.Errorf("%w: expected %s session %s, found %s session %s", ErrSessionChanged, requestedProvider.Label(), expectedThreadID, existingProvider.Label(), existingThreadID)
 		}
@@ -1098,8 +1102,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	if ok && !req.ForceNew {
 		requestedResumeID := strings.TrimSpace(req.ResumeID)
 		if requestedResumeID != "" {
-			existingThreadID := strings.TrimSpace(existingState.ThreadID)
-			if existingThreadID == "" || existingThreadID != requestedResumeID {
+			if !sessionMatchesResumeID(existing, existingState, requestedResumeID) {
 				replaceExisting = true
 				ok = false
 			}
@@ -1159,8 +1162,9 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 	if req.RequireResumeID {
 		expectedThreadID := strings.TrimSpace(req.ResumeID)
-		actualThreadID := strings.TrimSpace(sessionStateSnapshot(session).ThreadID)
-		if actualThreadID != expectedThreadID {
+		snapshot := sessionStateSnapshot(session)
+		actualThreadID := strings.TrimSpace(snapshot.ThreadID)
+		if !sessionMatchesResumeID(session, snapshot, expectedThreadID) {
 			_ = session.Close()
 			return nil, false, fmt.Errorf("%w: expected resumed session %s, got %s", ErrSessionChanged, expectedThreadID, actualThreadID)
 		}
@@ -1172,6 +1176,17 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	m.mu.Unlock()
 	m.notify(projectPath)
 	return session, false, nil
+}
+
+func sessionMatchesResumeID(session Session, snapshot Snapshot, resumeID string) bool {
+	resumeID = strings.TrimSpace(resumeID)
+	if resumeID == "" || session == nil {
+		return false
+	}
+	if matcher, ok := session.(resumeIdentityMatcher); ok {
+		return matcher.MatchesResumeID(resumeID)
+	}
+	return strings.TrimSpace(snapshot.ThreadID) == resumeID
 }
 
 // OpenParallel opens a background session for the project without replacing

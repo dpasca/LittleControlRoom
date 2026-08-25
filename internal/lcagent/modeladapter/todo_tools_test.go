@@ -69,3 +69,49 @@ func TestProjectTodoPromptUsesSharedPolicyAndExcludesReadOnlyScout(t *testing.T)
 		}
 	}
 }
+
+func TestLCRControlToolsAndPromptRequireExplicitEnablement(t *testing.T) {
+	controlTools := []string{
+		"list_control_capabilities",
+		"describe_control_capability",
+		"propose_control_operation",
+		"get_control_operation",
+	}
+	defaults := toolNames(Tools())
+	for _, name := range controlTools {
+		if defaults[name] {
+			t.Fatalf("Tools() unexpectedly exposed %s", name)
+		}
+	}
+
+	enabled := toolNames(ToolsWithOptions(ToolOptions{LCRControlsEnabled: true}))
+	for _, name := range controlTools {
+		if !enabled[name] {
+			t.Fatalf("LCR control profile missing %s", name)
+		}
+	}
+	propose := toolSpec(t, LCRControlToolDefinitions(), "propose_control_operation")
+	properties := propose.Parameters["properties"].(map[string]any)
+	if _, ok := properties["arguments"]; !ok {
+		t.Fatalf("proposal schema = %#v, want typed arguments object", propose.Parameters)
+	}
+
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{LCRControlsEnabled: true})
+	for _, want := range []string{
+		"list_control_capabilities",
+		"explicit operator confirmation",
+		"propose engineer.send_prompt",
+		"durable delivery waits for that recipient",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("control-enabled prompt missing %q:\n%s", want, prompt)
+		}
+	}
+
+	readOnlyNames := toolNames(ToolsWithOptions(ToolOptions{LCRControlsEnabled: true, ReadOnly: true}))
+	for _, name := range controlTools {
+		if readOnlyNames[name] {
+			t.Fatalf("read-only scout unexpectedly exposed %s", name)
+		}
+	}
+}

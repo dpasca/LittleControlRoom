@@ -344,6 +344,11 @@ type Model struct {
 	skillsInventorySeq            int64
 	pendingBossHostNotices        []bossHostNotice
 	bossTrackedTodos              map[string]bossTrackedTodo
+	engineerMessagesPollInFlight  bool
+	engineerMessagesRecovered     bool
+	engineerMessagesCursorAt      time.Time
+	engineerMessagesCursorID      string
+	engineerMessageDeliveries     map[string]struct{}
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -871,6 +876,8 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		homeDirFn:                     os.UserHomeDir,
 		homeDir:                       strings.TrimSpace(homeDir),
 		anthropicAPIKeyPresentFn:      anthropicAPIKeyPresentInEnvironment,
+		engineerMessagesPollInFlight:  true,
+		engineerMessageDeliveries:     make(map[string]struct{}),
 	}
 	if issue := settingsLocalFileIssue(initialSettings); issue != nil {
 		m.appendSettingsConfigIssue(issue)
@@ -1284,6 +1291,7 @@ func (m Model) Init() tea.Cmd {
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
 		m.waitMergeConflictResolverUpdateCmd(),
+		m.loadEngineerMessagesCmd(true),
 		spinnerTickCmd(),
 		m.checkSelfUpdateCmd(false),
 	}
@@ -1624,6 +1632,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyTerminalHealthCheckMsg(msg)
 	case terminalRepairFinishedMsg:
 		return m.applyTerminalRepairFinishedMsg(msg)
+	case engineerMessageQueuedMsg:
+		return m.applyEngineerMessageQueued(msg)
+	case engineerMessagesLoadedMsg:
+		return m.applyEngineerMessagesLoaded(msg)
+	case engineerMessageClaimedMsg:
+		return m.applyEngineerMessageClaimed(msg)
+	case engineerMessageDeliveryRecordedMsg:
+		return m.applyEngineerMessageDeliveryRecorded(msg)
+	case engineerMessageReceiptRetryMsg:
+		return m.applyEngineerMessageReceiptRetry(msg)
 	case codexClipboardPasteMsg:
 		return m.applyCodexClipboardPasteMsg(msg)
 	case todoClipboardPasteMsg:
@@ -3141,6 +3159,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.spinnerFrame%cpuSnapshotRefreshEveryTicks == 0 {
 			cpuSnapshotCmd = m.requestCPUSnapshotRefreshCmd()
 		}
+		engineerMessagesCmd := tea.Cmd(nil)
+		if m.spinnerFrame%engineerMessagePollEveryTick == 0 {
+			engineerMessagesCmd = m.requestEngineerMessagesPollCmd()
+		}
 		sidebarDiffCmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd()
 		browserStateCmd := m.maybeRefreshVisibleManagedBrowserStateCmd()
 		m.terminalHealthCheckTicks++
@@ -3149,7 +3171,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.terminalHealthCheckTicks = 0
 			terminalHealthCmd = m.requestTerminalHealthCheckCmd()
 		}
-		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd, browserStateCmd, terminalHealthCmd)
+		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, engineerMessagesCmd, sidebarDiffCmd, browserStateCmd, terminalHealthCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
 	case codexUpdateAckMsg:

@@ -21,6 +21,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	"lcroom/internal/agentcontrol"
 	"lcroom/internal/agentquery"
 	"lcroom/internal/commandguard"
 	"lcroom/internal/lcagent/policy"
@@ -69,6 +70,7 @@ type Runner struct {
 	Processes            ProcessBroker
 	ProjectTodos         ProjectTodoBroker
 	LCRQueries           *agentquery.Executor
+	LCRControls          *agentcontrol.Executor
 	TodoCaptureMode      todocapture.CaptureMode
 	Skills               skillcatalog.Catalog
 	SessionID            string
@@ -1050,6 +1052,24 @@ type runLCRQueryArgs struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+type listControlCapabilitiesArgs struct {
+	Domain string `json:"domain"`
+}
+
+type describeControlCapabilityArgs struct {
+	Name string `json:"name"`
+}
+
+type proposeControlOperationArgs struct {
+	Capability string          `json:"capability"`
+	Arguments  json.RawMessage `json:"arguments"`
+	RequestID  string          `json:"request_id"`
+}
+
+type getControlOperationArgs struct {
+	OperationID string `json:"operation_id"`
+}
+
 func DecodeFinalResponseArgs(raw json.RawMessage) (Action, error) {
 	var args finalResponseArgs
 	if err := decodeStrictJSON(raw, &args); err != nil {
@@ -1284,6 +1304,54 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		report, err := r.LCRQueries.Execute(ctx, agentquery.Name(strings.TrimSpace(args.Query)), args.Arguments)
+		result = lcrQueryToolResult(report, err)
+	case "list_control_capabilities":
+		var args listControlCapabilitiesArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRControls == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR controls are not available for this LCAgent run"}
+			break
+		}
+		report, err := r.LCRControls.List(args.Domain)
+		result = lcrQueryToolResult(report, err)
+	case "describe_control_capability":
+		var args describeControlCapabilityArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRControls == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR controls are not available for this LCAgent run"}
+			break
+		}
+		report, err := r.LCRControls.Describe(args.Name)
+		result = lcrQueryToolResult(report, err)
+	case "propose_control_operation":
+		var args proposeControlOperationArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRControls == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR controls are not available for this LCAgent run"}
+			break
+		}
+		report, err := r.LCRControls.Propose(ctx, args.Capability, args.Arguments, args.RequestID)
+		result = lcrQueryToolResult(report, err)
+	case "get_control_operation":
+		var args getControlOperationArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.LCRControls == nil {
+			result = tools.ToolResult{Success: false, Error: "LCR controls are not available for this LCAgent run"}
+			break
+		}
+		report, err := r.LCRControls.Get(ctx, args.OperationID)
 		result = lcrQueryToolResult(report, err)
 	case "read_file":
 		var args readFileArgs

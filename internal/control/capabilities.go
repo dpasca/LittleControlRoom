@@ -14,6 +14,7 @@ const (
 	FeatureSendPrompt                         = "send_prompt"
 	FeatureTargetSession                      = "target_session"
 	FeatureSteer                              = "steer"
+	FeatureDurableQueue                       = "durable_queue"
 	FeatureResume                             = "resume"
 	FeatureForceNew                           = "force_new"
 	FeatureCreateTask                         = "create_task"
@@ -164,14 +165,8 @@ type EngineerSendPromptInput struct {
 }
 
 type EngineerSendPromptResult struct {
-	Provider    Provider `json:"provider"`
-	ProjectPath string   `json:"project_path"`
-	SessionID   string   `json:"session_id"`
-	Reused      bool     `json:"reused"`
-	PromptSent  bool     `json:"prompt_sent"`
-	Revealed    bool     `json:"revealed"`
-	Status      string   `json:"status"`
-	TodoID      int64    `json:"todo_id"`
+	Status   string                 `json:"status"`
+	Delivery EngineerMessageReceipt `json:"delivery"`
 }
 
 type AgentTaskCreateInput struct {
@@ -440,7 +435,7 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 func EngineerSendPromptCapability() Capability {
 	return Capability{
 		Name:         CapabilityEngineerSendPrompt,
-		Description:  "Send a message to an embedded engineer session, resuming an idle target to start a turn or steering an active Codex turn when possible.",
+		Description:  "Send a message to an embedded engineer session through a durable queue. LCR resumes an idle target, steers an eligible active target, or delivers after the exact target becomes idle.",
 		InputSchema:  engineerSendPromptInputSchema(),
 		OutputSchema: engineerSendPromptOutputSchema(),
 		Risk:         RiskExternal,
@@ -451,23 +446,23 @@ func EngineerSendPromptCapability() Capability {
 			{
 				ID:        ProviderCodex,
 				Available: true,
-				Features:  []string{FeatureSendPrompt, FeatureTargetSession, FeatureSteer, FeatureResume, FeatureForceNew, FeatureApprovalResponse, FeatureReview, FeatureCompact},
+				Features:  []string{FeatureSendPrompt, FeatureTargetSession, FeatureSteer, FeatureDurableQueue, FeatureResume, FeatureForceNew, FeatureApprovalResponse, FeatureReview, FeatureCompact},
 			},
 			{
 				ID:        ProviderOpenCode,
 				Available: true,
-				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew, FeatureApprovalResponse},
+				Features:  []string{FeatureSendPrompt, FeatureTargetSession, FeatureDurableQueue, FeatureResume, FeatureForceNew, FeatureApprovalResponse},
 			},
 			{
 				ID:        ProviderClaudeCode,
 				Available: true,
-				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew},
+				Features:  []string{FeatureSendPrompt, FeatureTargetSession, FeatureDurableQueue, FeatureResume, FeatureForceNew},
 			},
 			{
 				ID:        ProviderLCAgent,
 				Available: true,
 				Reason:    "experimental",
-				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew},
+				Features:  []string{FeatureSendPrompt, FeatureTargetSession, FeatureDurableQueue, FeatureResume, FeatureForceNew},
 			},
 		},
 	}
@@ -707,9 +702,6 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 	}
 	if input.TargetSessionID != "" && input.Provider == ProviderAuto {
 		return EngineerSendPromptInput{}, fmt.Errorf("target_session_id requires an explicit engineer provider")
-	}
-	if input.TargetSessionID != "" && input.Provider != ProviderCodex {
-		return EngineerSendPromptInput{}, fmt.Errorf("target_session_id currently supports Codex engineer sessions")
 	}
 	if input.Prompt == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("prompt is required")
@@ -1549,7 +1541,7 @@ func engineerSendPromptInputSchema() map[string]any {
 			},
 			"target_session_id": map[string]any{
 				"type":        "string",
-				"description": "Exact Codex session id to resume or steer when the caller has inspected a known target. Leave empty for ordinary project-level routing. Requires provider=codex and session_mode=resume_or_new.",
+				"description": "Exact inspected recipient session id. LCR keeps the message bound to this recipient while queued and fails rather than silently retargeting it. Requires an explicit provider and session_mode=resume_or_new.",
 			},
 			"prompt": map[string]any{
 				"type":        "string",
@@ -1581,19 +1573,28 @@ func engineerSendPromptOutputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"provider": map[string]any{
-				"type": "string",
-				"enum": EngineerProviderStrings(false),
+			"status": map[string]any{"type": "string"},
+			"delivery": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"message_id": map[string]any{"type": "string"},
+					"state": map[string]any{
+						"type": "string",
+						"enum": []string{string(EngineerMessageQueued), string(EngineerMessageDelivering), string(EngineerMessageDelivered), string(EngineerMessageFailed)},
+					},
+					"provider": map[string]any{
+						"type": "string",
+						"enum": EngineerProviderStrings(false),
+					},
+					"project_path":      map[string]any{"type": "string"},
+					"target_session_id": map[string]any{"type": "string"},
+					"status":            map[string]any{"type": "string"},
+				},
+				"required": []string{"message_id", "state", "provider", "project_path", "status"},
 			},
-			"project_path": map[string]any{"type": "string"},
-			"session_id":   map[string]any{"type": "string"},
-			"reused":       map[string]any{"type": "boolean"},
-			"prompt_sent":  map[string]any{"type": "boolean"},
-			"revealed":     map[string]any{"type": "boolean"},
-			"status":       map[string]any{"type": "string"},
-			"todo_id":      map[string]any{"type": "integer"},
 		},
-		"required": []string{"provider", "project_path", "session_id", "reused", "prompt_sent", "revealed", "status", "todo_id"},
+		"required": []string{"status", "delivery"},
 	}
 }
 

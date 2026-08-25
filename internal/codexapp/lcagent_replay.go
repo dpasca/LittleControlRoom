@@ -22,6 +22,7 @@ const lcagentReplayMaxDepth = 20
 type lcagentReplay struct {
 	sessionID                   string
 	threadID                    string
+	resumeIDs                   []string
 	parentID                    string
 	projectPath                 string
 	model                       string
@@ -143,6 +144,7 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 	combined := &lcagentReplay{
 		sessionID:      strings.TrimSpace(info.LastRunID),
 		threadID:       threadID,
+		resumeIDs:      []string{threadID, strings.TrimSpace(info.LastRunID)},
 		projectPath:    strings.TrimSpace(info.ProjectPath),
 		lastActivityAt: info.UpdatedAt,
 	}
@@ -177,6 +179,7 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 		}
 		if replay.sessionID != "" {
 			combined.sessionID = replay.sessionID
+			combined.resumeIDs = append(combined.resumeIDs, replay.sessionID)
 		}
 		if replay.lastError != "" {
 			combined.lastError = replay.lastError

@@ -30,9 +30,11 @@ type ControlInvocationResultMsg struct {
 	Invocation        control.Invocation
 	Status            string
 	Activity          *ViewEngineerActivity
+	Delivery          *control.EngineerMessageReceipt
 	Err               error
 	AnnounceInChat    bool
 	OperationRecorded bool
+	OperationPending  bool
 }
 
 type controlProposalError struct {
@@ -863,13 +865,21 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 		m = m.recordOperationalNotice("control_failed", "error", content)
 		m.appendDeskEvent("control", "failed", content)
 	} else {
-		m.status = operationalStatusLine(content, "Control action completed")
-		m = m.recordOperationalNotice("control_completed", "notice", content)
+		fallback := "Control action completed"
+		noticeKind := "control_completed"
+		eventState := "done"
+		if msg.OperationPending {
+			fallback = "Control action queued"
+			noticeKind = "control_queued"
+			eventState = "queued"
+		}
+		m.status = operationalStatusLine(content, fallback)
+		m = m.recordOperationalNotice(noticeKind, "notice", content)
 		if msg.Activity != nil {
 			m = m.recordTransientEngineerActivity(*msg.Activity)
 			m.appendDeskEvent("engineer", "start", bossDeskActivityEventSummary(*msg.Activity, content))
 		} else {
-			m.appendDeskEvent("control", "done", content)
+			m.appendDeskEvent("control", eventState, content)
 		}
 	}
 	if msg.AnnounceInChat {

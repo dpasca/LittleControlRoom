@@ -101,10 +101,10 @@ Query results are bounded persisted snapshots, not guaranteed mirrors of transie
 
 When the user asks you to tell, ask, hand off to, continue, trigger, or steer another Little Control Room engineer, use LCR's control surface. Do not make the operator relay your message manually when the target can be identified and the control capability is available.
 
-1. Use the project queries to resolve the target project and inspect its recent session metadata. Use the exact session id and provider when the user means a known current Codex session.
+1. Use the project queries to resolve the target project and inspect its recent session metadata. Use the exact session id and provider when the user means a known current Codex, OpenCode, Claude Code, or LCAgent session.
 2. Call ` + "`list_control_capabilities`" + ` with ` + "`domain: \"engineer\"`" + `, then describe ` + "`engineer.send_prompt`" + `.
-3. Propose ` + "`engineer.send_prompt`" + ` with ` + "`session_mode: \"resume_or_new\"`" + `. For a known Codex target, set ` + "`target_session_id`" + ` to the inspected id and ` + "`provider: \"codex\"`" + `. Exact targeting is currently Codex-only; omit the id for other providers. Keep ` + "`reveal`" + ` false unless the user asks to open the target pane.
-4. An idle target is resumed and receives a new turn. An active Codex target is steered when its live state permits it. A stale or unsafe target fails instead of silently delivering to a replacement session.
+3. Propose ` + "`engineer.send_prompt`" + ` with ` + "`session_mode: \"resume_or_new\"`" + `. For a known target, set ` + "`target_session_id`" + ` to the inspected id and set the matching explicit ` + "`provider`" + `. Keep ` + "`reveal`" + ` false unless the user asks to open the target pane.
+4. LCR persists the message before attempting delivery. An idle exact target is resumed and receives a new turn. An active Codex target is steered when its live state permits it; active OpenCode, Claude Code, and LCAgent targets stay queued until idle. A stale target fails instead of silently delivering to a replacement session.
 
 A handoff document can carry detailed context, but it is not the delivery mechanism. Send a concise executable message that names the document or other evidence the receiving engineer should use. The normal proposal confirmation and stop-turn rules below still apply.
 

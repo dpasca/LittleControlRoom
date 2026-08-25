@@ -15,9 +15,11 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/agentcontrol"
 	"lcroom/internal/agentquery"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/buildinfo"
+	"lcroom/internal/control"
 	projectinstructions "lcroom/internal/lcagent/instructions"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/policy"
@@ -413,7 +415,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw, todoCaptureModeRaw, lcrDBPath, lcrQueryScopeRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw, todoCaptureModeRaw, lcrDBPath, lcrQueryScopeRaw, lcrControlScopeRaw string
 	var utilityProviderRaw, utilityModel string
 	var visionProviderRaw, visionModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
@@ -435,6 +437,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&todoCaptureModeRaw, "lcr-todo-capture-mode", string(todocapture.ModeOff), "Little Control Room host TODO capture mode")
 	fs.StringVar(&lcrDBPath, "lcr-db-path", "", "Little Control Room state database used by the read-only query catalog")
 	fs.StringVar(&lcrQueryScopeRaw, "lcr-query-scope", string(agentquery.ScopeProject), "Little Control Room query scope: project or portfolio")
+	fs.StringVar(&lcrControlScopeRaw, "lcr-control-scope", "", "Little Control Room confirmed-control scope: project or portfolio; empty disables control proposals")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
@@ -518,15 +521,26 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if strings.TrimSpace(lcrDBPath) == "" && visitedFlags["lcr-query-scope"] {
 		return fmt.Errorf("--lcr-query-scope requires --lcr-db-path")
 	}
+	lcrControlScope := control.NormalizeAuthorityScope(lcrControlScopeRaw)
+	if strings.TrimSpace(lcrControlScopeRaw) != "" && lcrControlScope == "" {
+		return fmt.Errorf("--lcr-control-scope must be one of: project, portfolio")
+	}
+	if lcrControlScope == control.AuthorityScopeHost {
+		return fmt.Errorf("--lcr-control-scope must be one of: project, portfolio")
+	}
+	if strings.TrimSpace(lcrDBPath) == "" && lcrControlScope != "" {
+		return fmt.Errorf("--lcr-control-scope requires --lcr-db-path")
+	}
 	var lcrQueries *agentquery.Executor
+	var lcrStateStore *store.Store
 	if strings.TrimSpace(lcrDBPath) != "" {
-		stateStore, err := store.Open(strings.TrimSpace(lcrDBPath))
+		lcrStateStore, err = store.Open(strings.TrimSpace(lcrDBPath))
 		if err != nil {
-			return fmt.Errorf("open LCR query store: %w", err)
+			return fmt.Errorf("open LCR state store: %w", err)
 		}
-		defer stateStore.Close()
+		defer lcrStateStore.Close()
 		lcrQueries, err = agentquery.NewExecutor(agentquery.Options{
-			Reader:            stateStore,
+			Reader:            lcrStateStore,
 			OriginProjectPath: workspace.Root,
 			Scope:             lcrQueryScope,
 		})
@@ -633,6 +647,20 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			return err
 		}
 	}
+	var lcrControls *agentcontrol.Executor
+	if lcrControlScope != "" {
+		lcrControls, err = agentcontrol.NewExecutor(agentcontrol.Options{
+			Store:             lcrStateStore,
+			OriginProjectPath: workspace.Root,
+			Scope:             lcrControlScope,
+			Source:            "lcagent",
+			Provider:          "lcagent",
+			SessionKey:        threadID,
+		})
+		if err != nil {
+			return fmt.Errorf("initialize LCR control catalog: %w", err)
+		}
+	}
 	stream := io.Writer(nil)
 	if outMode == outputStreamJSON {
 		stream = stdout
@@ -661,6 +689,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["require_final_response_tool"] = requireFinalResponseTool
 	meta["lcr_queries_enabled"] = lcrQueries != nil
 	meta["lcr_query_scope"] = lcrQueryScope
+	meta["lcr_controls_enabled"] = lcrControls != nil
+	meta["lcr_control_scope"] = lcrControlScope
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -835,6 +865,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		BrowserAvailable: browserCapability.Enabled,
 		Browser:          browserRunner,
 		LCRQueries:       lcrQueries,
+		LCRControls:      lcrControls,
 		Skills:           catalog,
 		SessionID:        sessionID,
 		Prompt:           prompt,
@@ -1001,6 +1032,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
 	systemPromptOptions.LCRQueriesEnabled = runner.LCRQueries != nil
+	systemPromptOptions.LCRControlsEnabled = runner.LCRControls != nil
 	systemPromptOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	systemPromptOptions.ReadOnly = readOnlyTools
 	systemPromptOptions.TodoCaptureMode = runner.TodoCaptureMode
@@ -1046,6 +1078,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.BrowserAvailable = runner.BrowserAvailable
 	toolOptions.VisionAnalysisEnabled = vision.Enabled
 	toolOptions.LCRQueriesEnabled = runner.LCRQueries != nil
+	toolOptions.LCRControlsEnabled = runner.LCRControls != nil
 	toolOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	toolOptions.ReadOnly = readOnlyTools
 	toolOptions.TodoCaptureMode = runner.TodoCaptureMode

@@ -9,11 +9,19 @@ import (
 )
 
 func NewOperationID() (string, error) {
+	return newTimestampedID("lcrop")
+}
+
+func NewEngineerMessageID() (string, error) {
+	return newTimestampedID("lcrmsg")
+}
+
+func newTimestampedID(prefix string) (string, error) {
 	var suffix [6]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
-		return "", fmt.Errorf("generate control operation id: %w", err)
+		return "", fmt.Errorf("generate %s id: %w", prefix, err)
 	}
-	return fmt.Sprintf("lcrop_%d_%s", time.Now().UTC().UnixMilli(), hex.EncodeToString(suffix[:])), nil
+	return fmt.Sprintf("%s_%d_%s", prefix, time.Now().UTC().UnixMilli(), hex.EncodeToString(suffix[:])), nil
 }
 
 func IsExternalOperationID(value string) bool {

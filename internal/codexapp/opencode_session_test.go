@@ -185,6 +185,43 @@ func TestOpenCodeInitializeSessionForceNewRejectsReusedSessionWithHistory(t *tes
 	}
 }
 
+func TestOpenCodeInitializeSessionExactResumeRejectsDifferentProject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		switch r.URL.Path {
+		case "/agent":
+			_, _ = w.Write([]byte(`[{"name":"build","mode":"primary"}]`))
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[],"default":{}}`))
+		case "/session/ses_exact":
+			_, _ = w.Write([]byte(`{"id":"ses_exact","directory":"/tmp/other-project"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	session := &openCodeSession{
+		baseURL:           server.URL,
+		http:              server.Client(),
+		notify:            func() {},
+		entryIndex:        make(map[string]int),
+		messageRole:       make(map[string]string),
+		partKind:          make(map[string]TranscriptKind),
+		partType:          make(map[string]string),
+		modelOptionsByKey: make(map[string]ModelOption),
+	}
+	err := session.initializeSession(context.Background(), LaunchRequest{
+		Provider:        ProviderOpenCode,
+		ProjectPath:     "/tmp/expected-project",
+		ResumeID:        "ses_exact",
+		RequireResumeID: true,
+	})
+	if !errors.Is(err, ErrSessionChanged) {
+		t.Fatalf("initializeSession() error = %v, want ErrSessionChanged", err)
+	}
+}
+
 func TestOpenCodePermissionOverrideForPreset(t *testing.T) {
 	tests := []struct {
 		name   string
