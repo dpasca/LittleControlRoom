@@ -10,6 +10,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/todocapture"
 )
@@ -62,6 +63,12 @@ func TestDefaultUsesManagedPlaywrightPolicy(t *testing.T) {
 	}
 	if got, want := cfg.PlaywrightPolicy.IsolationScope, browserctl.IsolationScopeTask; got != want {
 		t.Fatalf("default playwright isolation scope = %s, want %s", got, want)
+	}
+}
+
+func TestDefaultUsesClaudeAutoPermissionMode(t *testing.T) {
+	if got, want := Default().ClaudePermissionMode, claudecli.PermissionModeAuto; got != want {
+		t.Fatalf("default Claude permission mode = %q, want %q", got, want)
 	}
 }
 
@@ -258,6 +265,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
+		"claude_permission_mode = \"acceptEdits\"\n" +
 		"codex_launch_preset = \"safe\"\n" +
 		"playwright_management_mode = \"observe\"\n" +
 		"playwright_default_browser_mode = \"headed\"\n" +
@@ -359,6 +367,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.CodexLaunchPreset, codexcli.PresetSafe; got != want {
 		t.Fatalf("codex launch preset = %s, want %s", got, want)
+	}
+	if got, want := cfg.ClaudePermissionMode, claudecli.PermissionModeAcceptEdits; got != want {
+		t.Fatalf("Claude permission mode = %s, want %s", got, want)
 	}
 	if got, want := cfg.PlaywrightPolicy.ManagementMode, browserctl.ManagementModeObserve; got != want {
 		t.Fatalf("playwright management mode = %s, want %s", got, want)
@@ -555,6 +566,45 @@ func TestParseCodexLaunchPresetFlagOverridesConfigFile(t *testing.T) {
 	}
 }
 
+func TestLegacyCodexYoloConfigDefaultsClaudePermissionModeToAuto(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	content := "codex_launch_preset = \"yolo\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("parse legacy config: %v", err)
+	}
+
+	if got, want := cfg.CodexLaunchPreset, codexcli.PresetYolo; got != want {
+		t.Fatalf("Codex launch preset = %s, want %s", got, want)
+	}
+	if got, want := cfg.ClaudePermissionMode, claudecli.PermissionModeAuto; got != want {
+		t.Fatalf("Claude permission mode = %s, want %s", got, want)
+	}
+}
+
+func TestParseClaudePermissionModeFlagOverridesConfigFile(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	content := "claude_permission_mode = \"default\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", configPath, "--claude-permission-mode", "auto"})
+	if err != nil {
+		t.Fatalf("parse config with override: %v", err)
+	}
+
+	if got, want := cfg.ClaudePermissionMode, claudecli.PermissionModeAuto; got != want {
+		t.Fatalf("Claude permission mode = %s, want %s", got, want)
+	}
+}
+
 func TestParseAllowsEmptyIncludePathsFromConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()
@@ -695,7 +745,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s", "false", "true", "0.0.0.0:8787")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "auto", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s", "false", "true", "0.0.0.0:8787")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -800,6 +850,9 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if got, want := settings.CodexLaunchPreset, codexcli.PresetYolo; got != want {
 		t.Fatalf("codex launch preset = %s, want %s", got, want)
+	}
+	if got, want := settings.ClaudePermissionMode, claudecli.PermissionModeAuto; got != want {
+		t.Fatalf("Claude permission mode = %s, want %s", got, want)
 	}
 	if got, want := settings.PlaywrightPolicy.ManagementMode, browserctl.ManagementModeObserve; got != want {
 		t.Fatalf("playwright management mode = %s, want %s", got, want)
@@ -1040,7 +1093,7 @@ func TestSaveEditableSettingsPersistsLCAgentMainVisionStamp(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "10m", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "auto", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "10m", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -1048,15 +1101,23 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "auto", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
 		t.Fatalf("expected codex preset validation error")
+	}
+}
+
+func TestParseEditableSettingsRejectsInvalidClaudePermissionMode(t *testing.T) {
+	useTempHome(t)
+
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "reckless", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
+		t.Fatalf("expected Claude permission mode validation error")
 	}
 }
 
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress)
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "auto", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress)
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -1158,6 +1219,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		LCAgentWebSearchAPIKey:    "google-key",
 		LCAgentWebSearchEngineID:  "engine-id",
 		LCAgentWebSearchURL:       "http://127.0.0.1:8888",
+		ClaudePermissionMode:      claudecli.PermissionModeAuto,
 		CodexLaunchPreset:         codexcli.PresetFullAuto,
 		ConflictResolverProvider:  ConflictResolverProviderClaudeCode,
 		PlaywrightPolicy: browserctl.Policy{
@@ -1306,6 +1368,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "codex_launch_preset = \"full-auto\"") {
 		t.Fatalf("saved config should include codex launch preset: %q", text)
+	}
+	if !strings.Contains(text, "claude_permission_mode = \"auto\"") {
+		t.Fatalf("saved config should include Claude permission mode: %q", text)
 	}
 	if !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config should include interval: %q", text)

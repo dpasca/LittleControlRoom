@@ -199,6 +199,26 @@ func TestVisibleLCAgentViewShowsPermissionBadgeInBanner(t *testing.T) {
 	}
 }
 
+func TestClaudePermissionBadgeUsesEffectiveModeInsteadOfSharedPreset(t *testing.T) {
+	auto := ansi.Strip(codexBannerRightStatus(codexapp.Snapshot{
+		Provider:        codexapp.ProviderClaudeCode,
+		Preset:          codexcli.PresetYolo,
+		PermissionLevel: "auto",
+	}))
+	if auto != "AUTO MODE" {
+		t.Fatalf("Claude Auto badge = %q, want AUTO MODE", auto)
+	}
+
+	manual := ansi.Strip(codexBannerRightStatus(codexapp.Snapshot{
+		Provider:        codexapp.ProviderClaudeCode,
+		Preset:          codexcli.PresetYolo,
+		PermissionLevel: "manual",
+	}))
+	if manual != "MANUAL MODE" {
+		t.Fatalf("Claude fallback badge = %q, want MANUAL MODE", manual)
+	}
+}
+
 func TestCodexLowerBlocksOmitSidebarSessionMeta(t *testing.T) {
 	tokenBudget := int64(5000)
 	m := Model{

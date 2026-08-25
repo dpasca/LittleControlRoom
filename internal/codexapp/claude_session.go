@@ -26,49 +26,56 @@ import (
 )
 
 const (
-	claudeThinkingStatus                 = "Claude Code is thinking..."
-	claudeFinishingStatus                = "Claude Code is finalizing the current turn..."
-	claudeBackgroundTaskUnresolved       = "Claude Code exited before its background work reported completion"
-	claudeReadyStatus                    = "Claude Code session ready"
-	claudeOpenElsewhereStatus            = "Claude Code session open in another terminal"
-	claudeFreshReadyStatus               = "Fresh embedded Claude Code session ready. Send a prompt to start it."
-	claudeSupportStatus                  = "Embedded Claude Code session ready"
-	claudeInterruptNotice                = "Interrupted embedded Claude Code turn at your request; canceled tool calls were not individually denied."
-	claudeInterruptedCommandResult       = "[interrupted by the explicit Little Control Room stop; this command was not individually denied]"
-	claudeRecoverableAPIErrorNotice      = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
-	claudeCompactingStatus               = "Claude Code is compacting conversation history..."
-	claudeElicitationUnsupported         = "Embedded Claude Code elicitation responses are not supported yet"
-	claudeSafePresetNotice               = "Embedded Claude Code Safe mode routes unmatched tool requests to Little Control Room for approval."
-	claudeFullAutoPresetNotice           = "Embedded Claude Code Full Auto mode accepts file edits and routes remaining unmatched tool requests to Little Control Room for approval."
-	claudeApprovalUnavailableNotice      = "Embedded Claude Code approval routing is unavailable; unmatched tool requests will be denied."
-	claudeYoloPresetMappingNotice        = "Embedded Claude Code is running in Claude's bypassPermissions mode because the current launch preset is YOLO."
-	claudeDefaultModelAlias              = "sonnet"
-	claudeFableModelAlias                = "fable"
-	claudeOpusModelAlias                 = "opus"
-	claudeHaikuModelAlias                = "haiku"
-	claudeDefaultReasoningEffort         = "medium"
-	claudeSyntheticModelPlaceholder      = "<synthetic>"
-	claudeRuntimeMCPListControlsTool     = "mcp__lcr_runtime__list_control_capabilities"
-	claudeRuntimeMCPDescribeControlTool  = "mcp__lcr_runtime__describe_control_capability"
-	claudeRuntimeMCPProposeControlTool   = "mcp__lcr_runtime__propose_control_operation"
-	claudeRuntimeMCPGetControlTool       = "mcp__lcr_runtime__get_control_operation"
-	claudeRuntimeMCPListQueriesTool      = "mcp__lcr_runtime__list_lcr_queries"
-	claudeRuntimeMCPDescribeQueryTool    = "mcp__lcr_runtime__describe_lcr_query"
-	claudeRuntimeMCPRunQueryTool         = "mcp__lcr_runtime__run_lcr_query"
-	claudeRuntimeMCPListTODOsTool        = "mcp__lcr_runtime__list_project_todos"
-	claudeRuntimeMCPAddTODOTool          = "mcp__lcr_runtime__add_project_todo"
-	claudeRuntimeMCPBrowserAttentionTool = "mcp__lcr_runtime__request_browser_attention"
-	claudePlaywrightMCPAllowedTools      = "mcp__playwright__*"
-	claudeRestartCompletedNotice         = "The captured Claude Code turn completed before restart recovery; no continuation prompt was sent."
-	claudePIDStatusBusy                  = "busy"
-	claudePIDStatusIdle                  = "idle"
-	claudePIDStatusShell                 = "shell"
-	claudeDisableBackgroundTasksEnv      = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+	claudeThinkingStatus                  = "Claude Code is thinking..."
+	claudeFinishingStatus                 = "Claude Code is finalizing the current turn..."
+	claudeBackgroundTaskUnresolved        = "Claude Code exited before its background work reported completion"
+	claudeReadyStatus                     = "Claude Code session ready"
+	claudeOpenElsewhereStatus             = "Claude Code session open in another terminal"
+	claudeFreshReadyStatus                = "Fresh embedded Claude Code session ready. Send a prompt to start it."
+	claudeSupportStatus                   = "Embedded Claude Code session ready"
+	claudeInterruptNotice                 = "Interrupted embedded Claude Code turn at your request; canceled tool calls were not individually denied."
+	claudeInterruptedCommandResult        = "[interrupted by the explicit Little Control Room stop; this command was not individually denied]"
+	claudeRecoverableAPIErrorNotice       = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
+	claudeCompactingStatus                = "Claude Code is compacting conversation history..."
+	claudeElicitationUnsupported          = "Embedded Claude Code elicitation responses are not supported yet"
+	claudeAutoModeNotice                  = "Embedded Claude Code is using Auto mode: Claude's classifier reviews risky actions in the background, while explicit permission prompts route to Little Control Room."
+	claudeAutoApprovalUnavailableNotice   = "Embedded Claude Code is using Auto mode, but Little Control Room approval routing is unavailable; classifier-denied and explicitly gated actions cannot be approved interactively."
+	claudeBypassPermissionsNotice         = "Embedded Claude Code is using bypassPermissions mode. Claude's permission checks are disabled; Little Control Room's destructive-command hook remains active."
+	claudeAcceptEditsModeNotice           = "Embedded Claude Code accepts file edits and routes remaining unmatched tool requests to Little Control Room for approval."
+	claudeAcceptEditsUnavailableNotice    = "Embedded Claude Code accepts file edits, but Little Control Room approval routing is unavailable; remaining unmatched tool requests will be denied."
+	claudeManualModeNotice                = "Embedded Claude Code is using Manual mode and routes unmatched tool requests to Little Control Room for approval."
+	claudeManualApprovalUnavailableNotice = "Embedded Claude Code requested Manual mode, but approval routing is unavailable; Little Control Room is using Don't Ask mode so unmatched tool requests are denied."
+	claudeDontAskModeNotice               = "Embedded Claude Code is using Don't Ask mode: pre-approved actions may run and remaining permission requests are denied."
+	claudePlanModeNotice                  = "Embedded Claude Code is using Plan mode; permission prompts needed to advance the plan route to Little Control Room."
+	claudePlanApprovalUnavailableNotice   = "Embedded Claude Code is using Plan mode, but Little Control Room approval routing is unavailable; gated actions cannot be approved interactively."
+	claudeDefaultModelAlias               = "sonnet"
+	claudeFableModelAlias                 = "fable"
+	claudeOpusModelAlias                  = "opus"
+	claudeHaikuModelAlias                 = "haiku"
+	claudeDefaultReasoningEffort          = "medium"
+	claudeSyntheticModelPlaceholder       = "<synthetic>"
+	claudeRuntimeMCPListControlsTool      = "mcp__lcr_runtime__list_control_capabilities"
+	claudeRuntimeMCPDescribeControlTool   = "mcp__lcr_runtime__describe_control_capability"
+	claudeRuntimeMCPProposeControlTool    = "mcp__lcr_runtime__propose_control_operation"
+	claudeRuntimeMCPGetControlTool        = "mcp__lcr_runtime__get_control_operation"
+	claudeRuntimeMCPListQueriesTool       = "mcp__lcr_runtime__list_lcr_queries"
+	claudeRuntimeMCPDescribeQueryTool     = "mcp__lcr_runtime__describe_lcr_query"
+	claudeRuntimeMCPRunQueryTool          = "mcp__lcr_runtime__run_lcr_query"
+	claudeRuntimeMCPListTODOsTool         = "mcp__lcr_runtime__list_project_todos"
+	claudeRuntimeMCPAddTODOTool           = "mcp__lcr_runtime__add_project_todo"
+	claudeRuntimeMCPBrowserAttentionTool  = "mcp__lcr_runtime__request_browser_attention"
+	claudePlaywrightMCPAllowedTools       = "mcp__playwright__*"
+	claudeRestartCompletedNotice          = "The captured Claude Code turn completed before restart recovery; no continuation prompt was sent."
+	claudePIDStatusBusy                   = "busy"
+	claudePIDStatusIdle                   = "idle"
+	claudePIDStatusShell                  = "shell"
+	claudeDisableBackgroundTasksEnv       = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
 )
 
 type claudeCodeSession struct {
 	projectPath              string
 	preset                   codexcli.Preset
+	requestedPermissionMode  claudecli.PermissionMode
 	notify                   func()
 	playwrightPolicy         browserctl.Policy
 	managedBrowserSessionKey string
@@ -110,6 +117,7 @@ type claudeCodeSession struct {
 	lastActivityAt       time.Time
 	model                string
 	reasoningEffort      string
+	permissionMode       claudecli.PermissionMode
 	tokenUsage           *TokenUsageSnapshot
 	tokenUsageTracker    claudeTokenUsageTracker
 	modelContextWindow   int64
@@ -132,6 +140,7 @@ type claudeCodeSession struct {
 	closedCh             chan struct{}
 	closedOnce           sync.Once
 	modeNoticeShown      bool
+	modeFallbackShown    bool
 
 	assistantBlocks     map[string]map[string]struct{}
 	toolCalls           map[string]claudeToolCall
@@ -273,10 +282,14 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	if preset == "" {
 		preset = codexcli.DefaultPreset()
 	}
+	requestedPermissionMode, err := claudecli.ParsePermissionMode(string(req.ClaudePermissionMode))
+	if err != nil {
+		return nil, fmt.Errorf("Claude Code permission mode: %w", err)
+	}
 	ensureManagedPlaywrightSessionKey(&req)
 	policy := req.PlaywrightPolicy.Normalize()
 	var approvalServer *claudeapproval.Server
-	if preset != codexcli.PresetYolo {
+	if requestedPermissionMode.UsesApprovalBridge() {
 		approvalServer, err = claudeapproval.NewServer()
 		if err != nil {
 			return nil, err
@@ -292,6 +305,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		_ = approvalServer.Close()
 		approvalServer = nil
 	}
+	permissionMode, _ := claudePermissionMode(requestedPermissionMode, strings.TrimSpace(mcpOptions.PermissionPromptTool) != "")
 	safetySettings, err := claudeSafetyHookSettings(req)
 	if err != nil {
 		_ = approvalServer.Close()
@@ -301,6 +315,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	s := &claudeCodeSession{
 		projectPath:              req.ProjectPath,
 		preset:                   preset,
+		requestedPermissionMode:  requestedPermissionMode,
 		notify:                   notify,
 		playwrightPolicy:         policy,
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
@@ -313,6 +328,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		planUsageReader:          claudecli.NewPlanUsageReader(),
 		pendingModel:             concreteClaudeModel(req.PendingModel),
 		pendingReasoning:         strings.TrimSpace(req.PendingReasoning),
+		permissionMode:           permissionMode,
 		status:                   claudeSupportStatus,
 		closedCh:                 make(chan struct{}),
 		assistantBlocks:          make(map[string]map[string]struct{}),
@@ -418,6 +434,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		ProjectPath:              s.projectPath,
 		ThreadID:                 s.sessionID,
 		Preset:                   s.preset,
+		PermissionLevel:          string(s.effectivePermissionModeLocked()),
 		BrowserActivity:          s.browserActivity.Normalize(),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
@@ -595,11 +612,12 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		model := firstNonEmptyTrimmed(concreteClaudeModel(s.pendingModel), concreteClaudeModel(s.model))
 		reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
 		sessionID := strings.TrimSpace(s.sessionID)
-		permissionMode, modeNotice := claudePermissionModeForPreset(s.preset, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
+		permissionMode, modeNotice := claudePermissionMode(s.requestedPermissionMode, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
+		s.permissionMode = permissionMode
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cmd, stdin, stdout, stderr, err = startClaudeTurnWithMCP(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy, s.mcpOptions, s.safetySettings)
+		cmd, stdin, stdout, stderr, err = startClaudeTurnWithMCP(ctx, s.projectPath, sessionID, model, reasoning, string(permissionMode), s.playwrightPolicy, s.mcpOptions, s.safetySettings)
 		if err != nil {
 			cancel()
 			s.mu.Unlock()
@@ -735,7 +753,7 @@ func (s *claudeCodeSession) ShowStatus() error {
 	if model == "" {
 		model = "(default)"
 	}
-	mode, _ := claudePermissionModeForPreset(s.preset, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
+	mode := s.effectivePermissionModeLocked()
 	sessionFile := strings.TrimSpace(s.sessionFile)
 	if sessionFile == "" {
 		sessionFile = "(not created yet)"
@@ -743,7 +761,7 @@ func (s *claudeCodeSession) ShowStatus() error {
 	lines := []string{
 		"Claude session " + sessionID,
 		"Model: " + model,
-		"Mode: " + mode,
+		"Mode: " + mode.DisplayName(),
 		"Session file: " + sessionFile,
 	}
 	usage := cloneTokenUsageSnapshot(s.tokenUsage)
@@ -1760,8 +1778,23 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 				s.reasoningEffort = effort
 				s.pendingReasoning = ""
 			}
-			if mode := strings.TrimSpace(env.PermissionMode); mode != "" {
-				s.lastSystemNotice = "Claude Code permission mode: " + mode
+			if modeRaw := strings.TrimSpace(env.PermissionMode); modeRaw != "" {
+				if mode, err := claudecli.ParsePermissionMode(modeRaw); err == nil {
+					launchedMode := s.effectivePermissionModeLocked()
+					s.permissionMode = mode
+					if mode != launchedMode {
+						notice := fmt.Sprintf("Claude Code was launched in %s mode but started in %s mode. The requested mode may be unavailable for the selected model, account, or managed policy.", launchedMode.DisplayName(), mode.DisplayName())
+						s.lastSystemNotice = notice
+						if !s.modeFallbackShown {
+							s.appendSystemNoticeLocked(notice)
+							s.modeFallbackShown = true
+						}
+					} else {
+						s.lastSystemNotice = "Claude Code permission mode: " + mode.DisplayName()
+					}
+				} else {
+					s.lastSystemNotice = "Claude Code permission mode: " + modeRaw
+				}
 			}
 			if s.compacting {
 				s.status = claudeCompactingStatus
@@ -2899,25 +2932,51 @@ func claudeSessionFilePath(claudeHome, projectPath, sessionID string) string {
 	return filepath.Join(claudeHome, "projects", claudeartifact.ProjectDirectoryName(projectPath), sessionID+".jsonl")
 }
 
-func claudePermissionModeForPreset(preset codexcli.Preset, approvalRouting bool) (mode string, notice string) {
-	switch preset {
-	case codexcli.PresetYolo:
-		return "bypassPermissions", claudeYoloPresetMappingNotice
-	case codexcli.PresetFullAuto:
+func (s *claudeCodeSession) effectivePermissionModeLocked() claudecli.PermissionMode {
+	if s.permissionMode != "" {
+		return s.permissionMode
+	}
+	if s.requestedPermissionMode != "" {
+		return s.requestedPermissionMode
+	}
+	return claudecli.DefaultPermissionMode()
+}
+
+func claudePermissionMode(requested claudecli.PermissionMode, approvalRouting bool) (mode claudecli.PermissionMode, notice string) {
+	requested, err := claudecli.ParsePermissionMode(string(requested))
+	if err != nil {
+		requested = claudecli.DefaultPermissionMode()
+	}
+	switch requested {
+	case claudecli.PermissionModeAuto:
 		if approvalRouting {
-			return "acceptEdits", claudeFullAutoPresetNotice
+			return requested, claudeAutoModeNotice
 		}
-		return "acceptEdits", claudeApprovalUnavailableNotice
-	case codexcli.PresetSafe:
+		return requested, claudeAutoApprovalUnavailableNotice
+	case claudecli.PermissionModeBypassPermissions:
+		return requested, claudeBypassPermissionsNotice
+	case claudecli.PermissionModeAcceptEdits:
 		if approvalRouting {
-			return "default", claudeSafePresetNotice
+			return requested, claudeAcceptEditsModeNotice
 		}
-		return "dontAsk", claudeApprovalUnavailableNotice
+		return requested, claudeAcceptEditsUnavailableNotice
+	case claudecli.PermissionModeManual:
+		if approvalRouting {
+			return requested, claudeManualModeNotice
+		}
+		return claudecli.PermissionModeDontAsk, claudeManualApprovalUnavailableNotice
+	case claudecli.PermissionModeDontAsk:
+		return requested, claudeDontAskModeNotice
+	case claudecli.PermissionModePlan:
+		if approvalRouting {
+			return requested, claudePlanModeNotice
+		}
+		return requested, claudePlanApprovalUnavailableNotice
 	default:
 		if approvalRouting {
-			return "default", claudeSafePresetNotice
+			return claudecli.PermissionModeAuto, claudeAutoModeNotice
 		}
-		return "dontAsk", claudeApprovalUnavailableNotice
+		return claudecli.PermissionModeAuto, claudeAutoApprovalUnavailableNotice
 	}
 }
 

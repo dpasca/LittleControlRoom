@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/todocapture"
@@ -37,6 +38,7 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 		settingsFieldBossChatOllamaThinking,
 		settingsFieldLCAgentToolProfile,
 		settingsFieldLCAgentContextProfile,
+		settingsFieldClaudePermissionMode,
 		settingsFieldEngineerTodoCaptureMode,
 		settingsFieldConflictResolverProvider:
 		return true
@@ -47,6 +49,45 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 
 func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 	switch fieldIndex {
+	case settingsFieldClaudePermissionMode:
+		return []settingsChoiceOption{
+			{
+				Value:       string(claudecli.PermissionModeAuto),
+				Label:       "Auto",
+				Summary:     "Let Claude work while a classifier reviews risky actions.",
+				Description: "Recommended default. Routine reads and workspace edits proceed; risky shell or network actions receive a second safety review, and explicit asks route to Little Control Room.",
+			},
+			{
+				Value:       string(claudecli.PermissionModeBypassPermissions),
+				Label:       "Bypass Permissions",
+				Summary:     "Skip Claude Code's permission checks.",
+				Description: "Highest-risk escape hatch for an environment you have independently sandboxed. Little Control Room's destructive-command hook still runs, but Claude's permission classifier and approval bridge do not.",
+			},
+			{
+				Value:       string(claudecli.PermissionModeAcceptEdits),
+				Label:       "Accept Edits",
+				Summary:     "Allow file edits and ask about other unmatched tools.",
+				Description: "Useful when edits are trusted but shell, network, and other actions should still be routed for approval.",
+			},
+			{
+				Value:       string(claudecli.PermissionModeManual),
+				Label:       "Manual",
+				Summary:     "Route unmatched actions to Little Control Room.",
+				Description: "Most interactive normal mode. If the callback bridge is unavailable, Little Control Room fails closed with Don't Ask instead.",
+			},
+			{
+				Value:       string(claudecli.PermissionModeDontAsk),
+				Label:       "Don't Ask",
+				Summary:     "Run pre-approved actions and deny the rest.",
+				Description: "Non-interactive fail-closed mode for workflows that should never pause for permission input.",
+			},
+			{
+				Value:       string(claudecli.PermissionModePlan),
+				Label:       "Plan",
+				Summary:     "Keep Claude focused on inspection and planning.",
+				Description: "Use when you want a plan before allowing implementation actions.",
+			},
+		}
 	case settingsFieldLCAgentRoutePreset:
 		return []settingsChoiceOption{
 			{

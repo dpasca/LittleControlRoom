@@ -13,6 +13,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/todocapture"
 
@@ -84,6 +85,7 @@ type AppConfig struct {
 	LCAgentWebSearchAPIKey    string
 	LCAgentWebSearchEngineID  string
 	LCAgentWebSearchURL       string
+	ClaudePermissionMode      claudecli.PermissionMode
 	CodexLaunchPreset         codexcli.Preset
 	ConflictResolverProvider  ConflictResolverProvider
 	PlaywrightPolicy          browserctl.Policy
@@ -255,6 +257,7 @@ type fileConfig struct {
 	LCAgentWebSearchAPIKey    *string                  `toml:"lcagent_web_search_api_key"`
 	LCAgentWebSearchEngineID  *string                  `toml:"lcagent_web_search_engine_id"`
 	LCAgentWebSearchURL       *string                  `toml:"lcagent_web_search_url"`
+	ClaudePermissionMode      string                   `toml:"claude_permission_mode"`
 	CodexLaunchPreset         string                   `toml:"codex_launch_preset"`
 	ConflictResolverProvider  *string                  `toml:"conflict_resolver_provider"`
 	PlaywrightManagementMode  *string                  `toml:"playwright_management_mode"`
@@ -293,6 +296,7 @@ func Default() AppConfig {
 		LCAgentVisionProvider:    "auto",
 		LCAgentWebSearchBackend:  "off",
 		BossChatOllamaThinking:   true,
+		ClaudePermissionMode:     claudecli.DefaultPermissionMode(),
 		CodexLaunchPreset:        codexcli.DefaultPreset(),
 		ConflictResolverProvider: ConflictResolverProviderCodex,
 		PlaywrightPolicy:         browserctl.DefaultPolicy(),
@@ -360,6 +364,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
 	lcagentWebSearchURL := fs.String("lcagent-web-search-url", cfg.LCAgentWebSearchURL, "LCAgent web search endpoint URL, used by SearXNG")
+	claudePermissionMode := fs.String("claude-permission-mode", string(cfg.ClaudePermissionMode), "Claude Code permission mode: auto, bypassPermissions, acceptEdits, manual, dontAsk, or plan")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
 	conflictResolverProvider := fs.String("conflict-resolver-provider", string(cfg.ConflictResolverProvider), "Provider for /resolve conflict repair: codex, opencode, claude_code, or lcagent")
 	playwrightStateRetention := fs.Duration("playwright-state-retention", cfg.PlaywrightCleanupPolicy.RetentionPeriod, "Retention period for inactive managed Playwright state; 0 disables age-based expiry")
@@ -475,6 +480,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(*lcagentWebSearchAPIKey)
 	cfg.LCAgentWebSearchEngineID = strings.TrimSpace(*lcagentWebSearchEngineID)
 	cfg.LCAgentWebSearchURL = strings.TrimSpace(*lcagentWebSearchURL)
+	cfg.ClaudePermissionMode, err = claudecli.ParsePermissionMode(*claudePermissionMode)
+	if err != nil {
+		return AppConfig{}, fmt.Errorf("claude-permission-mode: %w", err)
+	}
 	cfg.CodexLaunchPreset, err = codexcli.ParsePreset(*codexLaunchPreset)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("codex-launch-preset: %w", err)
@@ -772,6 +781,13 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.LCAgentWebSearchAPIKey, fc.LCAgentWebSearchAPIKey)
 	applyOptionalTrimmedString(&cfg.LCAgentWebSearchEngineID, fc.LCAgentWebSearchEngineID)
 	applyOptionalTrimmedString(&cfg.LCAgentWebSearchURL, fc.LCAgentWebSearchURL)
+	if strings.TrimSpace(fc.ClaudePermissionMode) != "" {
+		mode, err := claudecli.ParsePermissionMode(fc.ClaudePermissionMode)
+		if err != nil {
+			return fmt.Errorf("config claude_permission_mode: %w", err)
+		}
+		cfg.ClaudePermissionMode = mode
+	}
 	if strings.TrimSpace(fc.CodexLaunchPreset) != "" {
 		preset, err := codexcli.ParsePreset(fc.CodexLaunchPreset)
 		if err != nil {
@@ -874,6 +890,9 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	if _, err := codexcli.ParsePreset(string(cfg.CodexLaunchPreset)); err != nil {
+		return err
+	}
+	if _, err := claudecli.ParsePermissionMode(string(cfg.ClaudePermissionMode)); err != nil {
 		return err
 	}
 	if _, err := ParseConflictResolverProvider(string(cfg.ConflictResolverProvider)); err != nil {

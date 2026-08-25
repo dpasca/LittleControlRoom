@@ -1535,7 +1535,7 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Codex launch mode", "Conflict resolver", "Codex", "Show reasoning"} {
+	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Claude permissions", "Auto", "Codex launch mode", "Conflict resolver", "Codex", "Show reasoning"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("providers and models section missing %q: %q", want, rendered)
 		}
@@ -1554,8 +1554,8 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	if got.activeSettingsSection().id != settingsSectionAI {
 		t.Fatalf("compact settings should stay in Providers & Models section, got %q", got.activeSettingsSection().id)
 	}
-	if got.settingsSelected != settingsFieldConflictResolverProvider {
-		t.Fatalf("settingsSelected = %d, want conflict resolver row", got.settingsSelected)
+	if got.settingsSelected != settingsFieldCodexLaunchPreset {
+		t.Fatalf("settingsSelected = %d, want Codex launch mode row", got.settingsSelected)
 	}
 }
 

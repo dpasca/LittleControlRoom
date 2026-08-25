@@ -662,6 +662,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) error 
 	s.cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	s.cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
 	s.cfg.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
+	s.cfg.ClaudePermissionMode = settings.ClaudePermissionMode
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.ConflictResolverProvider = config.NormalizeConflictResolverProvider(settings.ConflictResolverProvider)
 	s.cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()

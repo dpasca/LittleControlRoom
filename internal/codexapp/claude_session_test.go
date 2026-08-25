@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/claudeartifact"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 )
 
@@ -35,27 +36,32 @@ func (r *recordingWriteCloser) Close() error {
 	return nil
 }
 
-func TestClaudePermissionModeForPreset(t *testing.T) {
+func TestClaudePermissionMode(t *testing.T) {
 	tests := []struct {
-		preset          codexcli.Preset
+		requested       claudecli.PermissionMode
 		approvalRouting bool
-		wantMode        string
+		wantMode        claudecli.PermissionMode
 		wantNotice      string
 	}{
-		{preset: codexcli.PresetYolo, approvalRouting: true, wantMode: "bypassPermissions", wantNotice: claudeYoloPresetMappingNotice},
-		{preset: codexcli.PresetFullAuto, approvalRouting: true, wantMode: "acceptEdits", wantNotice: claudeFullAutoPresetNotice},
-		{preset: codexcli.PresetSafe, approvalRouting: true, wantMode: "default", wantNotice: claudeSafePresetNotice},
-		{preset: codexcli.PresetFullAuto, approvalRouting: false, wantMode: "acceptEdits", wantNotice: claudeApprovalUnavailableNotice},
-		{preset: codexcli.PresetSafe, approvalRouting: false, wantMode: "dontAsk", wantNotice: claudeApprovalUnavailableNotice},
+		{requested: claudecli.PermissionModeAuto, approvalRouting: true, wantMode: claudecli.PermissionModeAuto, wantNotice: claudeAutoModeNotice},
+		{requested: claudecli.PermissionModeAuto, approvalRouting: false, wantMode: claudecli.PermissionModeAuto, wantNotice: claudeAutoApprovalUnavailableNotice},
+		{requested: claudecli.PermissionModeBypassPermissions, approvalRouting: false, wantMode: claudecli.PermissionModeBypassPermissions, wantNotice: claudeBypassPermissionsNotice},
+		{requested: claudecli.PermissionModeAcceptEdits, approvalRouting: true, wantMode: claudecli.PermissionModeAcceptEdits, wantNotice: claudeAcceptEditsModeNotice},
+		{requested: claudecli.PermissionModeAcceptEdits, approvalRouting: false, wantMode: claudecli.PermissionModeAcceptEdits, wantNotice: claudeAcceptEditsUnavailableNotice},
+		{requested: claudecli.PermissionModeManual, approvalRouting: true, wantMode: claudecli.PermissionModeManual, wantNotice: claudeManualModeNotice},
+		{requested: claudecli.PermissionModeManual, approvalRouting: false, wantMode: claudecli.PermissionModeDontAsk, wantNotice: claudeManualApprovalUnavailableNotice},
+		{requested: claudecli.PermissionModeDontAsk, approvalRouting: false, wantMode: claudecli.PermissionModeDontAsk, wantNotice: claudeDontAskModeNotice},
+		{requested: claudecli.PermissionModePlan, approvalRouting: true, wantMode: claudecli.PermissionModePlan, wantNotice: claudePlanModeNotice},
+		{requested: claudecli.PermissionModePlan, approvalRouting: false, wantMode: claudecli.PermissionModePlan, wantNotice: claudePlanApprovalUnavailableNotice},
 	}
 
 	for _, tt := range tests {
-		gotMode, gotNotice := claudePermissionModeForPreset(tt.preset, tt.approvalRouting)
+		gotMode, gotNotice := claudePermissionMode(tt.requested, tt.approvalRouting)
 		if gotMode != tt.wantMode {
-			t.Fatalf("claudePermissionModeForPreset(%q) mode = %q, want %q", tt.preset, gotMode, tt.wantMode)
+			t.Fatalf("claudePermissionMode(%q) mode = %q, want %q", tt.requested, gotMode, tt.wantMode)
 		}
 		if gotNotice != tt.wantNotice {
-			t.Fatalf("claudePermissionModeForPreset(%q) notice = %q, want %q", tt.preset, gotNotice, tt.wantNotice)
+			t.Fatalf("claudePermissionMode(%q) notice = %q, want %q", tt.requested, gotNotice, tt.wantNotice)
 		}
 	}
 }
@@ -607,6 +613,28 @@ func TestClaudeStreamUsagePopulatesContextSnapshot(t *testing.T) {
 	}
 	if got := session.Snapshot().Transcript; !strings.Contains(got, "Context: 650914 / 1000000 tokens used (65% used, 35% left)") {
 		t.Fatalf("status transcript = %q, want Claude context report", got)
+	}
+}
+
+func TestClaudeStreamSurfacesPermissionModeFallback(t *testing.T) {
+	session := &claudeCodeSession{
+		requestedPermissionMode: claudecli.PermissionModeAuto,
+		permissionMode:          claudecli.PermissionModeAuto,
+		assistantBlocks:         make(map[string]map[string]struct{}),
+		toolCalls:               make(map[string]claudeToolCall),
+		toolResults:             make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"ses-demo","model":"claude-haiku-4-5","permissionMode":"manual"}`)
+
+	snapshot := session.Snapshot()
+	if got, want := snapshot.PermissionLevel, string(claudecli.PermissionModeManual); got != want {
+		t.Fatalf("effective permission mode = %q, want %q", got, want)
+	}
+	for _, want := range []string{"launched in Auto mode", "started in Manual mode", "selected model, account, or managed policy"} {
+		if !strings.Contains(snapshot.LastSystemNotice, want) {
+			t.Fatalf("fallback notice missing %q: %q", want, snapshot.LastSystemNotice)
+		}
 	}
 }
 

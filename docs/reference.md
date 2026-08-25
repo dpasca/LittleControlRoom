@@ -61,6 +61,7 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `include_paths`
 - `exclude_paths`
 - `exclude_project_patterns`
+- `claude_permission_mode`
 - `codex_launch_preset`
 - `conflict_resolver_provider`
 - `engineer_todo_capture_mode`
@@ -104,6 +105,7 @@ include_paths = [
 
 exclude_paths = []
 exclude_project_patterns = []
+claude_permission_mode = "auto"
 codex_launch_preset = "yolo"
 # /resolve preselects this provider independently of ordinary launch defaults.
 # Confirming another provider remembers it for next time.
@@ -176,9 +178,17 @@ exec-policy rules separately forbid absolute executables and common wrapper
 forms that could bypass the shim. This does not confine reads or ordinary
 writes to the current project. Embedded Claude Code receives an LCR-owned Bash
 `PreToolUse` hook that denies recursive or option-ambiguous `rm` before execution
-in every permission mode, including YOLO's `bypassPermissions`. In Safe mode,
-Claude's unmatched tool requests appear in LCR's existing approval dialog; Full
-Auto accepts edits and routes its remaining unmatched tools there. These Claude
+in every permission mode, including `auto` and `bypassPermissions`. Claude Code
+has a separate `claude_permission_mode` setting and defaults to `auto`, where
+Claude's background classifier reviews risky actions without routine prompts.
+Existing config files need no migration edit: when `claude_permission_mode` is
+absent, Claude automatically uses `auto` even if `codex_launch_preset` is
+`yolo`; Codex and OpenCode keep their existing preset. The next normal settings
+save writes the new Claude setting explicitly. An upgraded app applies the mode
+whenever it opens or recovers a Claude helper; a helper already running while a
+setting changes keeps its launch mode until it is restarted.
+Explicit asks and classifier fallback prompts route to LCR's existing approval
+dialog. `bypassPermissions` remains an explicit escape hatch. These Claude
 approvals are one-shot because the callback supplies no durable session scope.
 LCAgent applies the same recursive guard in every permission mode.
 
@@ -268,6 +278,7 @@ exclude_project_patterns = [
   "client-*",
   "archive-*",
 ]
+claude_permission_mode = "auto"
 codex_launch_preset = "yolo"
 conflict_resolver_provider = "codex"
 playwright_management_mode = "managed"
@@ -600,9 +611,11 @@ same tracked TODO, worktree, and engineer launch.
 - `--include-paths "~/dev/repos,~/work/client-repos"`
 - `--exclude-paths "~/dev/repos/archive,~/dev/repos/tmp"`
 - `--exclude-project-patterns "client-*,archive-*"`
+- `--claude-permission-mode "auto"`
 - `--codex-launch-preset "yolo"`
 - `--codex-home "~/.codex"`
 - `--opencode-home "~/.local/share/opencode"`
+- `--claude-code-home "~/.claude"`
 - `--lcagent-path "~/bin/lcagent"`
 - `--lcagent-env-file "~/path/to/openrouter.env"`
 - `--lcagent-auto low`
@@ -656,10 +669,11 @@ same tracked TODO, worktree, and engineer launch.
 - `/review` starts an embedded Codex review of uncommitted changes and streams the review-mode transcript into the pane.
 - While Chat is visible, `Enter` sends or confirms a proposal, `Alt+Enter` adds a newline, `/new [prompt]` starts a fresh session, `Ctrl+L` clears into a fresh session, and `Esc` or backtick hides the overlay.
 - When Little Control Room itself is started through `go run`, it pins the disposable Go-cache executable under `<data-dir>/embedded-helpers/` before registering LCR-owned MCP servers or Claude Code safety hooks. The pin is a hard link when the cache and data directory share a filesystem, with a byte-for-byte copy as the cross-filesystem fallback. Clearing the Go build cache can therefore remove its original path without breaking newly opened embedded sessions.
-- Embedded Claude Code runs through Claude Code's `claude -p` stream flow. Prompt/response turns, non-interrupting queued follow-ups, session resume, in-pane tool approvals and structured questions, `/model`, context-usage reporting, and native `/compact [instructions]` are wired, while other unsupported in-pane actions fall back to the local command subset above. A private per-session callback socket connects Claude's permission-prompt MCP tool to the owning TUI session without blocking the render path. LCR only reports successful Claude compaction after receiving Claude's structured compaction boundary; a short conversation can therefore return a clear no-op result. LCR disables Claude Code's native background-task mode for these embedded processes because Claude cleans up background tasks when its owning CLI exits; shell commands and tests therefore remain foreground-owned until they finish. LCR's per-process settings also disable Claude Code's automatic commit and pull-request attribution. Structured background-task evidence from restored or externally owned sessions is still shown under **Active Processes**, and a provider exit before a terminal notification is reported as lost work.
+- Embedded Claude Code runs through Claude Code's `claude -p` stream flow. Prompt/response turns, non-interrupting queued follow-ups, session resume, in-pane tool approvals and structured questions, `/model`, context-usage reporting, and native `/compact [instructions]` are wired, while other unsupported in-pane actions fall back to the local command subset above. A private per-session callback socket connects Claude's permission-prompt MCP tool to the owning TUI session without blocking the render path. Auto mode keeps that callback for explicit asks and classifier fallback prompts. LCR only reports successful Claude compaction after receiving Claude's structured compaction boundary; a short conversation can therefore return a clear no-op result. LCR disables Claude Code's native background-task mode for these embedded processes because Claude cleans up background tasks when its owning CLI exits; shell commands and tests therefore remain foreground-owned until they finish. LCR's per-process settings also disable Claude Code's automatic commit and pull-request attribution. Structured background-task evidence from restored or externally owned sessions is still shown under **Active Processes**, and a provider exit before a terminal notification is reported as lost work.
 - If LCR inherited a non-empty `ANTHROPIC_API_KEY`, it pauses before starting any embedded Claude Code process (including a Claude conflict-resolver lane) and warns that Claude Code may prioritize pay-as-you-go API billing over subscription limits. **Cancel launch** remains the default. **Continue anyway** acknowledges the warning for the current LCR process only; the warning becomes active again after LCR restarts.
 - The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail. When output is available, **Copy output** places that selected process's plain-text output on the clipboard, while **Add TODO** opens a prefilled, editable failure report under the repository-scoped project; press `Ctrl+S` there to save it.
-- `codex_launch_preset` controls the shared embedded-provider launch preset. For Claude Code, `safe` maps to `default` plus LCR-routed approvals, `full-auto` maps to `acceptEdits` plus approvals for remaining unmatched tools, and `yolo` maps to `bypassPermissions`. The default is `yolo`.
+- `claude_permission_mode` independently controls embedded Claude Code. It defaults to `auto`; existing config files do not need to add the key, including those with `codex_launch_preset = "yolo"`. The other accepted values are `bypassPermissions`, `acceptEdits`, `manual`, `dontAsk`, and `plan`. Auto mode requires a compatible Claude Code release and supported model/account route. If Claude reports that it actually started in another mode, LCR shows that effective mode in the pane badge and emits a fallback notice. See Anthropic's [permission modes](https://code.claude.com/docs/en/permission-modes) and [Auto mode configuration](https://code.claude.com/docs/en/auto-mode-config).
+- `codex_launch_preset` controls Codex and OpenCode only. Its default remains `yolo`; changing it no longer changes Claude Code permissions.
 - `conflict_resolver_provider` controls which provider the `/resolve` chooser preselects. The default is `codex`, and confirming another choice remembers it.
 - CLI flags override config file values.

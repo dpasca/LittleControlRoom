@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/todocapture"
 )
@@ -76,6 +77,7 @@ type EditableSettings struct {
 	LCAgentWebSearchAPIKey    string
 	LCAgentWebSearchEngineID  string
 	LCAgentWebSearchURL       string
+	ClaudePermissionMode      claudecli.PermissionMode
 	CodexLaunchPreset         codexcli.Preset
 	ConflictResolverProvider  ConflictResolverProvider
 	PlaywrightPolicy          browserctl.Policy
@@ -152,6 +154,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentWebSearchAPIKey:    cfg.LCAgentWebSearchAPIKey,
 		LCAgentWebSearchEngineID:  cfg.LCAgentWebSearchEngineID,
 		LCAgentWebSearchURL:       cfg.LCAgentWebSearchURL,
+		ClaudePermissionMode:      cfg.ClaudePermissionMode,
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		ConflictResolverProvider:  NormalizeConflictResolverProvider(cfg.ConflictResolverProvider),
 		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
@@ -240,6 +243,9 @@ func firstNonEmptyTrimmed(values ...string) string {
 
 func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
+	if mode, err := claudecli.ParsePermissionMode(string(settings.ClaudePermissionMode)); err == nil {
+		settings.ClaudePermissionMode = mode
+	}
 	settings.ConflictResolverProvider = NormalizeConflictResolverProvider(settings.ConflictResolverProvider)
 	settings.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	if settings.PlaywrightCleanupPolicy == (browserctl.ManagedPlaywrightCleanupPolicy{}) {
@@ -330,7 +336,7 @@ func normalizeLCAgentModelForProvider(provider, model string) string {
 	return NormalizeModelForProvider(provider, model)
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw, mobileEnabledRaw, mobileInputEnabledRaw, mobileListenAddressRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, claudePermissionModeRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw, mobileEnabledRaw, mobileInputEnabledRaw, mobileListenAddressRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -420,6 +426,10 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		return EditableSettings{}, fmt.Errorf("exclude paths: %w", err)
 	}
 	excludeProjectPatterns := normalizeProjectPatterns(strings.Split(excludeProjectPatternsRaw, ","))
+	claudePermissionMode, err := claudecli.ParsePermissionMode(claudePermissionModeRaw)
+	if err != nil {
+		return EditableSettings{}, fmt.Errorf("Claude permission mode: %w", err)
+	}
 	codexLaunchPreset, err := codexcli.ParsePreset(codexLaunchPresetRaw)
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("codex launch preset: %w", err)
@@ -499,6 +509,7 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		IncludePaths:           includePaths,
 		ExcludePaths:           excludePaths,
 		ExcludeProjectPatterns: excludeProjectPatterns,
+		ClaudePermissionMode:   claudePermissionMode,
 		CodexLaunchPreset:      codexLaunchPreset,
 		PlaywrightPolicy: browserctl.Policy{
 			ManagementMode:     playwrightManagementMode,
@@ -973,6 +984,7 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, "]")
 		lines = append(lines, "")
 	}
+	lines = append(lines, fmt.Sprintf("claude_permission_mode = %s", strconv.Quote(string(settings.ClaudePermissionMode))))
 	lines = append(lines, fmt.Sprintf("codex_launch_preset = %s", strconv.Quote(string(settings.CodexLaunchPreset))))
 	lines = append(lines, fmt.Sprintf("conflict_resolver_provider = %s", strconv.Quote(string(NormalizeConflictResolverProvider(settings.ConflictResolverProvider)))))
 	lines = append(lines, "")

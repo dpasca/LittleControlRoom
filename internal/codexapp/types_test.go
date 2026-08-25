@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 )
 
@@ -1272,6 +1273,23 @@ func TestPresetMappings(t *testing.T) {
 				t.Fatalf("sandboxModeForPreset(%q) = %q, want %q", tt.preset, got, tt.wantSandbox)
 			}
 		})
+	}
+}
+
+func TestClaudeLaunchRequestValidatesPermissionMode(t *testing.T) {
+	valid := LaunchRequest{
+		Provider:             ProviderClaudeCode,
+		ProjectPath:          "/tmp/demo",
+		ClaudePermissionMode: claudecli.PermissionModeAuto,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Auto launch request validation error = %v", err)
+	}
+
+	invalid := valid
+	invalid.ClaudePermissionMode = "reckless"
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("expected invalid Claude permission mode to fail validation")
 	}
 }
 

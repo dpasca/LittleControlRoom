@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
@@ -1048,6 +1049,7 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		InterruptedTurnID:          options.interruptedTurnID,
 		InterruptedTurnStartedAt:   options.interruptedTurnStartedAt,
 		Preset:                     m.currentCodexLaunchPreset(),
+		ClaudePermissionMode:       m.currentClaudePermissionMode(),
 		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
 		AppDataDir:                 m.appDataDir(),
 		CodexHome:                  m.codexHome(),
@@ -1626,6 +1628,14 @@ func (m Model) currentCodexLaunchPreset() codexcli.Preset {
 		return codexcli.DefaultPreset()
 	}
 	return settings.CodexLaunchPreset
+}
+
+func (m Model) currentClaudePermissionMode() claudecli.PermissionMode {
+	settings := m.currentSettingsBaseline()
+	if settings.ClaudePermissionMode == "" {
+		return claudecli.DefaultPermissionMode()
+	}
+	return settings.ClaudePermissionMode
 }
 
 func (m Model) currentPlaywrightPolicy() browserctl.Policy {

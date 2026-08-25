@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/keyedmutex"
 	"lcroom/internal/projectrun"
@@ -698,6 +699,7 @@ type LaunchRequest struct {
 	Prompt                   string
 	InitialInput             Submission
 	Preset                   codexcli.Preset
+	ClaudePermissionMode     claudecli.PermissionMode
 	PendingModel             string
 	PendingReasoning         string
 	PlaywrightPolicy         browserctl.Policy
@@ -792,8 +794,12 @@ func (r LaunchRequest) Validate() error {
 		if _, err := codexcli.ParsePreset(string(preset)); err != nil {
 			return err
 		}
-	case ProviderClaudeCode, ProviderLCAgent:
-		// These providers do not use Codex launch presets.
+	case ProviderClaudeCode:
+		if _, err := claudecli.ParsePermissionMode(string(r.ClaudePermissionMode)); err != nil {
+			return err
+		}
+	case ProviderLCAgent:
+		// LCAgent does not use Codex or Claude Code launch modes.
 	default:
 		return fmt.Errorf("embedded provider must be one of: codex, opencode, claude_code, lcagent")
 	}

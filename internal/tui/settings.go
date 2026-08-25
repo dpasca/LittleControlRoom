@@ -67,6 +67,7 @@ const (
 	settingsFieldExcludePaths
 	settingsFieldExcludeProjectPatterns
 	settingsFieldPrivacyPatterns
+	settingsFieldClaudePermissionMode
 	settingsFieldCodexLaunchPreset
 	settingsFieldBrowserAutomation
 	settingsFieldHideReasoningSections
@@ -217,6 +218,7 @@ func settingsSections() []settingsSection {
 			summary: "Shared provider defaults",
 			hint:    "A compact inventory of shared provider connections and global model display defaults. Use Getting Started for feature setup.",
 			fieldOrder: []int{
+				settingsFieldClaudePermissionMode,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldConflictResolverProvider,
 				settingsFieldHideReasoningSections,
@@ -834,6 +836,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldExcludePaths),
 		m.settingsFieldValue(settingsFieldExcludeProjectPatterns),
 		m.settingsFieldValue(settingsFieldPrivacyPatterns),
+		m.settingsFieldValue(settingsFieldClaudePermissionMode),
 		m.settingsFieldValue(settingsFieldCodexLaunchPreset),
 		string(playwrightPolicy.ManagementMode),
 		string(playwrightPolicy.DefaultBrowserMode),
@@ -4046,6 +4049,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			strings.Join(settings.PrivacyPatterns, ","),
 			2048,
 			settingsSectionScope,
+		),
+		newSettingsField(
+			"Claude permissions",
+			"Press Enter to choose Claude Code's permission mode. Auto is the default and uses Claude's background safety classifier; explicit asks still route to Little Control Room.",
+			string(settings.ClaudePermissionMode),
+			24,
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"Codex launch mode",

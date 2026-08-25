@@ -1,6 +1,6 @@
 # Claude Code Footprint Discovery
 
-Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29; embedded stream input and permission callbacks re-verified 2026-08-13 (Asia/Tokyo)
+Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29; embedded stream input and permission callbacks re-verified 2026-08-13; Auto permission mode re-verified 2026-08-25 (Asia/Tokyo)
 Host: macOS user-home environment
 
 This document summarizes observed Claude Code on-disk artifacts and the detector assumptions Little Control Room currently relies on.
@@ -192,25 +192,75 @@ tool results using denial-shaped provider text after an interrupt, so LCR record
 the explicit interruption source and does not present those canceled tools as
 individually denied by the user.
 
-For an LCR-owned non-YOLO session, LCR creates a private, per-session Unix socket
-and registers `mcp__lcr_runtime__request_tool_approval` through Claude's
-`--permission-prompt-tool` callback. The isolated runtime MCP process forwards
-the exact `tool_name`, tool input, and `tool_use_id` to the owning session. An
-approval returns the original input unchanged; a decline returns a
+LCR creates a private, per-session Unix socket for permission modes that may
+need interaction and registers `mcp__lcr_runtime__request_tool_approval` through
+Claude's `--permission-prompt-tool` callback. The isolated runtime MCP process
+forwards the exact `tool_name`, tool input, and `tool_use_id` to the owning
+session. An approval returns the original input unchanged; a decline returns a
 non-interrupting denial; canceling the dialog returns an interrupting denial.
 `AskUserQuestion` uses the same bridge and returns the original question payload
 with a structured `answers` object.
 
 Current callback requests do not carry a durable approval scope, so Claude
 approvals are deliberately one-shot and the TUI does not offer an invented
-"accept for session" action. Preset mapping is provider-aware:
+"accept for session" action.
 
-- Safe uses Claude's `default` mode and routes unmatched tools to LCR.
-- Full Auto uses `acceptEdits`, while routing other unmatched tools to LCR.
-- YOLO uses `bypassPermissions` and does not create the approval bridge.
-- If callback routing cannot be initialized, Safe falls back to `dontAsk` and
-  Full Auto retains `acceptEdits`; unmatched requests fail closed instead of
-  waiting for an approval UI that cannot appear.
+Claude Code 2.1.241 was installed for the 2026-08-25 verification. Its
+`--permission-mode` choices are `acceptEdits`, `auto`, `bypassPermissions`,
+`manual`, `dontAsk`, and `plan`. Anthropic introduced Auto in 2.1.83. LCR now
+uses a provider-specific `claude_permission_mode` setting and explicitly passes
+the selected value to `claude -p`; this matters because print mode does not
+simply inherit the interactive terminal's built-in default. The LCR default is
+`auto`, independently of the Codex/OpenCode `codex_launch_preset`.
+Existing users do not need to edit their config: a missing
+`claude_permission_mode` resolves to `auto`, even when the existing
+`codex_launch_preset` is `yolo`. Codex and OpenCode keep that preset, and the
+next normal settings save materializes the new Claude key. The upgraded app
+applies Auto to each newly opened or recovered Claude helper; only a helper
+already running while the setting changes retains its original launch mode
+until restart.
+
+Auto is the best everyday fit for LCR's embedded Claude lane:
+
+- Routine reads and ordinary working-directory edits proceed without a second
+  classifier call. Riskier shell and network actions receive a background
+  classifier review, avoiding routine dialog churn without removing Claude's
+  risk-aware decision layer.
+- The permission-prompt callback remains installed, so explicit `ask` rules,
+  user questions, and classifier fallback prompts can still reach the owning
+  LCR pane.
+- LCR's `PreToolUse` recursive-`rm` hook runs before Claude's permission
+  decision and remains authoritative in both `auto` and
+  `bypassPermissions`.
+- `bypassPermissions` remains available as an explicit escape hatch and does
+  not create an approval bridge. `dontAsk` likewise remains intentionally
+  non-interactive. `acceptEdits`, `manual`, and `plan` retain the bridge.
+- If the bridge cannot initialize, Manual fails closed to `dontAsk`; the other
+  modes keep their native behavior and LCR reports that interactive approval is
+  unavailable.
+
+The tradeoff is an extra classifier round trip for relevant shell or network
+actions. Reads and ordinary working-directory edits skip that review. Auto is
+also not a sandbox: normal Git pushes and declared dependency changes may still
+proceed, while its built-in policy concentrates on destructive, irreversible,
+production, shared-infrastructure, and data-exfiltration risk. Repository
+instructions, LCR's hook, backups, and ordinary operator review remain part of
+the safety model.
+
+Auto support is model- and route-dependent. At verification time, Anthropic's
+documentation listed current Sonnet, Opus, and Fable model minimums and excluded
+Haiku/older model generations; some signed-in or gateway routes had stricter
+minimums. The live documentation is the source of truth. When Auto is not
+available, Claude starts in Manual mode rather than failing the session. LCR
+parses the stream `init.permissionMode`, shows the effective mode in the pane
+badge, and emits a clear Auto-to-Manual fallback notice.
+
+Primary references:
+
+- [Permission modes](https://code.claude.com/docs/en/permission-modes)
+- [Configure Auto mode](https://code.claude.com/docs/en/auto-mode-config)
+- [Claude Code changelog](https://code.claude.com/docs/en/changelog)
+- [Permissions and hook evaluation order](https://code.claude.com/docs/en/permissions)
 
 ## 7. Practical detection strategy
 

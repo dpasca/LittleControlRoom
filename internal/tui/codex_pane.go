@@ -1420,6 +1420,9 @@ func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.
 	if req.RuntimeManager == nil {
 		req.RuntimeManager = m.runtimeManager
 	}
+	if provider == codexapp.ProviderClaudeCode && strings.TrimSpace(string(req.ClaudePermissionMode)) == "" {
+		req.ClaudePermissionMode = m.currentClaudePermissionMode()
+	}
 	if state, ok := m.repositoryIntegrityStateForProject(req.ProjectPath); ok && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
 		req.WorkspaceContract = codexapp.WorkspaceContract{
 			AssignedPath:       req.ProjectPath,

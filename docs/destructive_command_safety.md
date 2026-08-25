@@ -34,13 +34,15 @@ the recovery and containment layers. This feature is an additional seatbelt.
 | --- | --- | --- |
 | Embedded Codex, PATH-resolved named `rm` | LCR-owned `rm` shim pinned through `shell_environment_policy.set.PATH` | Non-recursive removal is allowed. Recursive forced cleanup is allowed only when every operand is a validated descendant spelled `/tmp/...`; other recursive invocations are rejected. |
 | Embedded Codex, absolute executable or common simple wrapper | LCR-owned Codex `prefix_rule` with `decision = "forbidden"` | Forms that can bypass the guarded executable, including `/bin/rm`, `/usr/bin/rm`, `sudo rm`, and `env rm`, are rejected without an approval escape hatch. |
-| Embedded Claude Code `Bash` | LCR-owned `PreToolUse` command hook backed by structural Bash/Zsh parsing | Non-recursive removal of explicit files is allowed; recursive or option-ambiguous `rm` is denied before execution in every permission mode, including YOLO's `bypassPermissions`. |
+| Embedded Claude Code `Bash` | LCR-owned `PreToolUse` command hook backed by structural Bash/Zsh parsing | Non-recursive removal of explicit files is allowed; recursive or option-ambiguous `rm` is denied before execution in every permission mode, including `auto` and `bypassPermissions`. |
 | LCAgent `run_command` | Structural Bash/Zsh parsing before command policy and execution | Non-recursive removal follows normal command permissions; recursive or option-ambiguous `rm` is denied at every autonomy level. |
 | LCAgent `start_process` | The same structural parsing before approval and process-broker launch | A Low approval or switch to Medium cannot bypass the denial. |
 
-The Codex and Claude Code launch presets are otherwise unchanged. In
-particular, the default `yolo` preset keeps its cross-directory read/write reach
-and does not acquire a workspace-only sandbox.
+The Codex launch preset is otherwise unchanged: its default `yolo` mode keeps
+its cross-directory read/write reach and does not acquire a workspace-only
+sandbox. Claude Code now has an independent permission setting that defaults to
+`auto`; this guard remains a separate invariant rather than relying on Auto's
+classifier.
 
 ## Codex Design
 
@@ -107,9 +109,9 @@ non-recursive file removal and ordinary commands return success. An invocation
 with a dynamic argument or glob before `--` is denied because the hook cannot
 prove that the expansion will not become a recursive option; `rm -- "$TARGET"`
 and `rm -- *.tmp` are the safe dynamic-target forms. Malformed or unexpected
-hook input fails closed. Because
-`PreToolUse` runs independently of Claude's normal permission decision, the
-guard also applies when LCR maps YOLO to `bypassPermissions`.
+hook input fails closed. Because `PreToolUse` runs before Claude's normal
+permission decision, the guard applies in Auto mode and when the operator
+explicitly selects `bypassPermissions`.
 
 The settings are added only to the LCR-launched process. LCR does not edit the
 user's `~/.claude` files or the repository's `.claude` settings. Existing user

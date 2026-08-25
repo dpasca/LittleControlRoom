@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/commands"
@@ -1316,6 +1317,20 @@ func TestEnrichEmbeddedLaunchRequestUsesCachedTodoCaptureContext(t *testing.T) {
 	}
 	if got.TodoCaptureHandler != svc {
 		t.Fatal("launch lost the in-process TODO capture handler")
+	}
+}
+
+func TestEnrichEmbeddedClaudeLaunchRequestUsesConfiguredPermissionMode(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.ClaudePermissionMode = claudecli.PermissionModeAcceptEdits
+	m := Model{settingsBaseline: &settings}
+
+	got := m.enrichEmbeddedLaunchRequest(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderClaudeCode,
+		ProjectPath: "/tmp/demo",
+	})
+	if got.ClaudePermissionMode != claudecli.PermissionModeAcceptEdits {
+		t.Fatalf("Claude permission mode = %q, want acceptEdits", got.ClaudePermissionMode)
 	}
 }
 

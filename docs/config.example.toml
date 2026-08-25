@@ -33,6 +33,9 @@ include_paths = [
 
 exclude_paths = []
 exclude_project_patterns = []
+# Claude Code uses its background safety classifier by default. Other values:
+# bypassPermissions, acceptEdits, manual, dontAsk, or plan.
+claude_permission_mode = "auto"
 codex_launch_preset = "yolo"
 # Provider preselected by the /resolve chooser. Confirming another provider
 # remembers it here for next time; ordinary task launches do not change it.

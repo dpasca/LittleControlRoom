@@ -282,6 +282,14 @@ Claude-backed background inference defaults to Haiku to keep usage lighter. See
 Anthropic's [plan billing](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan)
 and [cost](https://code.claude.com/docs/en/costs) docs.
 
+LCR-embedded Claude Code uses Claude's `auto` permission mode by default, while
+keeping explicit permission and classifier fallback prompts connected to the
+in-pane approval dialog. The pane badge reports the effective mode if Claude
+falls back because the selected model, account, or managed policy does not
+support Auto. `bypassPermissions` remains available as an explicit setting;
+Codex and OpenCode keep their existing launch preset. See Anthropic's
+[permission-mode guide](https://code.claude.com/docs/en/permission-modes).
+
 ## Safety rails
 
 Agents with broad filesystem access make mistakes. LCR adds narrow seatbelts

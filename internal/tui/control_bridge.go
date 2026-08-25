@@ -11,6 +11,7 @@ import (
 	"time"
 
 	bossui "lcroom/internal/boss"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
@@ -2275,6 +2276,21 @@ var settingsUpdateFieldSpecs = map[control.SettingsField]settingsUpdateFieldSpec
 		},
 		SetBool: func(settings *config.EditableSettings, value bool) {
 			settings.HideReasoningSections = value
+		},
+	},
+	control.SettingsFieldClaudePermissionMode: {
+		Label: "Claude Code permission mode",
+		Kind:  settingsUpdateString,
+		GetString: func(settings config.EditableSettings) string {
+			return string(settings.ClaudePermissionMode)
+		},
+		SetString: func(settings *config.EditableSettings, value string) error {
+			mode, err := claudecli.ParsePermissionMode(value)
+			if err != nil {
+				return err
+			}
+			settings.ClaudePermissionMode = mode
+			return nil
 		},
 	},
 	control.SettingsFieldCodexLaunchPreset: {

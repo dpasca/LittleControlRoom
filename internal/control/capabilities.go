@@ -284,6 +284,7 @@ const (
 	SettingsFieldExcludeProjectPatterns SettingsField = "exclude_project_patterns"
 	SettingsFieldPrivacyMode            SettingsField = "privacy_mode"
 	SettingsFieldHideReasoningSections  SettingsField = "hide_reasoning_sections"
+	SettingsFieldClaudePermissionMode   SettingsField = "claude_permission_mode"
 	SettingsFieldCodexLaunchPreset      SettingsField = "codex_launch_preset"
 )
 
@@ -294,6 +295,7 @@ func SettingsFieldValues() []SettingsField {
 		SettingsFieldExcludeProjectPatterns,
 		SettingsFieldPrivacyMode,
 		SettingsFieldHideReasoningSections,
+		SettingsFieldClaudePermissionMode,
 		SettingsFieldCodexLaunchPreset,
 	}
 }
@@ -316,6 +318,8 @@ func NormalizeSettingsField(value string) SettingsField {
 		return SettingsFieldPrivacyMode
 	case string(SettingsFieldHideReasoningSections):
 		return SettingsFieldHideReasoningSections
+	case string(SettingsFieldClaudePermissionMode):
+		return SettingsFieldClaudePermissionMode
 	case string(SettingsFieldCodexLaunchPreset):
 		return SettingsFieldCodexLaunchPreset
 	default:

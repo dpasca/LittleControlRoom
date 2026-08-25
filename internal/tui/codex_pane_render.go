@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/uistyle"
@@ -406,16 +407,39 @@ func codexBannerRightStatus(snapshot codexapp.Snapshot) string {
 	if snapshot.Closed {
 		return ""
 	}
-	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
+	switch embeddedProvider(snapshot) {
+	case codexapp.ProviderLCAgent:
 		if label := codexSnapshotPermissionLabel(snapshot); label != "" {
 			return codexPermissionBadgeStyle(label).Render("PERM " + strings.ToUpper(label))
 		}
 		return ""
+	case codexapp.ProviderClaudeCode:
+		if strings.TrimSpace(snapshot.PermissionLevel) == "" {
+			return ""
+		}
+		mode, err := claudecli.ParsePermissionMode(snapshot.PermissionLevel)
+		if err != nil {
+			return detailMutedStyle.Render("MODE " + strings.ToUpper(strings.TrimSpace(snapshot.PermissionLevel)))
+		}
+		return claudePermissionBadgeStyle(mode).Render(strings.ToUpper(mode.DisplayName()) + " MODE")
 	}
 	if snapshot.Preset == codexcli.PresetYolo {
 		return detailDangerStyle.Render("YOLO MODE")
 	}
 	return ""
+}
+
+func claudePermissionBadgeStyle(mode claudecli.PermissionMode) lipgloss.Style {
+	switch mode {
+	case claudecli.PermissionModeAuto:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	case claudecli.PermissionModeBypassPermissions:
+		return detailDangerStyle
+	case claudecli.PermissionModeAcceptEdits, claudecli.PermissionModeDontAsk:
+		return detailWarningStyle
+	default:
+		return detailMutedStyle
+	}
 }
 
 func codexPermissionBadgeStyle(label string) lipgloss.Style {
