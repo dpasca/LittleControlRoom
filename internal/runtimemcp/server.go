@@ -213,7 +213,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 				"version": "0.1.0",
 			},
 		}
-		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded persisted snapshots and never include private-category projects outside the originating project. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
+		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded persisted snapshots and never include private-category projects outside the originating project. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. When the user asks you to tell, hand off to, continue, trigger, or steer another embedded engineer, inspect the target session and use the engineer control capability instead of asking the operator to relay the message. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
 		if s.todoMode.Enabled() {
 			instructions += "\n\n" + todocapture.AgentInstructions(s.todoMode)
 		}

@@ -1032,6 +1032,7 @@ type embeddedLaunchOptions struct {
 	prompt                   string
 	reveal                   bool
 	resumeID                 string
+	requireResumeID          bool
 	continueInterruptedTurn  bool
 	interruptedTurnID        string
 	interruptedTurnStartedAt time.Time
@@ -1043,6 +1044,7 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		Provider:                   provider.Normalized(),
 		ProjectPath:                p.Path,
 		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
+		RequireResumeID:            options.requireResumeID,
 		ForceNew:                   options.forceNew,
 		Prompt:                     options.prompt,
 		ContinueInterruptedTurn:    options.continueInterruptedTurn,

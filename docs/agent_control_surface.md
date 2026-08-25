@@ -43,6 +43,30 @@ For a request such as creating a project, the embedded agent:
 The generated `runtime` skill teaches this sequence. It contains the workflow,
 not the capability schemas; the registry remains the schema source of truth.
 
+## Session-to-session handoffs
+
+An embedded engineer can hand work to another embedded engineer through the
+same confirmed control path. The sender first uses `project.search` and
+`project.session_list` (or `project.detail`) to identify the receiving project,
+provider, and current session, then proposes `engineer.send_prompt` with
+`session_mode: resume_or_new`.
+
+When the sender knows the receiving Codex session, it also supplies
+`target_session_id` with `provider: codex`. The host resumes that exact idle
+session and starts a turn, or steers that exact active turn when its live state
+allows steering. If the inspected session has been replaced by the time the
+operator confirms, LCR fails the operation instead of delivering the message
+to the replacement. Exact session pinning is initially Codex-only; the existing
+project/provider routing remains available for OpenCode, Claude Code, and
+LCAgent.
+
+This gives handoff documents a delivery path: the document can hold the full
+context, while the control message tells the receiving engineer what to read
+and what outcome to pursue. The sender does not need to ask the operator to
+copy that instruction manually. Sending still requires the ordinary LCR
+confirmation because the receiving engineer may edit files or invoke external
+tools after the turn begins.
+
 ## Architecture
 
 ```text
@@ -88,10 +112,11 @@ operation or continue later mutations or external actions through shell or
 another tool. A fresh proposal can be created on a later user turn.
 
 The confirmed `engineer.send_prompt` capability can target Codex, OpenCode,
-Claude Code, or LCAgent. It reuses an open idle session for the requested
-provider when possible. A Claude launch still passes through the normal
-`ANTHROPIC_API_KEY` billing warning; enabling Claude in the control executor
-does not bypass that operator acknowledgement.
+Claude Code, or LCAgent. It can pin a known Codex session id, and otherwise
+reuses an open idle session for the requested provider when possible. A Claude
+launch still passes through the normal `ANTHROPIC_API_KEY` billing warning;
+enabling Claude in the control executor does not bypass that operator
+acknowledgement.
 
 Waiting confirmations are returned to `proposed` when a new TUI host starts, so
 a restart does not strand the request. The standalone web server does not claim

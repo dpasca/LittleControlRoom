@@ -116,6 +116,77 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 	}
 }
 
+func TestExecuteControlEngineerSendPromptTargetsExactSession(t *testing.T) {
+	projectPath := "/tmp/control-exact-session"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider,
+				ThreadID: req.ResumeID,
+				Started:  true,
+				Phase:    codexapp.SessionPhaseIdle,
+			},
+		}, nil
+	})
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-exact-session",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	_, cmd := m.executeControlInvocation(controlInvocationForTest(t, control.EngineerSendPromptInput{
+		ProjectPath:     projectPath,
+		Provider:        control.ProviderCodex,
+		SessionMode:     control.SessionModeResumeOrNew,
+		TargetSessionID: "01exact-session",
+		Prompt:          "Read docs/handoff.md and implement it through the merge gate.",
+		Reveal:          false,
+	}))
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want exact-session open command")
+	}
+	_ = collectCmdMsgs(cmd)
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].ResumeID != "01exact-session" || !requests[0].RequireResumeID || requests[0].ForceNew {
+		t.Fatalf("launch target = ResumeID %q RequireResumeID %t ForceNew %t, want exact resume", requests[0].ResumeID, requests[0].RequireResumeID, requests[0].ForceNew)
+	}
+}
+
+func TestTargetedEngineerMessageFailsWhenSessionIsExternal(t *testing.T) {
+	inv := controlInvocationForTest(t, control.EngineerSendPromptInput{
+		ProjectPath:     "/tmp/control-external-session",
+		Provider:        control.ProviderCodex,
+		SessionMode:     control.SessionModeResumeOrNew,
+		TargetSessionID: "01external-session",
+		Prompt:          "Read docs/handoff.md and continue.",
+		Reveal:          false,
+	})
+	status, err := bossControlExecutionStatus(inv, codexSessionOpenedMsg{
+		projectPath: "/tmp/control-external-session",
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderCodex,
+			ThreadID:     "01external-session",
+			Started:      true,
+			BusyExternal: true,
+		},
+		status: "Codex is already active in another process. Prompt was not sent.",
+	})
+	if err == nil {
+		t.Fatal("bossControlExecutionStatus() error = nil, want undelivered-message failure")
+	}
+	if !strings.Contains(status, "Prompt was not sent") || !strings.Contains(err.Error(), "Prompt was not sent") {
+		t.Fatalf("status/error = %q / %v, want prompt-not-sent detail", status, err)
+	}
+}
+
 func TestExecuteControlEngineerSendPromptRoutesLCAgentHidden(t *testing.T) {
 	projectPath := "/tmp/control-lcagent"
 	var requests []codexapp.LaunchRequest
@@ -1883,11 +1954,12 @@ func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T
 
 	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
 		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
-			ProjectPath: projectPath,
-			Provider:    control.ProviderCodex,
-			SessionMode: control.SessionModeResumeOrNew,
-			Prompt:      "I can log in to Appfigures if necessary.",
-			Reveal:      false,
+			ProjectPath:     projectPath,
+			Provider:        control.ProviderCodex,
+			SessionMode:     control.SessionModeResumeOrNew,
+			TargetSessionID: "thread-live",
+			Prompt:          "I can log in to Appfigures if necessary.",
+			Reveal:          false,
 		}),
 	})
 	got := updated.(Model)
@@ -1914,8 +1986,72 @@ func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T
 	if result.Err != nil {
 		t.Fatalf("result err = %v, want successful steering note", result.Err)
 	}
-	if !strings.Contains(result.Status, "Work on control-active-session is underway") {
-		t.Fatalf("result status = %q, want engineer work status", result.Status)
+	if !strings.Contains(result.Status, "Message sent to the Codex engineer session for control-active-session") {
+		t.Fatalf("result status = %q, want exact-session message status", result.Status)
+	}
+}
+
+func TestExecuteBossControlInvocationRefusesChangedTargetSession(t *testing.T) {
+	projectPath := "/tmp/control-changed-session"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderCodex,
+			ThreadID:     "thread-replacement",
+			Started:      true,
+			Busy:         true,
+			Phase:        codexapp.SessionPhaseRunning,
+			ActiveTurnID: "turn-replacement",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-changed-session",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath:     projectPath,
+			Provider:        control.ProviderCodex,
+			SessionMode:     control.SessionModeResumeOrNew,
+			TargetSessionID: "thread-inspected",
+			Prompt:          "Use the handoff document.",
+			Reveal:          false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("executeBossControlInvocation() cmd = nil, want refusal result")
+	}
+	if !strings.Contains(got.status, "is not the session currently running") {
+		t.Fatalf("status = %q, want changed-target refusal", got.status)
+	}
+	if len(liveSession.submitted) != 0 {
+		t.Fatalf("replacement session received message: %#v", liveSession.submitted)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err == nil || !strings.Contains(result.Status, "Refresh the target session state") {
+		t.Fatalf("result = %#v, want stale-target failure", result)
 	}
 }
 

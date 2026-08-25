@@ -71,7 +71,7 @@ exit 2
 
 const shadowRuntimeSkillMarkdownBase = `---
 name: "runtime"
-description: "Use Little Control Room MCP tools for local runtimes and TODOs, or to progressively query and control LCR project, portfolio, and work state."
+description: "Use Little Control Room MCP tools for local runtimes and TODOs, to query/control LCR state, or to message, hand off to, continue, trigger, or steer another embedded engineer session."
 ---
 
 # Embedded Runtime Skill
@@ -96,6 +96,17 @@ For current project, portfolio, assessment, delegated-task, or goal-run state:
 3. Call ` + "`run_lcr_query`" + ` with arguments matching that schema. Follow ` + "`next_cursor`" + ` only when more records are needed.
 
 Query results are bounded persisted snapshots, not guaranteed mirrors of transient TUI memory. Private-category projects and tasks are hidden except when they belong to this session's originating project. Do not infer that Help Chat transcripts, raw event payloads, or arbitrary cross-project files are available through this catalog.
+
+## Communicating with another engineer session
+
+When the user asks you to tell, ask, hand off to, continue, trigger, or steer another Little Control Room engineer, use LCR's control surface. Do not make the operator relay your message manually when the target can be identified and the control capability is available.
+
+1. Use the project queries to resolve the target project and inspect its recent session metadata. Use the exact session id and provider when the user means a known current Codex session.
+2. Call ` + "`list_control_capabilities`" + ` with ` + "`domain: \"engineer\"`" + `, then describe ` + "`engineer.send_prompt`" + `.
+3. Propose ` + "`engineer.send_prompt`" + ` with ` + "`session_mode: \"resume_or_new\"`" + `. For a known Codex target, set ` + "`target_session_id`" + ` to the inspected id and ` + "`provider: \"codex\"`" + `. Exact targeting is currently Codex-only; omit the id for other providers. Keep ` + "`reveal`" + ` false unless the user asks to open the target pane.
+4. An idle target is resumed and receives a new turn. An active Codex target is steered when its live state permits it. A stale or unsafe target fails instead of silently delivering to a replacement session.
+
+A handoff document can carry detailed context, but it is not the delivery mechanism. Send a concise executable message that names the document or other evidence the receiving engineer should use. The normal proposal confirmation and stop-turn rules below still apply.
 
 ## Progressive LCR control discovery
 

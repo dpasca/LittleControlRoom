@@ -12,6 +12,8 @@ import (
 
 const (
 	FeatureSendPrompt                         = "send_prompt"
+	FeatureTargetSession                      = "target_session"
+	FeatureSteer                              = "steer"
 	FeatureResume                             = "resume"
 	FeatureForceNew                           = "force_new"
 	FeatureCreateTask                         = "create_task"
@@ -148,16 +150,17 @@ func (a ProjectArchiveAction) Normalized() ProjectArchiveAction {
 }
 
 type EngineerSendPromptInput struct {
-	RequestID   string      `json:"request_id,omitempty"`
-	ProjectPath string      `json:"project_path"`
-	ProjectName string      `json:"project_name"`
-	Provider    Provider    `json:"provider"`
-	SessionMode SessionMode `json:"session_mode"`
-	Prompt      string      `json:"prompt"`
-	TodoID      int64       `json:"todo_id,omitempty"`
-	TodoLabel   string      `json:"todo_label,omitempty"`
-	TodoText    string      `json:"todo_text,omitempty"`
-	Reveal      bool        `json:"reveal"`
+	RequestID       string      `json:"request_id,omitempty"`
+	ProjectPath     string      `json:"project_path"`
+	ProjectName     string      `json:"project_name"`
+	Provider        Provider    `json:"provider"`
+	SessionMode     SessionMode `json:"session_mode"`
+	TargetSessionID string      `json:"target_session_id,omitempty"`
+	Prompt          string      `json:"prompt"`
+	TodoID          int64       `json:"todo_id,omitempty"`
+	TodoLabel       string      `json:"todo_label,omitempty"`
+	TodoText        string      `json:"todo_text,omitempty"`
+	Reveal          bool        `json:"reveal"`
 }
 
 type EngineerSendPromptResult struct {
@@ -437,7 +440,7 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 func EngineerSendPromptCapability() Capability {
 	return Capability{
 		Name:         CapabilityEngineerSendPrompt,
-		Description:  "Send a prompt to an embedded engineer session for a project.",
+		Description:  "Send a message to an embedded engineer session, resuming an idle target to start a turn or steering an active Codex turn when possible.",
 		InputSchema:  engineerSendPromptInputSchema(),
 		OutputSchema: engineerSendPromptOutputSchema(),
 		Risk:         RiskExternal,
@@ -448,7 +451,7 @@ func EngineerSendPromptCapability() Capability {
 			{
 				ID:        ProviderCodex,
 				Available: true,
-				Features:  []string{FeatureSendPrompt, FeatureResume, FeatureForceNew, FeatureApprovalResponse, FeatureReview, FeatureCompact},
+				Features:  []string{FeatureSendPrompt, FeatureTargetSession, FeatureSteer, FeatureResume, FeatureForceNew, FeatureApprovalResponse, FeatureReview, FeatureCompact},
 			},
 			{
 				ID:        ProviderOpenCode,
@@ -689,6 +692,7 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 	if input.SessionMode == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("unsupported engineer session mode: %s", input.SessionMode)
 	}
+	input.TargetSessionID = strings.TrimSpace(input.TargetSessionID)
 	input.Prompt = strings.TrimSpace(input.Prompt)
 	input.TodoLabel = strings.TrimSpace(input.TodoLabel)
 	input.TodoText = strings.TrimSpace(input.TodoText)
@@ -697,6 +701,15 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 	}
 	if input.ProjectPath == "" && input.ProjectName == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	if input.TargetSessionID != "" && input.SessionMode != SessionModeResumeOrNew {
+		return EngineerSendPromptInput{}, fmt.Errorf("target_session_id requires session_mode %s", SessionModeResumeOrNew)
+	}
+	if input.TargetSessionID != "" && input.Provider == ProviderAuto {
+		return EngineerSendPromptInput{}, fmt.Errorf("target_session_id requires an explicit engineer provider")
+	}
+	if input.TargetSessionID != "" && input.Provider != ProviderCodex {
+		return EngineerSendPromptInput{}, fmt.Errorf("target_session_id currently supports Codex engineer sessions")
 	}
 	if input.Prompt == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("prompt is required")
@@ -1534,9 +1547,13 @@ func engineerSendPromptInputSchema() map[string]any {
 				"type": "string",
 				"enum": SessionModeStrings(false),
 			},
+			"target_session_id": map[string]any{
+				"type":        "string",
+				"description": "Exact Codex session id to resume or steer when the caller has inspected a known target. Leave empty for ordinary project-level routing. Requires provider=codex and session_mode=resume_or_new.",
+			},
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "Prompt to send to the engineer session.",
+				"description": "Message or executable handoff to send to the engineer session.",
 			},
 			"todo_id": map[string]any{
 				"type":        "integer",

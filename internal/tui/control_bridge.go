@@ -387,7 +387,14 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 
 func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, error) {
 	if opened, ok := msg.(codexSessionOpenedMsg); ok {
-		return bossControlOpenedSessionStatus(inv, opened), opened.err
+		status := bossControlOpenedSessionStatus(inv, opened)
+		if opened.err != nil {
+			return status, opened.err
+		}
+		if targetedEngineerMessageWasNotSent(inv, opened) {
+			return status, errors.New(status)
+		}
+		return status, nil
 	}
 	if saved, ok := msg.(settingsSavedMsg); ok && inv.Capability == control.CapabilitySettingsUpdate {
 		return bossSettingsUpdateSavedStatus(inv, saved), saved.err
@@ -406,6 +413,21 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 		return result.status, result.err
 	}
 	return "Control action completed.", nil
+}
+
+func targetedEngineerMessageWasNotSent(inv control.Invocation, opened codexSessionOpenedMsg) bool {
+	if !opened.snapshot.BusyExternal {
+		return false
+	}
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil || normalized.Capability != control.CapabilityEngineerSendPrompt {
+		return false
+	}
+	var input control.EngineerSendPromptInput
+	if err := json.Unmarshal(normalized.Args, &input); err != nil {
+		return false
+	}
+	return strings.TrimSpace(input.TargetSessionID) != "" && strings.TrimSpace(input.Prompt) != ""
 }
 
 func bossSettingsUpdateSavedStatus(inv control.Invocation, saved settingsSavedMsg) string {
@@ -668,6 +690,15 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 	if strings.TrimSpace(input.Prompt) == "" {
 		return "Opened the " + sessionLabel + targetPhrase + "."
 	}
+	if opened.snapshot.BusyExternal {
+		if status := strings.TrimSpace(opened.status); status != "" {
+			return status
+		}
+		return sessionLabel + " is active outside Little Control Room; the message was not sent."
+	}
+	if strings.TrimSpace(input.TargetSessionID) != "" {
+		return "Message sent to the " + sessionLabel + targetPhrase + "."
+	}
 	if target != "" {
 		return "Work on " + bossTrackedTodoTargetLabel(target, input.TodoID, input.TodoLabel, input.TodoText) + " is underway."
 	}
@@ -851,6 +882,15 @@ func (m Model) executeEngineerSendPromptWithTrackedTodo(input control.EngineerSe
 			return controlInvocationOutcome{model: m, err: err}
 		}
 	}
+	if targetSessionID := strings.TrimSpace(input.TargetSessionID); targetSessionID != "" {
+		if snapshot, ok := m.liveEmbeddedSnapshotForProject(project.Path, provider); ok &&
+			embeddedSessionBlocksProviderSwitch(snapshot) &&
+			strings.TrimSpace(snapshot.ThreadID) != targetSessionID {
+			err := fmt.Errorf("The requested %s engineer session %s is not the session currently running for this project. Refresh the target session state before sending the message.", provider.Label(), shortID(targetSessionID))
+			m.status = err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+	}
 	if controlPromptTargetsNonSteerableActiveEmbeddedSession(input, m, project.Path, provider) {
 		err := fmt.Errorf("The embedded %s engineer session is already running, so I did not send the prompt into it. Start a fresh session or open the target session and send manually.", provider.Label())
 		m.status = err.Error()
@@ -864,9 +904,11 @@ func (m Model) executeEngineerSendPromptWithTrackedTodo(input control.EngineerSe
 		prompt = m.promptWithRuntimeContext(engineerPromptWithTrackedTodo(input.Prompt, trackedTodo), m.projectRuntimeContextLines(project))
 	}
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
-		forceNew: input.SessionMode == control.SessionModeNew,
-		prompt:   prompt,
-		reveal:   input.Reveal,
+		forceNew:        input.SessionMode == control.SessionModeNew,
+		prompt:          prompt,
+		reveal:          input.Reveal,
+		resumeID:        strings.TrimSpace(input.TargetSessionID),
+		requireResumeID: strings.TrimSpace(input.TargetSessionID) != "",
 	})
 	m = normalizeUpdateModel(updated)
 	if cmd == nil {

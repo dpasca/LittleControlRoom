@@ -49,6 +49,9 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	if !strings.Contains(string(responses[0].Result), serverName) {
 		t.Fatalf("initialize result = %s, want server name", responses[0].Result)
 	}
+	if !strings.Contains(string(responses[0].Result), "instead of asking the operator to relay the message") {
+		t.Fatalf("initialize result = %s, want engineer handoff guidance", responses[0].Result)
+	}
 	if !strings.Contains(string(responses[1].Result), `"start_process"`) ||
 		!strings.Contains(string(responses[1].Result), `"list_processes"`) ||
 		!strings.Contains(string(responses[1].Result), `"read_process_output"`) ||

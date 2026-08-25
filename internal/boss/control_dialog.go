@@ -99,12 +99,15 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 	}
 
 	lines := []string{
-		bossControlNoticeStyle.Render(fitLine("Routine handoff: send a prompt to an engineer session", width)),
+		bossControlNoticeStyle.Render(fitLine("Routine handoff: send a message to an engineer session", width)),
 		"",
 		renderBossControlDetail("Provider", provider, width),
 		renderBossControlDetail("Project", target, width),
 		renderBossControlDetail("Mode", mode, width),
 		renderBossControlDetail("View", visibility, width),
+	}
+	if input.TargetSessionID != "" {
+		lines = append(lines, renderBossControlDetail("Session", input.TargetSessionID, width))
 	}
 	if input.TodoID > 0 {
 		lines = append(lines, renderBossControlDetail("TODO", controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText), width))

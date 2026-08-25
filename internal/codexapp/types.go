@@ -681,6 +681,10 @@ type LaunchRequest struct {
 	Provider    Provider
 	ProjectPath string
 	ResumeID    string
+	// RequireResumeID makes ResumeID an exact target. The launch must fail
+	// instead of replacing a different live session or falling back to a new
+	// provider session when the target can no longer be resumed.
+	RequireResumeID bool
 
 	// ContinueInterruptedTurn is set only for a turn captured by LCR's
 	// graceful-shutdown journal. Reopening a provider session restores context;
@@ -770,6 +774,17 @@ type WorkspaceExcursionHandler func(WorkspaceExcursion)
 func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
 		return fmt.Errorf("project path required")
+	}
+	if r.RequireResumeID {
+		if r.ForceNew {
+			return fmt.Errorf("exact session resume cannot force a new session")
+		}
+		if strings.TrimSpace(r.ResumeID) == "" {
+			return fmt.Errorf("exact session resume requires a session id")
+		}
+		if r.Provider.Normalized() != ProviderCodex {
+			return fmt.Errorf("exact session resume currently supports Codex")
+		}
 	}
 	if r.ContinueInterruptedTurn {
 		if r.ForceNew {
@@ -1050,6 +1065,22 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		existing = nil
 		ok = false
 	}
+	if ok && req.RequireResumeID {
+		expectedThreadID := strings.TrimSpace(req.ResumeID)
+		existingThreadID := strings.TrimSpace(existingState.ThreadID)
+		existingProvider := existingState.Provider.Normalized()
+		if existingProvider == "" {
+			existingProvider = ProviderCodex
+		}
+		requestedProvider := req.Provider.Normalized()
+		if requestedProvider == "" {
+			requestedProvider = ProviderCodex
+		}
+		if existingProvider != requestedProvider || existingThreadID != expectedThreadID {
+			m.mu.Unlock()
+			return nil, false, fmt.Errorf("%w: expected %s session %s, found %s session %s", ErrSessionChanged, requestedProvider.Label(), expectedThreadID, existingProvider.Label(), existingThreadID)
+		}
+	}
 	if ok {
 		existingProvider := existingState.Provider.Normalized()
 		if existingProvider == "" {
@@ -1125,6 +1156,14 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	})
 	if err != nil {
 		return nil, false, err
+	}
+	if req.RequireResumeID {
+		expectedThreadID := strings.TrimSpace(req.ResumeID)
+		actualThreadID := strings.TrimSpace(sessionStateSnapshot(session).ThreadID)
+		if actualThreadID != expectedThreadID {
+			_ = session.Close()
+			return nil, false, fmt.Errorf("%w: expected resumed session %s, got %s", ErrSessionChanged, expectedThreadID, actualThreadID)
+		}
 	}
 
 	m.mu.Lock()

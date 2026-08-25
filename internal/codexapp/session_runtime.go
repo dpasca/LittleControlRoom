@@ -96,11 +96,18 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	}
 
 	var threadID string
-	if !req.ForceNew && strings.TrimSpace(req.ResumeID) != "" {
-		threadID, err = s.resumeThread(ctx, req.ResumeID)
+	resumeID := strings.TrimSpace(req.ResumeID)
+	if !req.ForceNew && resumeID != "" {
+		threadID, err = s.resumeThread(ctx, resumeID)
 		if err != nil {
+			if req.RequireResumeID {
+				return fmt.Errorf("resume exact Codex session %s: %w", resumeID, err)
+			}
 			s.appendSystemNotice("Resume failed, starting a new Codex thread.")
 		}
+	}
+	if req.RequireResumeID && threadID != resumeID {
+		return fmt.Errorf("%w: expected resumed Codex session %s, got %s", ErrSessionChanged, resumeID, threadID)
 	}
 	if threadID == "" {
 		s.mu.Lock()

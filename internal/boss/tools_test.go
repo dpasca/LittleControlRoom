@@ -215,7 +215,7 @@ func TestQueryExecutorHelpReferenceFindsCommandAndCapabilityTopics(t *testing.T)
 	}
 	for _, want := range []string{
 		"control.capability.engineer.send-prompt",
-		"Send a prompt to an embedded engineer session for a project.",
+		"Send a message to an embedded engineer session",
 		"can_do_via: engineer.send_prompt",
 	} {
 		if !strings.Contains(capabilityResult.Text, want) {

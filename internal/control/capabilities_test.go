@@ -125,6 +125,17 @@ func TestEngineerSendPromptCapabilityMetadata(t *testing.T) {
 	if !providers[ProviderOpenCode].Available {
 		t.Fatalf("OpenCode provider should be available in default metadata")
 	}
+	if !stringSliceContains(providers[ProviderCodex].Features, FeatureTargetSession) ||
+		!stringSliceContains(providers[ProviderCodex].Features, FeatureSteer) {
+		t.Fatalf("Codex features = %#v, want exact-session targeting and steering", providers[ProviderCodex].Features)
+	}
+	if stringSliceContains(providers[ProviderOpenCode].Features, FeatureTargetSession) {
+		t.Fatalf("OpenCode features = %#v, exact-session targeting is currently Codex-only", providers[ProviderOpenCode].Features)
+	}
+	properties, _ := capability.InputSchema["properties"].(map[string]any)
+	if _, ok := properties["target_session_id"]; !ok {
+		t.Fatalf("engineer.send_prompt input schema = %#v, want target_session_id", capability.InputSchema)
+	}
 	if !providers[ProviderClaudeCode].Available {
 		t.Fatalf("Claude Code provider should be available in default metadata")
 	}
@@ -392,6 +403,22 @@ func TestNormalizeEngineerSendPromptInputAllowsProjectNameOnly(t *testing.T) {
 	}
 }
 
+func TestNormalizeEngineerSendPromptInputTargetsKnownSession(t *testing.T) {
+	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
+		ProjectPath:     "/tmp/demo",
+		Provider:        ProviderCodex,
+		SessionMode:     SessionModeResumeOrNew,
+		TargetSessionID: " 01abc-target ",
+		Prompt:          "Read docs/handoff.md and implement it.",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeEngineerSendPromptInput() error = %v", err)
+	}
+	if input.TargetSessionID != "01abc-target" {
+		t.Fatalf("TargetSessionID = %q, want trimmed exact target", input.TargetSessionID)
+	}
+}
+
 func TestNormalizeEngineerSendPromptInputRejectsInvalidInputs(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -417,6 +444,21 @@ func TestNormalizeEngineerSendPromptInputRejectsInvalidInputs(t *testing.T) {
 			name:  "bad session mode",
 			input: EngineerSendPromptInput{ProjectPath: "/tmp/demo", SessionMode: "later", Prompt: "Do the thing"},
 			want:  "unsupported engineer session mode",
+		},
+		{
+			name:  "target with fresh mode",
+			input: EngineerSendPromptInput{ProjectPath: "/tmp/demo", Provider: ProviderCodex, SessionMode: SessionModeNew, TargetSessionID: "session-1", Prompt: "Do the thing"},
+			want:  "target_session_id requires session_mode resume_or_new",
+		},
+		{
+			name:  "target without explicit provider",
+			input: EngineerSendPromptInput{ProjectPath: "/tmp/demo", SessionMode: SessionModeResumeOrNew, TargetSessionID: "session-1", Prompt: "Do the thing"},
+			want:  "target_session_id requires an explicit engineer provider",
+		},
+		{
+			name:  "target with unsupported provider",
+			input: EngineerSendPromptInput{ProjectPath: "/tmp/demo", Provider: ProviderOpenCode, SessionMode: SessionModeResumeOrNew, TargetSessionID: "session-1", Prompt: "Do the thing"},
+			want:  "target_session_id currently supports Codex",
 		},
 	}
 	for _, tt := range tests {

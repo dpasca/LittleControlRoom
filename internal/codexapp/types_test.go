@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -817,6 +818,81 @@ func TestManagerOpenReplacesSessionWhenResumeIDChanges(t *testing.T) {
 	}
 }
 
+func TestManagerOpenExactResumeRefusesDifferentLiveSession(t *testing.T) {
+	var created []*fakeSession
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Provider: ProviderCodex,
+				Started:  true,
+				ThreadID: req.ResumeID,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	first, _, err := manager.Open(LaunchRequest{
+		Provider:    ProviderCodex,
+		ProjectPath: "/tmp/demo",
+		ResumeID:    "thread_a",
+	})
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+
+	_, _, err = manager.Open(LaunchRequest{
+		Provider:        ProviderCodex,
+		ProjectPath:     "/tmp/demo",
+		ResumeID:        "thread_b",
+		RequireResumeID: true,
+	})
+	if !errors.Is(err, ErrSessionChanged) {
+		t.Fatalf("exact Open() error = %v, want ErrSessionChanged", err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("factory create count = %d, want no replacement", len(created))
+	}
+	if created[0].closed {
+		t.Fatal("exact resume closed the different live session")
+	}
+	stored, ok := manager.Session("/tmp/demo")
+	if !ok || stored != first {
+		t.Fatalf("stored session = %#v, %t; want original session", stored, ok)
+	}
+}
+
+func TestManagerOpenExactResumeRejectsFactoryMismatch(t *testing.T) {
+	created := &fakeSession{
+		projectPath: "/tmp/demo",
+		snapshot: Snapshot{
+			Provider: ProviderCodex,
+			Started:  true,
+			ThreadID: "thread_other",
+		},
+	}
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		return created, nil
+	})
+
+	_, _, err := manager.Open(LaunchRequest{
+		Provider:        ProviderCodex,
+		ProjectPath:     "/tmp/demo",
+		ResumeID:        "thread_expected",
+		RequireResumeID: true,
+	})
+	if !errors.Is(err, ErrSessionChanged) {
+		t.Fatalf("exact Open() error = %v, want ErrSessionChanged", err)
+	}
+	if !created.closed {
+		t.Fatal("mismatched factory session was not closed")
+	}
+	if _, ok := manager.Session("/tmp/demo"); ok {
+		t.Fatal("mismatched factory session was installed")
+	}
+}
+
 func TestManagerOpenReplacesSessionWhenProviderChanges(t *testing.T) {
 	var created []*fakeSession
 
@@ -1290,6 +1366,30 @@ func TestClaudeLaunchRequestValidatesPermissionMode(t *testing.T) {
 	invalid.ClaudePermissionMode = "reckless"
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("expected invalid Claude permission mode to fail validation")
+	}
+}
+
+func TestLaunchRequestValidatesExactResume(t *testing.T) {
+	valid := LaunchRequest{
+		Provider:        ProviderCodex,
+		ProjectPath:     "/tmp/demo",
+		ResumeID:        "thread_exact",
+		RequireResumeID: true,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("exact resume validation error = %v", err)
+	}
+
+	missingID := valid
+	missingID.ResumeID = ""
+	if err := missingID.Validate(); err == nil || !strings.Contains(err.Error(), "requires a session id") {
+		t.Fatalf("missing exact resume id error = %v", err)
+	}
+
+	unsupportedProvider := valid
+	unsupportedProvider.Provider = ProviderOpenCode
+	if err := unsupportedProvider.Validate(); err == nil || !strings.Contains(err.Error(), "currently supports Codex") {
+		t.Fatalf("unsupported exact resume provider error = %v", err)
 	}
 }
 

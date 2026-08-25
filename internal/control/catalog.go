@@ -23,7 +23,7 @@ type DomainSummary struct {
 
 func DomainSummaries() []DomainSummary {
 	return []DomainSummary{
-		{Domain: CapabilityDomainEngineer, Description: "Embedded engineer session handoffs and continuation."},
+		{Domain: CapabilityDomainEngineer, Description: "Embedded engineer messages, handoffs, turn starts, and active-turn steering."},
 		{Domain: CapabilityDomainTask, Description: "Temporary delegated agent tasks and their lifecycle."},
 		{Domain: CapabilityDomainProject, Description: "Repository creation, registration, organization, and archive state."},
 		{Domain: CapabilityDomainTodo, Description: "Project TODO capture, completion, worktrees, and tracked engineer work."},
