@@ -259,12 +259,14 @@ Embedded LCAgent also exposes `request_user_command` through the same
 interactive host channel. When a necessary command is outside the workspace,
 requires unavailable admin authority, or remains behind a hard command guard,
 LCAgent can pause and show the exact command, working directory, and reason.
-The operator can report that it ran, decline it, or type what happened; LCAgent
-then continues the same turn. This request never executes the command, raises
-the permission level, or bypasses recursive-`rm` and other command guards. A
-"Ran it" response is user-reported state rather than verification, so LCAgent
-should inspect the resulting state before claiming success when that is
-possible.
+The embedded pane presents this as an amber manual-action dialog rather than a
+generic structured questionnaire. The operator can copy the command, report
+that it ran, skip it, or type what happened; hiding the pane leaves the request
+pending. LCAgent then continues the same turn. This request never executes the
+command, raises the permission level, or bypasses recursive-`rm` and other
+command guards. A "Ran it" response is user-reported state rather than
+verification, so LCAgent should inspect the resulting state before claiming
+success when that is possible.
 
 `lcagent metrics <session.jsonl>...` summarizes trace artifacts and includes a
 `continuations` count plus a derived `trace_quality` block with verification

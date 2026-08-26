@@ -75,6 +75,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	label := embeddedProvider(snapshot).Label()
 	m.normalizeEmbeddedCodexFocus()
 	m.normalizeEmbeddedSidebarSelection(snapshot)
+	manualRequest, manualCommand, manualCommandPending := codexManualCommandFromSnapshot(snapshot)
 
 	if msg.String() == "alt+up" {
 		return m.hideCodexSession()
@@ -90,6 +91,12 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.codexInputSelectionActive() {
 		return m.updateCodexInputSelectionMode(msg)
+	}
+	if manualCommandPending {
+		if msg.String() == "esc" && m.activeCodexManualCommandOutcome(manualRequest.ID) == nil {
+			return m.hideCodexSession()
+		}
+		return m.updateCodexManualCommandMode(manualRequest, manualCommand, msg)
 	}
 
 	if msg.String() == "esc" {

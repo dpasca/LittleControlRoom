@@ -325,6 +325,8 @@ type Model struct {
 	codexLCAgentStatusVisible     map[string]struct{}
 	codexSlashSelected            int
 	codexToolAnswers              map[string]codexToolAnswerState
+	codexManualCommandOutcome     *codexManualCommandOutcomeState
+	codexManualCommandCopyBusy    bool
 	codexViewport                 viewport.Model
 	codexTranscriptCache          codexTranscriptRenderCache
 	codexViewportContent          codexViewportContentState
@@ -470,6 +472,12 @@ type runtimeActionMsg struct {
 
 type runtimeOutputCopyMsg struct {
 	projectPath string
+	err         error
+}
+
+type codexManualCommandCopyMsg struct {
+	projectPath string
+	requestID   string
 	err         error
 }
 
@@ -2456,6 +2464,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexArtifactLinkScanMsg(msg)
 	case runtimeOutputCopyMsg:
 		return m.applyRuntimeOutputCopyMsg(msg)
+	case codexManualCommandCopyMsg:
+		return m.applyCodexManualCommandCopyMsg(msg)
 	case runtimeActionMsg:
 		if msg.err != nil {
 			m.reportError("Runtime action failed", msg.err, msg.projectPath)

@@ -586,6 +586,10 @@ func cloneToolInputRequest(req *ToolInputRequest) *ToolInputRequest {
 		return nil
 	}
 	clone := *req
+	if req.ManualCommand != nil {
+		manualCommand := *req.ManualCommand
+		clone.ManualCommand = &manualCommand
+	}
 	if len(req.Questions) > 0 {
 		clone.Questions = make([]ToolInputQuestion, len(req.Questions))
 		copy(clone.Questions, req.Questions)

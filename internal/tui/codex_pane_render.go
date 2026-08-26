@@ -37,7 +37,9 @@ func (m Model) renderCodexView() string {
 		height = 30
 	}
 	body := m.renderCodexSplitView(snapshot, width, height)
-	if snapshot.PendingElicitation != nil {
+	if _, _, ok := codexManualCommandFromSnapshot(snapshot); ok {
+		body = m.renderCodexManualCommandDialogOverlay(body, width, height, snapshot)
+	} else if snapshot.PendingElicitation != nil {
 		body = m.renderCodexElicitationDialogOverlay(body, width, height, snapshot)
 	}
 	return body
@@ -145,6 +147,14 @@ func (m Model) renderCodexOpeningView(projectPath string) string {
 func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string {
 	label := embeddedProvider(snapshot).Label()
 	switch {
+	case snapshot.PendingToolInput != nil && snapshot.PendingToolInput.ManualCommand != nil:
+		return []string{
+			renderFooterLine(
+				width,
+				detailWarningStyle.Render("Manual terminal action required"),
+				renderFooterStatus("Waiting for manual command"),
+			),
+		}
 	case snapshot.PendingApproval != nil:
 		approvalActions := []footerAction{
 			footerPrimaryAction("a", "accept"),

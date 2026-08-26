@@ -2318,14 +2318,21 @@ func (m Model) respondVisibleToolInputCmd(answers map[string][]string) tea.Cmd {
 		return nil
 	}
 	label := "Codex"
+	status := ""
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
+		if snapshot.PendingToolInput != nil && snapshot.PendingToolInput.ManualCommand != nil {
+			status = "Manual command response sent to " + label
+		}
+	}
+	if status == "" {
+		status = "Structured input sent to " + label
 	}
 	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.RespondToolInput(answers); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Structured input sent to " + label}
+		return codexActionMsg{projectPath: projectPath, status: status}
 	})
 }
 

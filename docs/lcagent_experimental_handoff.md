@@ -80,10 +80,11 @@ LCR session parity:
 - LCAgent supports embedded approval prompts for denied low-autonomy
   `run_command` calls. `Allow once` reruns that command at medium autonomy;
   the `Medium` shortcut raises command autonomy to medium for the rest of the
-  LCAgent run. It can also pause on `request_user_command` and use the existing
-  structured-input pane to ask the operator to run an exact display-only
-  command, then continue from the operator's report without widening its own
-  permissions. General model-defined structured input, attachments,
+  LCAgent run. It can also pause on `request_user_command` and use a dedicated
+  warning dialog to ask the operator to run an exact display-only command,
+  copy it, report that it ran, skip it, or describe another outcome, then
+  continue from that report without widening its own permissions. General
+  model-defined structured input, attachments,
   elicitation, and goal state are still not wired in the embedded pane.
 - Embedded `/review` now starts a read-only current-diff LCAgent review run
   using the same JSONL trace path, with `--auto off` and no continuation resume.

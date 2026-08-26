@@ -329,15 +329,34 @@ type ToolInputQuestion struct {
 	Options     []ToolInputOption
 }
 
+// ManualCommandRequest describes a command that an embedded engineer cannot
+// execute within its current authority and has asked the operator to run.
+// The surrounding ToolInputRequest still carries the provider response shape,
+// while this metadata lets host surfaces present the request as a deliberate
+// manual action instead of a generic questionnaire.
+type ManualCommandRequest struct {
+	QuestionID     string
+	Prompt         string
+	Command        string
+	CWD            string
+	Reason         string
+	CompletedLabel string
+	DeclinedLabel  string
+}
+
 type ToolInputRequest struct {
-	ID        string
-	ThreadID  string
-	TurnID    string
-	ItemID    string
-	Questions []ToolInputQuestion
+	ID            string
+	ThreadID      string
+	TurnID        string
+	ItemID        string
+	Questions     []ToolInputQuestion
+	ManualCommand *ManualCommandRequest
 }
 
 func (r ToolInputRequest) Summary() string {
+	if r.ManualCommand != nil {
+		return "Manual terminal action required"
+	}
 	if len(r.Questions) == 0 {
 		return "Codex requested structured user input"
 	}

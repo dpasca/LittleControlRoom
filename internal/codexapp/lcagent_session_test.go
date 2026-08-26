@@ -569,12 +569,19 @@ func TestLCAgentSessionUserCommandRequestRoundTrip(t *testing.T) {
 	request := snapshot.PendingToolInput
 	question := request.Questions[0]
 	if request.ID != "command-1" || question.ID != "command_status" || len(question.Options) != 2 ||
-		question.Options[0].Label != "Ran it" || !strings.Contains(question.Question, "mv /repo/old ~/.Trash/old") ||
+		question.Options[0].Label != "Ran it" || question.Question != "Run this command in your terminal, then report what happened." ||
 		snapshot.Status != "Waiting for you to run a command" {
 		t.Fatalf("pending user command = %#v status=%q", request, snapshot.Status)
 	}
-	if !strings.Contains(snapshot.Transcript, "LCAgent needs you to run a terminal command") || !strings.Contains(snapshot.Transcript, "Working directory: /repo") {
-		t.Fatalf("transcript missing user command request:\n%s", snapshot.Transcript)
+	if request.ManualCommand == nil || request.ManualCommand.Command != "mv /repo/old ~/.Trash/old" ||
+		request.ManualCommand.CWD != "/repo" || request.ManualCommand.Reason != "The path is outside the writable workspace." ||
+		request.ManualCommand.CompletedLabel != "Ran it" || request.ManualCommand.DeclinedLabel != "Didn't run it" ||
+		request.Summary() != "Manual terminal action required" {
+		t.Fatalf("manual command metadata = %#v", request.ManualCommand)
+	}
+	if !strings.Contains(snapshot.Transcript, "LCAgent paused for a manual terminal command") ||
+		strings.Contains(snapshot.Transcript, "Working directory: /repo") {
+		t.Fatalf("transcript should retain one concise request notice:\n%s", snapshot.Transcript)
 	}
 	if err := session.RespondToolInput(map[string][]string{"command_status": {"Ran it"}}); err != nil {
 		t.Fatalf("RespondToolInput() error = %v", err)

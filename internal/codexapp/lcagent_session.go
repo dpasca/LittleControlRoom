@@ -2429,16 +2429,31 @@ func lcagentUserCommandRequestFromEvent(event map[string]json.RawMessage) *ToolI
 		return nil
 	}
 	questionID := firstNonEmpty(strings.TrimSpace(rawJSONString(event["question_id"])), "command_status")
+	prompt := firstNonEmpty(
+		strings.TrimSpace(rawJSONString(event["question"])),
+		"Run this command in your terminal, then report what happened.",
+	)
+	cwd := strings.TrimSpace(rawJSONString(event["cwd"]))
+	reason := strings.TrimSpace(rawJSONString(event["reason"]))
 	completedLabel := firstNonEmpty(strings.TrimSpace(rawJSONString(event["completed_label"])), "Ran it")
 	declinedLabel := firstNonEmpty(strings.TrimSpace(rawJSONString(event["declined_label"])), "Didn't run it")
 	return &ToolInputRequest{
 		ID:       id,
 		ThreadID: strings.TrimSpace(rawJSONString(event["session_id"])),
+		ManualCommand: &ManualCommandRequest{
+			QuestionID:     questionID,
+			Prompt:         prompt,
+			Command:        command,
+			CWD:            cwd,
+			Reason:         reason,
+			CompletedLabel: completedLabel,
+			DeclinedLabel:  declinedLabel,
+		},
 		Questions: []ToolInputQuestion{
 			{
 				Header:   "User command",
 				ID:       questionID,
-				Question: lcagentUserCommandPrompt(event),
+				Question: prompt,
 				IsOther:  true,
 				Options: []ToolInputOption{
 					{
@@ -2455,25 +2470,8 @@ func lcagentUserCommandRequestFromEvent(event map[string]json.RawMessage) *ToolI
 	}
 }
 
-func lcagentUserCommandPrompt(event map[string]json.RawMessage) string {
-	lines := []string{firstNonEmpty(
-		strings.TrimSpace(rawJSONString(event["question"])),
-		"Run this command in your terminal, then report what happened.",
-	)}
-	if cwd := strings.TrimSpace(rawJSONString(event["cwd"])); cwd != "" {
-		lines = append(lines, "Working directory: "+cwd)
-	}
-	if command := strings.TrimSpace(rawJSONString(event["command"])); command != "" {
-		lines = append(lines, "Command: "+command)
-	}
-	if reason := strings.TrimSpace(rawJSONString(event["reason"])); reason != "" {
-		lines = append(lines, "Why: "+reason)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func lcagentUserCommandRequestText(event map[string]json.RawMessage) string {
-	return "LCAgent needs you to run a terminal command:\n" + lcagentUserCommandPrompt(event)
+func lcagentUserCommandRequestText(_ map[string]json.RawMessage) string {
+	return "LCAgent paused for a manual terminal command. Review the action dialog to continue."
 }
 
 func lcagentUserCommandResolvedStatus(status string) string {
