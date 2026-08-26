@@ -1278,16 +1278,18 @@ func contextLCAgentToolCallText(tool string) string {
 
 func contextLCAgentToolResultText(tool string, raw json.RawMessage) string {
 	var result struct {
-		Success      bool     `json:"success"`
-		Error        string   `json:"error"`
-		Command      string   `json:"command"`
-		CWD          string   `json:"cwd"`
-		ExitCode     int      `json:"exit_code"`
-		TimedOut     bool     `json:"timed_out"`
-		Truncated    bool     `json:"truncated"`
-		Binary       bool     `json:"binary"`
-		ArtifactPath string   `json:"artifact_path"`
-		FilesTouched []string `json:"files_touched"`
+		Success           bool     `json:"success"`
+		Error             string   `json:"error"`
+		Command           string   `json:"command"`
+		CWD               string   `json:"cwd"`
+		ExitCode          int      `json:"exit_code"`
+		TimedOut          bool     `json:"timed_out"`
+		Truncated         bool     `json:"truncated"`
+		Binary            bool     `json:"binary"`
+		ArtifactPath      string   `json:"artifact_path"`
+		FilesTouched      []string `json:"files_touched"`
+		UserCommandStatus string   `json:"user_command_status"`
+		UserResponse      string   `json:"user_response"`
 	}
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &result)
@@ -1303,12 +1305,20 @@ func contextLCAgentToolResultText(tool string, raw json.RawMessage) string {
 		parts[0] = "tool result: " + tool
 	}
 	parts = append(parts, status)
-	if tool == "run_command" {
+	if tool == "run_command" || tool == "request_user_command" {
 		if result.Command = contextSanitizeText(result.Command); result.Command != "" {
 			parts = append(parts, "command: "+result.Command)
 		}
 		if result.CWD = contextSanitizeText(result.CWD); result.CWD != "" {
 			parts = append(parts, "cwd: "+result.CWD)
+		}
+	}
+	if tool == "request_user_command" {
+		if result.UserCommandStatus = contextSanitizeText(result.UserCommandStatus); result.UserCommandStatus != "" {
+			parts = append(parts, "user report: "+result.UserCommandStatus)
+		}
+		if result.UserResponse = contextSanitizeText(result.UserResponse); result.UserResponse != "" {
+			parts = append(parts, "response: "+result.UserResponse)
 		}
 	}
 	if result.Error = contextSanitizeText(result.Error); result.Error != "" {

@@ -3,30 +3,32 @@ package tools
 import "time"
 
 type ToolResult struct {
-	Success          bool                     `json:"success"`
-	Output           string                   `json:"output,omitempty"`
-	Error            string                   `json:"error,omitempty"`
-	Denied           bool                     `json:"denied,omitempty"`
-	DenialReason     string                   `json:"denial_reason,omitempty"`
-	Command          string                   `json:"command,omitempty"`
-	Argv             []string                 `json:"argv,omitempty"`
-	CWD              string                   `json:"cwd,omitempty"`
-	Purpose          string                   `json:"purpose,omitempty"`
-	AdminScope       string                   `json:"admin_scope,omitempty"`
-	SystemMutation   bool                     `json:"system_mutation,omitempty"`
-	AllowedExitCodes []int                    `json:"allowed_exit_codes,omitempty"`
-	ExitCode         int                      `json:"exit_code,omitempty"`
-	Duration         time.Duration            `json:"duration,omitempty"`
-	TimedOut         bool                     `json:"timed_out,omitempty"`
-	Truncated        bool                     `json:"truncated,omitempty"`
-	Binary           bool                     `json:"binary,omitempty"`
-	ArtifactPath     string                   `json:"artifact_path,omitempty"`
-	FilesTouched     []string                 `json:"files_touched,omitempty"`
-	DiffSummary      string                   `json:"diff_summary,omitempty"`
-	PatchSummary     *PatchSummary            `json:"patch_summary,omitempty"`
-	PatchFailure     *PatchFailure            `json:"patch_failure,omitempty"`
-	ManagedProcess   *ManagedProcessEvidence  `json:"managed_process,omitempty"`
-	ManagedProcesses []ManagedProcessEvidence `json:"managed_processes,omitempty"`
+	Success           bool                     `json:"success"`
+	Output            string                   `json:"output,omitempty"`
+	Error             string                   `json:"error,omitempty"`
+	Denied            bool                     `json:"denied,omitempty"`
+	DenialReason      string                   `json:"denial_reason,omitempty"`
+	Command           string                   `json:"command,omitempty"`
+	Argv              []string                 `json:"argv,omitempty"`
+	CWD               string                   `json:"cwd,omitempty"`
+	Purpose           string                   `json:"purpose,omitempty"`
+	AdminScope        string                   `json:"admin_scope,omitempty"`
+	SystemMutation    bool                     `json:"system_mutation,omitempty"`
+	AllowedExitCodes  []int                    `json:"allowed_exit_codes,omitempty"`
+	ExitCode          int                      `json:"exit_code,omitempty"`
+	Duration          time.Duration            `json:"duration,omitempty"`
+	TimedOut          bool                     `json:"timed_out,omitempty"`
+	Truncated         bool                     `json:"truncated,omitempty"`
+	Binary            bool                     `json:"binary,omitempty"`
+	ArtifactPath      string                   `json:"artifact_path,omitempty"`
+	FilesTouched      []string                 `json:"files_touched,omitempty"`
+	DiffSummary       string                   `json:"diff_summary,omitempty"`
+	PatchSummary      *PatchSummary            `json:"patch_summary,omitempty"`
+	PatchFailure      *PatchFailure            `json:"patch_failure,omitempty"`
+	ManagedProcess    *ManagedProcessEvidence  `json:"managed_process,omitempty"`
+	ManagedProcesses  []ManagedProcessEvidence `json:"managed_processes,omitempty"`
+	UserCommandStatus string                   `json:"user_command_status,omitempty"`
+	UserResponse      string                   `json:"user_response,omitempty"`
 }
 
 type ManagedProcessEvidence struct {

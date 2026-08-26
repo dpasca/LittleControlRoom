@@ -31,6 +31,37 @@ type ApprovalBroker interface {
 	RequestCommandApproval(context.Context, CommandApprovalRequest) (ApprovalDecision, error)
 }
 
+const (
+	UserCommandQuestionID    = "command_status"
+	UserCommandRanLabel      = "Ran it"
+	UserCommandDeclinedLabel = "Didn't run it"
+
+	UserCommandStatusCompleted = "completed"
+	UserCommandStatusDeclined  = "declined"
+	UserCommandStatusResponded = "responded"
+	UserCommandStatusCanceled  = "canceled"
+)
+
+type UserCommandRequest struct {
+	ID        string
+	SessionID string
+	Command   string
+	CWD       string
+	Reason    string
+}
+
+type UserCommandResponse struct {
+	Status  string
+	Message string
+}
+
+// UserCommandBroker pauses an embedded run while the operator performs a
+// command manually. It deliberately reports what the operator said happened;
+// it does not grant LCAgent authority to execute the command itself.
+type UserCommandBroker interface {
+	RequestUserCommand(context.Context, UserCommandRequest) (UserCommandResponse, error)
+}
+
 type ProcessAction string
 
 const (

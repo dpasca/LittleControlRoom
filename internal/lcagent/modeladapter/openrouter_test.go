@@ -420,6 +420,41 @@ func TestToolsWithOptionsDescribeAdminWritePaths(t *testing.T) {
 	}
 }
 
+func TestToolsWithOptionsExposeUserCommandRequestOnlyWhenInteractive(t *testing.T) {
+	if names := toolNames(ToolsWithOptions(ToolOptions{})); names["request_user_command"] {
+		t.Fatalf("non-interactive tools unexpectedly include request_user_command: %#v", names)
+	}
+	tools := ToolsWithOptions(ToolOptions{UserCommandRequestsEnabled: true})
+	spec := toolSpec(t, tools, "request_user_command")
+	if !strings.Contains(spec.Description, "never executes") || !strings.Contains(spec.Description, "verify the effect") {
+		t.Fatalf("request_user_command description = %q", spec.Description)
+	}
+	properties := spec.Parameters["properties"].(map[string]any)
+	for _, name := range []string{"command", "cwd", "reason"} {
+		if _, ok := properties[name]; !ok {
+			t.Fatalf("request_user_command schema missing %q: %#v", name, properties)
+		}
+	}
+	readOnly := toolNames(ToolsWithOptions(ToolOptions{UserCommandRequestsEnabled: true, ReadOnly: true}))
+	if readOnly["request_user_command"] {
+		t.Fatalf("read-only tools unexpectedly include request_user_command: %#v", readOnly)
+	}
+}
+
+func TestSystemPromptExplainsUserCommandRequestBoundary(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{UserCommandRequestsEnabled: true})
+	for _, want := range []string{
+		"interactive user command requests available: yes",
+		"call request_user_command instead of ending the turn",
+		"never executes or approves the command",
+		"A user report from request_user_command is not verification",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
 	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "absolute paths") || !strings.Contains(prompt, "read-only file inspection") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer repo_overview") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "intent sentence") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") || !strings.Contains(prompt, "toolchain probes") || !strings.Contains(prompt, "corepack enable") || !strings.Contains(prompt, "process group") || !strings.Contains(prompt, "long-running process is still running") {

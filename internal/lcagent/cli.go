@@ -433,7 +433,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, ollama, or mlx")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
-	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "approval mode for denied low-autonomy commands: deny or ask")
+	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "interactive host mode for approvals and user-command requests: deny or ask")
 	fs.StringVar(&todoCaptureModeRaw, "lcr-todo-capture-mode", string(todocapture.ModeOff), "Little Control Room host TODO capture mode")
 	fs.StringVar(&lcrDBPath, "lcr-db-path", "", "Little Control Room state database used by the read-only query catalog")
 	fs.StringVar(&lcrQueryScopeRaw, "lcr-query-scope", string(agentquery.ScopeProject), "Little Control Room query scope: project or portfolio")
@@ -874,6 +874,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if approvalMode == approvalModeAsk {
 		broker := newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
 		runner.Approvals = broker
+		runner.UserCommands = broker
 		runner.Processes = broker
 		if todoCaptureMode.Enabled() {
 			runner.ProjectTodos = broker
@@ -1033,6 +1034,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
 	systemPromptOptions.LCRQueriesEnabled = runner.LCRQueries != nil
 	systemPromptOptions.LCRControlsEnabled = runner.LCRControls != nil
+	systemPromptOptions.UserCommandRequestsEnabled = runner.UserCommands != nil
 	systemPromptOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	systemPromptOptions.ReadOnly = readOnlyTools
 	systemPromptOptions.TodoCaptureMode = runner.TodoCaptureMode
@@ -1079,6 +1081,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.VisionAnalysisEnabled = vision.Enabled
 	toolOptions.LCRQueriesEnabled = runner.LCRQueries != nil
 	toolOptions.LCRControlsEnabled = runner.LCRControls != nil
+	toolOptions.UserCommandRequestsEnabled = runner.UserCommands != nil
 	toolOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	toolOptions.ReadOnly = readOnlyTools
 	toolOptions.TodoCaptureMode = runner.TodoCaptureMode

@@ -1263,6 +1263,17 @@ func (f *fakeApprovalBroker) RequestCommandApproval(_ context.Context, request C
 	return decision, nil
 }
 
+type fakeUserCommandBroker struct {
+	requests []UserCommandRequest
+	response UserCommandResponse
+	err      error
+}
+
+func (f *fakeUserCommandBroker) RequestUserCommand(_ context.Context, request UserCommandRequest) (UserCommandResponse, error) {
+	f.requests = append(f.requests, request)
+	return f.response, f.err
+}
+
 type fakeProcessBroker struct {
 	requests []ProcessRequest
 	result   tools.ToolResult
@@ -1828,6 +1839,50 @@ func TestRunnerEmitsPermissionDeniedEvent(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunnerRequestsUserCommandWithoutExecutingIt(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	requests := &fakeUserCommandBroker{
+		response: UserCommandResponse{Status: UserCommandStatusCompleted},
+	}
+	runner := Runner{
+		Session:      writer,
+		SessionID:    sessionID,
+		Command:      tools.CommandRunner{Workspace: w},
+		UserCommands: requests,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "request_user_command",
+		Args: raw(`{"command":"mv /outside/old ~/.Trash/old","cwd":"/outside","reason":"The path is outside the writable workspace."}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || result.UserCommandStatus != UserCommandStatusCompleted || !strings.Contains(result.Output, "user-reported, not verification") {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(requests.requests) != 1 {
+		t.Fatalf("requests = %#v", requests.requests)
+	}
+	request := requests.requests[0]
+	if request.Command != "mv /outside/old ~/.Trash/old" || request.CWD != "/outside" || request.SessionID != sessionID {
+		t.Fatalf("request = %#v", request)
+	}
+	if !strings.Contains(stream.String(), `"tool":"request_user_command"`) || !strings.Contains(stream.String(), `"user_command_status":"completed"`) {
+		t.Fatalf("trace missing user command tool result:\n%s", stream.String())
 	}
 }
 

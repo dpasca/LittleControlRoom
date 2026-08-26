@@ -8,21 +8,22 @@ import (
 )
 
 type SystemPromptOptions struct {
-	ToolProfile             string
-	DefaultReadLineLimit    int
-	MaxReadLineLimit        int
-	WebSearchEnabled        bool
-	ManagedProcessesEnabled bool
-	AdminWrite              bool
-	BrowserAvailable        bool
-	VisionAnalysisEnabled   bool
-	LCRQueriesEnabled       bool
-	LCRControlsEnabled      bool
-	HostOS                  string
-	HostArch                string
-	WorkspaceOnlyReads      bool
-	ReadOnly                bool
-	TodoCaptureMode         todocapture.CaptureMode
+	ToolProfile                string
+	DefaultReadLineLimit       int
+	MaxReadLineLimit           int
+	WebSearchEnabled           bool
+	ManagedProcessesEnabled    bool
+	AdminWrite                 bool
+	BrowserAvailable           bool
+	VisionAnalysisEnabled      bool
+	LCRQueriesEnabled          bool
+	LCRControlsEnabled         bool
+	UserCommandRequestsEnabled bool
+	HostOS                     string
+	HostArch                   string
+	WorkspaceOnlyReads         bool
+	ReadOnly                   bool
+	TodoCaptureMode            todocapture.CaptureMode
 }
 
 func SystemPrompt(skillIndex, projectInstructions string) string {
@@ -57,6 +58,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		fmt.Sprintf("- vision image analysis available: %s", yesNo(opts.VisionAnalysisEnabled)),
 		fmt.Sprintf("- Little Control Room state queries available: %s", yesNo(opts.LCRQueriesEnabled)),
 		fmt.Sprintf("- Little Control Room confirmed controls available: %s", yesNo(opts.LCRControlsEnabled)),
+		fmt.Sprintf("- interactive user command requests available: %s", yesNo(opts.UserCommandRequestsEnabled)),
 	}
 	lines = append(lines, hostEnvironmentPromptLines(opts)...)
 	lines = append(lines,
@@ -96,6 +98,13 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 			"For LCR actions, call list_control_capabilities, then describe_control_capability, then propose_control_operation with arguments matching the described schema.",
 			"A successful proposal has not executed. It waits for explicit operator confirmation in Little Control Room; stop the turn after proposing and inspect it with get_control_operation only on a later user turn.",
 			"When asked to tell, hand off to, continue, trigger, or steer another engineer, inspect the target project/session with LCR queries and propose engineer.send_prompt. Use the exact target_session_id when a specific recipient is known; durable delivery waits for that recipient instead of asking the operator to relay the message.",
+		)
+	}
+	if opts.UserCommandRequestsEnabled {
+		lines = append(lines,
+			"When a necessary command cannot run because the current workspace, admin-write, process scope, or hard command policy does not permit it, call request_user_command instead of ending the turn with instructions for the user to run later.",
+			"request_user_command never executes or approves the command. It pauses for the user to run the exact displayed command themselves and reports what they selected or typed. Prefer a recoverable command when practical, explain destructive effects plainly, and never ask the user to paste credentials or secrets.",
+			"A user report from request_user_command is not verification. After the user reports running it, inspect the resulting state when possible before claiming the operation succeeded.",
 		)
 	}
 	if opts.WebSearchEnabled {

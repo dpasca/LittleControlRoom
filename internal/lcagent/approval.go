@@ -40,15 +40,22 @@ type projectTodoResponse struct {
 	Error  string           `json:"error"`
 }
 
+type userCommandResponse struct {
+	Type    string              `json:"type"`
+	ID      string              `json:"id"`
+	Answers map[string][]string `json:"answers"`
+}
+
 type stdioApprovalBroker struct {
-	writer           *session.Writer
-	sessionID        string
-	cwd              string
-	responses        <-chan approvalResponse
-	processResponses <-chan processResponse
-	todoResponses    <-chan projectTodoResponse
-	steerMessages    <-chan string
-	nextID           int64
+	writer               *session.Writer
+	sessionID            string
+	cwd                  string
+	responses            <-chan approvalResponse
+	processResponses     <-chan processResponse
+	todoResponses        <-chan projectTodoResponse
+	userCommandResponses <-chan userCommandResponse
+	steerMessages        <-chan string
+	nextID               int64
 }
 
 func normalizeApprovalMode(raw string) (string, error) {
@@ -66,23 +73,26 @@ func newStdioApprovalBroker(writer *session.Writer, sessionID, cwd string, input
 	responses := make(chan approvalResponse, 8)
 	processResponses := make(chan processResponse, 8)
 	todoResponses := make(chan projectTodoResponse, 8)
+	userCommandResponses := make(chan userCommandResponse, 8)
 	steerMessages := make(chan string, 8)
-	go readStdioResponses(input, responses, processResponses, todoResponses, steerMessages)
+	go readStdioResponses(input, responses, processResponses, todoResponses, userCommandResponses, steerMessages)
 	return &stdioApprovalBroker{
-		writer:           writer,
-		sessionID:        strings.TrimSpace(sessionID),
-		cwd:              strings.TrimSpace(cwd),
-		responses:        responses,
-		processResponses: processResponses,
-		todoResponses:    todoResponses,
-		steerMessages:    steerMessages,
+		writer:               writer,
+		sessionID:            strings.TrimSpace(sessionID),
+		cwd:                  strings.TrimSpace(cwd),
+		responses:            responses,
+		processResponses:     processResponses,
+		todoResponses:        todoResponses,
+		userCommandResponses: userCommandResponses,
+		steerMessages:        steerMessages,
 	}
 }
 
-func readStdioResponses(input io.Reader, approvalResponses chan<- approvalResponse, processResponses chan<- processResponse, todoResponses chan<- projectTodoResponse, steerMessages chan<- string) {
+func readStdioResponses(input io.Reader, approvalResponses chan<- approvalResponse, processResponses chan<- processResponse, todoResponses chan<- projectTodoResponse, userCommandResponses chan<- userCommandResponse, steerMessages chan<- string) {
 	defer close(approvalResponses)
 	defer close(processResponses)
 	defer close(todoResponses)
+	defer close(userCommandResponses)
 	defer close(steerMessages)
 	if input == nil {
 		return
@@ -128,6 +138,16 @@ func readStdioResponses(input io.Reader, approvalResponses chan<- approvalRespon
 				continue
 			}
 			todoResponses <- response
+		case "user_command_response":
+			var response userCommandResponse
+			if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+				continue
+			}
+			response.ID = strings.TrimSpace(response.ID)
+			if response.ID == "" {
+				continue
+			}
+			userCommandResponses <- response
 		case "steer":
 			var response struct {
 				Message string `json:"message"`
@@ -218,6 +238,85 @@ func (b *stdioApprovalBroker) RequestCommandApproval(ctx context.Context, reques
 			decision = response.Decision
 			return decision, nil
 		}
+	}
+}
+
+func (b *stdioApprovalBroker) RequestUserCommand(ctx context.Context, request script.UserCommandRequest) (response script.UserCommandResponse, err error) {
+	response.Status = script.UserCommandStatusCanceled
+	if b == nil || b.writer == nil {
+		return response, fmt.Errorf("user command request channel is unavailable")
+	}
+	request.ID = firstNonEmptyString(strings.TrimSpace(request.ID), b.nextUserCommandID())
+	request.SessionID = firstNonEmptyString(strings.TrimSpace(request.SessionID), b.sessionID)
+	request.Command = strings.TrimSpace(request.Command)
+	request.CWD = firstNonEmptyString(strings.TrimSpace(request.CWD), b.cwd)
+	request.Reason = strings.TrimSpace(request.Reason)
+	if err := b.writer.Write(session.Event{
+		"type":            "user_command_request",
+		"session_id":      request.SessionID,
+		"id":              request.ID,
+		"question_id":     script.UserCommandQuestionID,
+		"question":        "Run this command in your terminal, then report what happened.",
+		"command":         request.Command,
+		"cwd":             request.CWD,
+		"reason":          request.Reason,
+		"completed_label": script.UserCommandRanLabel,
+		"declined_label":  script.UserCommandDeclinedLabel,
+	}); err != nil {
+		return response, err
+	}
+	defer func() {
+		_ = b.writer.Write(session.Event{
+			"type":          "user_command_resolved",
+			"session_id":    request.SessionID,
+			"id":            request.ID,
+			"command":       request.Command,
+			"cwd":           request.CWD,
+			"status":        response.Status,
+			"user_response": response.Message,
+		})
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return response, ctx.Err()
+		case incoming, ok := <-b.userCommandResponses:
+			if !ok {
+				return response, fmt.Errorf("user command response channel closed")
+			}
+			if incoming.ID != request.ID {
+				continue
+			}
+			response, err = normalizeUserCommandResponse(incoming.Answers)
+			return response, err
+		}
+	}
+}
+
+func normalizeUserCommandResponse(answers map[string][]string) (script.UserCommandResponse, error) {
+	values := answers[script.UserCommandQuestionID]
+	if len(values) == 0 && len(answers) == 1 {
+		for _, fallback := range answers {
+			values = fallback
+		}
+	}
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			cleaned = append(cleaned, value)
+		}
+	}
+	if len(cleaned) == 0 {
+		return script.UserCommandResponse{Status: script.UserCommandStatusCanceled}, fmt.Errorf("user command response is empty")
+	}
+	answer := strings.Join(cleaned, ", ")
+	switch {
+	case strings.EqualFold(answer, script.UserCommandRanLabel):
+		return script.UserCommandResponse{Status: script.UserCommandStatusCompleted}, nil
+	case strings.EqualFold(answer, script.UserCommandDeclinedLabel):
+		return script.UserCommandResponse{Status: script.UserCommandStatusDeclined}, nil
+	default:
+		return script.UserCommandResponse{Status: script.UserCommandStatusResponded, Message: answer}, nil
 	}
 }
 
@@ -328,6 +427,11 @@ func (b *stdioApprovalBroker) nextProcessID() string {
 func (b *stdioApprovalBroker) nextProjectTodoID() string {
 	n := atomic.AddInt64(&b.nextID, 1)
 	return fmt.Sprintf("lca_todo_%d", n)
+}
+
+func (b *stdioApprovalBroker) nextUserCommandID() string {
+	n := atomic.AddInt64(&b.nextID, 1)
+	return fmt.Sprintf("lca_user_command_%d", n)
 }
 
 func approvalDecisionStatus(decision script.ApprovalDecision) string {

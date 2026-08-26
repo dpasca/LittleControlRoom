@@ -551,6 +551,53 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionUserCommandRequestRoundTrip(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		stdin:       stdin,
+		started:     true,
+		busy:        true,
+		status:      "LCAgent running",
+	}
+	session.handleEvent([]byte(`{"type":"user_command_request","session_id":"lca_user_command_session","id":"command-1","question_id":"command_status","question":"Run this command in your terminal, then report what happened.","command":"mv /repo/old ~/.Trash/old","cwd":"/repo","reason":"The path is outside the writable workspace.","completed_label":"Ran it","declined_label":"Didn't run it"}`))
+
+	snapshot := session.Snapshot()
+	if snapshot.PendingToolInput == nil || len(snapshot.PendingToolInput.Questions) != 1 {
+		t.Fatalf("PendingToolInput = %#v, want one question", snapshot.PendingToolInput)
+	}
+	request := snapshot.PendingToolInput
+	question := request.Questions[0]
+	if request.ID != "command-1" || question.ID != "command_status" || len(question.Options) != 2 ||
+		question.Options[0].Label != "Ran it" || !strings.Contains(question.Question, "mv /repo/old ~/.Trash/old") ||
+		snapshot.Status != "Waiting for you to run a command" {
+		t.Fatalf("pending user command = %#v status=%q", request, snapshot.Status)
+	}
+	if !strings.Contains(snapshot.Transcript, "LCAgent needs you to run a terminal command") || !strings.Contains(snapshot.Transcript, "Working directory: /repo") {
+		t.Fatalf("transcript missing user command request:\n%s", snapshot.Transcript)
+	}
+	if err := session.RespondToolInput(map[string][]string{"command_status": {"Ran it"}}); err != nil {
+		t.Fatalf("RespondToolInput() error = %v", err)
+	}
+	if err := session.RespondToolInput(map[string][]string{"command_status": {"Ran it"}}); err == nil || !strings.Contains(err.Error(), "no pending") {
+		t.Fatalf("repeated RespondToolInput() error = %v, want no pending request", err)
+	}
+	if got := strings.Join(stdin.writes, ""); !strings.Contains(got, `"type":"user_command_response"`) ||
+		!strings.Contains(got, `"id":"command-1"`) ||
+		!strings.Contains(got, `"command_status":["Ran it"]`) {
+		t.Fatalf("user command response payload = %q", got)
+	}
+
+	session.handleEvent([]byte(`{"type":"user_command_resolved","session_id":"lca_user_command_session","id":"command-1","command":"mv /repo/old ~/.Trash/old","cwd":"/repo","status":"completed"}`))
+	snapshot = session.Snapshot()
+	if snapshot.PendingToolInput != nil {
+		t.Fatalf("PendingToolInput after resolution = %#v, want nil", snapshot.PendingToolInput)
+	}
+	if snapshot.Status != "User reported the requested command ran" || !strings.Contains(snapshot.Transcript, "User reported the requested command ran") {
+		t.Fatalf("resolution not reflected; status=%q transcript=\n%s", snapshot.Status, snapshot.Transcript)
+	}
+}
+
 func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
 	projectPath := t.TempDir()
 	frontend := filepath.Join(projectPath, "frontend")

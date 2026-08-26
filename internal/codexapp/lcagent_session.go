@@ -107,6 +107,7 @@ type lcagentSession struct {
 	pendingReasoning            string
 	tokenUsage                  *threadTokenUsage
 	pendingApproval             *ApprovalRequest
+	pendingToolInput            *ToolInputRequest
 	replayLoaded                bool
 	managedBrowserSessionKey    string
 	browserProfileKey           string
@@ -1361,8 +1362,77 @@ func (s *lcagentSession) RespondApproval(decision ApprovalDecision) error {
 	return nil
 }
 
-func (s *lcagentSession) RespondToolInput(map[string][]string) error {
-	return fmt.Errorf("LCAgent structured input is not supported yet")
+func (s *lcagentSession) RespondToolInput(answers map[string][]string) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("LCAgent session is closed")
+	}
+	request := cloneToolInputRequest(s.pendingToolInput)
+	if request == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("no pending LCAgent input request")
+	}
+	stdin := s.stdin
+	if stdin == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("LCAgent input channel is not available")
+	}
+	normalized := make(map[string][]string, len(request.Questions))
+	for _, question := range request.Questions {
+		values := normalizeAnswerValues(answers[question.ID])
+		if len(values) == 0 {
+			s.mu.Unlock()
+			return fmt.Errorf("answer required for %q", question.Question)
+		}
+		normalized[question.ID] = values
+	}
+	s.pendingToolInput = nil
+	s.status = "Sending LCAgent user response..."
+	s.touchLocked()
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"type":    "user_command_response",
+		"id":      request.ID,
+		"answers": normalized,
+	})
+	if err != nil {
+		s.restoreLCAgentToolInputAfterSendFailure(request)
+		return err
+	}
+	if _, err := fmt.Fprintln(stdin, string(payload)); err != nil {
+		s.restoreLCAgentToolInputAfterSendFailure(request)
+		s.appendAsync(TranscriptError, "LCAgent user response failed: "+err.Error())
+		return err
+	}
+	s.mu.Lock()
+	if s.status == "Sending LCAgent user response..." {
+		s.status = "LCAgent user response sent"
+	}
+	s.appendEntryLocked(TranscriptStatus, "Response sent to LCAgent; waiting for it to continue.")
+	s.touchLocked()
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+	return nil
+}
+
+func (s *lcagentSession) restoreLCAgentToolInputAfterSendFailure(request *ToolInputRequest) {
+	s.mu.Lock()
+	if s.pendingToolInput == nil && s.busy && !s.closed {
+		s.pendingToolInput = cloneToolInputRequest(request)
+		s.status = "Waiting for you to run a command"
+		s.touchLocked()
+	}
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
 }
 
 func (s *lcagentSession) RespondElicitation(ElicitationDecision, json.RawMessage) error {
@@ -1393,7 +1463,7 @@ func (s *lcagentSession) CloseDueToInactivity() error {
 		s.mu.Unlock()
 		return nil
 	}
-	if s.busy || s.pendingApproval != nil {
+	if s.busy || s.pendingApproval != nil || s.pendingToolInput != nil {
 		s.touchLocked()
 		s.mu.Unlock()
 		return nil
@@ -2042,6 +2112,27 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		if text := lcagentApprovalResolvedText(event); text != "" {
 			s.appendAsync(TranscriptStatus, text)
 		}
+	case "user_command_request":
+		request := lcagentUserCommandRequestFromEvent(event)
+		if request != nil {
+			s.mu.Lock()
+			s.pendingToolInput = request
+			s.status = "Waiting for you to run a command"
+			s.touchLocked()
+			s.mu.Unlock()
+			s.appendAsync(TranscriptStatus, lcagentUserCommandRequestText(event))
+		}
+	case "user_command_resolved":
+		id := rawJSONString(event["id"])
+		status := strings.ToLower(strings.TrimSpace(rawJSONString(event["status"])))
+		s.mu.Lock()
+		if s.pendingToolInput != nil && (id == "" || id == s.pendingToolInput.ID) {
+			s.pendingToolInput = nil
+		}
+		s.status = lcagentUserCommandResolvedStatus(status)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, lcagentUserCommandResolvedText(event))
 	case "permission_level_changed":
 		if text := lcagentPermissionLevelChangedText(event); text != "" {
 			s.mu.Lock()
@@ -2329,6 +2420,81 @@ func lcagentApprovalRequestFromEvent(event map[string]json.RawMessage, fallbackT
 		Reason:   rawJSONString(event["reason"]),
 		Scope:    rawJSONString(event["scope"]),
 	}
+}
+
+func lcagentUserCommandRequestFromEvent(event map[string]json.RawMessage) *ToolInputRequest {
+	id := strings.TrimSpace(rawJSONString(event["id"]))
+	command := strings.TrimSpace(rawJSONString(event["command"]))
+	if id == "" || command == "" {
+		return nil
+	}
+	questionID := firstNonEmpty(strings.TrimSpace(rawJSONString(event["question_id"])), "command_status")
+	completedLabel := firstNonEmpty(strings.TrimSpace(rawJSONString(event["completed_label"])), "Ran it")
+	declinedLabel := firstNonEmpty(strings.TrimSpace(rawJSONString(event["declined_label"])), "Didn't run it")
+	return &ToolInputRequest{
+		ID:       id,
+		ThreadID: strings.TrimSpace(rawJSONString(event["session_id"])),
+		Questions: []ToolInputQuestion{
+			{
+				Header:   "User command",
+				ID:       questionID,
+				Question: lcagentUserCommandPrompt(event),
+				IsOther:  true,
+				Options: []ToolInputOption{
+					{
+						Label:       completedLabel,
+						Description: "I ran this exact command; LCAgent should verify the result.",
+					},
+					{
+						Label:       declinedLabel,
+						Description: "I did not run it; continue without assuming changes.",
+					},
+				},
+			},
+		},
+	}
+}
+
+func lcagentUserCommandPrompt(event map[string]json.RawMessage) string {
+	lines := []string{firstNonEmpty(
+		strings.TrimSpace(rawJSONString(event["question"])),
+		"Run this command in your terminal, then report what happened.",
+	)}
+	if cwd := strings.TrimSpace(rawJSONString(event["cwd"])); cwd != "" {
+		lines = append(lines, "Working directory: "+cwd)
+	}
+	if command := strings.TrimSpace(rawJSONString(event["command"])); command != "" {
+		lines = append(lines, "Command: "+command)
+	}
+	if reason := strings.TrimSpace(rawJSONString(event["reason"])); reason != "" {
+		lines = append(lines, "Why: "+reason)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func lcagentUserCommandRequestText(event map[string]json.RawMessage) string {
+	return "LCAgent needs you to run a terminal command:\n" + lcagentUserCommandPrompt(event)
+}
+
+func lcagentUserCommandResolvedStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed":
+		return "User reported the requested command ran"
+	case "declined":
+		return "User did not run the requested command"
+	case "responded":
+		return "User responded to the command request"
+	default:
+		return "User command request canceled"
+	}
+}
+
+func lcagentUserCommandResolvedText(event map[string]json.RawMessage) string {
+	text := lcagentUserCommandResolvedStatus(rawJSONString(event["status"]))
+	if response := strings.TrimSpace(rawJSONString(event["user_response"])); response != "" {
+		text += ": " + response
+	}
+	return text
 }
 
 func lcagentApprovalResolvedStatus(event map[string]json.RawMessage) string {
@@ -2771,6 +2937,7 @@ func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 	s.cmd = nil
 	s.stdin = nil
 	s.pendingApproval = nil
+	s.pendingToolInput = nil
 	s.lastBusyActivityAt = time.Now()
 	s.lastActivityAt = s.lastBusyActivityAt
 	if err != nil {
@@ -3493,6 +3660,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		SuggestedInputDraft:         suggestedDraft,
 		SuggestedInputDraftSource:   suggestedDraftSource,
 		PendingApproval:             cloneApprovalRequest(s.pendingApproval),
+		PendingToolInput:            cloneToolInputRequest(s.pendingToolInput),
 		ActivityPreview:             activityPreviewFromEntries(s.entries),
 		LastActivityAt:              s.lastActivityAt,
 		CurrentCWD:                  s.projectPath,
@@ -3880,6 +4048,18 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 				command = strings.Join(nonEmptyStrings(args.Argv), " ")
 			}
 			if cwd != "" {
+				return strings.TrimSpace(command + " in " + cwd)
+			}
+			return command
+		}
+	case "request_user_command":
+		var args struct {
+			Command string `json:"command"`
+			CWD     string `json:"cwd"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			command := strings.TrimSpace(args.Command)
+			if cwd := strings.TrimSpace(args.CWD); cwd != "" {
 				return strings.TrimSpace(command + " in " + cwd)
 			}
 			return command

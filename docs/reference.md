@@ -255,6 +255,17 @@ require explicit `admin_scope=system` plus `lcagent_admin_write`.
 When a Low run asks for command approval, `a` approves once and `A` switches the
 current LCAgent run to Medium.
 
+Embedded LCAgent also exposes `request_user_command` through the same
+interactive host channel. When a necessary command is outside the workspace,
+requires unavailable admin authority, or remains behind a hard command guard,
+LCAgent can pause and show the exact command, working directory, and reason.
+The operator can report that it ran, decline it, or type what happened; LCAgent
+then continues the same turn. This request never executes the command, raises
+the permission level, or bypasses recursive-`rm` and other command guards. A
+"Ran it" response is user-reported state rather than verification, so LCAgent
+should inspect the resulting state before claiming success when that is
+possible.
+
 `lcagent metrics <session.jsonl>...` summarizes trace artifacts and includes a
 `continuations` count plus a derived `trace_quality` block with verification
 coverage, tool failures, repair pressure, read overlap, cached-token rate, and

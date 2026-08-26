@@ -37,11 +37,11 @@ Implemented pieces:
   targets, package-manager test/check/build scripts, controlled `pnpm exec`
   wrappers around local JS/TS verifier CLIs, Cargo checks, Python test and
   typecheck tools, JS/TS checks, and read-only formatter modes.
-- Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
+- Coding-session tools: `read_file`, `file_outline`, `module_outline`,
   `list_files`, literal `search`, optional `web_search`, `load_skill`,
-  `run_command`, direct `create_file`, guarded whole-file `replace_file`,
-  `apply_patch`, literal `replace_text`, line-range `replace_lines`,
-  `update_plan`, and `final_response`.
+  `run_command`, interactive `request_user_command`, direct `create_file`,
+  guarded whole-file `replace_file`, `apply_patch`, literal `replace_text`,
+  line-range `replace_lines`, `update_plan`, and `final_response`.
 - Provider adapters for OpenRouter, OpenAI, DeepSeek, and Moonshot/Kimi routes.
 - Coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
   with traceable `route_preset` events, explicit flag overrides, and optional
@@ -80,8 +80,11 @@ LCR session parity:
 - LCAgent supports embedded approval prompts for denied low-autonomy
   `run_command` calls. `Allow once` reruns that command at medium autonomy;
   the `Medium` shortcut raises command autonomy to medium for the rest of the
-  LCAgent run. Attachments, structured tool input, elicitation, and goal state
-  are still not wired in the embedded pane.
+  LCAgent run. It can also pause on `request_user_command` and use the existing
+  structured-input pane to ask the operator to run an exact display-only
+  command, then continue from the operator's report without widening its own
+  permissions. General model-defined structured input, attachments,
+  elicitation, and goal state are still not wired in the embedded pane.
 - Embedded `/review` now starts a read-only current-diff LCAgent review run
   using the same JSONL trace path, with `--auto off` and no continuation resume.
 - Embedded `/compact` now writes a durable Markdown handoff summary from the

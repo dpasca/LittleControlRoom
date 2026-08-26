@@ -51,6 +51,58 @@ func TestStdioApprovalBrokerEmitsRequestAndResolvedEvents(t *testing.T) {
 	}
 }
 
+func TestStdioApprovalBrokerRequestsManualUserCommand(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	broker := newStdioApprovalBroker(
+		writer,
+		sessionID,
+		"/repo",
+		strings.NewReader(`{"type":"user_command_response","id":"lca_user_command_1","answers":{"command_status":["Ran it"]}}`+"\n"),
+	)
+	response, err := broker.RequestUserCommand(context.Background(), script.UserCommandRequest{
+		Command: "mv /repo/old ~/.Trash/old",
+		CWD:     "/repo",
+		Reason:  "The source is outside LCAgent's writable workspace.",
+	})
+	if err != nil {
+		t.Fatalf("RequestUserCommand() error = %v", err)
+	}
+	if response.Status != script.UserCommandStatusCompleted || response.Message != "" {
+		t.Fatalf("response = %#v, want completed", response)
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"type":"user_command_request"`,
+		`"id":"lca_user_command_1"`,
+		`"command":"mv /repo/old ~/.Trash/old"`,
+		`"question_id":"command_status"`,
+		`"completed_label":"Ran it"`,
+		`"type":"user_command_resolved"`,
+		`"status":"completed"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
+func TestNormalizeUserCommandResponsePreservesTypedReply(t *testing.T) {
+	response, err := normalizeUserCommandResponse(map[string][]string{
+		script.UserCommandQuestionID: {"It failed: permission denied"},
+	})
+	if err != nil {
+		t.Fatalf("normalizeUserCommandResponse() error = %v", err)
+	}
+	if response.Status != script.UserCommandStatusResponded || response.Message != "It failed: permission denied" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
 func TestStdioApprovalBrokerEmitsProcessRequestAndReceivesResult(t *testing.T) {
 	var stream bytes.Buffer
 	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)

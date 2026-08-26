@@ -9,27 +9,28 @@ import (
 )
 
 type ToolOptions struct {
-	ToolProfile             string
-	DefaultReadLineLimit    int
-	MaxReadLineLimit        int
-	DefaultListEntryLimit   int
-	MaxListEntryLimit       int
-	DefaultSearchMaxMatch   int
-	MaxSearchMaxMatch       int
-	MaxSearchContextLines   int
-	DefaultOutlineFileLimit int
-	MaxOutlineFileLimit     int
-	MaxModuleOutlineChars   int
-	WebSearchEnabled        bool
-	ManagedProcessesEnabled bool
-	AdminWrite              bool
-	BrowserAvailable        bool
-	VisionAnalysisEnabled   bool
-	LCRQueriesEnabled       bool
-	LCRControlsEnabled      bool
-	WorkspaceOnlyReads      bool
-	ReadOnly                bool
-	TodoCaptureMode         todocapture.CaptureMode
+	ToolProfile                string
+	DefaultReadLineLimit       int
+	MaxReadLineLimit           int
+	DefaultListEntryLimit      int
+	MaxListEntryLimit          int
+	DefaultSearchMaxMatch      int
+	MaxSearchMaxMatch          int
+	MaxSearchContextLines      int
+	DefaultOutlineFileLimit    int
+	MaxOutlineFileLimit        int
+	MaxModuleOutlineChars      int
+	WebSearchEnabled           bool
+	ManagedProcessesEnabled    bool
+	AdminWrite                 bool
+	BrowserAvailable           bool
+	VisionAnalysisEnabled      bool
+	LCRQueriesEnabled          bool
+	LCRControlsEnabled         bool
+	UserCommandRequestsEnabled bool
+	WorkspaceOnlyReads         bool
+	ReadOnly                   bool
+	TodoCaptureMode            todocapture.CaptureMode
 }
 
 func Tools() []ToolDefinition {
@@ -249,6 +250,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	}
 	if opts.LCRControlsEnabled {
 		defs = append(defs, lcrControlToolDefinitions()...)
+	}
+	if opts.UserCommandRequestsEnabled {
+		defs = append(defs, userCommandToolDefinition())
 	}
 	defs = append(defs,
 		ToolDefinition{
@@ -531,6 +535,26 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		defs = filtered
 	}
 	return defs
+}
+
+func userCommandToolDefinition() ToolDefinition {
+	return ToolDefinition{
+		Type: "function",
+		Function: FunctionSpec{
+			Name:        "request_user_command",
+			Description: "Pause and ask the user to run one exact terminal command that LCAgent cannot execute with its current permissions. This only displays the command and waits for the user's report; it never executes the command or expands LCAgent authority. Do not ask the user to paste credentials or secrets. After a reported run, verify the effect with inspection tools when possible.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"command": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000, "description": "Exact shell command for the user to copy and run."},
+					"cwd":     map[string]any{"type": "string", "maxLength": 1200, "description": "Working directory for the displayed command. Use an absolute path outside the workspace or a workspace-relative path."},
+					"reason":  map[string]any{"type": "string", "minLength": 1, "maxLength": 1200, "description": "Why the command is necessary and why LCAgent cannot run it itself."},
+				},
+				"required": []string{"command", "reason"},
+			},
+		},
+	}
 }
 
 func lcrQueryToolDefinitions() []ToolDefinition {

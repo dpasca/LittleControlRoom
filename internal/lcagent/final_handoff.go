@@ -669,6 +669,9 @@ func compactToolResultEntry(toolName, args, content string, outputLimit int) str
 	if len(result.FilesTouched) > 0 {
 		status += " files_touched=" + strings.Join(result.FilesTouched, ",")
 	}
+	if strings.TrimSpace(result.UserCommandStatus) != "" {
+		status += " user_command_status=" + strings.TrimSpace(result.UserCommandStatus)
+	}
 	if strings.TrimSpace(result.Error) != "" {
 		return status + "\nerror:\n" + indentBlock(truncateMiddle(result.Error, outputLimit))
 	}

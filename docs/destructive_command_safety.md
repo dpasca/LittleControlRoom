@@ -143,7 +143,11 @@ The guard is applied independently to:
   or managed-process launch.
 
 Targeted file and patch tools remain the expected way for LCAgent to remove or
-edit known files.
+edit known files. In an embedded interactive run, `request_user_command` may
+pause and display an exact cleanup command for the operator to run manually.
+That path does not execute the command, grant LCAgent write authority, or alter
+the recursive-`rm` guard; the operator's response is recorded as a report and
+must not be treated as verification by itself.
 
 ## Why DCG Is Not the Sole Codex Layer
 

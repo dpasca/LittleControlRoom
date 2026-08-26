@@ -67,6 +67,7 @@ type Runner struct {
 	ImageAnalyzer        ImageAnalyzer
 	SearchRefineMinBytes int
 	Approvals            ApprovalBroker
+	UserCommands         UserCommandBroker
 	Processes            ProcessBroker
 	ProjectTodos         ProjectTodoBroker
 	LCRQueries           *agentquery.Executor
@@ -1015,6 +1016,12 @@ type browserWaitForUserArgs struct {
 	URL     string `json:"url"`
 }
 
+type requestUserCommandArgs struct {
+	Command string `json:"command"`
+	CWD     string `json:"cwd"`
+	Reason  string `json:"reason"`
+}
+
 type fileOutlineArgs struct {
 	Path string `json:"path"`
 }
@@ -1528,6 +1535,13 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.runBrowserWaitForUser(ctx, args)
+	case "request_user_command":
+		var args requestUserCommandArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		result = r.runUserCommandRequest(ctx, args)
 	case "file_outline":
 		var args fileOutlineArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -2289,6 +2303,73 @@ func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandS
 	default:
 		return result
 	}
+}
+
+func (r *Runner) runUserCommandRequest(ctx context.Context, args requestUserCommandArgs) tools.ToolResult {
+	command := strings.TrimSpace(args.Command)
+	reason := strings.TrimSpace(args.Reason)
+	root := ""
+	if r != nil {
+		root = r.Command.Workspace.Root
+	}
+	cwd := commandCWDForApproval(root, tools.CommandSpec{CWD: args.CWD})
+	result := tools.ToolResult{
+		Command: command,
+		CWD:     cwd,
+	}
+	switch {
+	case r == nil || r.UserCommands == nil:
+		result.Error = "user command requests are unavailable outside an interactive Little Control Room session"
+		return result
+	case command == "":
+		result.Error = "request_user_command command is required"
+		return result
+	case len(command) > 4000:
+		result.Error = "request_user_command command exceeds 4000 bytes"
+		return result
+	case strings.ContainsRune(command, '\x00'):
+		result.Error = "request_user_command command contains a NUL byte"
+		return result
+	case reason == "":
+		result.Error = "request_user_command reason is required"
+		return result
+	case len(reason) > 1200:
+		result.Error = "request_user_command reason exceeds 1200 bytes"
+		return result
+	case len(cwd) > 1200:
+		result.Error = "request_user_command cwd exceeds 1200 bytes"
+		return result
+	}
+
+	response, err := r.UserCommands.RequestUserCommand(ctx, UserCommandRequest{
+		SessionID: r.SessionID,
+		Command:   command,
+		CWD:       cwd,
+		Reason:    reason,
+	})
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	result.UserCommandStatus = strings.ToLower(strings.TrimSpace(response.Status))
+	result.UserResponse = strings.TrimSpace(response.Message)
+	switch result.UserCommandStatus {
+	case UserCommandStatusCompleted:
+		result.Success = true
+		result.Output = "The user reported that they ran the requested command. This is user-reported, not verification; inspect the resulting state before claiming success."
+	case UserCommandStatusDeclined:
+		result.Success = true
+		result.Output = "The user reported that they did not run the requested command. Continue without assuming any command effects."
+	case UserCommandStatusResponded:
+		result.Success = true
+		result.Output = "The user responded to the command request. Do not assume the command ran unless their response says so."
+		if result.UserResponse != "" {
+			result.Output += " User response: " + result.UserResponse
+		}
+	default:
+		result.Error = "user command request ended without a recognized response"
+	}
+	return result
 }
 
 func (r *Runner) runCommandAtMedium(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {
