@@ -51,8 +51,14 @@ func EvaluateStaleWorktreeCleanupCandidate(summary model.ProjectSummary, now tim
 	if strings.TrimSpace(summary.WorktreeParentBranch) == "" {
 		return StaleWorktreeCleanupCandidate{}, "parent branch is unavailable", false
 	}
-	if summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+	switch summary.WorktreeMergeStatus {
+	case model.WorktreeMergeStatusMerged:
+	case model.WorktreeMergeStatusNotMerged:
 		return StaleWorktreeCleanupCandidate{}, "worktree is not merged into its parent branch", false
+	case model.WorktreeMergeStatusMergeInProgress:
+		return StaleWorktreeCleanupCandidate{}, "worktree merge into its parent branch is still in progress", false
+	default:
+		return StaleWorktreeCleanupCandidate{}, "worktree merge status is unavailable", false
 	}
 	if summary.RepoConflict {
 		return StaleWorktreeCleanupCandidate{}, "worktree has unresolved conflicts", false
