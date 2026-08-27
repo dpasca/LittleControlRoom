@@ -370,6 +370,18 @@ func ListGitWorktrees(ctx context.Context, path string) ([]GitWorktree, error) {
 	return worktrees, nil
 }
 
+func ReadGitRemoteDefaultBranch(ctx context.Context, path string) (string, error) {
+	branch, err := readGitSingleLine(ctx, path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "", fmt.Errorf("read git remote default branch for %s: %w", path, err)
+	}
+	branch = strings.TrimSpace(strings.TrimPrefix(branch, "origin/"))
+	if branch == "" {
+		return "", fmt.Errorf("read git remote default branch for %s: origin/HEAD is empty", path)
+	}
+	return branch, nil
+}
+
 func readGitSingleLine(ctx context.Context, path string, args ...string) (string, error) {
 	lines, err := readGitLines(ctx, path, args...)
 	if err != nil {

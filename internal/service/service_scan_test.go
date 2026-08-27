@@ -3466,12 +3466,15 @@ func TestScanOnceReconcilesTrackedRootWorktreeWithoutActivity(t *testing.T) {
 	rootPath := filepath.Join(parent, "avatar_presenter")
 	worktreePath := filepath.Join(parent, "avatar_presenter--office-by-the-glass")
 	initGitRepo(t, rootPath)
+	runGit(t, rootPath, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
 	runGit(t, rootPath, "git", "worktree", "add", "-b", "scene/office-by-the-glass", worktreePath)
 	if err := os.WriteFile(filepath.Join(worktreePath, "scene.txt"), []byte("office by the glass\n"), 0o644); err != nil {
 		t.Fatalf("write worktree file: %v", err)
 	}
 	runGit(t, worktreePath, "git", "add", "scene.txt")
 	runGit(t, worktreePath, "git", "commit", "-m", "Add office scene")
+	runGit(t, rootPath, "git", "switch", "-c", "review/adoption")
+	runGit(t, rootPath, "git", "merge", "--ff-only", "scene/office-by-the-glass")
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -3539,6 +3542,7 @@ func TestScanOnceReconcilesTrackedRootWorktreeWithoutActivity(t *testing.T) {
 		t.Fatalf("tracked root created_at = %v, want pre-existing blank value preserved", rootDetail.Summary.CreatedAt)
 	}
 
+	runGit(t, rootPath, "git", "switch", "master")
 	runGit(t, rootPath, "git", "merge", "--ff-only", "scene/office-by-the-glass")
 	afterMergeReport, err := svc.ScanOnce(ctx)
 	if err != nil {
@@ -3564,5 +3568,80 @@ func TestScanOnceReconcilesTrackedRootWorktreeWithoutActivity(t *testing.T) {
 	}
 	if detail.Summary.Path != worktreePath || detail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged || detail.Summary.RepoDirty {
 		t.Fatalf("persisted adopted worktree = %#v, want merged clean row", detail.Summary)
+	}
+}
+
+func TestScanOnceReconcilesTrackedRootWorktreeWhileMainDetached(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	parent := t.TempDir()
+	parent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatalf("resolve temp path: %v", err)
+	}
+	rootPath := filepath.Join(parent, "detached_presenter")
+	worktreePath := filepath.Join(parent, "detached_presenter--feature")
+	initGitRepo(t, rootPath)
+	runGit(t, rootPath, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
+	runGit(t, rootPath, "git", "worktree", "add", "-b", "feature/detached-adoption", worktreePath)
+	if err := os.WriteFile(filepath.Join(worktreePath, "feature.txt"), []byte("detached adoption\n"), 0o644); err != nil {
+		t.Fatalf("write worktree file: %v", err)
+	}
+	runGit(t, worktreePath, "git", "add", "feature.txt")
+	runGit(t, worktreePath, "git", "commit", "-m", "Add detached adoption feature")
+	runGit(t, rootPath, "git", "switch", "--detach", "master")
+
+	worktrees, err := scanner.ListGitWorktrees(ctx, rootPath)
+	if err != nil {
+		t.Fatalf("list detached worktrees: %v", err)
+	}
+	if len(worktrees) == 0 || !worktrees[0].IsMain || !worktrees[0].Detached || worktrees[0].Branch != "" {
+		t.Fatalf("main worktree metadata = %#v, want detached main with no branch", worktrees)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          rootPath,
+		Name:          filepath.Base(rootPath),
+		Kind:          model.ProjectKindProject,
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		WorktreeKind:  model.WorktreeKindMain,
+		InScope:       true,
+		UpdatedAt:     time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed tracked root: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(nil)
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan detached main: %v", err)
+	}
+
+	var adopted *model.ProjectState
+	for i := range report.States {
+		if report.States[i].Path == worktreePath {
+			adopted = &report.States[i]
+			break
+		}
+	}
+	if adopted == nil {
+		t.Fatalf("scan states = %#v, want adopted worktree %q", report.States, worktreePath)
+	}
+	if adopted.WorktreeParentBranch != "master" || adopted.RepoBranch != "feature/detached-adoption" {
+		t.Fatalf("adopted branches = parent %q worktree %q, want master and feature/detached-adoption", adopted.WorktreeParentBranch, adopted.RepoBranch)
+	}
+	if adopted.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged {
+		t.Fatalf("adopted merge status = %q, want %q", adopted.WorktreeMergeStatus, model.WorktreeMergeStatusNotMerged)
 	}
 }

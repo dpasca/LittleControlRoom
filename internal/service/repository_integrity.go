@@ -567,13 +567,10 @@ func repositoryIntegrityFingerprint(state model.RepositoryIntegrityState) string
 }
 
 func repositoryRemoteDefaultBranch(ctx context.Context, rootPath string) string {
-	cmd := exec.CommandContext(ctx, "git", "-C", rootPath, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
-	out, err := cmd.Output()
+	branch, err := scanner.ReadGitRemoteDefaultBranch(ctx, rootPath)
 	if err != nil {
 		return ""
 	}
-	branch := strings.TrimSpace(string(out))
-	branch = strings.TrimPrefix(branch, "origin/")
 	return strings.TrimSpace(branch)
 }
 

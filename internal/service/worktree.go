@@ -1623,7 +1623,7 @@ func (r worktreeExpansionResult) failureRoots() map[string]struct{} {
 	return roots
 }
 
-func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope, worktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error), worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) worktreeExpansionResult {
+func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope, worktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error), worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error), gitDefaultBranchReader func(context.Context, string) (string, error)) worktreeExpansionResult {
 	outSet := map[string]struct{}{}
 	for _, path := range discovered {
 		cleanPath := filepath.Clean(path)
@@ -1708,14 +1708,20 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 			result.liveByRoot[rootPath] = rootSet
 		}
 
-		parentBranch := ""
+		mainBranch := ""
 		for _, worktree := range normalized {
 			if worktree.Path == rootPath || worktree.IsMain {
-				parentBranch = strings.TrimSpace(worktree.Branch)
+				mainBranch = strings.TrimSpace(worktree.Branch)
 				break
 			}
 		}
 		trackedFamily := worktreeFamilyTracked(rootPath, oldMap, resolver)
+		parentBranch := mainBranch
+		if trackedFamily && gitDefaultBranchReader != nil {
+			if defaultBranch, defaultBranchErr := gitDefaultBranchReader(ctx, rootPath); defaultBranchErr == nil && strings.TrimSpace(defaultBranch) != "" {
+				parentBranch = strings.TrimSpace(defaultBranch)
+			}
+		}
 		for _, worktree := range normalized {
 			worktreePath := worktree.Path
 			rootSet[worktreePath] = struct{}{}

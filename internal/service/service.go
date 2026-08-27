@@ -82,6 +82,7 @@ type Service struct {
 	gitRepoStatusReader       func(context.Context, string) (scanner.GitRepoStatus, error)
 	gitWorktreeInfoReader     func(context.Context, string) (scanner.GitWorktreeInfo, error)
 	gitWorktreeListReader     func(context.Context, string) ([]scanner.GitWorktree, error)
+	gitDefaultBranchReader    func(context.Context, string) (string, error)
 	gitRepoInitializer        func(context.Context, string) error
 	gitRepoCloner             func(context.Context, string, string) error
 	refreshProjectAttentionFn func(context.Context, string) error
@@ -129,13 +130,14 @@ type asyncProjectRefreshState struct {
 }
 
 type serviceRuntimeSnapshot struct {
-	cfg                   config.AppConfig
-	classifier            SessionClassifier
-	gitFingerprintReader  func(context.Context, string) (scanner.GitFingerprint, error)
-	gitRepoStatusReader   func(context.Context, string) (scanner.GitRepoStatus, error)
-	gitWorktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error)
-	gitWorktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)
-	bus                   *events.Bus
+	cfg                    config.AppConfig
+	classifier             SessionClassifier
+	gitFingerprintReader   func(context.Context, string) (scanner.GitFingerprint, error)
+	gitRepoStatusReader    func(context.Context, string) (scanner.GitRepoStatus, error)
+	gitWorktreeInfoReader  func(context.Context, string) (scanner.GitWorktreeInfo, error)
+	gitWorktreeListReader  func(context.Context, string) ([]scanner.GitWorktree, error)
+	gitDefaultBranchReader func(context.Context, string) (string, error)
+	bus                    *events.Bus
 }
 
 type detectedProjectMove struct {
@@ -188,6 +190,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitRepoStatusReader:    scanner.ReadGitRepoStatus,
 		gitWorktreeInfoReader:  scanner.ReadGitWorktreeInfo,
 		gitWorktreeListReader:  scanner.ListGitWorktrees,
+		gitDefaultBranchReader: scanner.ReadGitRemoteDefaultBranch,
 		gitRepoInitializer:     runGitInit,
 		gitRepoCloner:          runGitClone,
 		scheduledScanTimeout:   defaultScheduledScanTimeout,
@@ -421,13 +424,14 @@ func (s *Service) runtimeSnapshot() serviceRuntimeSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return serviceRuntimeSnapshot{
-		cfg:                   cloneAppConfig(s.cfg),
-		classifier:            s.classifier,
-		gitFingerprintReader:  s.gitFingerprintReader,
-		gitRepoStatusReader:   s.gitRepoStatusReader,
-		gitWorktreeInfoReader: s.gitWorktreeInfoReader,
-		gitWorktreeListReader: s.gitWorktreeListReader,
-		bus:                   s.bus,
+		cfg:                    cloneAppConfig(s.cfg),
+		classifier:             s.classifier,
+		gitFingerprintReader:   s.gitFingerprintReader,
+		gitRepoStatusReader:    s.gitRepoStatusReader,
+		gitWorktreeInfoReader:  s.gitWorktreeInfoReader,
+		gitWorktreeListReader:  s.gitWorktreeListReader,
+		gitDefaultBranchReader: s.gitDefaultBranchReader,
+		bus:                    s.bus,
 	}
 }
 
@@ -1288,6 +1292,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, scanGitRepoStatusTimeout, timedOutGitPaths)
 	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, scanGitMetadataTimeout, timedOutGitPaths)
 	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, scanGitMetadataTimeout, timedOutGitPaths)
+	gitDefaultBranchReader := withScanGitMetadataTimeout(runtime.gitDefaultBranchReader, scanGitMetadataTimeout, timedOutGitPaths)
 	bus := runtime.bus
 	now := time.Now()
 	progress.setPhase("purging expired missing linked worktrees")
@@ -1337,7 +1342,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		}
 	}
 	progress.setPhase("expanding linked worktree paths")
-	worktreeExpansion := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
+	worktreeExpansion := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader, gitDefaultBranchReader)
 	discovered = worktreeExpansion.paths
 	liveWorktreePathsByRoot := worktreeExpansion.liveByRoot
 	if err := progress.contextErr(ctx); err != nil {

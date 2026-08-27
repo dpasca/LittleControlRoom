@@ -127,6 +127,9 @@ func TestExpandDiscoveredWorktreePathsAddsLiveWorktreeFromCurrentScan(t *testing
 				{Path: worktreePath, Branch: "feature"},
 			}, nil
 		},
+		func(context.Context, string) (string, error) {
+			return "master", nil
+		},
 	)
 
 	if !slices.Contains(expansion.paths, worktreePath) {
@@ -141,6 +144,94 @@ func TestExpandDiscoveredWorktreePathsAddsLiveWorktreeFromCurrentScan(t *testing
 	}
 	if metadata.rootPath != root || metadata.kind != model.WorktreeKindLinked || metadata.parentBranch != "master" {
 		t.Fatalf("reconciled worktree metadata = %#v, want root=%q kind=%q parent=master", metadata, root, model.WorktreeKindLinked)
+	}
+}
+
+func TestExpandDiscoveredWorktreePathsUsesRemoteDefaultBranchForAdoptedWorktrees(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		main          scanner.GitWorktree
+		defaultBranch string
+		defaultErr    error
+		wantParent    string
+	}{
+		{
+			name:          "main checkout on non-default branch",
+			main:          scanner.GitWorktree{Branch: "review/adoption"},
+			defaultBranch: "master",
+			wantParent:    "master",
+		},
+		{
+			name:          "main checkout detached",
+			main:          scanner.GitWorktree{Detached: true},
+			defaultBranch: "master",
+			wantParent:    "master",
+		},
+		{
+			name:       "origin HEAD unresolvable",
+			main:       scanner.GitWorktree{Branch: "review/adoption"},
+			defaultErr: errors.New("origin/HEAD is not a symbolic ref"),
+			wantParent: "review/adoption",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			root := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatalf("mkdir repo: %v", err)
+			}
+			worktreePath := filepath.Join(filepath.Dir(root), "repo-feature")
+			if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
+			}
+
+			defaultBranchCalls := 0
+			svc := &Service{}
+			expansion := svc.expandDiscoveredWorktreePaths(
+				ctx,
+				[]string{root},
+				map[string]model.ProjectSummary{
+					root: {Path: root},
+				},
+				scanner.NewPathScope(nil, nil),
+				func(context.Context, string) (scanner.GitWorktreeInfo, error) {
+					return scanner.GitWorktreeInfo{RootPath: root, Kind: scanner.GitWorktreeKindMain}, nil
+				},
+				func(context.Context, string) ([]scanner.GitWorktree, error) {
+					main := test.main
+					main.Path = root
+					main.IsMain = true
+					return []scanner.GitWorktree{
+						main,
+						{Path: worktreePath, Branch: "feature"},
+					}, nil
+				},
+				func(_ context.Context, path string) (string, error) {
+					defaultBranchCalls++
+					if path != root {
+						t.Fatalf("default branch path = %q, want root %q", path, root)
+					}
+					return test.defaultBranch, test.defaultErr
+				},
+			)
+
+			metadata, ok := expansion.reconciled[worktreePath]
+			if !ok {
+				t.Fatalf("reconciled worktrees = %#v, want %q", expansion.reconciled, worktreePath)
+			}
+			if metadata.parentBranch != test.wantParent {
+				t.Fatalf("reconciled parent branch = %q, want %q", metadata.parentBranch, test.wantParent)
+			}
+			if defaultBranchCalls != 1 {
+				t.Fatalf("default branch calls = %d, want one per tracked root", defaultBranchCalls)
+			}
+		})
 	}
 }
 
@@ -168,6 +259,7 @@ func TestExpandDiscoveredWorktreePathsReportsListFailureOncePerRoot(t *testing.T
 		func(context.Context, string) ([]scanner.GitWorktree, error) {
 			return nil, wantErr
 		},
+		nil,
 	)
 
 	failures := expansion.failures()
