@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/control"
 	"lcroom/internal/todocapture"
 )
@@ -568,7 +569,7 @@ func lcrQueryToolDefinitions() []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"domain": map[string]any{"type": "string", "enum": []string{"portfolio", "project", "assessment", "work"}, "description": "Optional exact domain. Omit it to list domains only."},
+						"domain": map[string]any{"type": "string", "enum": agentquery.DomainStrings(), "description": "Optional exact domain. Omit it to list domains only."},
 					},
 				},
 			},

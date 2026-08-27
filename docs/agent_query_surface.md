@@ -44,12 +44,21 @@ the query the agent intends to run.
 | `work.agent_task_get` | `portfolio` | One delegated task by exact id. |
 | `work.goal_run_list` | `portfolio` | Durable goal-run summaries. |
 | `work.goal_run_get` | `portfolio` | One durable goal run with a bounded newest-first trace. |
+| `demo_recording.latest` | `project` | The active demo recording, or latest finalized package, with conditional package-path disclosure. |
 
 The internal CLI defaults query access to `project` scope. LCR's managed
 embedded-session launchers explicitly grant `portfolio` scope so an agent can
 coordinate with other non-private projects when the user's task calls for it.
 Scope controls discovery and execution: a query outside the caller's scope is
 not listed and is rejected if invoked directly.
+
+`demo_recording.latest` is intentionally available at `project` scope so a
+lower-authority caller can discover that a recording exists without learning
+where the package lives. LCR-managed embedded sessions receive portfolio scope,
+so they receive the authorized package path. A host may instead bind a grant to
+one exact recording because it was explicitly attached or because the operator
+confirmed disclosure. Grants are host inputs to the executor, never caller
+claims in `run_lcr_query` arguments.
 
 ## Disclosure and privacy
 
@@ -68,6 +77,12 @@ Portfolio scope is not unrestricted database access.
 - Help Chat transcripts, raw session event payloads, transcript excerpts,
   artifact paths, arbitrary repository files, application settings, and generic
   SQL access are not query capabilities.
+- Demo recordings can contain public state from several unrelated projects.
+  Without portfolio scope or an exact host-provided attachment/confirmation
+  grant, `demo_recording.latest` omits `package_path` and returns only an opaque
+  `lcr://demo-recordings/<id>` resource URI, status, format version, timestamps,
+  duration, frame counts, and any association visible under the ordinary
+  project/privacy rules.
 
 Several queries intentionally return user-authored or model-authored text such
 as TODOs, summaries, assessments, task descriptions, or goal traces. Their
@@ -78,9 +93,15 @@ that content is relevant. Metadata-only session listings are marked
 ## Freshness and bounds
 
 Every result declares `freshness: persisted_snapshot` and includes an `as_of`
-timestamp. Results describe the SQLite snapshot read by the query; they do not
-claim to mirror transient in-memory TUI state or a provider process between
-persisted updates.
+timestamp. Results describe persisted state read by the query—normally the
+SQLite snapshot—and do not claim to mirror transient in-memory TUI state or a
+provider process between persisted updates.
+
+The demo-recording query reads LCR's private discovery reference and the
+package manifest at call time. An incomplete package is reported as active or
+finalizing only while its recorded owner process is still alive; otherwise LCR
+falls back to the latest finalized package. The duration of a live recording is
+computed through the query's `as_of` time.
 
 Collection queries default to 20 records and cap a page at 50. Continuations
 use opaque cursors. Detail queries apply their own smaller limits, long text is
@@ -102,6 +123,7 @@ generated runtime guidance / LCAgent system prompt
                       |
                       v
        bounded reads from persisted LCR state
+       + private demo-recording references/manifests
 ```
 
 The query surface is read-only. Mutations remain in the separate progressive

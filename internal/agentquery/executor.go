@@ -16,6 +16,7 @@ import (
 
 	"lcroom/internal/bossrun"
 	"lcroom/internal/control"
+	"lcroom/internal/demorecord"
 	"lcroom/internal/model"
 )
 
@@ -37,6 +38,10 @@ type Reader interface {
 	GetGoalRun(context.Context, string) (bossrun.GoalRecord, error)
 }
 
+type DemoRecordingReader interface {
+	Latest(context.Context) (demorecord.Resource, bool, error)
+}
+
 type DisclosurePolicy string
 
 const (
@@ -56,6 +61,8 @@ type Executor struct {
 	originProjectPath string
 	scope             Scope
 	disclosure        DisclosurePolicy
+	demoRecordings    DemoRecordingReader
+	recordingGrants   []DemoRecordingPathGrant
 	nowFn             func() time.Time
 }
 
@@ -64,6 +71,8 @@ type Options struct {
 	OriginProjectPath string
 	Scope             Scope
 	Disclosure        DisclosurePolicy
+	DemoRecordings    DemoRecordingReader
+	RecordingGrants   []DemoRecordingPathGrant
 	Now               func() time.Time
 }
 
@@ -96,11 +105,17 @@ func NewExecutor(options Options) (*Executor, error) {
 	if nowFn == nil {
 		nowFn = time.Now
 	}
+	recordingGrants, err := normalizeDemoRecordingPathGrants(options.RecordingGrants)
+	if err != nil {
+		return nil, err
+	}
 	return &Executor{
 		reader:            options.Reader,
 		originProjectPath: originProjectPath,
 		scope:             scope,
 		disclosure:        disclosure,
+		demoRecordings:    options.DemoRecordings,
+		recordingGrants:   recordingGrants,
 		nowFn:             nowFn,
 	}, nil
 }
@@ -149,6 +164,8 @@ func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMes
 		result, err = e.goalRunList(ctx, arguments)
 	case QueryGoalRunGet:
 		result, err = e.goalRunGet(ctx, arguments)
+	case QueryDemoRecordingLatest:
+		result, err = e.demoRecordingLatest(ctx, arguments)
 	default:
 		err = fmt.Errorf("LCR query %q has no executor", capability.Name)
 	}

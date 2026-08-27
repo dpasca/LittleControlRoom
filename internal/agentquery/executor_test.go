@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lcroom/internal/bossrun"
+	"lcroom/internal/demorecord"
 	"lcroom/internal/model"
 )
 
@@ -24,6 +25,122 @@ func TestCapabilityCatalogFiltersByScopeAndDefersSchemas(t *testing.T) {
 	}
 	if capability, ok := CapabilityByName(QueryProjectDetail); !ok || capability.InputSchema == nil || capability.OutputSchema == nil {
 		t.Fatalf("project.detail = %#v, %t; want full schemas", capability, ok)
+	}
+	recordingQueries := CapabilitySummaries(DomainDemoRecording, ScopeProject)
+	if len(recordingQueries) != 1 || recordingQueries[0].Name != QueryDemoRecordingLatest {
+		t.Fatalf("project-scoped demo recording catalog = %#v", recordingQueries)
+	}
+}
+
+func TestExecutorDemoRecordingLatestGatesPackagePath(t *testing.T) {
+	origin := "/repos/origin"
+	reader := newFakeReader([]model.ProjectSummary{{Path: origin, Name: "Origin", InScope: true}})
+	recording := demorecord.Resource{
+		ID:            "rec_demo",
+		Status:        demorecord.RecordingStatusActive,
+		PackagePath:   "/recordings/demo.lcrdemo",
+		StartedAt:     time.Unix(80, 0),
+		DurationMS:    20_000,
+		FormatVersion: demorecord.FormatVersion,
+		FrameCount:    42,
+		Association: demorecord.Association{
+			ProjectPath: origin,
+			Provider:    "codex",
+			SessionID:   "thread-demo",
+		},
+		UpdatedAt: time.Unix(99, 0),
+	}
+	source := fakeDemoRecordingReader{recording: recording, found: true}
+
+	projectExecutor, err := NewExecutor(Options{
+		Reader:            reader,
+		OriginProjectPath: origin,
+		Scope:             ScopeProject,
+		DemoRecordings:    source,
+		Now:               func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := projectExecutor.Execute(t.Context(), QueryDemoRecordingLatest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitizedRecording := sanitized["recording"].(map[string]any)
+	if sanitizedRecording["id"] != "rec_demo" || sanitizedRecording["status"] != demorecord.RecordingStatusActive {
+		t.Fatalf("sanitized recording metadata = %#v", sanitizedRecording)
+	}
+	if _, leaked := sanitizedRecording["package_path"]; leaked {
+		t.Fatalf("project-scoped recording leaked package path: %#v", sanitizedRecording)
+	}
+	if disclosure := sanitized["path_disclosure"].(map[string]any); disclosure["authorized"] != false || disclosure["basis"] != "withheld" {
+		t.Fatalf("sanitized disclosure = %#v", disclosure)
+	}
+	association := sanitizedRecording["association"].(map[string]any)
+	if association["project_path"] != origin || association["session_id"] != "thread-demo" {
+		t.Fatalf("origin association = %#v", association)
+	}
+
+	portfolioExecutor := mustDemoRecordingExecutor(t, reader, origin, ScopePortfolio, source, nil)
+	authorized, err := portfolioExecutor.Execute(t.Context(), QueryDemoRecordingLatest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizedRecording := authorized["recording"].(map[string]any)
+	if authorizedRecording["package_path"] != recording.PackagePath {
+		t.Fatalf("portfolio recording = %#v, want package path", authorizedRecording)
+	}
+	if disclosure := authorized["path_disclosure"].(map[string]any); disclosure["basis"] != "portfolio_scope" {
+		t.Fatalf("portfolio disclosure = %#v", disclosure)
+	}
+}
+
+func TestExecutorDemoRecordingPathAcceptsOnlyHostProvidedGrants(t *testing.T) {
+	origin := "/repos/origin"
+	reader := newFakeReader([]model.ProjectSummary{{Path: origin, Name: "Origin", InScope: true}})
+	recording := demorecord.Resource{
+		ID:            "rec_granted",
+		Status:        demorecord.RecordingStatusFinalized,
+		PackagePath:   "/recordings/granted.lcrdemo",
+		StartedAt:     time.Unix(80, 0),
+		CompletedAt:   time.Unix(90, 0),
+		DurationMS:    10_000,
+		FormatVersion: demorecord.FormatVersion,
+	}
+	source := fakeDemoRecordingReader{recording: recording, found: true}
+	for _, basis := range []DemoRecordingPathGrantBasis{
+		DemoRecordingGrantExplicitAttachment,
+		DemoRecordingGrantOperatorConfirmation,
+	} {
+		t.Run(string(basis), func(t *testing.T) {
+			executor := mustDemoRecordingExecutor(t, reader, origin, ScopeProject, source, []DemoRecordingPathGrant{{
+				RecordingID: recording.ID,
+				Basis:       basis,
+			}})
+			result, err := executor.Execute(t.Context(), QueryDemoRecordingLatest, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource := result["recording"].(map[string]any)
+			if resource["package_path"] != recording.PackagePath {
+				t.Fatalf("granted recording = %#v", resource)
+			}
+			if disclosure := result["path_disclosure"].(map[string]any); disclosure["basis"] != string(basis) {
+				t.Fatalf("grant disclosure = %#v", disclosure)
+			}
+		})
+	}
+	if _, err := NewExecutor(Options{
+		Reader:            reader,
+		OriginProjectPath: origin,
+		Scope:             ScopeProject,
+		DemoRecordings:    source,
+		RecordingGrants: []DemoRecordingPathGrant{{
+			RecordingID: recording.ID,
+			Basis:       "caller_claim",
+		}},
+	}); err == nil {
+		t.Fatal("untrusted recording path grant unexpectedly accepted")
 	}
 }
 
@@ -180,6 +297,16 @@ type fakeReader struct {
 	goalRuns    map[string]bossrun.GoalRecord
 }
 
+type fakeDemoRecordingReader struct {
+	recording demorecord.Resource
+	found     bool
+	err       error
+}
+
+func (r fakeDemoRecordingReader) Latest(context.Context) (demorecord.Resource, bool, error) {
+	return r.recording, r.found, r.err
+}
+
 func newFakeReader(projects []model.ProjectSummary) *fakeReader {
 	reader := &fakeReader{
 		projects:    map[string]model.ProjectSummary{},
@@ -274,6 +401,22 @@ func mustExecutor(t *testing.T, reader Reader, origin string, scope Scope) *Exec
 		Reader:            reader,
 		OriginProjectPath: origin,
 		Scope:             scope,
+		Now:               func() time.Time { return time.Unix(100, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return executor
+}
+
+func mustDemoRecordingExecutor(t *testing.T, reader Reader, origin string, scope Scope, source DemoRecordingReader, grants []DemoRecordingPathGrant) *Executor {
+	t.Helper()
+	executor, err := NewExecutor(Options{
+		Reader:            reader,
+		OriginProjectPath: origin,
+		Scope:             scope,
+		DemoRecordings:    source,
+		RecordingGrants:   grants,
 		Now:               func() time.Time { return time.Unix(100, 0) },
 	})
 	if err != nil {

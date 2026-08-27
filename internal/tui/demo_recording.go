@@ -18,6 +18,10 @@ type DemoRecordingController interface {
 	Stop() (path string, stopped bool, err error)
 }
 
+type associatedDemoRecordingController interface {
+	StartWithAssociation(path string, association demorecord.Association) (string, error)
+}
+
 type demoRecordingStartedMsg struct {
 	path string
 	err  error
@@ -87,7 +91,7 @@ func (m Model) handleDemoRecordingCommand(inv commands.Invocation) (tea.Model, t
 		}
 		m.demoRecordingBusy = true
 		m.status = "Starting demo recording..."
-		return m, startDemoRecordingCmd(controller, path)
+		return m, startDemoRecordingCmd(controller, path, m.DemoRecordingAssociation())
 	case commands.RecordStop:
 		if !controller.Active() {
 			m.status = "Demo recording is not active"
@@ -102,11 +106,35 @@ func (m Model) handleDemoRecordingCommand(inv commands.Invocation) (tea.Model, t
 	}
 }
 
-func startDemoRecordingCmd(controller DemoRecordingController, path string) tea.Cmd {
+func startDemoRecordingCmd(controller DemoRecordingController, path string, association demorecord.Association) tea.Cmd {
 	return func() tea.Msg {
-		startedPath, err := controller.Start(path)
+		var startedPath string
+		var err error
+		if associated, ok := controller.(associatedDemoRecordingController); ok {
+			startedPath, err = associated.StartWithAssociation(path, association)
+		} else {
+			startedPath, err = controller.Start(path)
+		}
 		return demoRecordingStartedMsg{path: startedPath, err: err}
 	}
+}
+
+// DemoRecordingAssociation returns only cached UI state. It is safe to call
+// from the Bubble Tea update path before recorder creation is queued in a Cmd.
+func (m Model) DemoRecordingAssociation() demorecord.Association {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath != "" {
+		association := demorecord.Association{ProjectPath: projectPath}
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok && !snapshot.Closed {
+			association.Provider = string(snapshot.Provider.Normalized())
+			association.SessionID = strings.TrimSpace(snapshot.ThreadID)
+		}
+		return association.Normalize()
+	}
+	if project, ok := m.selectedProject(); ok {
+		return demorecord.Association{ProjectPath: project.Path}.Normalize()
+	}
+	return demorecord.Association{}
 }
 
 func stopDemoRecordingCmd(controller DemoRecordingController) tea.Cmd {

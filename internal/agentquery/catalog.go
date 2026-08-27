@@ -40,10 +40,11 @@ func ScopeAllows(available, required Scope) bool {
 type Domain string
 
 const (
-	DomainPortfolio  Domain = "portfolio"
-	DomainProject    Domain = "project"
-	DomainAssessment Domain = "assessment"
-	DomainWork       Domain = "work"
+	DomainPortfolio     Domain = "portfolio"
+	DomainProject       Domain = "project"
+	DomainAssessment    Domain = "assessment"
+	DomainWork          Domain = "work"
+	DomainDemoRecording Domain = "demo_recording"
 )
 
 func NormalizeDomain(value string) Domain {
@@ -56,6 +57,8 @@ func NormalizeDomain(value string) Domain {
 		return DomainAssessment
 	case DomainWork:
 		return DomainWork
+	case DomainDemoRecording:
+		return DomainDemoRecording
 	default:
 		return ""
 	}
@@ -64,17 +67,18 @@ func NormalizeDomain(value string) Domain {
 type Name string
 
 const (
-	QueryPortfolioOverview Name = "portfolio.overview"
-	QueryProjectList       Name = "project.list"
-	QueryProjectSearch     Name = "project.search"
-	QueryProjectDetail     Name = "project.detail"
-	QueryTodoList          Name = "project.todo_list"
-	QuerySessionList       Name = "project.session_list"
-	QueryAssessmentList    Name = "assessment.list"
-	QueryAgentTaskList     Name = "work.agent_task_list"
-	QueryAgentTaskGet      Name = "work.agent_task_get"
-	QueryGoalRunList       Name = "work.goal_run_list"
-	QueryGoalRunGet        Name = "work.goal_run_get"
+	QueryPortfolioOverview   Name = "portfolio.overview"
+	QueryProjectList         Name = "project.list"
+	QueryProjectSearch       Name = "project.search"
+	QueryProjectDetail       Name = "project.detail"
+	QueryTodoList            Name = "project.todo_list"
+	QuerySessionList         Name = "project.session_list"
+	QueryAssessmentList      Name = "assessment.list"
+	QueryAgentTaskList       Name = "work.agent_task_list"
+	QueryAgentTaskGet        Name = "work.agent_task_get"
+	QueryGoalRunList         Name = "work.goal_run_list"
+	QueryGoalRunGet          Name = "work.goal_run_get"
+	QueryDemoRecordingLatest Name = "demo_recording.latest"
 )
 
 type Sensitivity string
@@ -115,7 +119,17 @@ func DomainSummaries() []DomainSummary {
 		{Domain: DomainProject, Description: "Bounded project, TODO, and session state."},
 		{Domain: DomainAssessment, Description: "Persisted session assessment state and summaries."},
 		{Domain: DomainWork, Description: "Delegated agent tasks and durable goal runs."},
+		{Domain: DomainDemoRecording, Description: "Active or recently finalized LCR demo recording metadata."},
 	}
+}
+
+func DomainStrings() []string {
+	summaries := DomainSummaries()
+	values := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		values = append(values, string(summary.Domain))
+	}
+	return values
 }
 
 func Capabilities() []Capability {
@@ -236,6 +250,14 @@ func Capabilities() []Capability {
 				"run_id":      stringProperty("Exact goal-run id.", 1),
 				"trace_limit": integerProperty("Maximum newest trace entries to return.", 1, 50),
 			}, []string{"run_id"}),
+		),
+		collectionCapability(
+			QueryDemoRecordingLatest,
+			DomainDemoRecording,
+			ScopeProject,
+			"Return the active LCR demo recording, or the latest finalized package. The package path is conditional on portfolio authority or a host-provided attachment/confirmation grant; other callers receive sanitized resource metadata.",
+			SensitivityMetadata,
+			objectSchema(nil, nil),
 		),
 	}
 }

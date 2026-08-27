@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
+	"lcroom/internal/demorecord"
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
@@ -76,6 +77,9 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	}
 	if strings.Contains(string(responses[1].Result), string(agentquery.QueryPortfolioOverview)) {
 		t.Fatalf("tools/list eagerly exposes query names instead of deferring them: %s", responses[1].Result)
+	}
+	if strings.Contains(string(responses[1].Result), string(agentquery.QueryDemoRecordingLatest)) {
+		t.Fatalf("tools/list eagerly exposes demo recording query names instead of deferring them: %s", responses[1].Result)
 	}
 }
 
@@ -285,6 +289,73 @@ func TestRuntimeMCPProgressiveQueriesUseStructuredBoundsAndPrivacy(t *testing.T)
 	}
 	if !strings.Contains(encoded, `"as_of"`) || !strings.Contains(encoded, "private_categories_hidden_except_origin_project") {
 		t.Fatalf("query metadata missing freshness/privacy contract: %s", encoded)
+	}
+}
+
+func TestRuntimeMCPProgressivelyDiscoversLatestDemoRecording(t *testing.T) {
+	ctx := t.Context()
+	dataDir := t.TempDir()
+	projectPath := filepath.Join(t.TempDir(), "origin")
+	st, err := store.Open(filepath.Join(t.TempDir(), "queries.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Origin",
+		InScope:       true,
+		PresentOnDisk: true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recordingPath := filepath.Join(dataDir, "demo-recordings", "active.lcrdemo")
+	controller := demorecord.NewControllerWithDataDir(dataDir)
+	if _, err := controller.StartWithAssociation(recordingPath, demorecord.Association{
+		ProjectPath: projectPath,
+		Provider:    "codex",
+		SessionID:   "thread-demo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = controller.Close() })
+	controller.Capture(80, 24, "active recording")
+
+	server, err := New(Options{
+		ProjectPath: projectPath,
+		Provider:    "codex",
+		DataDir:     dataDir,
+		SessionKey:  "query-session",
+		QueryScope:  agentquery.ScopePortfolio,
+		Store:       st,
+		Manager:     projectrun.NewManager(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.manager.CloseAll() })
+
+	listed := callRuntimeToolForMap(t, server, "list_lcr_queries", `{"domain":"demo_recording"}`)
+	if !strings.Contains(mustJSON(t, listed), string(agentquery.QueryDemoRecordingLatest)) {
+		t.Fatalf("demo recording catalog = %#v", listed)
+	}
+	described := callRuntimeToolForMap(t, server, "describe_lcr_query", `{"name":"demo_recording.latest"}`)
+	if !strings.Contains(mustJSON(t, described), "portfolio authority") {
+		t.Fatalf("demo recording description = %#v", described)
+	}
+	result := callRuntimeToolForMap(t, server, "run_lcr_query", `{"query":"demo_recording.latest","arguments":{}}`)
+	recording, ok := result["recording"].(map[string]any)
+	if !ok {
+		t.Fatalf("demo recording result = %#v", result)
+	}
+	if recording["package_path"] != recordingPath || recording["status"] != string(demorecord.RecordingStatusActive) {
+		t.Fatalf("demo recording = %#v", recording)
+	}
+	association, ok := recording["association"].(map[string]any)
+	if !ok || association["project_path"] != projectPath || association["session_id"] != "thread-demo" {
+		t.Fatalf("recording association = %#v", recording["association"])
 	}
 }
 

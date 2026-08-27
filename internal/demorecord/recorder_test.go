@@ -117,6 +117,16 @@ func TestRecorderRefusesToOverwriteExistingPath(t *testing.T) {
 	}
 }
 
+func TestRecorderRejectsPathLikeRecordingID(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "invalid-id.lcrdemo")
+	_, err := NewRecorder(path, RecorderOptions{RecordingID: "/private/operator/path"})
+	if err == nil || !strings.Contains(err.Error(), "opaque identifier") {
+		t.Fatalf("NewRecorder invalid id error = %v", err)
+	}
+}
+
 func TestRecorderCompressesLineLevelAnimation(t *testing.T) {
 	t.Parallel()
 

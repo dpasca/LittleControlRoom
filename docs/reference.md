@@ -397,6 +397,23 @@ is visible, the saved frame is replaced before capture with the fixed message
 visible surfaces can still contain project names, prompts, diffs, paths, or
 sensitive output, so review every clip before sharing it.
 
+Each new package has an opaque recording id. LCR writes a private discovery
+reference under its data directory when capture starts and finalizes that
+reference with the package. Embedded agents can therefore discover the active
+recording—or the latest finalized one—without an operator pasting a path:
+
+1. `list_lcr_queries` with `domain: "demo_recording"`
+2. `describe_lcr_query` with `name: "demo_recording.latest"`
+3. `run_lcr_query` with that query and an empty arguments object
+
+The result includes status, format version, timestamps, duration, and a known
+project/session association. Because one recording may contain unrelated
+portfolio state, `package_path` is returned only with portfolio query scope or
+an exact attachment/operator-confirmation grant supplied by the host. Other
+callers receive sanitized resource metadata and an opaque `lcr://` identifier.
+This adds no dedicated MCP tool; it uses the existing progressive
+list/describe/run catalog.
+
 The equivalent launch-time TUI flag is:
 
 ```sh

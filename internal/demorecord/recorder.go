@@ -3,6 +3,8 @@ package demorecord
 import (
 	"bufio"
 	"compress/gzip"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ type RecorderOptions struct {
 	Now           func() time.Time
 	ChunkDuration time.Duration
 	CaptureBuffer int
+	RecordingID   string
 }
 
 type captureFrame struct {
@@ -42,6 +45,7 @@ type stopRequest struct {
 // safe: every accepted frame can reconstruct the screen independently of
 // frames that arrived before it.
 type Recorder struct {
+	id        string
 	path      string
 	startedAt time.Time
 	now       func() time.Time
@@ -85,7 +89,15 @@ func NewRecorder(path string, opts RecorderOptions) (*Recorder, error) {
 	}
 
 	startedAt := opts.Now()
+	recordingID := strings.TrimSpace(opts.RecordingID)
+	if recordingID != "" && !validRecordingID(recordingID) {
+		return nil, fmt.Errorf("recording id must be an opaque identifier containing only letters, digits, underscore, or hyphen")
+	}
+	if recordingID == "" {
+		recordingID = newRecordingID(path, startedAt)
+	}
 	recorder := &Recorder{
+		id:        recordingID,
 		path:      path,
 		startedAt: startedAt,
 		now:       opts.Now,
@@ -95,6 +107,7 @@ func NewRecorder(path string, opts RecorderOptions) (*Recorder, error) {
 		done:      make(chan struct{}),
 	}
 	manifest := Manifest{
+		ID:        recordingID,
 		Version:   FormatVersion,
 		StartedAt: startedAt,
 		Chunks:    []ChunkMeta{},
@@ -105,6 +118,20 @@ func NewRecorder(path string, opts RecorderOptions) (*Recorder, error) {
 
 	go recorder.run(manifest, opts.ChunkDuration)
 	return recorder, nil
+}
+
+func (r *Recorder) ID() string {
+	if r == nil {
+		return ""
+	}
+	return r.id
+}
+
+func (r *Recorder) StartedAt() time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+	return r.startedAt
 }
 
 // MarkInteraction records only a coarse timestamp. The key, mouse button, and
@@ -124,6 +151,32 @@ func (r *Recorder) Path() string {
 		return ""
 	}
 	return r.path
+}
+
+func newRecordingID(path string, startedAt time.Time) string {
+	var random [12]byte
+	if _, err := rand.Read(random[:]); err == nil {
+		return fmt.Sprintf("rec_%x", random[:])
+	}
+	sum := sha256.Sum256([]byte(path + "\n" + startedAt.UTC().Format(time.RFC3339Nano)))
+	return fmt.Sprintf("rec_%x", sum[:12])
+}
+
+func validRecordingID(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 4 || len(value) > 96 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // Capture queues a complete rendered view. It never waits for compression or

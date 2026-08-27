@@ -17,6 +17,7 @@ const (
 
 // Manifest describes a compact, chunked LCR demo recording.
 type Manifest struct {
+	ID            string      `json:"id,omitempty"`
 	Version       int         `json:"version"`
 	StartedAt     time.Time   `json:"started_at"`
 	CompletedAt   *time.Time  `json:"completed_at,omitempty"`

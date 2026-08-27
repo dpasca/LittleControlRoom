@@ -1044,7 +1044,7 @@ func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (s
 
 func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool, demoRecordingPath string) (int, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
-	recordingController := demorecord.NewController()
+	recordingController := demorecord.NewControllerWithDataDir(svc.Config().DataDir)
 	if strings.TrimSpace(demoRecordingPath) != "" {
 		recordingPath, err := recordingController.Start(demoRecordingPath)
 		if err != nil {
@@ -1093,6 +1093,11 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	m := tui.NewWithManagers(runCtx, svc, codexManager, runtimeManager)
 	m.SetMobileServerStatus(mobileStatus)
 	m.SetDemoRecordingController(recordingController)
+	if recordingController.Active() {
+		if err := recordingController.Associate(m.DemoRecordingAssociation()); err != nil {
+			fmt.Fprintf(os.Stderr, "associate demo recording: %v\n", err)
+		}
+	}
 	m.EnableUIStallWatchdog()
 	programModel := demorecord.WrapModel(m, recordingController)
 	p := tea.NewProgram(programModel, tea.WithAltScreen())

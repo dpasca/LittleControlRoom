@@ -172,6 +172,9 @@ Embedded Codex, Claude Code, and OpenCode sessions get an `lcr_runtime` MCP
 server; LCAgent gets equivalent native read and confirmed-control adapters.
 Through the progressive query catalog, agents can inspect bounded persisted
 project, assessment, and delegated-work state across the non-private portfolio.
+They can also discover the active or latest finalized demo recording as a typed
+resource; raw package paths require portfolio query scope or an exact
+host-provided attachment/confirmation grant.
 The MCP surface also lets agents file duplicate-checked repository TODOs,
 inspect and start managed processes, and progressively discover typed LCR
 actions — including project creation — then queue them for explicit confirmation

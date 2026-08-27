@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/agentquery"
 	"lcroom/internal/bossrun"
 	"lcroom/internal/control"
+	"lcroom/internal/demorecord"
 	"lcroom/internal/lcagent"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/model"
@@ -282,10 +283,15 @@ func (a *Assistant) helpChatAgentQueryExecutor(req AssistantRequest) (*agentquer
 	if req.View.PrivacyMode {
 		disclosure = agentquery.DisclosureHidePrivate
 	}
+	var demoRecordings agentquery.DemoRecordingReader
+	if strings.TrimSpace(a.dataDir) != "" {
+		demoRecordings = demorecord.NewDiscovery(a.dataDir)
+	}
 	return agentquery.NewExecutor(agentquery.Options{
-		Reader:     a.agentQueryReader,
-		Scope:      agentquery.ScopePortfolio,
-		Disclosure: disclosure,
+		Reader:         a.agentQueryReader,
+		Scope:          agentquery.ScopePortfolio,
+		Disclosure:     disclosure,
+		DemoRecordings: demoRecordings,
 	})
 }
 

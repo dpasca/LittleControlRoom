@@ -238,6 +238,20 @@ func TestToolsWithOptionsExposeProgressiveLCRQueriesWhenEnabled(t *testing.T) {
 	if _, ok := domain["enum"]; !ok {
 		t.Fatalf("list_lcr_queries domain has no bounded enum: %#v", domain)
 	}
+	encodedDomains, err := json.Marshal(domain["enum"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encodedDomains), "demo_recording") {
+		t.Fatalf("list_lcr_queries domains = %s, want demo_recording", encodedDomains)
+	}
+	encodedTools, err := json.Marshal(enabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedTools), "demo_recording.latest") {
+		t.Fatalf("base LCR query tools eagerly expose demo_recording.latest: %s", encodedTools)
+	}
 	if _, ok := toolSpec(t, enabled, "run_lcr_query").Parameters["properties"].(map[string]any)["project_path"]; ok {
 		t.Fatal("run_lcr_query eagerly exposed a capability-specific project_path schema")
 	}

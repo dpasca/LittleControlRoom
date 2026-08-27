@@ -20,6 +20,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/buildinfo"
 	"lcroom/internal/control"
+	"lcroom/internal/demorecord"
 	projectinstructions "lcroom/internal/lcagent/instructions"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/policy"
@@ -514,6 +515,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	workspace.AdminWrite = adminWrite
 	workspace.WorkspaceOnlyReads = opts.WorkspaceOnlyReads
+	if dataDir == "" {
+		dataDir = defaultDataDir()
+	}
 	lcrQueryScope := agentquery.NormalizeScope(lcrQueryScopeRaw)
 	if lcrQueryScope == "" {
 		return fmt.Errorf("lcr-query-scope must be one of: project, portfolio")
@@ -543,6 +547,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			Reader:            lcrStateStore,
 			OriginProjectPath: workspace.Root,
 			Scope:             lcrQueryScope,
+			DemoRecordings:    demorecord.NewDiscovery(dataDir),
 		})
 		if err != nil {
 			return fmt.Errorf("initialize LCR query catalog: %w", err)
@@ -564,9 +569,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		if err != nil {
 			return fmt.Errorf("load skills: %w", err)
 		}
-	}
-	if dataDir == "" {
-		dataDir = defaultDataDir()
 	}
 	outMode := outputMode(strings.TrimSpace(outputRaw))
 	if outMode != outputText && outMode != outputJSON && outMode != outputStreamJSON {

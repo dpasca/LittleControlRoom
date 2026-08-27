@@ -1,9 +1,12 @@
 package demorecord
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 type controllerOperation string
@@ -22,10 +25,16 @@ type Controller struct {
 	mu        sync.RWMutex
 	recorder  *Recorder
 	operation controllerOperation
+	discovery *Discovery
+	reference discoveryReference
 }
 
 func NewController() *Controller {
 	return &Controller{}
+}
+
+func NewControllerWithDataDir(dataDir string) *Controller {
+	return &Controller{discovery: NewDiscovery(dataDir)}
 }
 
 func (c *Controller) Active() bool {
@@ -41,6 +50,10 @@ func (c *Controller) Path() string {
 }
 
 func (c *Controller) Start(path string) (string, error) {
+	return c.StartWithAssociation(path, Association{})
+}
+
+func (c *Controller) StartWithAssociation(path string, association Association) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("demo recording controller is unavailable")
 	}
@@ -64,17 +77,51 @@ func (c *Controller) Start(path string) (string, error) {
 	c.mu.Unlock()
 
 	recorder, err := NewRecorder(path, RecorderOptions{})
+	var reference discoveryReference
+	if err == nil && c.discovery != nil {
+		reference = discoveryReference{
+			ID:            recorder.ID(),
+			Status:        RecordingStatusActive,
+			PackagePath:   recorder.Path(),
+			OwnerPID:      os.Getpid(),
+			StartedAt:     recorder.StartedAt().UTC(),
+			FormatVersion: FormatVersion,
+			Association:   association.Normalize(),
+			UpdatedAt:     time.Now().UTC(),
+		}
+		if discoveryErr := c.discovery.writeReference(reference); discoveryErr != nil {
+			closeErr := recorder.Close()
+			err = errors.Join(discoveryErr, closeErr)
+		}
+	}
 
 	c.mu.Lock()
 	c.operation = controllerIdle
 	if err == nil {
 		c.recorder = recorder
+		c.reference = reference
 	}
 	c.mu.Unlock()
 	if err != nil {
 		return "", err
 	}
 	return recorder.Path(), nil
+}
+
+func (c *Controller) Associate(association Association) error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	if c.recorder == nil || c.discovery == nil || strings.TrimSpace(c.reference.ID) == "" {
+		c.mu.Unlock()
+		return nil
+	}
+	c.reference.Association = association.Normalize()
+	c.reference.UpdatedAt = time.Now().UTC()
+	reference := c.reference
+	c.mu.Unlock()
+	return c.discovery.writeReference(reference)
 }
 
 // Stop detaches the active recorder before waiting for disk finalization, so
@@ -97,15 +144,37 @@ func (c *Controller) Stop() (string, bool, error) {
 	}
 	c.recorder = nil
 	c.operation = controllerStopping
+	reference := c.reference
 	c.mu.Unlock()
 
 	path := recorder.Path()
-	err := recorder.Close()
+	var discoveryErr error
+	if c.discovery != nil && strings.TrimSpace(reference.ID) != "" {
+		reference.Status = RecordingStatusFinalizing
+		reference.UpdatedAt = time.Now().UTC()
+		discoveryErr = c.discovery.writeReference(reference)
+	}
+	recordingErr := recorder.Close()
+	if c.discovery != nil && strings.TrimSpace(reference.ID) != "" {
+		reference.Status = RecordingStatusFailed
+		if reader, err := Open(path); err == nil {
+			manifest := reader.Manifest()
+			reference.DurationMS = manifest.DurationMS
+			reference.FormatVersion = manifest.Version
+			if manifest.CompletedAt != nil {
+				reference.Status = RecordingStatusFinalized
+				reference.CompletedAt = manifest.CompletedAt.UTC()
+			}
+		}
+		reference.UpdatedAt = time.Now().UTC()
+		discoveryErr = errors.Join(discoveryErr, c.discovery.writeReference(reference))
+	}
 
 	c.mu.Lock()
 	c.operation = controllerIdle
+	c.reference = discoveryReference{}
 	c.mu.Unlock()
-	return path, true, err
+	return path, true, errors.Join(recordingErr, discoveryErr)
 }
 
 func (c *Controller) Close() error {

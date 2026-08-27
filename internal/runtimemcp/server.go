@@ -18,6 +18,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
+	"lcroom/internal/demorecord"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
@@ -47,6 +48,7 @@ type Options struct {
 	TodoCaptureMode      todocapture.CaptureMode
 	ControlScope         control.AuthorityScope
 	QueryScope           agentquery.Scope
+	RecordingGrants      []agentquery.DemoRecordingPathGrant
 	Input                io.Reader
 	Output               io.Writer
 	Manager              *projectrun.Manager
@@ -133,11 +135,17 @@ func New(opts Options) (*Server, error) {
 	var queryExecutor *agentquery.Executor
 	var controlExecutor *agentcontrol.Executor
 	if stateStore != nil {
+		var demoRecordings agentquery.DemoRecordingReader
+		if strings.TrimSpace(opts.DataDir) != "" {
+			demoRecordings = demorecord.NewDiscovery(opts.DataDir)
+		}
 		var queryErr error
 		queryExecutor, queryErr = agentquery.NewExecutor(agentquery.Options{
 			Reader:            stateStore,
 			OriginProjectPath: projectPath,
 			Scope:             queryScope,
+			DemoRecordings:    demoRecordings,
+			RecordingGrants:   opts.RecordingGrants,
 		})
 		if queryErr != nil {
 			return nil, fmt.Errorf("initialize runtime MCP query service: %w", queryErr)
@@ -1090,7 +1098,7 @@ func queryCatalogTools(structuredTools bool) []mcpTool {
 				"properties": map[string]any{
 					"domain": map[string]any{
 						"type":        "string",
-						"enum":        []string{string(agentquery.DomainPortfolio), string(agentquery.DomainProject), string(agentquery.DomainAssessment), string(agentquery.DomainWork)},
+						"enum":        agentquery.DomainStrings(),
 						"description": "Optional exact query domain. Omit to receive only domain summaries, then call again with the relevant domain.",
 					},
 				},

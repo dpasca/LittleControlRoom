@@ -7,17 +7,20 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/commands"
+	"lcroom/internal/demorecord"
 
 	"github.com/charmbracelet/x/ansi"
 )
 
 type fakeDemoRecordingController struct {
-	active    bool
-	path      string
-	startPath string
-	startErr  error
-	stopErr   error
+	active      bool
+	path        string
+	startPath   string
+	startErr    error
+	stopErr     error
+	association demorecord.Association
 }
 
 func (c *fakeDemoRecordingController) Active() bool {
@@ -36,6 +39,11 @@ func (c *fakeDemoRecordingController) Start(path string) (string, error) {
 	c.active = true
 	c.path = path
 	return path, nil
+}
+
+func (c *fakeDemoRecordingController) StartWithAssociation(path string, association demorecord.Association) (string, error) {
+	c.association = association.Normalize()
+	return c.Start(path)
 }
 
 func (c *fakeDemoRecordingController) Stop() (string, bool, error) {
@@ -121,6 +129,35 @@ func TestRecordSlashCommandSupportsExplicitPathAndStatus(t *testing.T) {
 	status := normalizeUpdateModel(statusModel)
 	if statusCmd != nil || status.status != "Recording active: "+explicitPath {
 		t.Fatalf("status = %q, cmd %v", status.status, statusCmd)
+	}
+}
+
+func TestRecordSlashCommandAssociatesVisibleEmbeddedSession(t *testing.T) {
+	projectPath := "/tmp/demo-project"
+	controller := &fakeDemoRecordingController{}
+	m := Model{
+		demoRecordingController: controller,
+		codexVisibleProject:     projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: {
+				Provider:    codexapp.ProviderCodex,
+				ProjectPath: projectPath,
+				ThreadID:    "thread-demo",
+				Started:     true,
+			},
+		},
+	}
+	_, cmd := m.dispatchCommand(commands.Invocation{
+		Kind:          commands.KindRecord,
+		Record:        commands.RecordStart,
+		RecordingPath: "/tmp/associated.lcrdemo",
+	})
+	if cmd == nil {
+		t.Fatal("record start returned nil command")
+	}
+	_ = cmd()
+	if got := controller.association; got.ProjectPath != projectPath || got.Provider != "codex" || got.SessionID != "thread-demo" {
+		t.Fatalf("recording association = %#v", got)
 	}
 }
 
