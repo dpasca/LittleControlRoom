@@ -107,6 +107,7 @@ Make browser automation feel quiet and predictable by default:
 - Managed Codex login flows now go through an LCR-owned interactive browser lease:
   - one session can hold the interactive browser slot at a time
   - later sessions are blocked cleanly instead of blindly opening another browser login flow
+  - a blocked browser-attention dialog offers an explicit takeover; the previous flow remains waiting in its own session instead of being closed or discarded
   - failed browser-reveal attempts release the slot immediately
 - Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
 - On macOS, managed browser hide/reveal now targets the browser PID through Accessibility/AppKit instead of depending on the `System Events` application host. Every `osascript` attempt, including verified activation retries and the named-process fallback, is time-bounded and preserves useful diagnostics.
@@ -125,7 +126,7 @@ Make browser automation feel quiet and predictable by default:
 - A Codex smoke check can now verify the overlay without a live user session by running `codex debug prompt-input` against that overlay and checking that the shadow Playwright skill is what Codex sees.
 - A managed embedded Codex smoke test now builds a real `lcroom` helper binary and verifies that a fresh trusted session can see Playwright MCP tools before the first turn starts.
 - The real embedded OpenCode Playwright smoke now launches with its own temporary `XDG_DATA_HOME`, so it exercises the managed browser path without polluting the user's normal OpenCode DB or leaving `tmp-oc-browser-smoke-*` projects in the dashboard.
-- Browser-attention coverage now verifies the exact structured tool identity, required instruction, stale or mismatched managed state rejection, failed tool results, idle and resume persistence with the original request time, successful-response clearing, inactivity protection, popup acknowledgement/retry behavior, and OpenCode parity.
+- Browser-attention coverage now verifies the exact structured tool identity, required instruction, stale or mismatched managed state rejection, failed tool results, idle and resume persistence with the original request time, successful-response clearing, inactivity protection, popup acknowledgement/retry/takeover behavior, and OpenCode parity.
 - Claude coverage verifies its combined inline MCP config, Playwright wildcard permission, shared session key, activity and URL tracking, successful and failed attention results, inactivity protection, and same-process follow-up after a browser handoff.
 - Codex turn-start and turn-steer coverage now verifies that current managed-browser guidance is supplied as application context only when both managed Playwright and the runtime MCP are available, without rewriting the user's submitted text.
 - Handoff state reads use the same cross-process state lock as the managed-browser writer, and hydration coverage verifies that initially hidden OpenCode/LCAgent waits surface as soon as their revealable browser state arrives.
@@ -186,10 +187,6 @@ Make browser automation feel quiet and predictable by default:
    - waiting -> cancel
    - waiting -> blocked by another interactive lease
    - classic browser behavior still avoiding managed behavior
-
-4. Add a small manual-release / reclaim story if needed.
-   - Decide whether the first version should expose a "release browser slot" action when a login flow is abandoned.
-   - Keep this optional until real usage shows the lease can get stuck in practice.
 
 ## Next Phase After That
 

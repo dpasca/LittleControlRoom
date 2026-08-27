@@ -79,6 +79,16 @@ func (m *Model) acquireManagedBrowserLease(ref browserctl.SessionRef) browserctl
 	return result
 }
 
+func (m *Model) takeOverManagedBrowserLease(ref browserctl.SessionRef) browserctl.InteractiveAcquireResult {
+	controller := m.ensureBrowserController()
+	if controller == nil {
+		return browserctl.InteractiveAcquireResult{}
+	}
+	result := controller.TakeOverInteractive(ref)
+	m.browserLeaseSnapshot = result.Snapshot
+	return result
+}
+
 func (m *Model) releaseManagedBrowserLease(ref browserctl.SessionRef) browserctl.ControllerSnapshot {
 	controller := m.ensureBrowserController()
 	if controller == nil {
@@ -98,6 +108,34 @@ func managedBrowserLeaseRef(provider codexapp.Provider, projectPath, threadID st
 }
 
 func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Provider, threadID, managedSessionKey string, activity browserctl.SessionActivity, loginURL, openingStatus, successStatus string) (tea.Model, tea.Cmd) {
+	return m.openManagedBrowserLoginWithTakeover(
+		projectPath,
+		provider,
+		threadID,
+		managedSessionKey,
+		activity,
+		loginURL,
+		openingStatus,
+		successStatus,
+		false,
+	)
+}
+
+func (m Model) takeOverManagedBrowserLogin(projectPath string, provider codexapp.Provider, threadID, managedSessionKey string, activity browserctl.SessionActivity, loginURL, openingStatus, successStatus string) (tea.Model, tea.Cmd) {
+	return m.openManagedBrowserLoginWithTakeover(
+		projectPath,
+		provider,
+		threadID,
+		managedSessionKey,
+		activity,
+		loginURL,
+		openingStatus,
+		successStatus,
+		true,
+	)
+}
+
+func (m Model) openManagedBrowserLoginWithTakeover(projectPath string, provider codexapp.Provider, threadID, managedSessionKey string, activity browserctl.SessionActivity, loginURL, openingStatus, successStatus string, takeOver bool) (tea.Model, tea.Cmd) {
 	ref := managedBrowserLeaseRef(provider, projectPath, threadID)
 	if !ref.Valid() {
 		m.status = "Managed browser control is unavailable for this session."
@@ -113,7 +151,12 @@ func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Pro
 			UpdatedAt: activity.LastEventAt,
 		})
 	}
-	result := m.acquireManagedBrowserLease(ref)
+	result := browserctl.InteractiveAcquireResult{}
+	if takeOver {
+		result = m.takeOverManagedBrowserLease(ref)
+	} else {
+		result = m.acquireManagedBrowserLease(ref)
+	}
 	if !result.Granted {
 		m.status = m.managedBrowserLeaseBlockedStatus(result.Owner)
 		return m, nil

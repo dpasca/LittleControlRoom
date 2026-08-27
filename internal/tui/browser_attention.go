@@ -24,6 +24,7 @@ type browserAttentionNotification struct {
 	AttentionMessage         string
 	Fingerprint              string
 	Problem                  string
+	BlockedBy                *browserctl.InteractiveLease
 }
 
 type projectBrowserAttentionState struct {
@@ -389,6 +390,9 @@ func (m Model) updateBrowserAttentionMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.returnToBrowserAttentionSession(*notify)
 	case "r":
 		if notify.revealFailed() && notify.canOpenBrowser() {
+			if notify.blockedByAnotherBrowser() {
+				return m.takeOverBrowserAttentionLogin(*notify)
+			}
 			return m.openBrowserAttentionLogin(*notify)
 		}
 		return m, nil
@@ -429,6 +433,15 @@ func (n browserAttentionNotification) canOpenBrowser() bool {
 
 func (n browserAttentionNotification) revealFailed() bool {
 	return strings.TrimSpace(n.Problem) != ""
+}
+
+func (n browserAttentionNotification) blockedByAnotherBrowser() bool {
+	if n.BlockedBy == nil {
+		return false
+	}
+	owner := n.BlockedBy.Normalize()
+	target := managedBrowserLeaseRef(n.Provider, n.ProjectPath, n.SessionID)
+	return owner.Ref.Valid() && owner.Ref != target.Normalize()
 }
 
 func managedBrowserFlowSupported(provider codexapp.Provider) bool {
@@ -482,30 +495,60 @@ func managedBrowserSessionURL(provider codexapp.Provider, policy browserctl.Poli
 }
 
 func (m Model) openBrowserAttentionLogin(notify browserAttentionNotification) (tea.Model, tea.Cmd) {
+	return m.openBrowserAttentionLoginWithTakeover(notify, false)
+}
+
+func (m Model) takeOverBrowserAttentionLogin(notify browserAttentionNotification) (tea.Model, tea.Cmd) {
+	return m.openBrowserAttentionLoginWithTakeover(notify, true)
+}
+
+func (m Model) openBrowserAttentionLoginWithTakeover(notify browserAttentionNotification, takeOver bool) (tea.Model, tea.Cmd) {
 	if !notify.canOpenBrowser() {
 		m.dismissBrowserAttentionNotification()
 		return m.showCodexProject(notify.ProjectPath, notify.Provider.Label()+" browser needs your attention")
 	}
 
+	openingStatus := "Showing the managed browser window and switching to the embedded session..."
+	successStatus := "Managed browser window is ready. Finish the browser flow there, then return to the embedded session if more input is needed."
+	if takeOver {
+		openingStatus = "Taking over the interactive browser and switching to the embedded session..."
+		successStatus = "Managed browser window is ready. The previous browser flow remains available from its session."
+	}
 	m.dismissBrowserAttentionNotification()
 	updated, revealCmd := m.showCodexProject(
 		notify.ProjectPath,
-		"Showing the managed browser window and switching to the embedded session...",
+		openingStatus,
 	)
 	model := updated.(Model)
-	leaseModel, openCmd := model.openManagedBrowserLogin(
-		notify.ProjectPath,
-		notify.Provider,
-		notify.SessionID,
-		notify.ManagedBrowserSessionKey,
-		notify.Activity,
-		notify.OpenURL,
-		"Showing the managed browser window and switching to the embedded session...",
-		"Managed browser window is ready. Finish the browser flow there, then return to the embedded session if more input is needed.",
-	)
+	var leaseModel tea.Model
+	var openCmd tea.Cmd
+	if takeOver {
+		leaseModel, openCmd = model.takeOverManagedBrowserLogin(
+			notify.ProjectPath,
+			notify.Provider,
+			notify.SessionID,
+			notify.ManagedBrowserSessionKey,
+			notify.Activity,
+			notify.OpenURL,
+			openingStatus,
+			successStatus,
+		)
+	} else {
+		leaseModel, openCmd = model.openManagedBrowserLogin(
+			notify.ProjectPath,
+			notify.Provider,
+			notify.SessionID,
+			notify.ManagedBrowserSessionKey,
+			notify.Activity,
+			notify.OpenURL,
+			openingStatus,
+			successStatus,
+		)
+	}
 	model = leaseModel.(Model)
 	if openCmd == nil {
 		notify.Problem = strings.TrimSpace(model.status)
+		notify.BlockedBy = model.managedBrowserLeaseBlockedBy(managedBrowserLeaseRef(notify.Provider, notify.ProjectPath, notify.SessionID))
 		delete(model.browserAttentionAcknowledged, normalizeProjectPath(notify.ProjectPath))
 		model.browserAttention = &notify
 		return model, revealCmd
@@ -576,6 +619,21 @@ func (m Model) renderBrowserAttentionContent(width int) string {
 	lines = append(lines, "")
 	if notify.canOpenBrowser() {
 		if notify.revealFailed() {
+			if notify.blockedByAnotherBrowser() {
+				lines = append(lines, renderWrappedDialogTextLines(
+					detailMutedStyle,
+					width,
+					"The other browser flow remains available from its session. You can explicitly take over the interactive browser slot for this request without closing the other page.",
+				)...)
+				lines = append(lines,
+					"",
+					renderDialogAction("Enter", m.browserAttentionSessionActionLabel(*notify), commitActionKeyStyle, commitActionTextStyle),
+					renderDialogAction("R", "take over browser", pushActionKeyStyle, pushActionTextStyle),
+					renderDialogAction("B", "browser settings", pushActionKeyStyle, pushActionTextStyle),
+					renderDialogAction("Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),
+				)
+				return strings.Join(lines, "\n")
+			}
 			lines = append(lines, renderWrappedDialogTextLines(
 				detailMutedStyle,
 				width,
