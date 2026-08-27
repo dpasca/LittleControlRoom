@@ -286,9 +286,9 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.repositoryIntegrityDialog != nil {
 		if m.repositoryIntegrityDialog.Busy {
-			return m.renderModalFooter(width, "Repository integrity: action in progress", supplementSegments...)
+			return m.renderModalFooter(width, "Home branch: action in progress", supplementSegments...)
 		}
-		return m.renderModalFooter(width, "Repository integrity: Tab choose, Enter confirm, Esc leave warning active", supplementSegments...)
+		return m.renderModalFooter(width, "Home branch: Tab choose, Enter confirm, Esc leave warning active", supplementSegments...)
 	}
 	if m.projectRemoveConfirm != nil {
 		if m.projectRemoveConfirm.Submitting {

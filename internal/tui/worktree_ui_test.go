@@ -1039,11 +1039,11 @@ func TestUpdateNormalModeMShowsBlockedMergeWhenWorktreesDirty(t *testing.T) {
 	if !got.worktreeMergeConfirm.SourceDirty {
 		t.Fatalf("blocked merge should offer a commit when the source worktree is dirty")
 	}
-	if !strings.Contains(worktreeMergeConfirmBlockReason(got.worktreeMergeConfirm), "The root checkout is dirty") {
+	if !strings.Contains(worktreeMergeConfirmBlockReason(got.worktreeMergeConfirm), "The primary checkout is dirty") {
 		t.Fatalf("blocked reason = %q, want root dirty reason", worktreeMergeConfirmBlockReason(got.worktreeMergeConfirm))
 	}
 	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The root checkout is dirty") || !strings.Contains(rendered, "Commit worktree changes first") {
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The primary checkout is dirty") || !strings.Contains(rendered, "Commit worktree changes first") {
 		t.Fatalf("blocked merge overlay should explain why merge is unavailable, got %q", rendered)
 	}
 }
@@ -1157,10 +1157,10 @@ func TestOpenWorktreeMergeConfirmRefreshesLiveRootDirtyStatus(t *testing.T) {
 	if worktreeMergeConfirmReady(m.worktreeMergeConfirm) {
 		t.Fatalf("merge confirmation should block once the live root checkout refresh reports dirtiness: %#v", m.worktreeMergeConfirm)
 	}
-	if !strings.Contains(worktreeMergeConfirmBlockReason(m.worktreeMergeConfirm), "The root checkout is dirty") {
+	if !strings.Contains(worktreeMergeConfirmBlockReason(m.worktreeMergeConfirm), "The primary checkout is dirty") {
 		t.Fatalf("blocked reason = %q, want refreshed root-dirty warning", worktreeMergeConfirmBlockReason(m.worktreeMergeConfirm))
 	}
-	if got := m.status; got != "The root checkout is dirty. Commit or discard changes before merging back." {
+	if got := m.status; got != "The primary checkout is dirty. Commit or discard changes before merging back." {
 		t.Fatalf("status = %q, want refreshed root-dirty status", got)
 	}
 	rootSummary, ok := m.projectSummaryByPath(rootPath)
@@ -1172,7 +1172,7 @@ func TestOpenWorktreeMergeConfirmRefreshesLiveRootDirtyStatus(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderWorktreeMergeConfirmOverlay("", 100, 24))
-	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The root checkout is dirty") {
+	if !strings.Contains(rendered, "Merge blocked") || !strings.Contains(rendered, "The primary checkout is dirty") {
 		t.Fatalf("rendered merge dialog should show the refreshed root-dirty warning, got %q", rendered)
 	}
 }
@@ -1188,7 +1188,7 @@ func TestBusyWorktreeMergeRefreshEscCancelsDialog(t *testing.T) {
 			TargetBranch:   "master",
 			PendingRefresh: worktreeMergeConfirmPendingRefreshSet("/tmp/repo--feat-live-dirty", "/tmp/repo"),
 			Busy:           true,
-			BusyMessage:    "Checking live git status for this worktree and its root checkout.",
+			BusyMessage:    "Checking live git status for this worktree and its primary checkout.",
 		},
 	}
 
@@ -1216,7 +1216,7 @@ func TestRenderBusyWorktreeMergeRefreshShowsEscHint(t *testing.T) {
 			TargetBranch:   "master",
 			PendingRefresh: worktreeMergeConfirmPendingRefreshSet("/tmp/repo--feat-live-dirty", "/tmp/repo"),
 			Busy:           true,
-			BusyMessage:    "Checking live git status for this worktree and its root checkout.",
+			BusyMessage:    "Checking live git status for this worktree and its primary checkout.",
 		},
 	}
 
@@ -1849,7 +1849,7 @@ func TestDispatchCommandWorktreeUpdateBlocksDirtyRoot(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("dirty root should block /wt update")
 	}
-	if got.status != "Commit or discard root checkout changes before updating this worktree" {
+	if got.status != "Commit or discard changes in the primary checkout before updating this worktree" {
 		t.Fatalf("status = %q", got.status)
 	}
 	if got.pendingGitSummary(childPath) != "" {
@@ -3309,7 +3309,7 @@ func TestWorktreeActionMsgSubmodulePublishBlockedReopensMergeDialog(t *testing.T
 		"Merge-back stopped before",
 		"Ask Engineer",
 		"separate tracked repair task",
-		"root checkout stays unchanged",
+		"primary checkout stays unchanged",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("merge dialog missing %q in %q", want, rendered)
@@ -3352,7 +3352,7 @@ func TestWorktreeMergeRecoveryPromptPreservesRootAndIncludesDiagnosticContext(t 
 	prompt := worktreeMergeRecoveryEngineerPrompt(confirm, blocker)
 	for _, want := range []string{
 		"Preserve the intended work",
-		"root checkout was deliberately left unchanged",
+		"primary checkout was deliberately left unchanged",
 		"do not merge into it",
 		"operator can safely retry merge-back",
 		"makes every gitlink commit",

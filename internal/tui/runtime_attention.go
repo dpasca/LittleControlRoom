@@ -74,9 +74,10 @@ func (m Model) projectRepositoryIntegrityAttentionReason(projectPath string) *mo
 	if !ok || !state.NeedsAttention() {
 		return nil
 	}
-	text := fmt.Sprintf("Root checkout is on %s; expected %s", state.ActualBranch, state.ExpectedBranch)
+	text := fmt.Sprintf("Primary checkout is on %s; saved home branch is %s", state.ActualBranch, state.ExpectedBranch)
 	if strings.TrimSpace(projectPath) != strings.TrimSpace(state.RootPath) {
-		text = fmt.Sprintf("Repository root %s is on %s; expected %s", state.RootName, state.ActualBranch, state.ExpectedBranch)
+		name := firstNonEmptyTrimmed(state.RootName, "Repository")
+		text = fmt.Sprintf("%s primary checkout is on %s; saved home branch is %s", name, state.ActualBranch, state.ExpectedBranch)
 	}
 	return &model.AttentionReason{
 		Code:   "repository_root_displaced",

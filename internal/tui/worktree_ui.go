@@ -694,13 +694,13 @@ func worktreeMergeRecoveryEngineerPrompt(confirm worktreeMergeConfirmState, bloc
 	lines := []string{
 		"Resolve the submodule publication blocker that stopped Little Control Room from merging this linked worktree.",
 		"",
-		"Preserve the intended work. The root checkout was deliberately left unchanged; do not merge into it, remove the linked worktree, or complete its linked TODO. Leave the linked worktree in a state where the operator can safely retry merge-back.",
+		"Preserve the intended work. The primary checkout was deliberately left unchanged; do not merge into it, remove the linked worktree, or complete its linked TODO. Leave the linked worktree in a state where the operator can safely retry merge-back.",
 		"",
 		"First inspect the parent worktree, the affected submodule, its configured fetch/push remotes, and commit reachability. Choose the safest repair that makes every gitlink commit recorded by the parent branch fetchable by a fresh checkout. If the repair requires a fork, an external push, changing a canonical submodule URL, or dropping an intended submodule change, explain the exact tradeoff and get the user's confirmation before doing it.",
 		"",
 		"Trusted merge snapshot:",
 		"- Linked worktree: " + firstNonEmptyTrimmed(confirm.ProjectPath, blocker.WorktreePath, "(unknown)"),
-		"- Root checkout: " + firstNonEmptyTrimmed(confirm.RootPath, blocker.RootProjectPath, "(unknown)"),
+		"- Primary checkout: " + firstNonEmptyTrimmed(confirm.RootPath, blocker.RootProjectPath, "(unknown)"),
 		"- Merge direction: " + firstNonEmptyTrimmed(confirm.BranchName, blocker.SourceBranch, "(unknown)") + " -> " + firstNonEmptyTrimmed(confirm.TargetBranch, blocker.TargetBranch, "(unknown)"),
 		"- Submodule path: " + firstNonEmptyTrimmed(blocker.SubmodulePath, "(unknown)"),
 		"- Local submodule branch: " + firstNonEmptyTrimmed(blocker.SubmoduleBranch, "(unknown)"),
@@ -1557,7 +1557,7 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 		}
 	}
 	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && width >= 80 {
-		actions = append(actions, footerPrimaryAction("I", "integrity"))
+		actions = append(actions, footerPrimaryAction("I", "home branch"))
 	}
 	recoveryTask, hasRecoveryTask := m.worktreeMergeRecoveryTaskForProjectPath(project.Path)
 	if hasRecoveryTask {
@@ -1690,7 +1690,7 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 }
 
 func (m Model) mergeBackRulesSummary() string {
-	return "Requires a clean source worktree and clean root checkout. Sibling worktrees can stay dirty."
+	return "Requires a clean source worktree and clean primary checkout. Sibling worktrees can stay dirty."
 }
 
 func worktreeMergeOpenSessionWarning(snapshot codexapp.Snapshot) string {
@@ -1765,16 +1765,16 @@ func worktreeMergeReadinessWithRoot(project model.ProjectSummary, targetBranch s
 		return state
 	}
 	if rootProject.RepoConflict {
-		state.HardBlockReason = "The root checkout has unresolved conflicts. Resolve or abort the in-progress Git operation before retrying."
+		state.HardBlockReason = "The primary checkout has unresolved conflicts. Resolve or abort the in-progress Git operation before retrying."
 		return state
 	}
 	if rootProject.RepoDirty {
-		state.HardBlockReason = "The root checkout is dirty. Commit or discard changes before merging back."
+		state.HardBlockReason = "The primary checkout is dirty. Commit or discard changes before merging back."
 		return state
 	}
 	rootBranch := strings.TrimSpace(rootProject.RepoBranch)
 	if rootBranch != "" && rootBranch != targetBranch {
-		state.HardBlockReason = fmt.Sprintf("The root checkout is on %s. Switch it to %s before merging back.", rootBranch, targetBranch)
+		state.HardBlockReason = fmt.Sprintf("The primary checkout is on %s. Switch it to %s before merging back.", rootBranch, targetBranch)
 		return state
 	}
 	return state
@@ -1853,7 +1853,7 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 	}
 	if len(pendingRefresh) > 0 {
 		m.worktreeMergeConfirm.Busy = true
-		m.worktreeMergeConfirm.BusyMessage = "Checking live git status for this worktree and its root checkout."
+		m.worktreeMergeConfirm.BusyMessage = "Checking live git status for this worktree and its primary checkout."
 	}
 	m.worktreeMergeConfirm.StopRuntime = m.worktreeMergeConfirm.RuntimeRunning
 	m.worktreeMergeConfirm.CommitBeforeMerge = m.worktreeMergeConfirm.SourceDirty
@@ -1914,13 +1914,13 @@ func (m *Model) updateWorktreeFromParentForSelection() tea.Cmd {
 	if rootProject, ok := m.projectSummaryByPathAllProjects(rootPath); ok {
 		switch {
 		case rootProject.RepoConflict:
-			m.status = "Resolve or abort the root checkout's current Git operation before updating this worktree"
+			m.status = "Resolve or abort the primary checkout's current Git operation before updating this worktree"
 			return nil
 		case rootProject.RepoDirty:
-			m.status = "Commit or discard root checkout changes before updating this worktree"
+			m.status = "Commit or discard changes in the primary checkout before updating this worktree"
 			return nil
 		case strings.TrimSpace(rootProject.RepoBranch) != "" && strings.TrimSpace(rootProject.RepoBranch) != parentBranch:
-			m.status = fmt.Sprintf("The root checkout is on %s. Switch it to %s before updating this worktree.", strings.TrimSpace(rootProject.RepoBranch), parentBranch)
+			m.status = fmt.Sprintf("The primary checkout is on %s. Switch it to %s before updating this worktree.", strings.TrimSpace(rootProject.RepoBranch), parentBranch)
 			return nil
 		}
 	}
@@ -2937,7 +2937,7 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		lines = append(lines, renderWrappedDialogTextLines(headerStyle, panelInnerW, confirm.ErrorMessage)...)
 		if worktreeMergeConfirmHasRecovery(confirm) {
 			lines = append(lines, "", detailValueStyle.Render("Automatic recovery"))
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Ask Engineer starts a separate tracked repair task with the full Git failure and merge context. The root checkout stays unchanged while it works.")...)
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Ask Engineer starts a separate tracked repair task with the full Git failure and merge context. The primary checkout stays unchanged while it works.")...)
 		}
 	}
 	if !confirm.Busy {
@@ -2978,7 +2978,7 @@ func (m Model) renderWorktreeMergeRecoveryOverlay(body string, bodyW, bodyH int)
 	lines := []string{
 		renderDialogHeader("Ask Engineer", dialog.Confirm.ProjectName, dialog.Confirm.BranchName, panelInnerW),
 	}
-	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, panelInnerW, "Start a separate tracked repair task for this submodule merge blocker. The root checkout stays unchanged while it works.")...)
+	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, panelInnerW, "Start a separate tracked repair task for this submodule merge blocker. The primary checkout stays unchanged while it works.")...)
 	lines = append(lines, "", detailSectionStyle.Render("Agent"))
 	for _, option := range embeddedLaunchProviderOptions() {
 		label := m.todoCopyProviderButtonLabel(dialog.Confirm.ProjectPath, option, settings)

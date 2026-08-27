@@ -199,7 +199,7 @@ var specs = []Spec{
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
 	{Name: "pull", Usage: "/pull [cancel]", Summary: "Pull the selected project with progress, or cancel its active pull"},
 	{Name: "resolve", Usage: "/resolve", Summary: "Resolve merge conflicts in the background with project-row progress"},
-	{Name: "integrity", Usage: "/integrity", Summary: "Inspect a displaced repository root and choose a safe response"},
+	{Name: "integrity", Usage: "/integrity", Summary: "Review a primary checkout that differs from its saved home branch"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
 	{Name: "codex-gc", Usage: "/codex-gc", Summary: "Review safely eligible Codex session storage before permanent deletion"},
 	{Name: "new-codex", Usage: "/new-codex [prompt]", Summary: "Start a fresh Codex session in the selected project"},

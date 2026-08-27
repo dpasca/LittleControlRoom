@@ -308,10 +308,11 @@ rather than pretending to be a sandbox:
   of `/tmp`. This stops the common accidental command, not a determined one —
   keep your backups.
   ([threat model](docs/destructive_command_safety.md))
-- **Repository root integrity.** LCR remembers the trusted root branch before
-  creating linked worktrees and warns if the canonical checkout later moves. `I`
-  or `/integrity` shows the evidence; automatic repair is only offered when it is
-  provably safe. ([details](docs/repository_root_integrity.md))
+- **Repository home branch.** LCR keeps the primary checkout on a saved home
+  branch, preferring the remote default from `origin/HEAD`. That home is separate
+  from each linked worktree's merge target. `I` or `/integrity` explains any
+  mismatch; automatic repair is only offered when it is provably safe.
+  ([details](docs/repository_root_integrity.md))
 - **Explicit confirmation.** Every action an agent proposes through the control
   surface waits for you in the TUI.
 - **Conservative cleanup.** `/clean` only offers present, unpinned linked

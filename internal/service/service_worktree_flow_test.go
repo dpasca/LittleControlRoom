@@ -359,6 +359,62 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeKeepsMergeTargetSeparateFromRootHomeBranch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
+	runGit(t, projectPath, "git", "switch", "-c", "feature/prebuilt-quick-descriptions")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	item, err := svc.AddTodo(ctx, projectPath, "Build the auto-review child branch")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath:    projectPath,
+		TodoID:         item.ID,
+		BranchName:     "feature/auto-review",
+		WorktreeSuffix: "auto-review",
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	if result.ParentBranch != "feature/prebuilt-quick-descriptions" {
+		t.Fatalf("merge target = %q, want feature/prebuilt-quick-descriptions", result.ParentBranch)
+	}
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 0)
+	if err != nil {
+		t.Fatalf("load created worktree: %v", err)
+	}
+	if detail.Summary.WorktreeParentBranch != "feature/prebuilt-quick-descriptions" {
+		t.Fatalf("stored merge target = %q, want feature/prebuilt-quick-descriptions", detail.Summary.WorktreeParentBranch)
+	}
+	policy, err := st.GetRepositoryRootPolicy(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("load root policy: %v", err)
+	}
+	if policy.ExpectedBranch != "master" || policy.ExpectedBranchSource != repositoryExpectedBranchRemoteDefault {
+		t.Fatalf("root policy = %#v, want master from origin/HEAD", policy)
+	}
+}
+
 func TestCreateTodoWorktreeRepairsStaleRootSubmoduleMetadataBeforeRecordingParent(t *testing.T) {
 	t.Parallel()
 

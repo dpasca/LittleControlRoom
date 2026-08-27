@@ -76,7 +76,7 @@ func (m *Model) openRepositoryIntegrityDialogForSelection() tea.Cmd {
 	}
 	state, ok := m.repositoryIntegrityStateForProject(project.Path)
 	if !ok || !state.Displaced {
-		m.status = "No repository root integrity incident for the selected project"
+		m.status = "The selected repository's primary checkout is already on its saved home branch"
 		return nil
 	}
 	if block := m.repositoryIntegrityLiveRepairBlockReason(state); block != "" {
@@ -87,7 +87,7 @@ func (m *Model) openRepositoryIntegrityDialogForSelection() tea.Cmd {
 		State:    state,
 		Selected: repositoryIntegrityKeep,
 	}
-	m.status = "Repository integrity warning open"
+	m.status = "Home-branch warning open"
 	return nil
 }
 
@@ -114,14 +114,14 @@ func (m Model) updateRepositoryIntegrityDialogMode(msg tea.KeyMsg) (tea.Model, t
 	}
 	if dialog.Busy {
 		if msg.String() == "esc" {
-			m.status = "Repository integrity action is already in progress"
+			m.status = "Home-branch action is already in progress"
 		}
 		return m, nil
 	}
 	switch msg.String() {
 	case "esc":
 		m.repositoryIntegrityDialog = nil
-		m.status = "Repository integrity warning left active"
+		m.status = "Home-branch warning left active"
 		return m, nil
 	case "left", "h", "up", "k", "shift+tab":
 		dialog.Selected = (dialog.Selected - 1 + repositoryIntegrityOptionCount) % repositoryIntegrityOptionCount
@@ -150,17 +150,17 @@ func (m Model) updateRepositoryIntegrityDialogMode(msg tea.KeyMsg) (tea.Model, t
 				return m, nil
 			}
 			dialog.Busy = true
-			dialog.BusyMessage = fmt.Sprintf("Moving %s into a linked worktree and restoring %s...", state.ActualBranch, state.ExpectedBranch)
+			dialog.BusyMessage = fmt.Sprintf("Moving %s into a linked worktree and restoring home branch %s...", state.ActualBranch, state.ExpectedBranch)
 			m.status = dialog.BusyMessage
 			return m, m.repairRepositoryIntegrityCmd(state)
 		case repositoryIntegrityUseCurrent:
 			dialog.Busy = true
-			dialog.BusyMessage = "Updating the expected root branch..."
+			dialog.BusyMessage = fmt.Sprintf("Saving %s as the home branch...", state.ActualBranch)
 			m.status = dialog.BusyMessage
 			return m, m.setRepositoryIntegrityExpectedBranchCmd(state)
 		default:
 			dialog.Busy = true
-			dialog.BusyMessage = "Acknowledging this exact repository state..."
+			dialog.BusyMessage = "Dismissing this exact home-branch warning..."
 			m.status = dialog.BusyMessage
 			return m, m.acknowledgeRepositoryIntegrityCmd(state)
 		}
@@ -218,7 +218,7 @@ func (m Model) createRepositoryIntegrityEngineerTaskCmd(state model.RepositoryIn
 			Resources: []model.AgentTaskResource{{
 				Kind:        model.AgentTaskResourceProject,
 				ProjectPath: state.RootPath,
-				Label:       "repository root integrity incident",
+				Label:       "primary checkout home-branch incident",
 			}},
 		})
 		err = timeoutActionError(err, repositoryIntegrityActionTimeout, "creating a repository integrity engineer task")
@@ -238,16 +238,16 @@ func (m Model) applyRepositoryIntegrityActionMsg(msg repositoryIntegrityActionMs
 	switch msg.Action {
 	case repositoryIntegrityActionAcknowledge:
 		m.repositoryIntegrityDialog = nil
-		m.status = "Repository warning acknowledged for this exact checkout state"
+		m.status = "Home-branch warning dismissed for this exact checkout state"
 		return m, m.requestProjectsReloadCmd()
 	case repositoryIntegrityActionUseCurrent:
 		m.repositoryIntegrityDialog = nil
-		m.status = fmt.Sprintf("Repository root policy now expects %s", msg.State.ActualBranch)
+		m.status = fmt.Sprintf("Saved home branch is now %s", msg.State.ActualBranch)
 		return m, m.requestProjectsReloadCmd()
 	case repositoryIntegrityActionRepair:
 		m.repositoryIntegrityDialog = nil
 		m.preferredSelectPath = msg.Repair.WorktreePath
-		m.status = fmt.Sprintf("Root restored to %s; %s moved to %s", msg.Repair.RestoredBranch, msg.Repair.MovedBranch, msg.Repair.WorktreePath)
+		m.status = fmt.Sprintf("Primary checkout restored to %s; %s moved to %s", msg.Repair.RestoredBranch, msg.Repair.MovedBranch, msg.Repair.WorktreePath)
 		if warning := strings.TrimSpace(msg.Repair.PreparationWarning); warning != "" {
 			m.status += "; worktree preparation needs attention"
 			m.appendBackgroundErrorLogEntry("Worktree preparation incomplete", fmt.Errorf("%s", warning), msg.Repair.WorktreePath)
@@ -282,21 +282,21 @@ func (m Model) applyRepositoryIntegrityActionMsg(msg repositoryIntegrityActionMs
 
 func repositoryIntegrityEngineerTaskTitle(state model.RepositoryIntegrityState) string {
 	name := firstNonEmptyTrimmed(state.RootName, filepath.Base(state.RootPath), "repository")
-	return "Investigate root checkout for " + name
+	return "Investigate primary checkout branch for " + name
 }
 
 func repositoryIntegrityEngineerPrompt(state model.RepositoryIntegrityState) string {
 	lines := []string{
-		"Investigate this repository-root integrity incident. Start in investigation-only mode: do not mutate files, branches, worktrees, Git metadata, or LCR state.",
+		"Investigate this primary-checkout home-branch incident. Start in investigation-only mode: do not mutate files, branches, worktrees, Git metadata, or LCR state.",
 		"",
-		"Explain the likely cause, the risk, and the safest repair. Before making any change, present the exact plan and ask the user for explicit confirmation.",
+		"Explain the likely cause, the risk, and the safest repair. Treat the saved home branch as independent from every linked worktree's merge target. Before making any change, present the exact plan and ask the user for explicit confirmation.",
 		"",
 		"Trusted incident snapshot:",
-		"- Repository root: " + state.RootPath,
-		"- Expected root branch: " + state.ExpectedBranch,
-		"- Current root branch: " + state.ActualBranch,
-		fmt.Sprintf("- Root dirty: %t", state.RootDirty),
-		fmt.Sprintf("- Root conflict: %t", state.RootConflict),
+		"- Primary checkout: " + state.RootPath,
+		"- Saved home branch: " + state.ExpectedBranch,
+		"- Current primary branch: " + state.ActualBranch,
+		fmt.Sprintf("- Primary checkout dirty: %t", state.RootDirty),
+		fmt.Sprintf("- Primary checkout conflict: %t", state.RootConflict),
 	}
 	if state.SuggestedWorktreePath != "" {
 		lines = append(lines, "- Proposed linked worktree for the current branch: "+state.SuggestedWorktreePath)
@@ -342,26 +342,26 @@ func (m Model) renderRepositoryIntegrityDialogOverlay(body string, bodyW, bodyH 
 func (m Model) renderRepositoryIntegrityDialogContent(dialog repositoryIntegrityDialogState, width int) string {
 	state := dialog.State
 	lines := []string{
-		commandPaletteTitleStyle.Render("Repository Root Integrity"),
+		commandPaletteTitleStyle.Render("Primary Checkout Branch"),
 		"",
-		detailWarningStyle.Render("The canonical root is not on its expected branch."),
+		detailWarningStyle.Render("The primary checkout is not on its saved home branch."),
 		"",
-		detailLabelStyle.Render("Root:") + " " + detailMutedStyle.Render(m.displayPathWithHomeTilde(state.RootPath)),
-		detailLabelStyle.Render("Expected:") + " " + detailValueStyle.Render(state.ExpectedBranch),
-		detailLabelStyle.Render("Current:") + " " + detailWarningStyle.Render(state.ActualBranch),
-		detailLabelStyle.Render("Evidence:") + " " + detailMutedStyle.Render(repositoryIntegrityEvidenceLabel(state.ExpectedBranchSource)),
+		detailLabelStyle.Render("Primary path:") + " " + detailMutedStyle.Render(m.displayPathWithHomeTilde(state.RootPath)),
+		detailLabelStyle.Render("Home branch:") + " " + detailValueStyle.Render(state.ExpectedBranch),
+		detailLabelStyle.Render("Current branch:") + " " + detailWarningStyle.Render(state.ActualBranch),
+		detailLabelStyle.Render("Home source:") + " " + detailMutedStyle.Render(repositoryIntegrityEvidenceLabel(state.ExpectedBranchSource)),
 	}
 	if state.RootDirty || state.RootConflict {
-		lines = append(lines, detailDangerStyle.Render(fmt.Sprintf("Root state: dirty=%t, conflict=%t", state.RootDirty, state.RootConflict)))
+		lines = append(lines, detailDangerStyle.Render(fmt.Sprintf("Primary state: dirty=%t, conflict=%t", state.RootDirty, state.RootConflict)))
 	}
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Ask Engineer investigates. Use Current changes policy. Keep acknowledges only this exact state.")...)
-	lines = append(lines, "", detailSectionStyle.Render("Safe response"))
+	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "The home branch is separate from each linked worktree's merge target. Restore Home changes Git; Keep Current changes only LCR's saved home branch; Dismiss hides only this exact warning.")...)
+	lines = append(lines, "", detailSectionStyle.Render("Git repair"))
 	if state.CanRepair {
 		target := m.displayPathWithHomeTilde(state.SuggestedWorktreePath)
 		if width < 84 {
 			target = filepath.Base(state.SuggestedWorktreePath) + " (a sibling worktree)"
 		}
-		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, fmt.Sprintf("Restore %s here and move %s to %s. No branch is renamed or deleted.", state.ExpectedBranch, state.ActualBranch, target))...)
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, fmt.Sprintf("Switch the primary checkout to %s and move %s to %s. No branch is renamed or deleted.", state.ExpectedBranch, state.ActualBranch, target))...)
 	} else {
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "Automatic repair is unavailable: "+firstNonEmptyTrimmed(state.RepairBlockReason, "the safety checks did not pass"))...)
 	}
@@ -379,15 +379,15 @@ func (m Model) renderRepositoryIntegrityDialogContent(dialog repositoryIntegrity
 		renderDialogButton("Ask Engineer", dialog.Selected == repositoryIntegrityAskEngineer),
 	}
 	if state.CanRepair {
-		buttons = append(buttons, renderDialogButton("Repair Safely", dialog.Selected == repositoryIntegrityRepair))
+		buttons = append(buttons, renderDialogButton("Restore Home", dialog.Selected == repositoryIntegrityRepair))
 	} else if dialog.Selected == repositoryIntegrityRepair {
-		buttons = append(buttons, dialogButtonSelectedStyle.Render("Repair Unavailable"))
+		buttons = append(buttons, dialogButtonSelectedStyle.Render("Restore Unavailable"))
 	} else {
-		buttons = append(buttons, disabledActionTextStyle.Render("[Repair Unavailable]"))
+		buttons = append(buttons, disabledActionTextStyle.Render("[Restore Unavailable]"))
 	}
 	buttons = append(buttons,
-		renderDialogButton("Use Current", dialog.Selected == repositoryIntegrityUseCurrent),
-		renderDialogButton("Keep", dialog.Selected == repositoryIntegrityKeep),
+		renderDialogButton("Keep Current", dialog.Selected == repositoryIntegrityUseCurrent),
+		renderDialogButton("Dismiss", dialog.Selected == repositoryIntegrityKeep),
 	)
 	lines = append(lines, strings.Join(buttons, " "))
 	lines = append(lines, "", renderHelpPanelActionRow(
@@ -401,13 +401,13 @@ func (m Model) renderRepositoryIntegrityDialogContent(dialog repositoryIntegrity
 func repositoryIntegrityEvidenceLabel(source string) string {
 	switch strings.TrimSpace(source) {
 	case "worktree_creation":
-		return "saved before LCR created a linked worktree"
+		return "primary branch when LCR first created a worktree (fallback)"
 	case "linked_worktree_parent":
-		return "unanimous linked-worktree parent branch"
+		return "older linked-worktree merge-target inference (fallback)"
 	case "origin_default":
-		return "origin/HEAD"
+		return "remote default (origin/HEAD)"
 	case "user":
-		return "explicit user choice"
+		return "your explicit choice"
 	default:
 		return firstNonEmptyTrimmed(source, "saved policy")
 	}
@@ -429,7 +429,7 @@ func (m Model) renderFooterRepositoryIntegritySegment() string {
 		return ""
 	}
 	if count == 1 {
-		return renderFooterAlert("1 root checkout warning")
+		return renderFooterAlert("1 home-branch warning")
 	}
-	return renderFooterAlert(fmt.Sprintf("%d root checkout warnings", count))
+	return renderFooterAlert(fmt.Sprintf("%d home-branch warnings", count))
 }

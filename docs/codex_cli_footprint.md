@@ -184,9 +184,11 @@ The compatibility result is reused while both the resolved Codex executable and 
 
 LCR-managed embedded Codex app-server sessions receive an application-context
 entry on every turn. The entry records the assigned workspace, canonical
-repository root, and trusted expected root branch, and asks Codex to request
-permission before crossing checkout boundaries. This context is advisory and is
-not inferred from natural-language transcript text.
+repository root, and trusted home branch for the primary checkout, and asks Codex
+to request permission before crossing checkout boundaries. The home branch is
+derived independently from a linked worktree's merge target, preferring
+`origin/HEAD` unless the user explicitly chooses another policy. This context is
+advisory and is not inferred from natural-language transcript text.
 
 When a session assigned to a linked worktree emits a structured command item
 whose `cwd` is inside the canonical root but outside the assigned worktree, LCR

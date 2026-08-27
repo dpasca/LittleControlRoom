@@ -563,10 +563,11 @@ func (m Model) renderTopStatusLine(width int) string {
 	}
 	if project, ok := m.selectedProject(); ok {
 		if state, found := m.repositoryIntegrityStateForProject(project.Path); found && state.Displaced && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
-			statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("ROOT CHECKOUT"))
-			message := fmt.Sprintf("root is on %s; expected %s; press I", state.ActualBranch, state.ExpectedBranch)
+			statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("HOME BRANCH"))
+			name := firstNonEmptyTrimmed(state.RootName, "repository")
+			message := fmt.Sprintf("%s primary checkout: %s; saved home: %s; press I", name, state.ActualBranch, state.ExpectedBranch)
 			if state.Acknowledged {
-				message = fmt.Sprintf("root remains on %s; expected %s; acknowledged; press I", state.ActualBranch, state.ExpectedBranch)
+				message = fmt.Sprintf("%s primary checkout: %s; saved home: %s; dismissed once; press I", name, state.ActualBranch, state.ExpectedBranch)
 			}
 			statusParts = append(statusParts, detailWarningStyle.Render(message))
 		}

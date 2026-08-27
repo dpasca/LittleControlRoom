@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/config"
 	"lcroom/internal/events"
@@ -142,5 +143,90 @@ func TestRepositoryIntegrityRepairBlocksDirtyRoot(t *testing.T) {
 	}
 	if state.CanRepair || !strings.Contains(state.RepairBlockReason, "uncommitted") {
 		t.Fatalf("repair state = %#v, want uncommitted-change blocker", state)
+	}
+}
+
+func TestRepositoryIntegrityUpgradesDisplacedInferredPolicyToOriginDefault(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	parent := t.TempDir()
+	rootPath := filepath.Join(parent, "repo")
+	initGitRepo(t, rootPath)
+	runGit(t, rootPath, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
+	runGit(t, rootPath, "git", "branch", "feature/prebuilt-quick-descriptions")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{ParentPath: parent, Name: "repo"}); err != nil {
+		t.Fatalf("track root: %v", err)
+	}
+	if err := st.UpsertRepositoryRootPolicy(ctx, model.RepositoryRootPolicy{
+		RootPath:             rootPath,
+		ExpectedBranch:       "feature/prebuilt-quick-descriptions",
+		ExpectedBranchSource: repositoryExpectedBranchWorktree,
+		Mode:                 model.RepositoryIntegrityModeWarn,
+		UpdatedAt:            time.Now(),
+	}); err != nil {
+		t.Fatalf("seed inferred root policy: %v", err)
+	}
+
+	states, err := svc.RepositoryIntegrityStates(ctx)
+	if err != nil {
+		t.Fatalf("RepositoryIntegrityStates() error = %v", err)
+	}
+	state := states[rootPath]
+	if state.ExpectedBranch != "master" || state.ActualBranch != "master" || state.Displaced {
+		t.Fatalf("upgraded state = %#v, want matching master branches", state)
+	}
+	policy, err := st.GetRepositoryRootPolicy(ctx, rootPath)
+	if err != nil {
+		t.Fatalf("load upgraded root policy: %v", err)
+	}
+	if policy.ExpectedBranch != "master" || policy.ExpectedBranchSource != repositoryExpectedBranchRemoteDefault {
+		t.Fatalf("upgraded policy = %#v, want master from origin/HEAD", policy)
+	}
+}
+
+func TestRepositoryIntegrityDoesNotReplaceExplicitUserPolicy(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	parent := t.TempDir()
+	rootPath := filepath.Join(parent, "repo")
+	initGitRepo(t, rootPath)
+	runGit(t, rootPath, "git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master")
+	runGit(t, rootPath, "git", "branch", "develop")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{ParentPath: parent, Name: "repo"}); err != nil {
+		t.Fatalf("track root: %v", err)
+	}
+	if err := svc.SetRepositoryRootExpectedBranch(ctx, rootPath, "develop"); err != nil {
+		t.Fatalf("set explicit root policy: %v", err)
+	}
+
+	state, err := svc.RepositoryIntegrityStateForProject(ctx, rootPath)
+	if err != nil {
+		t.Fatalf("RepositoryIntegrityStateForProject() error = %v", err)
+	}
+	if state.ExpectedBranch != "develop" || state.ActualBranch != "master" || !state.Displaced {
+		t.Fatalf("explicit-policy state = %#v, want displaced master from develop", state)
+	}
+	policy, err := st.GetRepositoryRootPolicy(ctx, rootPath)
+	if err != nil {
+		t.Fatalf("load explicit root policy: %v", err)
+	}
+	if policy.ExpectedBranchSource != repositoryExpectedBranchUser {
+		t.Fatalf("explicit policy source = %q, want %q", policy.ExpectedBranchSource, repositoryExpectedBranchUser)
 	}
 }

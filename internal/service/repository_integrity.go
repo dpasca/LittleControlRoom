@@ -68,14 +68,28 @@ func (s *Service) RepositoryIntegrityStates(ctx context.Context) (map[string]mod
 	families := repositoryIntegrityFamilies(projects, policies)
 	states := make(map[string]model.RepositoryIntegrityState, len(families))
 	for _, family := range families {
+		remoteDefaultChecked := false
+		remoteDefault := ""
+		readRemoteDefault := func() string {
+			if !remoteDefaultChecked {
+				remoteDefault = repositoryRemoteDefaultBranch(ctx, family.rootPath)
+				remoteDefaultChecked = true
+			}
+			return remoteDefault
+		}
+
 		policy, ok := policies[family.rootPath]
 		if !ok || strings.TrimSpace(policy.ExpectedBranch) == "" {
-			expected, source := repositoryExpectedBranchFromMembers(family.members)
-			if expected == "" && repositoryFamilyHasLinkedWorktree(family.members) {
-				expected = repositoryRemoteDefaultBranch(ctx, family.rootPath)
+			expected := ""
+			source := ""
+			if repositoryFamilyHasLinkedWorktree(family.members) {
+				expected = readRemoteDefault()
 				if expected != "" {
 					source = repositoryExpectedBranchRemoteDefault
 				}
+			}
+			if expected == "" {
+				expected, source = repositoryExpectedBranchFromMembers(family.members)
 			}
 			if expected == "" {
 				continue
@@ -92,6 +106,21 @@ func (s *Service) RepositoryIntegrityStates(ctx context.Context) (map[string]mod
 			}
 		}
 		state := repositoryIntegrityStateFromFamily(policy, family)
+		if state.Displaced && repositoryExpectedBranchSourceIsInferred(policy.ExpectedBranchSource) {
+			if expected := readRemoteDefault(); expected != "" {
+				branchChanged := expected != policy.ExpectedBranch
+				policy.ExpectedBranch = expected
+				policy.ExpectedBranchSource = repositoryExpectedBranchRemoteDefault
+				if branchChanged {
+					policy.AcknowledgedFingerprint = ""
+				}
+				policy.UpdatedAt = time.Now()
+				if err := s.store.UpsertRepositoryRootPolicy(ctx, policy); err != nil {
+					return nil, fmt.Errorf("upgrade repository root policy for %s: %w", family.rootPath, err)
+				}
+				state = repositoryIntegrityStateFromFamily(policy, family)
+			}
+		}
 		state.RecentExcursions = s.recentRepositoryWorkspaceExcursions(ctx, family.rootPath, 5)
 		if state.Displaced {
 			s.assessRepositoryIntegrityRepair(ctx, &state)
@@ -416,6 +445,15 @@ func repositoryFamilyHasLinkedWorktree(members []model.ProjectSummary) bool {
 		}
 	}
 	return false
+}
+
+func repositoryExpectedBranchSourceIsInferred(source string) bool {
+	switch strings.TrimSpace(source) {
+	case repositoryExpectedBranchWorktree, repositoryExpectedBranchLinkedParent:
+		return true
+	default:
+		return false
+	}
 }
 
 func repositoryIntegrityStateFromFamily(policy model.RepositoryRootPolicy, family repositoryIntegrityFamily) model.RepositoryIntegrityState {

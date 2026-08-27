@@ -165,7 +165,13 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if parentBranch == "" || parentBranch == "(detached)" {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("cannot create a mergeable worktree from %s because its parent branch is unavailable", worktreeRootPath)
 	}
-	if err := s.EnsureRepositoryRootExpectedBranch(ctx, worktreeRootPath, parentBranch, repositoryExpectedBranchWorktree); err != nil {
+	expectedRootBranch := repositoryRemoteDefaultBranch(ctx, worktreeRootPath)
+	expectedRootBranchSource := repositoryExpectedBranchRemoteDefault
+	if expectedRootBranch == "" {
+		expectedRootBranch = parentBranch
+		expectedRootBranchSource = repositoryExpectedBranchWorktree
+	}
+	if err := s.EnsureRepositoryRootExpectedBranch(ctx, worktreeRootPath, expectedRootBranch, expectedRootBranchSource); err != nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("record expected root branch for %s: %w", worktreeRootPath, err)
 	}
 	worktreePath, worktreeSuffix, branchName, err := uniqueWorktreeNames(worktreeRootPath, projectPath, worktreeSuffix, branchName)

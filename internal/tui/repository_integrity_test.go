@@ -34,7 +34,7 @@ func TestRepositoryIntegrityAddsFamilyAttention(t *testing.T) {
 		t.Fatalf("projectAttentionScore() = %d, want %d", got, repositoryIntegrityAttentionWeight)
 	}
 	reason := m.projectRepositoryIntegrityAttentionReason(linked.Path)
-	if reason == nil || reason.Code != "repository_root_displaced" || !strings.Contains(reason.Text, "expected master") {
+	if reason == nil || reason.Code != "repository_root_displaced" || !strings.Contains(reason.Text, "saved home branch is master") {
 		t.Fatalf("attention reason = %#v", reason)
 	}
 }
@@ -60,6 +60,12 @@ func TestRepositoryIntegrityDialogDefaultsToKeep(t *testing.T) {
 		repositoryIntegrityByRoot: map[string]model.RepositoryIntegrityState{project.Path: state},
 		selected:                  0,
 	}
+	topStatus := ansi.Strip(m.renderTopStatusLine(180))
+	for _, text := range []string{"HOME BRANCH", "demo primary checkout: feature/root", "saved home: master"} {
+		if !strings.Contains(topStatus, text) {
+			t.Fatalf("top status missing %q: %q", text, topStatus)
+		}
+	}
 	if cmd := m.openRepositoryIntegrityDialogForSelection(); cmd != nil {
 		t.Fatal("open dialog should not schedule work")
 	}
@@ -67,7 +73,7 @@ func TestRepositoryIntegrityDialogDefaultsToKeep(t *testing.T) {
 		t.Fatalf("dialog = %#v, want Keep selected", m.repositoryIntegrityDialog)
 	}
 	rendered := ansi.Strip(m.renderRepositoryIntegrityDialogContent(*m.repositoryIntegrityDialog, 90))
-	for _, text := range []string{"Repository Root Integrity", "Expected:", "master", "Repair Safely", "Ask Engineer", "Use Current", "Keep"} {
+	for _, text := range []string{"Primary Checkout Branch", "Home branch:", "master", "Restore Home", "Ask Engineer", "Keep Current", "Dismiss", "separate from each linked worktree's merge target"} {
 		if !strings.Contains(rendered, text) {
 			t.Fatalf("dialog missing %q: %q", text, rendered)
 		}
@@ -100,8 +106,9 @@ func TestRepositoryIntegrityEngineerPromptRequiresConfirmation(t *testing.T) {
 		"investigation-only mode",
 		"do not mutate",
 		"explicit confirmation",
-		"Expected root branch: master",
-		"Current root branch: feature/root",
+		"independent from every linked worktree's merge target",
+		"Saved home branch: master",
+		"Current primary branch: feature/root",
 		"git status",
 	} {
 		if !strings.Contains(prompt, required) {
