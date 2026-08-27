@@ -868,6 +868,13 @@ func scanCompleteStatus(report service.ScanReport) string {
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", report.GitMetadataTimeoutCount, label))
 	}
+	if report.WorktreeExpansionFailureCount > 0 {
+		label := "worktree expansion failures"
+		if report.WorktreeExpansionFailureCount == 1 {
+			label = "worktree expansion failure"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", report.WorktreeExpansionFailureCount, label))
+	}
 	return strings.Join(parts, ", ")
 }
 
@@ -890,6 +897,38 @@ func scanGitMetadataTimeoutEventError(payload map[string]string) error {
 	if len(paths) > 0 {
 		detail += ": " + strings.Join(paths, ", ")
 		if remaining := count - len(paths); remaining > 0 {
+			detail += fmt.Sprintf(" (+%d more)", remaining)
+		}
+	}
+	return errors.New(detail)
+}
+
+func scanWorktreeExpansionEventError(payload map[string]string) error {
+	count, err := strconv.Atoi(strings.TrimSpace(payload["worktree_expansion_failures"]))
+	if err != nil || count <= 0 {
+		return nil
+	}
+	details := make([]string, 0, 8)
+	for _, detail := range strings.Split(payload["worktree_expansion_failure_detail_samples"], "\n") {
+		if detail = strings.TrimSpace(detail); detail != "" {
+			details = append(details, detail)
+		}
+	}
+	if len(details) == 0 {
+		for _, rootPath := range strings.Split(payload["worktree_expansion_failure_root_samples"], "\n") {
+			if rootPath = strings.TrimSpace(rootPath); rootPath != "" {
+				details = append(details, rootPath)
+			}
+		}
+	}
+
+	detail := fmt.Sprintf("Git worktree expansion failed for %d repository root", count)
+	if count != 1 {
+		detail += "s"
+	}
+	if len(details) > 0 {
+		detail += ": " + strings.Join(details, "; ")
+		if remaining := count - len(details); remaining > 0 {
 			detail += fmt.Sprintf(" (+%d more)", remaining)
 		}
 	}

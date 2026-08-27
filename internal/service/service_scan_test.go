@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/store"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -205,6 +206,75 @@ func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t 
 	}
 	if strings.TrimSpace(detail.Sessions[0].SnapshotHash) == "" {
 		t.Fatalf("expected stored session snapshot hash after scan")
+	}
+}
+
+func TestScanReportCountsWorktreeExpansionFailuresPerRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rootPath := filepath.Join(t.TempDir(), "tracked-root")
+	initGitRepo(t, rootPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          rootPath,
+		Name:          filepath.Base(rootPath),
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		WorktreeKind:  model.WorktreeKindMain,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed tracked root: %v", err)
+	}
+
+	bus := events.NewBus()
+	eventCh, unsubscribe := bus.Subscribe(8)
+	defer unsubscribe()
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, bus, nil)
+	svc.SetSessionClassifier(nil)
+	svc.gitWorktreeListReader = func(context.Context, string) ([]scanner.GitWorktree, error) {
+		return nil, errors.New("porcelain read failed")
+	}
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if report.WorktreeExpansionFailureCount != 1 {
+		t.Fatalf("WorktreeExpansionFailureCount = %d, want 1", report.WorktreeExpansionFailureCount)
+	}
+	if len(report.WorktreeExpansionFailures) != 1 {
+		t.Fatalf("WorktreeExpansionFailures = %#v, want one failure", report.WorktreeExpansionFailures)
+	}
+	failure := report.WorktreeExpansionFailures[0]
+	if failure.RootPath != rootPath || failure.SeedPath != rootPath || !strings.Contains(failure.Error, "porcelain read failed") {
+		t.Fatalf("worktree expansion failure = %#v, want root and error detail", failure)
+	}
+	if !slices.Equal(report.WorktreeExpansionFailureRootSamples, []string{rootPath}) {
+		t.Fatalf("WorktreeExpansionFailureRootSamples = %#v, want [%q]", report.WorktreeExpansionFailureRootSamples, rootPath)
+	}
+
+	foundScanEvent := false
+	for len(eventCh) > 0 {
+		event := <-eventCh
+		if event.Type != events.ScanCompleted {
+			continue
+		}
+		foundScanEvent = true
+		if event.Payload["worktree_expansion_failures"] != "1" || !strings.Contains(event.Payload["worktree_expansion_failure_detail_samples"], "porcelain read failed") {
+			t.Fatalf("scan completion payload = %#v, want worktree expansion failure detail", event.Payload)
+		}
+	}
+	if !foundScanEvent {
+		t.Fatal("scan completion event was not published")
 	}
 }
 
@@ -3323,5 +3393,176 @@ func TestScanOnceDetectsRepoAheadOfRemote(t *testing.T) {
 	}
 	if strings.TrimSpace(detail.Summary.RepoBranch) == "" {
 		t.Fatalf("expected stored summary to preserve repo branch, got %#v", detail.Summary)
+	}
+}
+
+func TestScanOnceUsesDefaultFilesystemDiscoveryRootWhenIncludePathsEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	ctx := context.Background()
+	root := filepath.Join(home, "dev", "repos")
+	oldPath := filepath.Join(root, "before-move")
+	newPath := filepath.Join(root, "after-move")
+	initGitRepo(t, oldPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			oldPath: fakeActivity(oldPath, "ses_default_discovery", activityAt),
+		},
+	}
+	configPath := filepath.Join(home, "config.toml")
+	if err := os.WriteFile(configPath, []byte("include_paths = []\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := config.Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if !slices.Equal(cfg.IncludePaths, []string{root}) {
+		t.Fatalf("effective include paths = %#v, want default root %q", cfg.IncludePaths, root)
+	}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	firstReport, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	if len(firstReport.States) != 1 || firstReport.States[0].Path != oldPath {
+		t.Fatalf("first scan states = %#v, want %q", firstReport.States, oldPath)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		t.Fatalf("rename repository: %v", err)
+	}
+
+	secondReport, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if len(secondReport.States) != 1 || secondReport.States[0].Path != newPath {
+		t.Fatalf("second scan states = %#v, want moved path %q", secondReport.States, newPath)
+	}
+	if secondReport.States[0].MovedFromPath != oldPath {
+		t.Fatalf("moved_from_path = %q, want %q", secondReport.States[0].MovedFromPath, oldPath)
+	}
+}
+
+func TestScanOnceReconcilesTrackedRootWorktreeWithoutActivity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	parent := t.TempDir()
+	parent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatalf("resolve temp path: %v", err)
+	}
+	rootPath := filepath.Join(parent, "avatar_presenter")
+	worktreePath := filepath.Join(parent, "avatar_presenter--office-by-the-glass")
+	initGitRepo(t, rootPath)
+	runGit(t, rootPath, "git", "worktree", "add", "-b", "scene/office-by-the-glass", worktreePath)
+	if err := os.WriteFile(filepath.Join(worktreePath, "scene.txt"), []byte("office by the glass\n"), 0o644); err != nil {
+		t.Fatalf("write worktree file: %v", err)
+	}
+	runGit(t, worktreePath, "git", "add", "scene.txt")
+	runGit(t, worktreePath, "git", "commit", "-m", "Add office scene")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          rootPath,
+		Name:          filepath.Base(rootPath),
+		Kind:          model.ProjectKindProject,
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		WorktreeKind:  model.WorktreeKindMain,
+		RepoBranch:    "master",
+		InScope:       true,
+		UpdatedAt:     now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed tracked root: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(nil)
+	beforeMergeReport, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan before merge: %v", err)
+	}
+	if beforeMergeReport.WorktreeExpansionFailureCount != 0 {
+		t.Fatalf("worktree expansion failures = %#v, want none", beforeMergeReport.WorktreeExpansionFailures)
+	}
+
+	var beforeMerge *model.ProjectState
+	for i := range beforeMergeReport.States {
+		if beforeMergeReport.States[i].Path == worktreePath {
+			beforeMerge = &beforeMergeReport.States[i]
+			break
+		}
+	}
+	if beforeMerge == nil {
+		t.Fatalf("scan states = %#v, want adopted worktree %q", beforeMergeReport.States, worktreePath)
+	}
+	if beforeMerge.WorktreeKind != model.WorktreeKindLinked || beforeMerge.WorktreeRootPath != rootPath {
+		t.Fatalf("adopted worktree identity = kind %q root %q, want linked under %q", beforeMerge.WorktreeKind, beforeMerge.WorktreeRootPath, rootPath)
+	}
+	if beforeMerge.WorktreeOriginTodoID != 0 {
+		t.Fatalf("adopted origin TODO = %d, want 0", beforeMerge.WorktreeOriginTodoID)
+	}
+	if beforeMerge.WorktreeParentBranch != "master" || beforeMerge.RepoBranch != "scene/office-by-the-glass" {
+		t.Fatalf("adopted branches = parent %q worktree %q", beforeMerge.WorktreeParentBranch, beforeMerge.RepoBranch)
+	}
+	if beforeMerge.WorktreeMergeStatus != model.WorktreeMergeStatusNotMerged || beforeMerge.RepoDirty {
+		t.Fatalf("adopted integration state before merge = merge %q dirty %v, want not_merged and clean", beforeMerge.WorktreeMergeStatus, beforeMerge.RepoDirty)
+	}
+	if beforeMerge.CreatedAt.IsZero() {
+		t.Fatalf("adopted worktree created_at is zero, want adoption time")
+	}
+	rootDetail, err := st.GetProjectDetail(ctx, rootPath, 5)
+	if err != nil {
+		t.Fatalf("get tracked root detail: %v", err)
+	}
+	if !rootDetail.Summary.CreatedAt.IsZero() {
+		t.Fatalf("tracked root created_at = %v, want pre-existing blank value preserved", rootDetail.Summary.CreatedAt)
+	}
+
+	runGit(t, rootPath, "git", "merge", "--ff-only", "scene/office-by-the-glass")
+	afterMergeReport, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan after merge: %v", err)
+	}
+	var afterMerge *model.ProjectState
+	for i := range afterMergeReport.States {
+		if afterMergeReport.States[i].Path == worktreePath {
+			afterMerge = &afterMergeReport.States[i]
+			break
+		}
+	}
+	if afterMerge == nil {
+		t.Fatalf("post-merge scan states = %#v, want adopted worktree %q", afterMergeReport.States, worktreePath)
+	}
+	if afterMerge.WorktreeMergeStatus != model.WorktreeMergeStatusMerged || afterMerge.RepoDirty {
+		t.Fatalf("adopted integration state after merge = merge %q dirty %v, want merged and clean", afterMerge.WorktreeMergeStatus, afterMerge.RepoDirty)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 5)
+	if err != nil {
+		t.Fatalf("get adopted worktree detail: %v", err)
+	}
+	if detail.Summary.Path != worktreePath || detail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged || detail.Summary.RepoDirty {
+		t.Fatalf("persisted adopted worktree = %#v, want merged clean row", detail.Summary)
 	}
 }

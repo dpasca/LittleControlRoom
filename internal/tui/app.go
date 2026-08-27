@@ -3127,6 +3127,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err := scanGitMetadataTimeoutEventError(msg.Payload); err != nil {
 				m.appendScanErrorLogEntry("Git metadata scan warning", err)
 			}
+			if err := scanWorktreeExpansionEventError(msg.Payload); err != nil {
+				m.appendScanErrorLogEntry("Worktree discovery scan warning", err)
+			}
 			if strings.TrimSpace(msg.Payload["updated"]) == "0" {
 				// A stable scan refreshed the in-memory working set but changed no
 				// project data. Keep the current view instead of re-querying SQLite.

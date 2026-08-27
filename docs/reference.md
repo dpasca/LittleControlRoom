@@ -91,6 +91,11 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 
 Minimal config example:
 
+If `include_paths` is empty, filesystem discovery falls back to the default
+`~/dev/repos` root. Exclusions still apply, and tracked repository roots are
+also reconciled directly against `git worktree list --porcelain` so linked
+worktrees cannot remain absent merely because a previous expansion read failed.
+
 ```toml
 openai_api_key = "sk-your-openai-api-key"
 # Optional direct LCAgent provider keys. OpenAI-backed LCAgent reuses

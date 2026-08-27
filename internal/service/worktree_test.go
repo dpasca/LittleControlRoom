@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -110,7 +111,7 @@ func TestExpandDiscoveredWorktreePathsAddsLiveWorktreeFromCurrentScan(t *testing
 	}
 
 	svc := &Service{}
-	paths, liveByRoot := svc.expandDiscoveredWorktreePaths(
+	expansion := svc.expandDiscoveredWorktreePaths(
 		ctx,
 		[]string{root},
 		map[string]model.ProjectSummary{
@@ -122,16 +123,58 @@ func TestExpandDiscoveredWorktreePathsAddsLiveWorktreeFromCurrentScan(t *testing
 		},
 		func(context.Context, string) ([]scanner.GitWorktree, error) {
 			return []scanner.GitWorktree{
-				{Path: root, IsMain: true},
+				{Path: root, Branch: "master", IsMain: true},
 				{Path: worktreePath, Branch: "feature"},
 			}, nil
 		},
 	)
 
-	if !slices.Contains(paths, worktreePath) {
-		t.Fatalf("expanded paths = %#v, want live worktree %q", paths, worktreePath)
+	if !slices.Contains(expansion.paths, worktreePath) {
+		t.Fatalf("expanded paths = %#v, want live worktree %q", expansion.paths, worktreePath)
 	}
-	if _, ok := liveByRoot[root][worktreePath]; !ok {
-		t.Fatalf("live worktrees for root = %#v, want %q", liveByRoot[root], worktreePath)
+	if _, ok := expansion.liveByRoot[root][worktreePath]; !ok {
+		t.Fatalf("live worktrees for root = %#v, want %q", expansion.liveByRoot[root], worktreePath)
+	}
+	metadata, ok := expansion.reconciled[worktreePath]
+	if !ok {
+		t.Fatalf("reconciled worktrees = %#v, want %q", expansion.reconciled, worktreePath)
+	}
+	if metadata.rootPath != root || metadata.kind != model.WorktreeKindLinked || metadata.parentBranch != "master" {
+		t.Fatalf("reconciled worktree metadata = %#v, want root=%q kind=%q parent=master", metadata, root, model.WorktreeKindLinked)
+	}
+}
+
+func TestExpandDiscoveredWorktreePathsReportsListFailureOncePerRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir repo metadata: %v", err)
+	}
+
+	wantErr := errors.New("porcelain unavailable")
+	svc := &Service{}
+	expansion := svc.expandDiscoveredWorktreePaths(
+		ctx,
+		[]string{root},
+		map[string]model.ProjectSummary{
+			root: {Path: root, WorktreeKind: model.WorktreeKindMain},
+		},
+		scanner.NewPathScope(nil, nil),
+		func(context.Context, string) (scanner.GitWorktreeInfo, error) {
+			return scanner.GitWorktreeInfo{RootPath: root, Kind: scanner.GitWorktreeKindMain}, nil
+		},
+		func(context.Context, string) ([]scanner.GitWorktree, error) {
+			return nil, wantErr
+		},
+	)
+
+	failures := expansion.failures()
+	if len(failures) != 1 {
+		t.Fatalf("expansion failures = %#v, want one failure for the root", failures)
+	}
+	if failures[0].rootPath != root || failures[0].seedPath != root || !errors.Is(failures[0].err, wantErr) {
+		t.Fatalf("expansion failure = %#v, want root=%q seed=%q error=%v", failures[0], root, root, wantErr)
 	}
 }

@@ -145,15 +145,24 @@ type detectedProjectMove struct {
 	SharedHeads []string
 }
 
+type WorktreeExpansionFailure struct {
+	RootPath string
+	SeedPath string
+	Error    string
+}
+
 type ScanReport struct {
-	At                            time.Time
-	ActivityProjectCount          int
-	TrackedProjectCount           int
-	UpdatedProjects               []string
-	QueuedClassifications         int
-	GitMetadataTimeoutCount       int
-	GitMetadataTimeoutPathSamples []string
-	States                        []model.ProjectState
+	At                                  time.Time
+	ActivityProjectCount                int
+	TrackedProjectCount                 int
+	UpdatedProjects                     []string
+	QueuedClassifications               int
+	GitMetadataTimeoutCount             int
+	GitMetadataTimeoutPathSamples       []string
+	WorktreeExpansionFailureCount       int
+	WorktreeExpansionFailureRootSamples []string
+	WorktreeExpansionFailures           []WorktreeExpansionFailure
+	States                              []model.ProjectState
 }
 
 type ScanOptions struct {
@@ -1328,7 +1337,9 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		}
 	}
 	progress.setPhase("expanding linked worktree paths")
-	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
+	worktreeExpansion := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
+	discovered = worktreeExpansion.paths
+	liveWorktreePathsByRoot := worktreeExpansion.liveByRoot
 	if err := progress.contextErr(ctx); err != nil {
 		return ScanReport{}, err
 	}
@@ -1527,6 +1538,9 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		}
 		candidateSet[filepath.Clean(path)] = struct{}{}
 	}
+	for path := range worktreeExpansion.reconciled {
+		candidateSet[filepath.Clean(path)] = struct{}{}
+	}
 
 	paths := make([]string, 0, len(candidateSet))
 	for p := range candidateSet {
@@ -1589,7 +1603,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			return ScanReport{}, progress.wrapTimeout(err)
 		}
 		activity := activities[path]
-		old := oldMap[path]
+		old, wasPreviouslyTracked := oldMap[path]
 		currentState, haveCurrentState, err := s.currentProjectStateForScan(ctx, path)
 		if err != nil {
 			unlockProjectState()
@@ -1599,6 +1613,9 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			// The bulk summary snapshot was loaded earlier in this scan. Only a
 			// newer in-process mutation may override those durable summary fields.
 			old = overlayProjectSummaryWithState(old, currentState)
+		}
+		if haveCurrentState {
+			wasPreviouslyTracked = true
 		}
 		if old.SnoozedUntil != nil && now.After(*old.SnoozedUntil) {
 			if err := s.store.SetSnooze(ctx, path, nil); err != nil {
@@ -1672,6 +1689,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		worktreeKind := old.WorktreeKind
 		worktreeParentBranch := old.WorktreeParentBranch
 		worktreeMergeStatus := old.WorktreeMergeStatus
+		reconciledWorktree, wasReconciled := worktreeExpansion.reconciled[path]
 		inferredMissingLinkedWorktree := false
 		residualLinkedWorktree := false
 		if presentOnDisk && !isGitRepo {
@@ -1707,6 +1725,12 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			if worktreeInfo, ok := currentWorktreeInfo[path]; ok {
 				worktreeRootPath = filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
 				worktreeKind = modelWorktreeKindFromGit(worktreeInfo.Kind)
+			} else if wasReconciled {
+				worktreeRootPath = reconciledWorktree.rootPath
+				worktreeKind = reconciledWorktree.kind
+			}
+			if wasReconciled && worktreeKind == model.WorktreeKindLinked && strings.TrimSpace(worktreeParentBranch) == "" {
+				worktreeParentBranch = reconciledWorktree.parentBranch
 			}
 			if repoStatus, ok := currentRepoStatus[path]; ok {
 				repoBranch = strings.TrimSpace(repoStatus.Branch)
@@ -1719,6 +1743,9 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 				repoSubmoduleUnpushedCount = repoStatus.SubmoduleUnpushedCount()
 			} else if isGitRepo {
 				repoBranch = old.RepoBranch
+				if repoBranch == "" && wasReconciled {
+					repoBranch = reconciledWorktree.branch
+				}
 				repoDirty = old.RepoDirty
 				repoConflict = old.RepoConflict
 				repoSyncStatus = old.RepoSyncStatus
@@ -1813,12 +1840,16 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			latestTurnComplete = sessions[0].LatestTurnCompleted
 		}
 		classificationKnown, classificationCategory := s.latestSessionClassification(ctx, path, sessions, now)
+		createdAt := old.CreatedAt
+		if createdAt.IsZero() && wasReconciled && !wasPreviouslyTracked {
+			createdAt = now
+		}
 
 		score := attention.Score(attention.Input{
 			Path:                       path,
 			Now:                        now,
 			LastActivity:               lastActivity,
-			CreatedAt:                  old.CreatedAt,
+			CreatedAt:                  createdAt,
 			RepoDirty:                  repoDirty,
 			RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
 			RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
@@ -1876,7 +1907,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			AttentionReason:            score.Reasons,
 			Sessions:                   sessions,
 			Artifacts:                  artifacts,
-			CreatedAt:                  old.CreatedAt,
+			CreatedAt:                  createdAt,
 			UpdatedAt:                  now,
 		}
 
@@ -1908,15 +1939,20 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 	}
 
 	gitMetadataTimeoutCount, gitMetadataTimeoutPaths := timedOutGitPaths.snapshot(scanGitMetadataTimeoutPathLimit)
+	worktreeExpansionFailures := scanReportWorktreeExpansionFailures(worktreeExpansion.failures())
+	worktreeExpansionFailureRoots := worktreeExpansionFailureRootSamples(worktreeExpansionFailures, scanGitMetadataTimeoutPathLimit)
 	report := ScanReport{
-		At:                            now,
-		ActivityProjectCount:          len(activities),
-		TrackedProjectCount:           len(states),
-		UpdatedProjects:               updated,
-		QueuedClassifications:         queuedClassifications,
-		GitMetadataTimeoutCount:       gitMetadataTimeoutCount,
-		GitMetadataTimeoutPathSamples: gitMetadataTimeoutPaths,
-		States:                        states,
+		At:                                  now,
+		ActivityProjectCount:                len(activities),
+		TrackedProjectCount:                 len(states),
+		UpdatedProjects:                     updated,
+		QueuedClassifications:               queuedClassifications,
+		GitMetadataTimeoutCount:             gitMetadataTimeoutCount,
+		GitMetadataTimeoutPathSamples:       gitMetadataTimeoutPaths,
+		WorktreeExpansionFailureCount:       len(worktreeExpansionFailures),
+		WorktreeExpansionFailureRootSamples: worktreeExpansionFailureRoots,
+		WorktreeExpansionFailures:           worktreeExpansionFailures,
+		States:                              states,
 	}
 	if queuedClassifications > 0 && classifier != nil {
 		progress.setPhase("notifying queued classifications")
@@ -1933,15 +1969,64 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			Type: events.ScanCompleted,
 			At:   now,
 			Payload: map[string]string{
-				"updated":                           fmt.Sprintf("%d", len(updated)),
-				"queued_classifications":            fmt.Sprintf("%d", queuedClassifications),
-				"git_metadata_timeouts":             fmt.Sprintf("%d", gitMetadataTimeoutCount),
-				"git_metadata_timeout_path_samples": strings.Join(gitMetadataTimeoutPaths, "\n"),
+				"updated":                                   fmt.Sprintf("%d", len(updated)),
+				"queued_classifications":                    fmt.Sprintf("%d", queuedClassifications),
+				"git_metadata_timeouts":                     fmt.Sprintf("%d", gitMetadataTimeoutCount),
+				"git_metadata_timeout_path_samples":         strings.Join(gitMetadataTimeoutPaths, "\n"),
+				"worktree_expansion_failures":               fmt.Sprintf("%d", len(worktreeExpansionFailures)),
+				"worktree_expansion_failure_root_samples":   strings.Join(worktreeExpansionFailureRoots, "\n"),
+				"worktree_expansion_failure_detail_samples": formatWorktreeExpansionFailureSamples(worktreeExpansionFailures),
 			},
 		})
 	}
 
 	return report, nil
+}
+
+func scanReportWorktreeExpansionFailures(failures []worktreeExpansionFailure) []WorktreeExpansionFailure {
+	out := make([]WorktreeExpansionFailure, 0, len(failures))
+	for _, failure := range failures {
+		detail := "worktree list failed"
+		if failure.err != nil {
+			detail = strings.Join(strings.Fields(failure.err.Error()), " ")
+		}
+		out = append(out, WorktreeExpansionFailure{
+			RootPath: filepath.Clean(strings.TrimSpace(failure.rootPath)),
+			SeedPath: filepath.Clean(strings.TrimSpace(failure.seedPath)),
+			Error:    detail,
+		})
+	}
+	return out
+}
+
+func worktreeExpansionFailureRootSamples(failures []WorktreeExpansionFailure, limit int) []string {
+	if limit < 0 || limit > len(failures) {
+		limit = len(failures)
+	}
+	out := make([]string, 0, limit)
+	for _, failure := range failures[:limit] {
+		out = append(out, failure.RootPath)
+	}
+	return out
+}
+
+func formatWorktreeExpansionFailureSamples(failures []WorktreeExpansionFailure) string {
+	limit := scanGitMetadataTimeoutPathLimit
+	if limit > len(failures) {
+		limit = len(failures)
+	}
+	lines := make([]string, 0, limit)
+	for _, failure := range failures[:limit] {
+		line := failure.RootPath
+		if failure.SeedPath != "" && failure.SeedPath != failure.RootPath {
+			line += " (via " + failure.SeedPath + ")"
+		}
+		if failure.Error != "" {
+			line += ": " + failure.Error
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 type scanGitMetadataResult struct {

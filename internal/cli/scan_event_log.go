@@ -83,25 +83,42 @@ func serveScanEventLogMessage(event events.Event) string {
 		}
 		return label + ": " + detail
 	case events.ScanCompleted:
-		count := strings.TrimSpace(event.Payload["git_metadata_timeouts"])
-		if count == "" || count == "0" {
-			return ""
-		}
-		label := "projects"
-		if count == "1" {
-			label = "project"
-		}
-		message := fmt.Sprintf("scan warning: Git metadata reads timed out for %s %s", count, label)
-		paths := make([]string, 0, 8)
-		for _, path := range strings.Split(event.Payload["git_metadata_timeout_path_samples"], "\n") {
-			if path = strings.TrimSpace(path); path != "" {
-				paths = append(paths, path)
+		messages := make([]string, 0, 2)
+		if count := strings.TrimSpace(event.Payload["git_metadata_timeouts"]); count != "" && count != "0" {
+			label := "projects"
+			if count == "1" {
+				label = "project"
 			}
+			message := fmt.Sprintf("scan warning: Git metadata reads timed out for %s %s", count, label)
+			paths := make([]string, 0, 8)
+			for _, path := range strings.Split(event.Payload["git_metadata_timeout_path_samples"], "\n") {
+				if path = strings.TrimSpace(path); path != "" {
+					paths = append(paths, path)
+				}
+			}
+			if len(paths) > 0 {
+				message += ": " + strings.Join(paths, ", ")
+			}
+			messages = append(messages, message)
 		}
-		if len(paths) > 0 {
-			message += ": " + strings.Join(paths, ", ")
+		if count := strings.TrimSpace(event.Payload["worktree_expansion_failures"]); count != "" && count != "0" {
+			label := "repository roots"
+			if count == "1" {
+				label = "repository root"
+			}
+			message := fmt.Sprintf("scan warning: Git worktree expansion failed for %s %s", count, label)
+			details := make([]string, 0, 8)
+			for _, detail := range strings.Split(event.Payload["worktree_expansion_failure_detail_samples"], "\n") {
+				if detail = strings.TrimSpace(detail); detail != "" {
+					details = append(details, detail)
+				}
+			}
+			if len(details) > 0 {
+				message += ": " + strings.Join(details, "; ")
+			}
+			messages = append(messages, message)
 		}
-		return message
+		return strings.Join(messages, "\n")
 	default:
 		return ""
 	}

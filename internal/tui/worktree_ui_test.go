@@ -2641,6 +2641,33 @@ func TestWorktreeRemoveSafetyCopyTreatsDirtyWorkAsPendingIntegration(t *testing.
 	}
 }
 
+func TestAdoptedWorktreeUsesMergeAndDirtySafetyState(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                 "/tmp/repo--adopted",
+		Kind:                 model.ProjectKindProject,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeOriginTodoID: 0,
+		WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
+		RepoDirty:            false,
+		PresentOnDisk:        true,
+		InScope:              true,
+	}
+	if worktreeHasPendingIntegration(project) {
+		t.Fatal("merged, clean adopted worktree should be safe to remove")
+	}
+
+	project.WorktreeMergeStatus = model.WorktreeMergeStatusNotMerged
+	if !worktreeHasPendingIntegration(project) {
+		t.Fatal("unmerged adopted worktree should be protected even without an origin TODO")
+	}
+
+	project.WorktreeMergeStatus = model.WorktreeMergeStatusMerged
+	project.RepoDirty = true
+	if !worktreeHasPendingIntegration(project) {
+		t.Fatal("dirty adopted worktree should be protected even when its branch is merged")
+	}
+}
+
 func TestMergedWorktreeRemoveDefaultsToCompletingLinkedTodo(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--answer-only"

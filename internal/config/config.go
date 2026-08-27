@@ -413,6 +413,9 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	if err != nil {
 		return AppConfig{}, err
 	}
+	if len(expandedIncludePaths) == 0 {
+		expandedIncludePaths = append([]string(nil), Default().IncludePaths...)
+	}
 	cfg.IncludePaths = expandedIncludePaths
 	expandedExcludePaths, err := expandAndSplitPaths(*excludePaths)
 	if err != nil {

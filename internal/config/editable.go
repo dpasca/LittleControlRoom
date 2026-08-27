@@ -242,6 +242,9 @@ func firstNonEmptyTrimmed(values ...string) string {
 }
 
 func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
+	if len(settings.IncludePaths) == 0 {
+		settings.IncludePaths = append([]string(nil), Default().IncludePaths...)
+	}
 	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
 	if mode, err := claudecli.ParsePermissionMode(string(settings.ClaudePermissionMode)); err == nil {
 		settings.ClaudePermissionMode = mode

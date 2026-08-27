@@ -46,7 +46,7 @@ func TestSchedulerAppliesLiveIntervalUpdates(t *testing.T) {
 
 	called := make(chan struct{}, 1)
 	cfg := config.Default()
-	cfg.IncludePaths = nil
+	cfg.IncludePaths = []string{t.TempDir()}
 	cfg.ScanInterval = 0
 	svc := &Service{
 		cfg:       cfg,

@@ -605,8 +605,8 @@ func TestParseClaudePermissionModeFlagOverridesConfigFile(t *testing.T) {
 	}
 }
 
-func TestParseAllowsEmptyIncludePathsFromConfigFile(t *testing.T) {
-	useTempHome(t)
+func TestParseFallsBackToDefaultRootForEmptyIncludePaths(t *testing.T) {
+	home := useTempHome(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 	content := "include_paths = []\nexclude_paths = [\"/tmp/skip\"]\n"
@@ -619,8 +619,9 @@ func TestParseAllowsEmptyIncludePathsFromConfigFile(t *testing.T) {
 		t.Fatalf("parse config: %v", err)
 	}
 
-	if len(cfg.IncludePaths) != 0 {
-		t.Fatalf("expected include paths to be cleared, got %v", cfg.IncludePaths)
+	wantIncludePaths := []string{filepath.Join(home, "dev", "repos")}
+	if !reflect.DeepEqual(cfg.IncludePaths, wantIncludePaths) {
+		t.Fatalf("include paths = %v, want default roots %v", cfg.IncludePaths, wantIncludePaths)
 	}
 	if got, want := cfg.ExcludePaths, []string{"/tmp/skip"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exclude paths = %v, want %v", got, want)

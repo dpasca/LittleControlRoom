@@ -1586,7 +1586,44 @@ func (s *Service) linkedOpenTodoForWorktree(ctx context.Context, summary model.P
 	return todo, true
 }
 
-func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope, worktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error), worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) ([]string, map[string]map[string]struct{}) {
+type worktreeExpansionFailure struct {
+	rootPath string
+	seedPath string
+	err      error
+}
+
+type reconciledWorktree struct {
+	rootPath     string
+	branch       string
+	parentBranch string
+	kind         model.WorktreeKind
+}
+
+type worktreeExpansionResult struct {
+	paths          []string
+	liveByRoot     map[string]map[string]struct{}
+	reconciled     map[string]reconciledWorktree
+	failuresByRoot map[string]worktreeExpansionFailure
+}
+
+func (r worktreeExpansionResult) failures() []worktreeExpansionFailure {
+	roots := sortedPathKeys(r.failureRoots())
+	out := make([]worktreeExpansionFailure, 0, len(roots))
+	for _, rootPath := range roots {
+		out = append(out, r.failuresByRoot[rootPath])
+	}
+	return out
+}
+
+func (r worktreeExpansionResult) failureRoots() map[string]struct{} {
+	roots := make(map[string]struct{}, len(r.failuresByRoot))
+	for rootPath := range r.failuresByRoot {
+		roots[rootPath] = struct{}{}
+	}
+	return roots
+}
+
+func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered []string, oldMap map[string]model.ProjectSummary, scope scanner.PathScope, worktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error), worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) worktreeExpansionResult {
 	outSet := map[string]struct{}{}
 	for _, path := range discovered {
 		cleanPath := filepath.Clean(path)
@@ -1597,9 +1634,14 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 	resolver := newKnownPathVariantResolver(sortedPathKeys(outSet))
 	resolver.addAll(mapKeys(oldMap), false)
 
-	liveByRoot := map[string]map[string]struct{}{}
+	result := worktreeExpansionResult{
+		liveByRoot:     map[string]map[string]struct{}{},
+		reconciled:     map[string]reconciledWorktree{},
+		failuresByRoot: map[string]worktreeExpansionFailure{},
+	}
 	if s == nil || worktreeListReader == nil {
-		return sortedPathKeys(outSet), liveByRoot
+		result.paths = sortedPathKeys(outSet)
+		return result
 	}
 
 	seeds := make([]string, 0, len(outSet)+len(oldMap))
@@ -1625,6 +1667,11 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 	for _, seed := range seeds {
 		rootPath, _ := s.readProjectWorktreeInfoWithResolver(ctx, seed, worktreeInfoReader, resolver)
 		if rootPath == "" {
+			if summary, ok := oldMap[seed]; ok && summary.WorktreeKind == model.WorktreeKindLinked {
+				rootPath = resolver.preferred(filepath.Clean(strings.TrimSpace(summary.WorktreeRootPath)))
+			}
+		}
+		if rootPath == "" {
 			rootPath = filepath.Clean(seed)
 		}
 		if _, seen := listedRoots[rootPath]; seen {
@@ -1632,27 +1679,88 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 		}
 		worktrees, err := worktreeListReader(ctx, seed)
 		if err != nil {
+			if _, recorded := result.failuresByRoot[rootPath]; !recorded && shouldReportWorktreeExpansionFailure(seed, rootPath, oldMap) {
+				result.failuresByRoot[rootPath] = worktreeExpansionFailure{
+					rootPath: rootPath,
+					seedPath: filepath.Clean(seed),
+					err:      err,
+				}
+			}
 			continue
 		}
-		listedRoots[rootPath] = struct{}{}
-		rootSet := liveByRoot[rootPath]
-		if rootSet == nil {
-			rootSet = map[string]struct{}{}
-			liveByRoot[rootPath] = rootSet
-		}
+
+		normalized := make([]scanner.GitWorktree, 0, len(worktrees))
 		for _, worktree := range worktrees {
-			worktreePath := resolver.preferred(filepath.Clean(strings.TrimSpace(worktree.Path)))
-			if worktreePath == "" || worktreePath == "." {
+			worktree.Path = resolver.preferred(filepath.Clean(strings.TrimSpace(worktree.Path)))
+			if worktree.Path == "" || worktree.Path == "." {
 				continue
 			}
+			normalized = append(normalized, worktree)
+			if worktree.IsMain {
+				rootPath = worktree.Path
+			}
+		}
+
+		listedRoots[rootPath] = struct{}{}
+		rootSet := result.liveByRoot[rootPath]
+		if rootSet == nil {
+			rootSet = map[string]struct{}{}
+			result.liveByRoot[rootPath] = rootSet
+		}
+
+		parentBranch := ""
+		for _, worktree := range normalized {
+			if worktree.Path == rootPath || worktree.IsMain {
+				parentBranch = strings.TrimSpace(worktree.Branch)
+				break
+			}
+		}
+		trackedFamily := worktreeFamilyTracked(rootPath, oldMap, resolver)
+		for _, worktree := range normalized {
+			worktreePath := worktree.Path
 			rootSet[worktreePath] = struct{}{}
-			if scope.Allows(worktreePath) || oldMap[worktreePath].Path != "" || oldMap[rootPath].Path != "" {
+			if scope.Allows(worktreePath) || oldMap[worktreePath].Path != "" || oldMap[rootPath].Path != "" || trackedFamily {
 				outSet[worktreePath] = struct{}{}
 				resolver.add(worktreePath, true)
 			}
+			if !trackedFamily {
+				continue
+			}
+			kind := model.WorktreeKindLinked
+			if worktreePath == rootPath || worktree.IsMain {
+				kind = model.WorktreeKindMain
+			}
+			result.reconciled[worktreePath] = reconciledWorktree{
+				rootPath:     rootPath,
+				branch:       strings.TrimSpace(worktree.Branch),
+				parentBranch: parentBranch,
+				kind:         kind,
+			}
 		}
 	}
-	return sortedPathKeys(outSet), liveByRoot
+	result.paths = sortedPathKeys(outSet)
+	return result
+}
+
+func shouldReportWorktreeExpansionFailure(seedPath, rootPath string, oldMap map[string]model.ProjectSummary) bool {
+	if projectIsGitRepo(seedPath) || projectIsGitRepo(rootPath) {
+		return true
+	}
+	if summary, ok := oldMap[seedPath]; ok && summary.WorktreeKind != model.WorktreeKindNone {
+		return true
+	}
+	if summary, ok := oldMap[rootPath]; ok && summary.WorktreeKind != model.WorktreeKindNone {
+		return true
+	}
+	return false
+}
+
+func worktreeFamilyTracked(rootPath string, oldMap map[string]model.ProjectSummary, resolver *knownPathVariantResolver) bool {
+	rootPath = resolver.preferred(filepath.Clean(strings.TrimSpace(rootPath)))
+	if _, ok := oldMap[rootPath]; ok {
+		return true
+	}
+	return false
 }
 
 func sortedPathKeys(paths map[string]struct{}) []string {

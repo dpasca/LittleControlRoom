@@ -1676,6 +1676,14 @@ func TestScanCompleteStatusIncludesGitMetadataTimeouts(t *testing.T) {
 	}
 }
 
+func TestScanCompleteStatusIncludesWorktreeExpansionFailures(t *testing.T) {
+	got := scanCompleteStatus(service.ScanReport{WorktreeExpansionFailureCount: 2})
+	want := "Scan complete: 0 updated, 2 worktree expansion failures"
+	if got != want {
+		t.Fatalf("scanCompleteStatus() = %q, want %q", got, want)
+	}
+}
+
 func TestFitFooterWidth(t *testing.T) {
 	if got := fitFooterWidth("abcdefghij", 7); got != "abcd..." {
 		t.Fatalf("fitFooterWidth() = %q, want %q", got, "abcd...")

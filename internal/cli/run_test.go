@@ -36,16 +36,20 @@ func TestLogServeScanEventsSurfacesWarningsAndDeduplicatesRepeats(t *testing.T) 
 	eventCh := make(chan events.Event, 4)
 	for _, event := range []events.Event{
 		{Type: events.ScanCompleted, At: at, Payload: map[string]string{
-			"git_metadata_timeouts":             "2",
-			"git_metadata_timeout_path_samples": "/tmp/one\n/tmp/two",
+			"git_metadata_timeouts":                     "2",
+			"git_metadata_timeout_path_samples":         "/tmp/one\n/tmp/two",
+			"worktree_expansion_failures":               "1",
+			"worktree_expansion_failure_detail_samples": "/tmp/repo: porcelain read failed",
 		}},
 		{Type: events.ScanFailed, At: at.Add(time.Minute), Payload: map[string]string{
 			"error_kind": "timeout",
 			"error":      "scan timed out\nwhile detecting projects",
 		}},
 		{Type: events.ScanCompleted, At: at.Add(2 * time.Minute), Payload: map[string]string{
-			"git_metadata_timeouts":             "2",
-			"git_metadata_timeout_path_samples": "/tmp/one\n/tmp/two",
+			"git_metadata_timeouts":                     "2",
+			"git_metadata_timeout_path_samples":         "/tmp/one\n/tmp/two",
+			"worktree_expansion_failures":               "1",
+			"worktree_expansion_failure_detail_samples": "/tmp/repo: porcelain read failed",
 		}},
 		{Type: events.ScanFailed, At: at.Add(3 * time.Minute), Payload: map[string]string{
 			"error_kind": "timeout",
@@ -59,6 +63,7 @@ func TestLogServeScanEventsSurfacesWarningsAndDeduplicatesRepeats(t *testing.T) 
 	var output strings.Builder
 	logServeScanEvents(context.Background(), eventCh, &output)
 	want := "scan warning: Git metadata reads timed out for 2 projects: /tmp/one, /tmp/two\n" +
+		"scan warning: Git worktree expansion failed for 1 repository root: /tmp/repo: porcelain read failed\n" +
 		"scheduled scan timed out: scan timed out while detecting projects\n"
 	if got := output.String(); got != want {
 		t.Fatalf("serve scan event log = %q, want %q", got, want)

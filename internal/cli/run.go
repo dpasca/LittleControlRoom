@@ -324,6 +324,19 @@ func runScan(ctx context.Context, svc *service.Service) int {
 			fmt.Printf("  ... and %d more\n", remaining)
 		}
 	}
+	if report.WorktreeExpansionFailureCount > 0 {
+		fmt.Printf("worktree expansion failures: %d\n", report.WorktreeExpansionFailureCount)
+		for _, failure := range report.WorktreeExpansionFailures {
+			fmt.Printf("  - %s", failure.RootPath)
+			if failure.SeedPath != "" && failure.SeedPath != failure.RootPath {
+				fmt.Printf(" (via %s)", failure.SeedPath)
+			}
+			if failure.Error != "" {
+				fmt.Printf(": %s", failure.Error)
+			}
+			fmt.Println()
+		}
+	}
 	return 0
 }
 

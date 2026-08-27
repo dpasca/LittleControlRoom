@@ -473,6 +473,30 @@ func TestStableScanCompletionSurfacesAndDeduplicatesGitMetadataWarning(t *testin
 	}
 }
 
+func TestStableScanCompletionSurfacesWorktreeExpansionWarning(t *testing.T) {
+	now := time.Date(2026, 8, 27, 10, 0, 0, 0, time.UTC)
+	m := Model{nowFn: func() time.Time { return now }}
+	msg := busMsg{
+		Type: events.ScanCompleted,
+		Payload: map[string]string{
+			"updated":                     "0",
+			"worktree_expansion_failures": "1",
+			"worktree_expansion_failure_root_samples":   "/tmp/repo",
+			"worktree_expansion_failure_detail_samples": "/tmp/repo: porcelain read failed",
+		},
+	}
+
+	updated, _ := m.Update(msg)
+	got := updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log entries = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Worktree discovery scan warning" || !strings.Contains(entry.Message, "/tmp/repo: porcelain read failed") {
+		t.Fatalf("worktree expansion warning entry = %#v", entry)
+	}
+}
+
 func TestScheduledScanFailureSurfacesWithoutProjectReloadAndDeduplicates(t *testing.T) {
 	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
 	m := Model{nowFn: func() time.Time { return now }}
