@@ -829,8 +829,9 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 	}
 
 	linkedSyncIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{
-		WorktreeKind:   model.WorktreeKindLinked,
-		RepoSyncStatus: model.RepoSyncAhead,
+		WorktreeKind:        model.WorktreeKindLinked,
+		WorktreeMergeStatus: model.WorktreeMergeStatusMerged,
+		RepoSyncStatus:      model.RepoSyncAhead,
 	}, 0)
 	if linkedSyncIndicator != " " {
 		t.Fatalf("linked worktree sync-only state should not warn, got %q", linkedSyncIndicator)

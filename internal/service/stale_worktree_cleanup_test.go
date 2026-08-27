@@ -33,6 +33,8 @@ func TestEvaluateStaleWorktreeCleanupCandidateRequiresEverySafetySignal(t *testi
 		{name: "dirty", mutate: func(p *model.ProjectSummary) { p.RepoDirty = true }, reason: "uncommitted"},
 		{name: "conflict", mutate: func(p *model.ProjectSummary) { p.RepoConflict = true }, reason: "conflicts"},
 		{name: "not merged", mutate: func(p *model.ProjectSummary) { p.WorktreeMergeStatus = model.WorktreeMergeStatusNotMerged }, reason: "not merged"},
+		{name: "merge status unknown", mutate: func(p *model.ProjectSummary) { p.WorktreeMergeStatus = model.WorktreeMergeStatusUnknown }, reason: "merge status is unavailable"},
+		{name: "merge in progress", mutate: func(p *model.ProjectSummary) { p.WorktreeMergeStatus = model.WorktreeMergeStatusMergeInProgress }, reason: "still in progress"},
 		{name: "waiting assessment", mutate: func(p *model.ProjectSummary) { p.LatestSessionClassificationType = model.SessionCategoryWaitingForUser }, reason: "not done"},
 		{name: "assessment running", mutate: func(p *model.ProjectSummary) { p.LatestSessionClassification = model.ClassificationRunning }, reason: "not complete"},
 		{name: "unfinished turn", mutate: func(p *model.ProjectSummary) { p.LatestTurnCompleted = false }, reason: "unfinished"},

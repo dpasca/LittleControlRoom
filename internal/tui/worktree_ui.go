@@ -1425,7 +1425,9 @@ func worktreeHasPendingIntegration(project model.ProjectSummary) bool {
 	if project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress {
 		return false
 	}
-	return project.RepoDirty || project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged
+	return project.RepoDirty ||
+		project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged ||
+		project.WorktreeMergeStatus == model.WorktreeMergeStatusUnknown
 }
 
 func worktreePendingIntegrationCount(projects []model.ProjectSummary) int {
@@ -2745,10 +2747,16 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		lines = append(lines, detailValueStyle.Render("Linked TODO"))
 		todoCopy := "This checkout is already merged. Complete its originating TODO when removing it."
 		switch {
+		case confirm.MergeStatus == model.WorktreeMergeStatusUnknown && confirm.Dirty:
+			todoCopy = "This checkout has uncommitted changes, and its merge state is unknown. Mark its originating TODO done only if force-removing the checkout also closes the task."
+		case confirm.MergeStatus == model.WorktreeMergeStatusUnknown:
+			todoCopy = "Little Control Room could not confirm whether this checkout has commits to merge. Mark its originating TODO done only if removing the checkout also closes the task; the branch ref will remain available."
 		case confirm.Dirty:
 			todoCopy = "This checkout has uncommitted changes. Mark its originating TODO done only if force-removing the checkout also closes the task."
-		case confirm.MergeStatus != model.WorktreeMergeStatusMerged:
-			todoCopy = "This checkout may still have commits to merge. Mark its originating TODO done if removing the checkout also closes the task; the branch ref will remain available."
+		case confirm.MergeStatus == model.WorktreeMergeStatusNotMerged:
+			todoCopy = "This checkout still has commits to merge. Mark its originating TODO done if removing the checkout also closes the task; the branch ref will remain available."
+		case confirm.MergeStatus == model.WorktreeMergeStatusMergeInProgress:
+			todoCopy = "This checkout is part of a merge in progress. Mark its originating TODO done only if removing the checkout also closes the task; the branch ref will remain available."
 		}
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, todoCopy)...)
 		lines = append(lines, "")
@@ -2800,6 +2808,10 @@ func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch str
 	targetBranch = strings.TrimSpace(targetBranch)
 	if dirty && status != model.WorktreeMergeStatusMergeInProgress {
 		switch {
+		case status == model.WorktreeMergeStatusUnknown && targetBranch != "":
+			return "Pending integration; merge state unknown", "This worktree has uncommitted changes, and Little Control Room could not confirm whether its branch also has commits to merge into " + targetBranch + ".", detailWarningStyle
+		case status == model.WorktreeMergeStatusUnknown:
+			return "Pending integration; merge state unknown", "This worktree has uncommitted changes, and Little Control Room could not confirm whether its branch also has commits to merge back.", detailWarningStyle
 		case status == model.WorktreeMergeStatusNotMerged && targetBranch != "":
 			return "Pending integration", "This worktree has uncommitted changes and branch commits to integrate into " + targetBranch + ".", detailWarningStyle
 		case status == model.WorktreeMergeStatusNotMerged:
@@ -2826,11 +2838,13 @@ func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch str
 			return "Pending merge", "This branch still has commits to merge into " + targetBranch + ". You can still remove the checkout, but you may lose track of that work.", detailWarningStyle
 		}
 		return "Pending merge", "This branch still has commits to merge back. You can still remove the checkout, but you may lose track of that work.", detailWarningStyle
-	default:
+	case model.WorktreeMergeStatusUnknown:
 		if targetBranch != "" {
-			return "Commit status unavailable", "Little Control Room could not confirm whether this branch has commits to merge into " + targetBranch + ".", detailMutedStyle
+			return "Merge state unknown", "Little Control Room could not confirm whether this branch has commits to merge into " + targetBranch + ".", detailWarningStyle
 		}
-		return "Commit status unavailable", "Little Control Room could not confirm whether this branch still has commits to merge back.", detailMutedStyle
+		return "Merge state unknown", "Little Control Room could not confirm whether this branch still has commits to merge back.", detailWarningStyle
+	default:
+		return "Merge state unavailable", "Little Control Room could not interpret this branch's merge state.", detailWarningStyle
 	}
 }
 

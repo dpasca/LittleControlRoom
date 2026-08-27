@@ -2385,8 +2385,8 @@ func TestRenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPatte
 	if len(lines) != 4 {
 		t.Fatalf("renderProjectList() expected tabs, header, root, and linked worktree rows, got %q", rendered)
 	}
-	if !strings.Contains(lines[2], "[1 linked]") {
-		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[2])
+	if !strings.Contains(lines[2], "[1 linked, 1 to integrate]") {
+		t.Fatalf("renderProjectList() should keep the unknown-status linked lane visible and protected under a visible root, got %q", lines[2])
 	}
 	if !strings.Contains(lines[3], "↳ tests/") {
 		t.Fatalf("renderProjectList() should always show the privacy-matched linked lane under its visible root, got %q", lines[3])

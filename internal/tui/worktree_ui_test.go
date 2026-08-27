@@ -2641,30 +2641,165 @@ func TestWorktreeRemoveSafetyCopyTreatsDirtyWorkAsPendingIntegration(t *testing.
 	}
 }
 
-func TestAdoptedWorktreeUsesMergeAndDirtySafetyState(t *testing.T) {
-	project := model.ProjectSummary{
+func TestWorktreeRemoveSafetyCopyDistinguishesUnknownFromUnmerged(t *testing.T) {
+	unknownHeader, unknownBody, _ := worktreeRemoveSafetyCopy(model.WorktreeMergeStatusUnknown, "master", false)
+	if unknownHeader != "Merge state unknown" {
+		t.Fatalf("unknown merge status header = %q, want merge state unknown", unknownHeader)
+	}
+	if !strings.Contains(unknownBody, "could not confirm whether this branch has commits to merge into master") {
+		t.Fatalf("unknown merge status body = %q, want unavailable-state explanation", unknownBody)
+	}
+	if strings.Contains(unknownBody, "still has commits") {
+		t.Fatalf("unknown merge status body should not claim unmerged work: %q", unknownBody)
+	}
+
+	dirtyHeader, dirtyBody, _ := worktreeRemoveSafetyCopy(model.WorktreeMergeStatusUnknown, "master", true)
+	if dirtyHeader != "Pending integration; merge state unknown" {
+		t.Fatalf("dirty unknown merge status header = %q, want pending integration plus unknown state", dirtyHeader)
+	}
+	for _, want := range []string{"uncommitted changes", "could not confirm whether its branch also has commits"} {
+		if !strings.Contains(dirtyBody, want) {
+			t.Fatalf("dirty unknown merge status body = %q, want %q", dirtyBody, want)
+		}
+	}
+
+	unmergedHeader, unmergedBody, _ := worktreeRemoveSafetyCopy(model.WorktreeMergeStatusNotMerged, "master", false)
+	if unmergedHeader != "Pending merge" || !strings.Contains(unmergedBody, "still has commits") {
+		t.Fatalf("known unmerged copy = (%q, %q), want an explicit pending-commit claim", unmergedHeader, unmergedBody)
+	}
+}
+
+func TestWorktreeRemoveConfirmKeepsUnknownStatusAdvisory(t *testing.T) {
+	confirm := &worktreeRemoveConfirmState{
+		ProjectPath:  "/tmp/repo--unknown",
+		RootPath:     "/tmp/repo",
+		ProjectName:  "repo--unknown",
+		BranchName:   "feature/unknown",
+		TargetBranch: "master",
+		MergeStatus:  model.WorktreeMergeStatusUnknown,
+	}
+	confirm.Selected = worktreeRemoveConfirmKeepIndex(confirm)
+	if !worktreeRemoveConfirmReady(confirm) {
+		t.Fatal("a clean worktree with unknown merge status should remain explicitly removable")
+	}
+
+	m := Model{worktreeRemoveConfirm: confirm}
+	rendered := strings.Join(strings.Fields(ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 96, 30))), " ")
+	for _, want := range []string{
+		"Merge state unknown",
+		"could not confirm whether this branch has",
+		"commits to merge into master.",
+		"deletes the checkout only. The branch ref",
+		"stays in the repo.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("unknown removal confirmation missing %q in %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "This branch still has commits") {
+		t.Fatalf("unknown removal confirmation should not claim known unmerged work: %q", rendered)
+	}
+}
+
+func TestWorktreeMergeConfirmKeepsUnknownStatusAdvisory(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--unknown"
+	root := model.ProjectSummary{
+		Name:             "repo",
+		Path:             rootPath,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+	}
+	child := model.ProjectSummary{
+		Name:                 "repo--unknown",
+		Path:                 childPath,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		WorktreeMergeStatus:  model.WorktreeMergeStatusUnknown,
+		RepoBranch:           "feature/unknown",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, child},
+		visibility:  visibilityAllFolders,
+		sortMode:    sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	if cmd := m.openWorktreeMergeConfirmForSelection(); cmd != nil {
+		t.Fatal("opening an unknown-state merge confirmation without a service should not queue work")
+	}
+	confirm := m.worktreeMergeConfirm
+	if confirm == nil {
+		t.Fatal("unknown merge status should still open merge-back confirmation")
+	}
+	if !worktreeMergeConfirmReady(confirm) {
+		t.Fatalf("unknown merge status should not hard-block merge-back: %q", worktreeMergeConfirmBlockReason(confirm))
+	}
+	if !confirm.RemoveNow {
+		t.Fatal("unknown merge status should still allow cleanup after merge-back verifies integration")
+	}
+	if got := worktreeIntegrationStatusSummary(child); got != "unavailable for master" {
+		t.Fatalf("unknown integration summary = %q, want unavailable without claiming unmerged work", got)
+	}
+
+	rendered := strings.Join(strings.Fields(ansi.Strip(m.renderWorktreeMergeConfirmOverlay("body", 100, 28))), " ")
+	for _, want := range []string{
+		"Merge worktree back",
+		"[x] Remove merged worktree after merge",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("unknown merge confirmation missing %q in %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Merge blocked") || strings.Contains(rendered, "This branch still has commits") {
+		t.Fatalf("unknown merge confirmation should remain usable without claiming known unmerged work: %q", rendered)
+	}
+}
+
+func TestWorktreeHasPendingIntegrationMergeStates(t *testing.T) {
+	base := model.ProjectSummary{
 		Path:                 "/tmp/repo--adopted",
 		Kind:                 model.ProjectKindProject,
 		WorktreeKind:         model.WorktreeKindLinked,
 		WorktreeOriginTodoID: 0,
-		WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
-		RepoDirty:            false,
 		PresentOnDisk:        true,
 		InScope:              true,
 	}
-	if worktreeHasPendingIntegration(project) {
-		t.Fatal("merged, clean adopted worktree should be safe to remove")
+	tests := []struct {
+		name        string
+		mergeStatus model.WorktreeMergeStatus
+		dirty       bool
+		want        bool
+	}{
+		{name: "unknown clean", mergeStatus: model.WorktreeMergeStatusUnknown, want: true},
+		{name: "unknown dirty", mergeStatus: model.WorktreeMergeStatusUnknown, dirty: true, want: true},
+		{name: "merged clean", mergeStatus: model.WorktreeMergeStatusMerged, want: false},
+		{name: "not merged", mergeStatus: model.WorktreeMergeStatusNotMerged, want: true},
+		{name: "merge in progress", mergeStatus: model.WorktreeMergeStatusMergeInProgress, dirty: true, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			project := base
+			project.WorktreeMergeStatus = test.mergeStatus
+			project.RepoDirty = test.dirty
+			if got := worktreeHasPendingIntegration(project); got != test.want {
+				t.Fatalf("worktreeHasPendingIntegration() = %t, want %t for merge status %q, dirty %t", got, test.want, test.mergeStatus, test.dirty)
+			}
+		})
 	}
 
-	project.WorktreeMergeStatus = model.WorktreeMergeStatusNotMerged
-	if !worktreeHasPendingIntegration(project) {
-		t.Fatal("unmerged adopted worktree should be protected even without an origin TODO")
-	}
-
-	project.WorktreeMergeStatus = model.WorktreeMergeStatusMerged
-	project.RepoDirty = true
-	if !worktreeHasPendingIntegration(project) {
-		t.Fatal("dirty adopted worktree should be protected even when its branch is merged")
+	unknown := base
+	unknown.WorktreeMergeStatus = model.WorktreeMergeStatusUnknown
+	merged := base
+	merged.WorktreeMergeStatus = model.WorktreeMergeStatusMerged
+	merging := base
+	merging.WorktreeMergeStatus = model.WorktreeMergeStatusMergeInProgress
+	if got := worktreePendingIntegrationCount([]model.ProjectSummary{unknown, merged, merging}); got != 1 {
+		t.Fatalf("worktreePendingIntegrationCount() = %d, want the unknown worktree counted once", got)
 	}
 }
 
@@ -2777,9 +2912,9 @@ func TestCleanUnmergedWorktreeRemoveDefaultsToCompletingLinkedTodo(t *testing.T)
 	rendered := strings.Join(strings.Fields(ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 96, 30))), " ")
 	for _, want := range []string{
 		"Pending merge",
-		"may still have commits to merge",
+		"still has commits to merge",
 		"[x] Mark linked TODO done",
-		"ref will remain available",
+		"will remain available",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("unmerged remove confirmation missing %q in %q", want, rendered)
