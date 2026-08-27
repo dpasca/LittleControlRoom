@@ -1198,8 +1198,90 @@ func TestBrowserAttentionEnterShowsBlockedStatusWhenLeaseOwnedElsewhere(t *testi
 	if got.browserAttention == nil || !got.browserAttention.revealFailed() {
 		t.Fatal("blocked browser reveal should restore the actionable attention dialog")
 	}
+	if !got.browserAttention.blockedByAnotherBrowser() {
+		t.Fatal("blocked browser reveal should retain the lease owner for explicit takeover")
+	}
+	rendered := ansi.Strip(got.renderBrowserAttentionContent(76))
+	for _, want := range []string{"other browser flow remains available", "R  take over browser"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("blocked browser dialog is missing %q:\n%s", want, rendered)
+		}
+	}
 	if _, ok := got.browserAttentionAcknowledged[normalizeProjectPath("/tmp/demo")]; ok {
 		t.Fatal("blocked browser reveal should clear the provisional acknowledgement")
+	}
+}
+
+func TestBrowserAttentionExplicitTakeoverMovesPreviousOwnerToWaiting(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	controller := browserctl.NewController()
+	ownerObservation := browserctl.Observation{
+		Ref: browserctl.SessionRef{
+			Provider:    "codex",
+			ProjectPath: "/tmp/owner-demo",
+			SessionID:   "thread-owner",
+		},
+		Policy:   settingsAutomaticPlaywrightPolicy,
+		Activity: browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright", ToolName: "browser_navigate"},
+		LoginURL: "https://example.test/owner",
+	}
+	controller.Observe(ownerObservation)
+	controller.AcquireInteractive(ownerObservation.Ref)
+
+	previousSessionRevealer := managedBrowserSessionRevealer
+	defer func() {
+		managedBrowserSessionRevealer = previousSessionRevealer
+	}()
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123}, nil
+	}
+
+	m := Model{
+		settingsBaseline:     &settings,
+		browserController:    controller,
+		browserLeaseSnapshot: controller.Snapshot(),
+		browserAttention: &browserAttentionNotification{
+			ProjectPath:              "/tmp/demo",
+			ProjectName:              "demo",
+			SessionID:                "thread-demo",
+			Provider:                 codexapp.ProviderCodex,
+			Activity:                 browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy, State: browserctl.SessionActivityStateWaitingForUser, ServerName: "playwright"},
+			ManagedBrowserSessionKey: "managed-demo",
+			OpenURL:                  "https://example.test/login",
+			Problem:                  "Interactive browser is already reserved by Codex / owner-demo. Finish that login flow first.",
+			BlockedBy:                controller.Snapshot().Interactive,
+		},
+	}
+
+	updated, cmd := m.updateBrowserAttentionMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("explicit browser takeover should queue a reveal command")
+	}
+	if got.browserAttention != nil {
+		t.Fatal("explicit browser takeover should dismiss the blocked dialog")
+	}
+	interactive := got.browserLeaseSnapshot.Interactive
+	if interactive == nil || interactive.Ref.ProjectPath != "/tmp/demo" {
+		t.Fatalf("interactive lease = %#v, want target project", interactive)
+	}
+	if len(got.browserLeaseSnapshot.Waiting) != 1 || got.browserLeaseSnapshot.Waiting[0].Ref != ownerObservation.Ref.Normalize() {
+		t.Fatalf("waiting leases = %#v, want previous owner", got.browserLeaseSnapshot.Waiting)
+	}
+
+	foundSuccess := false
+	for _, msg := range collectCmdMsgs(cmd) {
+		openMsg, ok := msg.(browserOpenMsg)
+		if !ok {
+			continue
+		}
+		if openMsg.err != nil {
+			t.Fatalf("browser takeover reveal failed: %v", openMsg.err)
+		}
+		foundSuccess = strings.Contains(openMsg.status, "previous browser flow remains available")
+	}
+	if !foundSuccess {
+		t.Fatal("browser takeover should report that the previous flow remains available")
 	}
 }
 

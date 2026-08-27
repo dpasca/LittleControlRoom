@@ -206,6 +206,48 @@ func (c *Controller) AcquireInteractive(ref SessionRef) InteractiveAcquireResult
 	}
 }
 
+// TakeOverInteractive explicitly moves the interactive slot to ref while
+// leaving the previous owner's managed browser flow available as waiting.
+func (c *Controller) TakeOverInteractive(ref SessionRef) InteractiveAcquireResult {
+	if c == nil {
+		return InteractiveAcquireResult{}
+	}
+	normalized := ref.Normalize()
+	if !normalized.Valid() {
+		return InteractiveAcquireResult{}
+	}
+	key := normalized.key()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	lease, ok := c.leases[key]
+	if !ok {
+		return InteractiveAcquireResult{Snapshot: c.snapshotLocked()}
+	}
+
+	var previousOwner *InteractiveLease
+	if c.interactiveKey != "" && c.interactiveKey != key {
+		if owner, ownerOK := c.leases[c.interactiveKey]; ownerOK {
+			normalizedOwner := owner.Normalize()
+			normalizedOwner.State = InteractiveLeaseStateWaiting
+			c.leases[c.interactiveKey] = normalizedOwner
+			previousOwner = &normalizedOwner
+		}
+	}
+
+	c.interactiveKey = key
+	lease.State = InteractiveLeaseStateInteractive
+	lease.UpdatedAt = time.Now()
+	c.leases[key] = lease
+	return InteractiveAcquireResult{
+		Granted:  true,
+		Lease:    lease.Normalize(),
+		Owner:    previousOwner,
+		Snapshot: c.snapshotLocked(),
+	}
+}
+
 func (c *Controller) ReleaseInteractive(ref SessionRef) ControllerSnapshot {
 	if c == nil {
 		return ControllerSnapshot{}

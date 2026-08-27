@@ -88,3 +88,45 @@ func TestControllerReleaseInteractiveReturnsLeaseToWaiting(t *testing.T) {
 		t.Fatalf("waiting lease project = %q, want /tmp/a", snapshot.Waiting[0].Ref.ProjectPath)
 	}
 }
+
+func TestControllerTakeOverInteractiveMovesPreviousOwnerToWaiting(t *testing.T) {
+	controller := NewController()
+	owner := managedObservation("/tmp/owner", "thread-owner", "https://example.test/owner")
+	target := managedObservation("/tmp/target", "thread-target", "https://example.test/target")
+	controller.Observe(owner)
+	controller.Observe(target)
+	controller.AcquireInteractive(owner.Ref)
+
+	result := controller.TakeOverInteractive(target.Ref)
+	if !result.Granted {
+		t.Fatal("explicit takeover should succeed")
+	}
+	if result.Owner == nil || result.Owner.Ref != owner.Ref.Normalize() {
+		t.Fatalf("previous owner = %#v, want %#v", result.Owner, owner.Ref.Normalize())
+	}
+	if result.Snapshot.Interactive == nil || result.Snapshot.Interactive.Ref != target.Ref.Normalize() {
+		t.Fatalf("interactive owner = %#v, want %#v", result.Snapshot.Interactive, target.Ref.Normalize())
+	}
+	if len(result.Snapshot.Waiting) != 1 || result.Snapshot.Waiting[0].Ref != owner.Ref.Normalize() {
+		t.Fatalf("waiting leases = %#v, want previous owner", result.Snapshot.Waiting)
+	}
+}
+
+func TestControllerTakeOverInteractiveKeepsOwnerWhenTargetIsUnknown(t *testing.T) {
+	controller := NewController()
+	owner := managedObservation("/tmp/owner", "thread-owner", "https://example.test/owner")
+	controller.Observe(owner)
+	controller.AcquireInteractive(owner.Ref)
+
+	result := controller.TakeOverInteractive(SessionRef{
+		Provider:    "codex",
+		ProjectPath: "/tmp/unknown",
+		SessionID:   "thread-unknown",
+	})
+	if result.Granted {
+		t.Fatal("takeover should reject a target without a waiting browser flow")
+	}
+	if result.Snapshot.Interactive == nil || result.Snapshot.Interactive.Ref != owner.Ref.Normalize() {
+		t.Fatalf("interactive owner = %#v, want original owner", result.Snapshot.Interactive)
+	}
+}
