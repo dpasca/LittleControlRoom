@@ -121,6 +121,11 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	if !strings.Contains(text, "lcr_runtime/request_browser_attention") || !strings.Contains(text, "exact page") {
 		t.Fatalf("overlay skill = %q, want structured browser-attention handoff guidance", text)
 	}
+	for _, want := range []string{"fixed emulated viewport", "disposable tab", "create a fresh tab first"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("overlay skill = %q, want viewport-hygiene guidance for %q", text, want)
+		}
+	}
 	if strings.Contains(text, "original skill") {
 		t.Fatalf("overlay skill should not mirror original Playwright skill contents: %q", text)
 	}
@@ -393,6 +398,9 @@ func TestPrepareCodexHomeOverlayDoesNotAdvertiseUnavailableRuntimeHandoff(t *tes
 	}
 	if strings.Contains(string(playwrightRaw), "request_browser_attention") {
 		t.Fatalf("Playwright skill advertises unavailable runtime handoff: %s", playwrightRaw)
+	}
+	if !strings.Contains(string(playwrightRaw), "fixed emulated viewport") {
+		t.Fatalf("Playwright skill omits viewport-hygiene guidance: %s", playwrightRaw)
 	}
 	runtimePath := filepath.Join(overlay, "skills", "runtime")
 	if target, err := os.Readlink(runtimePath); err != nil {

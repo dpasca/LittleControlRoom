@@ -81,6 +81,11 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	if strings.Contains(string(responses[1].Result), string(agentquery.QueryDemoRecordingLatest)) {
 		t.Fatalf("tools/list eagerly exposes demo recording query names instead of deferring them: %s", responses[1].Result)
 	}
+	for _, want := range []string{"browser_resize", "fixed emulated viewport", "create a fresh tab"} {
+		if !strings.Contains(string(responses[1].Result), want) {
+			t.Fatalf("tools/list result = %s, want browser-attention viewport guidance for %q", responses[1].Result, want)
+		}
+	}
 }
 
 func TestRuntimeMCPClaudePermissionToolWaitsForLCRDecision(t *testing.T) {

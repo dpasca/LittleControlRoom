@@ -7,6 +7,8 @@ const (
 
 const managedBrowserTurnContextText = `Little Control Room managed-browser contract for this turn:
 - Use the registered playwright MCP tools for browser work; do not launch a separate Playwright CLI or desktop browser.
+- ` + "`browser_resize`" + ` installs a fixed emulated viewport on the current tab; it does not resize the native browser window and cannot be safely reset on that same tab. Use it only in a disposable tab: create the tab before navigating or resizing, perform the responsive check there, then close it before ending the turn unless the user explicitly asked to keep that emulation visible.
+- Never resize a tab that may be shown to the user. Before a human handoff, make the current page an unresized tab. If the current tab was resized, create a fresh tab first and navigate that fresh tab to the exact handoff page so cookies and origin-shared state are retained without carrying over the fixed viewport. Prepare the fresh tab before entering a one-time or stateful handoff flow; never silently reload or replace an already-ready page if that could lose form or session state.
 - If the managed page reaches a login, MFA, consent, CAPTCHA, or another human-only browser step, first navigate the managed browser to the exact page where the user must act.
 - Then call lcr_runtime/request_browser_attention with a short message that says exactly what the user should do. Little Control Room will surface that same browser through its attention dialog and Browser sidebar.
 - After the attention call succeeds, stop the turn immediately. Do not poll, wait, or use another tool until the user sends a new message.

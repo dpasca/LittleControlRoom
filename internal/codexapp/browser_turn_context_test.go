@@ -110,6 +110,9 @@ func assertManagedBrowserTurnContext(t *testing.T, entries map[string]additional
 		t.Fatalf("additional context kind = %q, want %q", entry.Kind, applicationContextKind)
 	}
 	for _, required := range []string{
+		"fixed emulated viewport",
+		"disposable tab",
+		"create a fresh tab first",
 		"lcr_runtime/request_browser_attention",
 		"attention dialog and Browser sidebar",
 		"stop the turn immediately",

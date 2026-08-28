@@ -201,6 +201,7 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 		"outputDir":      s.paths.OutputDir,
 		"launchMode":     string(s.paths.LaunchMode),
 		"browserChannel": browserChannel,
+		"viewport":       playwrightWorkerViewport(s.paths.LaunchMode),
 	}
 	configRaw, err := json.Marshal(config)
 	if err != nil {
@@ -241,6 +242,18 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 	go s.readResponses(stdout)
 	go s.monitorWorker(cmd.Process.Pid)
 	return nil
+}
+
+type playwrightWorkerViewportSize struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+func playwrightWorkerViewport(launchMode ManagedLaunchMode) *playwrightWorkerViewportSize {
+	if launchMode.Normalize() != ManagedLaunchModeHeadless {
+		return nil
+	}
+	return &playwrightWorkerViewportSize{Width: 1280, Height: 900}
 }
 
 func (s *PlaywrightBrowserSession) browserChannel() string {

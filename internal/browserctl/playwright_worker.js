@@ -21,7 +21,9 @@ async function ensurePage() {
     context = await launchPersistentContext({
       headless,
       downloadsPath: config.outputDir,
-      viewport: { width: 1280, height: 900 },
+      // Headed pages follow the native window. A fixed Playwright viewport
+      // leaves an iframe-like blank region when the user stretches Chrome.
+      viewport: config.viewport,
     });
     page = context.pages()[0] || await context.newPage();
   }
