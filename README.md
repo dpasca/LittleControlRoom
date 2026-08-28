@@ -320,8 +320,9 @@ rather than pretending to be a sandbox:
   turn, and inactive for more than 24 hours. Every selection is revalidated
   before removal; active turns and runtimes are skipped, while an idle
   LCR-managed engineer session is closed first. Branches and conversation
-  history are preserved. Orphaned folders are only deleted when they contain
-  nothing but a single `.DS_Store`.
+  history are preserved. Orphaned folders are deleted only when they contain
+  a single `.DS_Store`, or when a stale worktree pointer and byte-for-byte Git
+  verification prove that a partial removal contains no uncommitted files.
 
 ## More
 

@@ -42,7 +42,7 @@ const (
 	worktreeCommitMergePendingSummary = "Committing and merging worktree back..."
 	worktreeRemovePendingSummary      = "Removing worktree..."
 	worktreeResidualCleanupSummary    = "Cleaning safe residual worktree folders..."
-	worktreeOrphanCleanupSummary      = "Clearing empty orphaned worktree..."
+	worktreeOrphanCleanupSummary      = "Verifying and clearing orphaned worktree..."
 	worktreeFinalizeRemoveSummary     = "Completing linked TODO and removing worktree..."
 	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
 	tuiWorktreeRemoveTimeout          = 20 * time.Second
@@ -59,7 +59,7 @@ type projectListRow struct {
 	LinkedPendingIntegrationCount int
 	LinkedStaleCount              int
 	PendingLaunchID               int64
-	OrphanedDSStoreOnly           bool
+	OrphanedCleanupKind           service.ResidualWorktreeCleanupKind
 }
 
 type worktreeRemoveConfirmState struct {
@@ -76,6 +76,7 @@ type worktreeRemoveConfirmState struct {
 	IdleSessionProvider   codexapp.Provider
 	MarkTodoDone          bool
 	ResidualCleanup       bool
+	ResidualCleanupKind   service.ResidualWorktreeCleanupKind
 	OrphanedCheckoutCount int
 	Busy                  bool
 	BusyMessage           string
@@ -1010,11 +1011,15 @@ func projectWorktreeLabel(project model.ProjectSummary) string {
 	return name
 }
 
-func orphanedWorktreeListSummary(dsStoreOnly bool) string {
-	if dsStoreOnly {
+func orphanedWorktreeListSummary(cleanupKind service.ResidualWorktreeCleanupKind) string {
+	switch cleanupKind {
+	case service.ResidualWorktreeCleanupDSStoreOnly:
 		return "Empty orphaned worktree (.DS_Store only). Use /remove to clear."
+	case service.ResidualWorktreeCleanupPartialGitDir:
+		return "Partial Git removal residue. Use /remove to verify and clear."
+	default:
+		return "Orphaned worktree needs inspection before removal."
 	}
-	return "Orphaned worktree needs inspection before removal."
 }
 
 func worktreeIntegrationStatusSummary(project model.ProjectSummary) string {
@@ -1369,7 +1374,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 				Kind:                projectListRowOrphaned,
 				ProjectPath:         orphan.Path,
 				RootPath:            rootPath,
-				OrphanedDSStoreOnly: m.orphanedWorktreeContainsOnlyDSStore(orphan.Path),
+				OrphanedCleanupKind: m.orphanedWorktreeCleanupKind(orphan.Path),
 			})
 		}
 	}
@@ -1595,7 +1600,7 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if row.Kind == projectListRowWorktree && m.canRemoveWorktree(project) {
 		actions = append(actions, footerHideAction("x", "remove"))
 	}
-	if row.Kind == projectListRowOrphaned && row.OrphanedDSStoreOnly {
+	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind != service.ResidualWorktreeCleanupUnknown {
 		actions = append(actions, footerHideAction("x", "cleanup"))
 	}
 	if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
@@ -2291,7 +2296,7 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	if row.Kind == projectListRowOrphaned {
-		if !row.OrphanedDSStoreOnly {
+		if row.OrphanedCleanupKind == service.ResidualWorktreeCleanupUnknown {
 			m.status = "This orphaned worktree needs inspection before it can be removed"
 			return nil
 		}
@@ -2309,6 +2314,7 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 			ProjectName:           project.Name,
 			BranchName:            projectWorktreeLabel(project),
 			ResidualCleanup:       true,
+			ResidualCleanupKind:   row.OrphanedCleanupKind,
 			OrphanedCheckoutCount: 1,
 		}
 		state.Selected = worktreeRemoveConfirmKeepIndex(state)
@@ -2578,7 +2584,7 @@ func (m Model) cleanupResidualWorktreeDirectoryCmd(projectPath, rootPath string)
 			projectPath:            projectPath,
 			removedProjectPath:     removedWorktreePath(err == nil, projectPath),
 			selectPath:             rootPath,
-			status:                 "Empty orphaned worktree cleared",
+			status:                 "Verified orphaned worktree residue cleared",
 			clearPendingGitSummary: true,
 			err:                    err,
 		}
@@ -2590,11 +2596,11 @@ func residualWorktreeCleanupStatus(result service.CleanupResidualWorktreeDirecto
 	kept := len(result.KeptPaths)
 	switch {
 	case removed > 0 && kept > 0:
-		return fmt.Sprintf("Cleared %d .DS_Store-only residual folder(s); kept %d orphaned folder(s) containing other files", removed, kept)
+		return fmt.Sprintf("Cleared %d verified residual folder(s); kept %d orphaned folder(s) with unverified entries", removed, kept)
 	case removed > 0:
-		return fmt.Sprintf("Cleared %d .DS_Store-only residual worktree folder(s)", removed)
+		return fmt.Sprintf("Cleared %d verified residual worktree folder(s)", removed)
 	case kept > 0:
-		return fmt.Sprintf("No folders cleared; kept %d orphaned folder(s) containing other files", kept)
+		return fmt.Sprintf("No folders cleared; kept %d orphaned folder(s) with unverified entries", kept)
 	default:
 		return "No residual worktree folders needed cleanup"
 	}
@@ -2678,7 +2684,10 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		dialogTitle = "Clean residual worktree folders"
 	}
 	if individualResidualCleanup {
-		dialogTitle = "Clear empty orphaned worktree"
+		dialogTitle = "Clear orphaned worktree residue"
+		if confirm.ResidualCleanupKind == service.ResidualWorktreeCleanupDSStoreOnly {
+			dialogTitle = "Clear empty orphaned worktree"
+		}
 	}
 	lines := []string{
 		detailSectionStyle.Render(dialogTitle),
@@ -2700,9 +2709,15 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if confirm.ResidualCleanup {
 		lines = append(lines, "")
 		lines = append(lines, detailWarningStyle.Render("Strict cleanup guard"))
-		cleanupCopy := "Little Control Room will inspect each orphaned folder and delete it only when its sole entry is one regular .DS_Store file. It removes that file and then the empty directory with non-recursive deletes. Any folder containing another entry is kept untouched."
+		cleanupCopy := "Little Control Room will re-check each orphaned folder. It clears a .DS_Store-only folder, or a partial Git removal only when its stale .git pointer belongs to this repository and every remaining project file and executable mode matches a preserved commit. Nested .DS_Store files and empty directories are allowed. Unverified folders are kept untouched."
 		if individualResidualCleanup {
-			cleanupCopy = "Little Control Room will re-check this folder and clear it only when its sole entry is one regular .DS_Store file. It removes that file and then the empty directory with non-recursive deletes."
+			cleanupCopy = "Little Control Room will re-check this folder before deleting anything."
+			switch confirm.ResidualCleanupKind {
+			case service.ResidualWorktreeCleanupDSStoreOnly:
+				cleanupCopy += " Cleanup proceeds only if its sole entry is one regular .DS_Store file."
+			case service.ResidualWorktreeCleanupPartialGitDir:
+				cleanupCopy += " Cleanup proceeds only if the stale .git pointer belongs to this repository and every remaining project file and executable mode matches a preserved commit. Nested .DS_Store files and empty directories are allowed."
+			}
 		}
 		lines = append(lines, renderWrappedDialogTextLines(
 			detailMutedStyle,
@@ -2775,9 +2790,9 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	}
 	lines = append(lines, "")
 	if confirm.ResidualCleanup {
-		cleanupBoundary := "This cleanup does not delete branches or any folder that still contains project files."
+		cleanupBoundary := "This cleanup never deletes branches, follows symlinks, or removes unverified files."
 		if individualResidualCleanup {
-			cleanupBoundary = "This cleanup does not delete the branch or a folder that contains any project file."
+			cleanupBoundary = "The branch is preserved. Any untracked, changed, unreadable, symlinked, or special entry blocks cleanup."
 		}
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, cleanupBoundary)...)
 	} else {

@@ -81,7 +81,7 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 		surface.Text("Press d or use /remove to archive or delete this task.", projectDetailToneMuted)
 	}
 	if projectIsOrphanedWorktree(p) {
-		surface.WrappedField("Worktree", orphanedWorktreeListSummary(m.orphanedWorktreeContainsOnlyDSStore(p.Path)), projectDetailToneWarning)
+		surface.WrappedField("Worktree", orphanedWorktreeListSummary(m.orphanedWorktreeCleanupKind(p.Path)), projectDetailToneWarning)
 	}
 
 	if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {

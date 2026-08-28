@@ -85,6 +85,7 @@ type CleanupResidualWorktreeDirectoriesResult struct {
 type OrphanedWorktreeDirectory struct {
 	Summary         model.ProjectSummary
 	DSStoreOnly     bool
+	CleanupKind     ResidualWorktreeCleanupKind
 	InspectionError string
 }
 
@@ -1270,15 +1271,16 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	staleLinkedWorktree := s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath)
 	residualDirectoryRemoved := false
 	if presentOnDisk && staleLinkedWorktree {
-		onlyDSStore, inspectErr := directoryContainsOnlyRegularDSStore(projectPath)
+		summary := s.residualWorktreeSummary(ctx, projectPath)
+		inspection, inspectErr := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, "")
 		if inspectErr != nil {
 			return fmt.Errorf("inspect orphaned worktree directory before cleanup: %w", inspectErr)
 		}
-		if !onlyDSStore {
-			return fmt.Errorf("Git no longer tracks this worktree, and %s contains files other than a single regular .DS_Store; Little Control Room left the folder untouched", projectPath)
+		if !inspection.Safe {
+			return fmt.Errorf("Git no longer tracks this worktree, but Little Control Room could not verify the remaining folder for safe cleanup: %s; Little Control Room left the folder untouched: %s", inspection.Reason, projectPath)
 		}
-		if err := removeDSStoreOnlyDirectory(projectPath); err != nil {
-			return fmt.Errorf("remove .DS_Store-only worktree residue: %w", err)
+		if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
+			return fmt.Errorf("remove verified worktree residue: %w", err)
 		}
 		presentOnDisk = false
 		residualDirectoryRemoved = true
@@ -1294,13 +1296,17 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		}
 		allowSubmoduleForceFallback = true
 	}
+	expectedCommit := ""
+	if presentOnDisk && !residualDirectoryRemoved {
+		expectedCommit, _ = gitCommitHash(ctx, projectPath, "HEAD")
+	}
 	if !residualDirectoryRemoved {
 		removeErr := gitWorktreeRemove(ctx, rootPath, projectPath, force)
 		if removeErr != nil && allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(removeErr) {
 			removeErr = gitWorktreeRemove(ctx, rootPath, projectPath, true)
 		}
 		if removeErr != nil {
-			if err := s.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, kind, projectPath, removeErr); err != nil {
+			if err := s.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, kind, projectPath, expectedCommit, removeErr); err != nil {
 				return err
 			}
 		}
@@ -1348,7 +1354,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	return nil
 }
 
-func (s *Service) finishSafeWorktreeRemovalAfterGitError(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string, removeErr error) error {
+func (s *Service) finishSafeWorktreeRemovalAfterGitError(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath, expectedCommit string, removeErr error) error {
 	if removeErr == nil {
 		return nil
 	}
@@ -1361,18 +1367,19 @@ func (s *Service) finishSafeWorktreeRemovalAfterGitError(ctx context.Context, ro
 		}
 		return errors.Join(removeErr, fmt.Errorf("inspect partially removed worktree path %s: %w", projectPath, err))
 	}
-	onlyDSStore, err := directoryContainsOnlyRegularDSStore(projectPath)
+	summary := s.residualWorktreeSummary(ctx, projectPath)
+	inspection, err := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, expectedCommit)
 	if err != nil {
 		return errors.Join(removeErr, fmt.Errorf("inspect partially removed worktree residue %s: %w", projectPath, err))
 	}
-	if !onlyDSStore {
+	if !inspection.Safe {
 		return errors.Join(
 			removeErr,
-			fmt.Errorf("Git no longer registers %s, but its remaining path is not a directory containing only one regular .DS_Store; Little Control Room left it untouched", projectPath),
+			fmt.Errorf("Git no longer registers %s, but its remaining path could not be verified for safe cleanup: %s; Little Control Room left it untouched", projectPath, inspection.Reason),
 		)
 	}
-	if err := removeDSStoreOnlyDirectory(projectPath); err != nil {
-		return errors.Join(removeErr, fmt.Errorf("clear .DS_Store created during worktree removal: %w", err))
+	if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
+		return errors.Join(removeErr, fmt.Errorf("clear verified residue created during worktree removal: %w", err))
 	}
 	return nil
 }
@@ -1403,11 +1410,12 @@ func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPa
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		onlyDSStore, inspectErr := directoryContainsOnlyRegularDSStore(path)
+		summary := orphaned[path]
+		inspection, inspectErr := s.inspectResidualWorktreeDirectory(ctx, rootPath, path, summary, "")
 		if inspectErr != nil {
 			return result, fmt.Errorf("inspect orphaned worktree directory %s: %w", path, inspectErr)
 		}
-		if !onlyDSStore {
+		if !inspection.Safe {
 			result.KeptPaths = append(result.KeptPaths, path)
 			continue
 		}
@@ -1432,10 +1440,11 @@ func (s *Service) ListOrphanedWorktreeDirectories(ctx context.Context) (map[stri
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		onlyDSStore, inspectErr := directoryContainsOnlyRegularDSStore(path)
+		cleanupKind, inspectErr := s.residualWorktreeCleanupKind(ctx, summary.WorktreeRootPath, path)
 		directory := OrphanedWorktreeDirectory{
 			Summary:     summary,
-			DSStoreOnly: onlyDSStore,
+			DSStoreOnly: cleanupKind == ResidualWorktreeCleanupDSStoreOnly,
+			CleanupKind: cleanupKind,
 		}
 		if inspectErr != nil {
 			directory.InspectionError = inspectErr.Error()
@@ -1443,6 +1452,17 @@ func (s *Service) ListOrphanedWorktreeDirectories(ctx context.Context) (map[stri
 		directories[path] = directory
 	}
 	return directories, nil
+}
+
+func (s *Service) residualWorktreeSummary(ctx context.Context, projectPath string) model.ProjectSummary {
+	if s == nil || s.store == nil {
+		return model.ProjectSummary{}
+	}
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 1)
+	if err != nil {
+		return model.ProjectSummary{}
+	}
+	return detail.Summary
 }
 
 func directoryContainsOnlyRegularDSStore(path string) (bool, error) {

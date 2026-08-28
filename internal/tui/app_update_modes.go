@@ -56,7 +56,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openTodoPendingLaunchDialogForSelection(todoPendingLaunchDialogFocusOK)
 			}
 			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowOrphaned {
-				m.status = orphanedWorktreeListSummary(row.OrphanedDSStoreOnly)
+				m.status = orphanedWorktreeListSummary(row.OrphanedCleanupKind)
 				return m, nil
 			}
 			project, ok := m.selectedProject()
