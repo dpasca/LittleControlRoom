@@ -993,7 +993,7 @@ func runtimeTools(todoMode todocapture.CaptureMode, structuredTools, claudeAppro
 		},
 		mcpTool{
 			Name:        "request_browser_attention",
-			Description: "Notify Little Control Room that the already-open managed Playwright page for this same embedded session needs human interaction, such as login, MFA, consent, or CAPTCHA. Call this only after navigating to the exact page with Playwright. Provide a short user-facing instruction. On success, stop the current turn and do not call Playwright again until the user sends a new message. Do not open a separate browser context.",
+			Description: "Notify Little Control Room that the already-open managed Playwright page for this same embedded session needs human interaction, such as login, MFA, consent, or CAPTCHA. Call this only after navigating to the exact page with Playwright. The current tab must not have received browser_resize, which installs a fixed emulated viewport; if it has, create a fresh tab before navigating to the handoff page. Never silently reload or replace an already-ready one-time or stateful page. Provide a short user-facing instruction. On success, stop the current turn and do not call Playwright again until the user sends a new message. Do not open a separate browser context.",
 			InputSchema: map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,

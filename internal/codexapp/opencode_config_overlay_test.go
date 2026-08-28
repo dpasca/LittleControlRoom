@@ -64,6 +64,11 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 	if !strings.Contains(text, "lcr_runtime/request_browser_attention") || !strings.Contains(text, "exact page") {
 		t.Fatalf("overlay Playwright skill text missing structured browser-attention handoff guidance: %s", text)
 	}
+	for _, want := range []string{"fixed emulated viewport", "disposable tab", "create a fresh tab first"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("overlay Playwright skill text missing viewport-hygiene guidance for %q: %s", want, text)
+		}
+	}
 
 	runtimeSkillPath := filepath.Join(overlayRoot, "opencode", "skills", "runtime", "SKILL.md")
 	runtimeRaw, err := os.ReadFile(runtimeSkillPath)

@@ -155,4 +155,28 @@ done
 	if got := cfg["browserChannel"]; got != "chrome" {
 		t.Fatalf("browserChannel = %#v, want chrome for background handoff", got)
 	}
+	if got := cfg["viewport"]; got != nil {
+		t.Fatalf("viewport = %#v, want native window sizing for background handoff", got)
+	}
+}
+
+func TestPlaywrightWorkerViewportKeepsHeadlessRunsDeterministic(t *testing.T) {
+	viewport := playwrightWorkerViewport(ManagedLaunchModeHeadless)
+	if viewport == nil || viewport.Width != 1280 || viewport.Height != 900 {
+		t.Fatalf("headless viewport = %#v, want 1280x900", viewport)
+	}
+	for _, launchMode := range []ManagedLaunchMode{ManagedLaunchModeHeaded, ManagedLaunchModeBackground} {
+		if viewport := playwrightWorkerViewport(launchMode); viewport != nil {
+			t.Fatalf("%s viewport = %#v, want native window sizing", launchMode, viewport)
+		}
+	}
+}
+
+func TestPlaywrightWorkerSourceUsesConfiguredViewport(t *testing.T) {
+	if !strings.Contains(playwrightWorkerSource, "viewport: config.viewport") {
+		t.Fatalf("worker source does not pass through the launch-mode viewport")
+	}
+	if strings.Contains(playwrightWorkerSource, "viewport: { width: 1280, height: 900 }") {
+		t.Fatalf("worker source still forces a fixed viewport for headed launches")
+	}
 }

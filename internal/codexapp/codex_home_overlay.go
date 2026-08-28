@@ -26,6 +26,14 @@ Use the Playwright MCP tools directly.
 Do not shell out to ` + "`npx @playwright/mcp`" + `, ` + "`playwright-mcp`" + `, ` + "`playwright_cli.sh`" + `, or any standalone Playwright browser launcher from the terminal unless the user explicitly asks to debug that wrapper itself.
 `
 
+const shadowPlaywrightViewportHygieneMarkdown = `
+## Window sizing
+
+- ` + "`browser_resize`" + ` installs a fixed emulated viewport on the current tab. It does not resize the native browser window, and Playwright cannot safely restore native sizing on that same tab.
+- Use ` + "`browser_resize`" + ` only in a disposable tab: create the tab before navigating or resizing, run the responsive check there, then close it before ending the turn unless the user explicitly asked to keep that emulation visible.
+- Never resize a tab that may be shown to the user. If the current tab was resized, create a fresh tab first and navigate that fresh tab to the exact handoff page. Tabs share the managed browser context, so cookies and origin-shared state remain available without carrying over the fixed viewport. Prepare the fresh tab before entering a one-time or stateful handoff flow; never silently reload or replace an already-ready page if that could lose form or session state.
+`
+
 const shadowPlaywrightBrowserAttentionMarkdown = `
 ## When the user needs to interact with the page
 
@@ -52,7 +60,7 @@ const shadowPlaywrightGuardrailsMarkdown = `
 `
 
 func shadowPlaywrightSkillMarkdown(runtimeAvailable bool) string {
-	text := shadowPlaywrightSkillMarkdownBase
+	text := shadowPlaywrightSkillMarkdownBase + shadowPlaywrightViewportHygieneMarkdown
 	if runtimeAvailable {
 		text += shadowPlaywrightBrowserAttentionMarkdown
 	} else {
