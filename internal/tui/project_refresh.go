@@ -34,7 +34,7 @@ type projectsMsg struct {
 	categories                []model.ProjectCategory
 	openAgentTasks            []model.AgentTask
 	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
-	orphanedDSStoreOnlyByPath map[string]bool
+	orphanedCleanupKindByPath map[string]service.ResidualWorktreeCleanupKind
 	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
 	excludeProjectPatterns    []string
 	err                       error
@@ -668,11 +668,11 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			return projectsMsg{err: err}
 		}
 		orphanedWorktrees := make(map[string]model.ProjectSummary, len(orphanedDirectories))
-		orphanedDSStoreOnlyByPath := make(map[string]bool, len(orphanedDirectories))
+		orphanedCleanupKindByPath := make(map[string]service.ResidualWorktreeCleanupKind, len(orphanedDirectories))
 		for path, directory := range orphanedDirectories {
 			orphanedWorktrees[path] = directory.Summary
-			if directory.DSStoreOnly {
-				orphanedDSStoreOnlyByPath[normalizeProjectPath(path)] = true
+			if directory.CleanupKind != service.ResidualWorktreeCleanupUnknown {
+				orphanedCleanupKindByPath[normalizeProjectPath(path)] = directory.CleanupKind
 			}
 		}
 		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
@@ -695,7 +695,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			categories:                categories,
 			openAgentTasks:            openAgentTasks,
 			orphanedWorktreesByRoot:   buildOrphanedWorktreeMap(orphanedWorktrees),
-			orphanedDSStoreOnlyByPath: orphanedDSStoreOnlyByPath,
+			orphanedCleanupKindByPath: orphanedCleanupKindByPath,
 			repositoryIntegrityByRoot: integrityStates,
 			excludeProjectPatterns:    patterns,
 			filterErr:                 filterErr,

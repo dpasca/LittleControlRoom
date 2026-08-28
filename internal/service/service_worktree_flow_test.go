@@ -1060,7 +1060,7 @@ func TestFinishSafeWorktreeRemovalAfterGitErrorRequiresUnregisteredDSStoreOnlyRe
 				return []scanner.GitWorktree{{Path: rootPath}}, nil
 			},
 		}
-		if err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, residualPath, removeErr); err != nil {
+		if err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, residualPath, "", removeErr); err != nil {
 			t.Fatalf("finishSafeWorktreeRemovalAfterGitError() error = %v", err)
 		}
 		if _, err := os.Lstat(residualPath); !os.IsNotExist(err) {
@@ -1085,7 +1085,7 @@ func TestFinishSafeWorktreeRemovalAfterGitErrorRequiresUnregisteredDSStoreOnlyRe
 				return []scanner.GitWorktree{{Path: rootPath}, {Path: worktreePath}}, nil
 			},
 		}
-		err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, worktreePath, removeErr)
+		err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, worktreePath, "", removeErr)
 		if !errors.Is(err, removeErr) {
 			t.Fatalf("finishSafeWorktreeRemovalAfterGitError() error = %v, want original removal error", err)
 		}
@@ -1111,7 +1111,7 @@ func TestFinishSafeWorktreeRemovalAfterGitErrorRequiresUnregisteredDSStoreOnlyRe
 				return []scanner.GitWorktree{{Path: rootPath}}, nil
 			},
 		}
-		err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, residualPath, removeErr)
+		err := svc.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, model.WorktreeKindLinked, residualPath, "", removeErr)
 		if !errors.Is(err, removeErr) || !strings.Contains(err.Error(), "left it untouched") {
 			t.Fatalf("finishSafeWorktreeRemovalAfterGitError() error = %v, want guarded original error", err)
 		}

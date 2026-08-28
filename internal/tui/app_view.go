@@ -1216,7 +1216,7 @@ func (m Model) renderProjectList(width, height int) string {
 			namePrefix = "  ↳ "
 			nameLabel = projectWorktreeLabel(p)
 			statusText = "orphaned"
-			assessmentText = orphanedWorktreeListSummary(rowMeta.OrphanedDSStoreOnly)
+			assessmentText = orphanedWorktreeListSummary(rowMeta.OrphanedCleanupKind)
 			statusStyle = detailWarningStyle
 			summaryStyle = detailWarningStyle
 			nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)

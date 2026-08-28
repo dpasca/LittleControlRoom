@@ -239,17 +239,35 @@ LCR treats a `root-name--suffix` sibling containing exactly one regular
 `.DS_Store` file as a residual linked-worktree directory rather than a
 standalone project. It remains attached to the repository family as an orphaned
 checkout warning. From the repository root, `x` or `/wt remove` offers guarded
-cleanup across those warnings. Cleanup rechecks every directory and only calls
-non-recursive file removal for `.DS_Store`, followed by non-recursive removal of
-the now-empty directory. A symlink, an empty folder, or any additional entry
-causes that folder to be kept untouched.
+cleanup across those warnings. Cleanup rechecks every directory and uses
+non-recursive removal for the `.DS_Store` followed by the now-empty directory.
+A symlink or any additional entry keeps this simple cleanup path blocked.
 
 The same guard handles a Finder race during normal removal. If
 `git worktree remove` unregisters the checkout but reports an error because its
 final directory deletion encountered a newly created `.DS_Store`, LCR verifies
 that the path is no longer registered and that the sole remaining entry is one
-regular `.DS_Store` before finishing cleanup. A still-registered worktree or any
-other residue preserves the original Git failure and remains untouched.
+regular `.DS_Store` before finishing cleanup.
+
+Finder can also create `.DS_Store` inside a nested directory while Git is
+walking the checkout. Git may then unregister the worktree and stop partway
+through deletion, leaving a stale root `.git` pointer plus an arbitrary subset
+of tracked files. LCR exposes `x` and `/remove` for this partial-removal shape,
+but performs the expensive verification only after confirmation and off the UI
+thread. Under the repository Git-write lock it requires the stale `.git` target
+to be a now-missing direct child of the expected common Git `worktrees`
+directory, resolves the recorded current or initial branch, and recursively
+checks every remaining regular project file and executable bit against that
+commit. Missing tracked files are expected; nested regular `.DS_Store` files
+and empty directories are allowed.
+
+Cleanup remains fail-closed. An untracked, changed, unreadable, symlinked, or
+special entry blocks removal, as do a missing branch and a foreign or live Git
+pointer. After verification, LCR rechecks each filesystem entry and removes it
+bottom-up with individual non-recursive calls. A new entry appearing during
+cleanup makes directory removal fail instead of being traversed or deleted.
+Repository-level cleanup keeps every unverified orphan untouched and reports
+the number retained.
 
 ## 10. Deleted-worktree session cleanup
 

@@ -42,7 +42,7 @@ type Model struct {
 	projectCategories         []model.ProjectCategory
 	openAgentTasks            []model.AgentTask
 	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
-	orphanedDSStoreOnlyByPath map[string]bool
+	orphanedCleanupKindByPath map[string]service.ResidualWorktreeCleanupKind
 	worktreeFamilies          map[string][]model.ProjectSummary
 	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
 	projectTabProjects        map[string][]model.ProjectSummary
@@ -1976,7 +1976,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureSelectedCategoryTab()
 		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
-		m.orphanedDSStoreOnlyByPath = msg.orphanedDSStoreOnlyByPath
+		m.orphanedCleanupKindByPath = msg.orphanedCleanupKindByPath
 		m.repositoryIntegrityByRoot = msg.repositoryIntegrityByRoot
 		m.rebuildProjectList(selectedPath)
 		m.reconcileMergeConflictResolverProjects()

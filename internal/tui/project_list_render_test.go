@@ -2133,8 +2133,8 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 				RepoBranch:       "todo/stale-lane",
 			}},
 		},
-		orphanedDSStoreOnlyByPath: map[string]bool{
-			"/tmp/repo--stale-lane": true,
+		orphanedCleanupKindByPath: map[string]service.ResidualWorktreeCleanupKind{
+			"/tmp/repo--stale-lane": service.ResidualWorktreeCleanupDSStoreOnly,
 		},
 		sortMode:   sortByAttention,
 		visibility: visibilityAllFolders,

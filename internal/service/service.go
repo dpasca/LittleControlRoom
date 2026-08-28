@@ -1698,7 +1698,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		inferredMissingLinkedWorktree := false
 		residualLinkedWorktree := false
 		if presentOnDisk && !isGitRepo {
-			if inferredRootPath, ok := inferResidualLinkedWorktreeRoot(path); ok {
+			if inferredRootPath, ok := s.inferResidualLinkedWorktreeRoot(ctx, path); ok {
 				worktreeRootPath = inferredRootPath
 				worktreeKind = model.WorktreeKindLinked
 				residualLinkedWorktree = true
@@ -2402,16 +2402,27 @@ func inferMissingLinkedWorktreeRoot(projectPath string) (string, bool) {
 	return inferLinkedWorktreeRootFromSiblingName(projectPath)
 }
 
-func inferResidualLinkedWorktreeRoot(projectPath string) (string, bool) {
+func (s *Service) inferResidualLinkedWorktreeRoot(ctx context.Context, projectPath string) (string, bool) {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" || projectPath == "." {
 		return "", false
 	}
-	onlyDSStore, err := directoryContainsOnlyRegularDSStore(projectPath)
-	if err != nil || !onlyDSStore {
+	rootPath, rootFound := inferLinkedWorktreeRootFromSiblingName(projectPath)
+	if !rootFound {
 		return "", false
 	}
-	return inferLinkedWorktreeRootFromSiblingName(projectPath)
+	onlyDSStore, err := directoryContainsOnlyRegularDSStore(projectPath)
+	if err == nil && onlyDSStore {
+		return rootPath, true
+	}
+	if err != nil {
+		return "", false
+	}
+	_, staleGitFile, err := inspectStaleWorktreeGitFile(ctx, rootPath, projectPath)
+	if err != nil || !staleGitFile {
+		return "", false
+	}
+	return rootPath, true
 }
 
 func inferLinkedWorktreeRootFromSiblingName(projectPath string) (string, bool) {
@@ -3303,7 +3314,7 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		return meta
 	}
 	if !meta.isGitRepo {
-		if residualRootPath, ok := inferResidualLinkedWorktreeRoot(projectPath); ok {
+		if residualRootPath, ok := s.inferResidualLinkedWorktreeRoot(ctx, projectPath); ok {
 			meta.worktreeRootPath = residualRootPath
 			meta.worktreeKind = model.WorktreeKindLinked
 			meta.repoDirty = false

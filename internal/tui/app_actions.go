@@ -345,7 +345,7 @@ func (m *Model) removeProjectSummary(projectPath string) {
 		}
 		m.orphanedWorktreesByRoot[rootPath] = family
 	}
-	delete(m.orphanedDSStoreOnlyByPath, path)
+	delete(m.orphanedCleanupKindByPath, path)
 }
 
 func removeProjectSummaryFromSlice(projects []model.ProjectSummary, cleanPath string) []model.ProjectSummary {
@@ -412,8 +412,8 @@ func (m Model) orphanedWorktreeCount(rootPath string) int {
 	return len(m.orphanedWorktreeFamily(rootPath))
 }
 
-func (m Model) orphanedWorktreeContainsOnlyDSStore(projectPath string) bool {
-	return m.orphanedDSStoreOnlyByPath[normalizeProjectPath(projectPath)]
+func (m Model) orphanedWorktreeCleanupKind(projectPath string) service.ResidualWorktreeCleanupKind {
+	return m.orphanedCleanupKindByPath[normalizeProjectPath(projectPath)]
 }
 
 func (m *Model) markProjectSessionSeenLocal(projectPath string, seenAt time.Time) {

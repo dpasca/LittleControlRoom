@@ -1985,9 +1985,10 @@ func TestDispatchCommandWorktreeRemoveOnRootOpensResidualCleanupConfirm(t *testi
 	for _, want := range []string{
 		"Clean residual worktree folders",
 		"Clean Safe Residues",
-		"sole entry is one regular .DS_Store file",
-		"non-recursive deletes",
-		"containing another entry is kept untouched",
+		"partial Git removal",
+		"every remaining project file",
+		"Nested .DS_Store files",
+		"Unverified folders are kept untouched",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("residual cleanup confirmation missing %q in %q", want, rendered)
@@ -2005,6 +2006,69 @@ func TestDispatchCommandWorktreeRemoveOnRootOpensResidualCleanupConfirm(t *testi
 	}
 	if got.pendingGitSummary(rootPath) != worktreeResidualCleanupSummary {
 		t.Fatalf("pending summary = %q, want %q", got.pendingGitSummary(rootPath), worktreeResidualCleanupSummary)
+	}
+}
+
+func TestRemoveOnPartialOrphanedWorktreeOpensVerifiedCleanup(t *testing.T) {
+	rootPath := "/tmp/repo"
+	orphanPath := "/tmp/repo--partial-removal"
+	m := Model{
+		focusedPane: focusProjects,
+		allProjects: []model.ProjectSummary{{
+			Name:             "repo",
+			Path:             rootPath,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+		}},
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
+			rootPath: {{
+				Name:             "repo--partial-removal",
+				Path:             orphanPath,
+				PresentOnDisk:    true,
+				Forgotten:        true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+			}},
+		},
+		orphanedCleanupKindByPath: map[string]service.ResidualWorktreeCleanupKind{
+			orphanPath: service.ResidualWorktreeCleanupPartialGitDir,
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(orphanPath)
+
+	row, _, ok := m.selectedProjectRow()
+	if !ok || row.Kind != projectListRowOrphaned || row.OrphanedCleanupKind != service.ResidualWorktreeCleanupPartialGitDir {
+		t.Fatalf("selected partial orphan row = %#v, %v", row, ok)
+	}
+	if footer := ansi.Strip(m.renderFooter(160)); !strings.Contains(footer, "x cleanup") {
+		t.Fatalf("partial orphaned worktree footer missing cleanup action: %q", footer)
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("/remove should open partial-residue confirmation without scheduling work")
+	}
+	confirm := got.worktreeRemoveConfirm
+	if confirm == nil || confirm.ResidualCleanupKind != service.ResidualWorktreeCleanupPartialGitDir {
+		t.Fatalf("partial residual cleanup confirmation = %#v", confirm)
+	}
+	rendered := ansi.Strip(got.renderWorktreeRemoveConfirmOverlay("body", 100, 28))
+	for _, want := range []string{
+		"Clear orphaned worktree residue",
+		"stale .git pointer belongs to this",
+		"repository and every remaining project file",
+		"Nested .DS_Store files",
+		"untracked, changed, unreadable, symlinked",
+		"or special entry blocks cleanup",
+		"[Clear]",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("partial residual cleanup confirmation missing %q in %q", want, rendered)
+		}
 	}
 }
 
@@ -2030,14 +2094,14 @@ func TestRemoveOnEmptyOrphanedWorktreeOpensTargetedCleanup(t *testing.T) {
 				WorktreeKind:     model.WorktreeKindLinked,
 			}},
 		},
-		orphanedDSStoreOnlyByPath: map[string]bool{orphanPath: true},
+		orphanedCleanupKindByPath: map[string]service.ResidualWorktreeCleanupKind{orphanPath: service.ResidualWorktreeCleanupDSStoreOnly},
 		visibility:                visibilityAllFolders,
 		sortMode:                  sortByAttention,
 	}
 	m.rebuildProjectList(orphanPath)
 
 	row, _, ok := m.selectedProjectRow()
-	if !ok || row.Kind != projectListRowOrphaned || !row.OrphanedDSStoreOnly {
+	if !ok || row.Kind != projectListRowOrphaned || row.OrphanedCleanupKind != service.ResidualWorktreeCleanupDSStoreOnly {
 		t.Fatalf("selected orphaned row = %#v, %v", row, ok)
 	}
 	if footer := ansi.Strip(m.renderFooter(160)); !strings.Contains(footer, "x cleanup") {
@@ -2128,7 +2192,7 @@ func TestResidualWorktreeCleanupStatusReportsRemovedAndKeptFolders(t *testing.T)
 		RemovedPaths: []string{"/tmp/repo--one", "/tmp/repo--two"},
 		KeptPaths:    []string{"/tmp/repo--keep"},
 	})
-	want := "Cleared 2 .DS_Store-only residual folder(s); kept 1 orphaned folder(s) containing other files"
+	want := "Cleared 2 verified residual folder(s); kept 1 orphaned folder(s) with unverified entries"
 	if got != want {
 		t.Fatalf("residualWorktreeCleanupStatus() = %q, want %q", got, want)
 	}
