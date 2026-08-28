@@ -52,6 +52,69 @@ func TestControllerAcquireInteractiveBlocksSecondOwner(t *testing.T) {
 	}
 }
 
+func TestControllerAcquireInteractiveReclaimsStaleOwner(t *testing.T) {
+	now := time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
+	controller := NewController()
+	controller.nowFn = func() time.Time { return now }
+	owner := managedObservation("/tmp/a", "thread-a", "https://example.test/a")
+	owner.UpdatedAt = now
+	target := managedObservation("/tmp/b", "thread-b", "https://example.test/b")
+	target.UpdatedAt = now
+	controller.Observe(owner)
+	controller.Observe(target)
+	controller.AcquireInteractive(owner.Ref)
+
+	now = now.Add(interactiveLeaseReclaimAfter)
+	result := controller.AcquireInteractive(target.Ref)
+	if !result.Granted {
+		t.Fatalf("stale interactive owner should be reclaimed, blocker = %#v", result.Owner)
+	}
+	if result.Snapshot.Interactive == nil || result.Snapshot.Interactive.Ref != target.Ref.Normalize() {
+		t.Fatalf("interactive owner = %#v, want target", result.Snapshot.Interactive)
+	}
+	if len(result.Snapshot.Waiting) != 1 || result.Snapshot.Waiting[0].Ref != owner.Ref.Normalize() {
+		t.Fatalf("waiting leases = %#v, want previous owner", result.Snapshot.Waiting)
+	}
+}
+
+func TestControllerSnapshotDemotesStaleOwnerWithoutAnotherRequest(t *testing.T) {
+	now := time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
+	controller := NewController()
+	controller.nowFn = func() time.Time { return now }
+	owner := managedObservation("/tmp/a", "thread-a", "https://example.test/a")
+	owner.UpdatedAt = now
+	controller.Observe(owner)
+	controller.AcquireInteractive(owner.Ref)
+
+	now = now.Add(interactiveLeaseReclaimAfter)
+	snapshot := controller.Snapshot()
+	if snapshot.Interactive != nil {
+		t.Fatalf("stale interactive owner should be demoted, got %#v", snapshot.Interactive)
+	}
+	if len(snapshot.Waiting) != 1 || snapshot.Waiting[0].Ref != owner.Ref.Normalize() {
+		t.Fatalf("waiting leases = %#v, want stale owner retained as waiting", snapshot.Waiting)
+	}
+}
+
+func TestControllerObserveDoesNotMakeAcquiredLeaseOldAgain(t *testing.T) {
+	now := time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
+	controller := NewController()
+	controller.nowFn = func() time.Time { return now }
+	owner := managedObservation("/tmp/a", "thread-a", "https://example.test/a")
+	owner.UpdatedAt = now.Add(-time.Hour)
+	controller.Observe(owner)
+	controller.AcquireInteractive(owner.Ref)
+
+	controller.Observe(owner)
+	snapshot := controller.Snapshot()
+	if snapshot.Interactive == nil {
+		t.Fatal("an old provider event timestamp should not expire a newly acquired lease")
+	}
+	if !snapshot.Interactive.UpdatedAt.Equal(now) {
+		t.Fatalf("lease updated at = %v, want acquisition time %v", snapshot.Interactive.UpdatedAt, now)
+	}
+}
+
 func TestControllerObserveRemovesResolvedOwner(t *testing.T) {
 	controller := NewController()
 	obs := managedObservation("/tmp/a", "thread-a", "https://example.test/a")
