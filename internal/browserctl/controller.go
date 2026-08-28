@@ -44,6 +44,7 @@ type InteractiveLeaseState string
 const (
 	InteractiveLeaseStateWaiting     InteractiveLeaseState = "waiting"
 	InteractiveLeaseStateInteractive InteractiveLeaseState = "interactive"
+	interactiveLeaseReclaimAfter                           = 10 * time.Minute
 )
 
 type InteractiveLease struct {
@@ -93,10 +94,14 @@ type Controller struct {
 	mu             sync.Mutex
 	leases         map[string]InteractiveLease
 	interactiveKey string
+	nowFn          func() time.Time
 }
 
 func NewController() *Controller {
-	return &Controller{leases: make(map[string]InteractiveLease)}
+	return &Controller{
+		leases: make(map[string]InteractiveLease),
+		nowFn:  time.Now,
+	}
 }
 
 func (c *Controller) Snapshot() ControllerSnapshot {
@@ -141,7 +146,13 @@ func (c *Controller) Observe(observation Observation) ControllerSnapshot {
 		lease.UpdatedAt = observation.Activity.Normalize().LastEventAt
 	}
 	if lease.UpdatedAt.IsZero() {
-		lease.UpdatedAt = time.Now()
+		lease.UpdatedAt = c.currentTime()
+	}
+	if previous, ok := c.leases[key]; ok && previous.UpdatedAt.After(lease.UpdatedAt) {
+		// Snapshot observations may still carry the handoff's original event
+		// time after the user has revealed the browser. Never let that older
+		// provider timestamp erase a newer lease acquisition or renewal.
+		lease.UpdatedAt = previous.UpdatedAt
 	}
 	if c.interactiveKey == key {
 		lease.State = InteractiveLeaseStateInteractive
@@ -180,6 +191,8 @@ func (c *Controller) AcquireInteractive(ref SessionRef) InteractiveAcquireResult
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	now := c.currentTime()
+	c.expireStaleInteractiveLocked(now)
 
 	lease, ok := c.leases[key]
 	if !ok {
@@ -188,7 +201,7 @@ func (c *Controller) AcquireInteractive(ref SessionRef) InteractiveAcquireResult
 	if c.interactiveKey == "" || c.interactiveKey == key {
 		c.interactiveKey = key
 		lease.State = InteractiveLeaseStateInteractive
-		lease.UpdatedAt = time.Now()
+		lease.UpdatedAt = now
 		c.leases[key] = lease
 		return InteractiveAcquireResult{
 			Granted:  true,
@@ -220,6 +233,8 @@ func (c *Controller) TakeOverInteractive(ref SessionRef) InteractiveAcquireResul
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	now := c.currentTime()
+	c.expireStaleInteractiveLocked(now)
 
 	lease, ok := c.leases[key]
 	if !ok {
@@ -238,7 +253,7 @@ func (c *Controller) TakeOverInteractive(ref SessionRef) InteractiveAcquireResul
 
 	c.interactiveKey = key
 	lease.State = InteractiveLeaseStateInteractive
-	lease.UpdatedAt = time.Now()
+	lease.UpdatedAt = now
 	c.leases[key] = lease
 	return InteractiveAcquireResult{
 		Granted:  true,
@@ -290,6 +305,7 @@ func observationTracksManagedLogin(ref SessionRef, policy Policy, activity Sessi
 }
 
 func (c *Controller) snapshotLocked() ControllerSnapshot {
+	c.expireStaleInteractiveLocked(c.currentTime())
 	if c.interactiveKey != "" {
 		if _, ok := c.leases[c.interactiveKey]; !ok {
 			c.interactiveKey = ""
@@ -318,4 +334,33 @@ func (c *Controller) snapshotLocked() ControllerSnapshot {
 		return snapshot.Waiting[i].UpdatedAt.After(snapshot.Waiting[j].UpdatedAt)
 	})
 	return snapshot
+}
+
+func (c *Controller) expireStaleInteractiveLocked(now time.Time) {
+	if c.interactiveKey == "" {
+		return
+	}
+	lease, ok := c.leases[c.interactiveKey]
+	if !ok {
+		c.interactiveKey = ""
+		return
+	}
+	lease = lease.Normalize()
+	if lease.UpdatedAt.IsZero() || now.IsZero() {
+		return
+	}
+	age := now.Sub(lease.UpdatedAt)
+	if age < interactiveLeaseReclaimAfter {
+		return
+	}
+	lease.State = InteractiveLeaseStateWaiting
+	c.leases[c.interactiveKey] = lease
+	c.interactiveKey = ""
+}
+
+func (c *Controller) currentTime() time.Time {
+	if c != nil && c.nowFn != nil {
+		return c.nowFn()
+	}
+	return time.Now()
 }
