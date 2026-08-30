@@ -1033,6 +1033,131 @@ func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Remove a checkout whose old path now contains a nested repository",
+		"feat/prunable-checkout",
+		"feat-prunable-checkout",
+	)
+	if err := os.Remove(filepath.Join(result.WorktreePath, ".git")); err != nil {
+		t.Fatalf("remove linked checkout git file: %v", err)
+	}
+	nestedRepositoryPath := filepath.Join(result.WorktreePath, "Apps", "Assets")
+	initGitRepo(t, nestedRepositoryPath)
+
+	worktrees, err := scanner.ListGitWorktrees(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("ListGitWorktrees() before removal error = %v", err)
+	}
+	prunable := false
+	for _, worktree := range worktrees {
+		if samePath(worktree.Path, result.WorktreePath) && strings.TrimSpace(worktree.PrunableReason) != "" {
+			prunable = true
+			break
+		}
+	}
+	if !prunable {
+		t.Fatalf("worktrees before removal = %#v, want prunable entry for %s", worktrees, result.WorktreePath)
+	}
+	if err := svc.RefreshProjectStatus(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("RefreshProjectStatus() with prunable occupied checkout error = %v", err)
+	}
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after prunable refresh error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
+		t.Fatalf("refreshed prunable occupied checkout state = %#v, want forgotten and missing", detail.Summary)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() with prunable occupied checkout error = %v", err)
+	}
+	detail, err = st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after prunable scan error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
+		t.Fatalf("prunable occupied checkout state = %#v, want forgotten and missing", detail.Summary)
+	}
+
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+		t.Fatalf("RemoveWorktree() for prunable checkout error = %v", err)
+	}
+	if !projectIsGitRepo(nestedRepositoryPath) {
+		t.Fatalf("nested repository was removed with stale outer checkout: %s", nestedRepositoryPath)
+	}
+	if !projectPathExists(result.WorktreePath) {
+		t.Fatalf("occupied former checkout path was removed: %s", result.WorktreePath)
+	}
+
+	worktrees, err = scanner.ListGitWorktrees(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("ListGitWorktrees() after removal error = %v", err)
+	}
+	for _, worktree := range worktrees {
+		if samePath(worktree.Path, result.WorktreePath) {
+			t.Fatalf("pruned worktree %q still present in git worktree list: %#v", result.WorktreePath, worktrees)
+		}
+	}
+	detail, err = st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after removal error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
+		t.Fatalf("removed outer checkout state = %#v, want forgotten and missing", detail.Summary)
+	}
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() after removal error = %v", err)
+	}
+	detail, err = st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after rescan error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk ||
+		detail.Summary.WorktreeKind != model.WorktreeKindLinked ||
+		!samePath(detail.Summary.WorktreeRootPath, projectPath) {
+		t.Fatalf("rescanned outer checkout state = %#v, want retained missing linked-worktree history", detail.Summary)
+	}
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() after rescan error = %v", err)
+	}
+	for _, project := range visible {
+		if samePath(project.Path, result.WorktreePath) {
+			t.Fatalf("missing outer checkout was revived after rescan: %#v", project)
+		}
+	}
+}
+
 func TestRemoveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
 	t.Parallel()
 

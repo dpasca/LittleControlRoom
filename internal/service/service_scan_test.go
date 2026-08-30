@@ -2601,6 +2601,83 @@ func TestScanOnceMarksPrunedLinkedWorktreeAsForgotten(t *testing.T) {
 	}
 }
 
+func TestScanOnceDoesNotRediscoverPrunableCheckoutFromSessionActivity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--old-task")
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature/prunable-session", worktreePath)
+	if err := os.Remove(filepath.Join(worktreePath, ".git")); err != nil {
+		t.Fatalf("remove linked checkout git file: %v", err)
+	}
+	nestedRepositoryPath := filepath.Join(worktreePath, "Apps", "Assets")
+	initGitRepo(t, nestedRepositoryPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	activityAt := time.Now().Add(-10 * time.Minute).UTC().Truncate(time.Second)
+	detector := staticDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			worktreePath: fakeActivity(worktreePath, "ses_prunable_checkout", activityAt),
+		},
+	}
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 5)
+	if err != nil && !strings.Contains(err.Error(), "project not found") {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if err == nil {
+		if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk || detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+			t.Fatalf("prunable checkout was rediscovered as a live project: %#v", detail.Summary)
+		}
+	}
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	for _, project := range visible {
+		if samePath(project.Path, worktreePath) {
+			t.Fatalf("prunable checkout was visible after scan: %#v", project)
+		}
+	}
+	if !projectIsGitRepo(nestedRepositoryPath) {
+		t.Fatalf("scan changed nested repository at %s", nestedRepositoryPath)
+	}
+
+	worktrees, err := scanner.ListGitWorktrees(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("ListGitWorktrees() error = %v", err)
+	}
+	prunableStillRegistered := false
+	for _, worktree := range worktrees {
+		if samePath(worktree.Path, worktreePath) && strings.TrimSpace(worktree.PrunableReason) != "" {
+			prunableStillRegistered = true
+			break
+		}
+	}
+	if !prunableStillRegistered {
+		t.Fatalf("scan should not mutate Git's prunable registration: %#v", worktrees)
+	}
+}
+
 func TestScanOnceForgetsMissingLinkedWorktreeWithLostMetadata(t *testing.T) {
 	t.Parallel()
 

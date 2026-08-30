@@ -1695,13 +1695,31 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		worktreeParentBranch := old.WorktreeParentBranch
 		worktreeMergeStatus := old.WorktreeMergeStatus
 		reconciledWorktree, wasReconciled := worktreeExpansion.reconciled[path]
+		prunableWorktree, wasPrunable := worktreeExpansion.prunableWorktree(path)
+		if wasPrunable {
+			worktreeRootPath = prunableWorktree.rootPath
+			worktreeKind = prunableWorktree.kind
+			if strings.TrimSpace(worktreeParentBranch) == "" {
+				worktreeParentBranch = prunableWorktree.parentBranch
+			}
+		}
 		inferredMissingLinkedWorktree := false
 		residualLinkedWorktree := false
+		missingLinkedCheckoutAtOccupiedPath := false
 		if presentOnDisk && !isGitRepo {
 			if inferredRootPath, ok := s.inferResidualLinkedWorktreeRoot(ctx, path); ok {
 				worktreeRootPath = inferredRootPath
 				worktreeKind = model.WorktreeKindLinked
 				residualLinkedWorktree = true
+			} else if wasPrunable {
+				missingLinkedCheckoutAtOccupiedPath = true
+			} else if worktreeKind == model.WorktreeKindLinked && strings.TrimSpace(worktreeRootPath) != "" {
+				// A linked checkout can disappear while another repository (most
+				// commonly an initialized submodule worktree) keeps an ancestor
+				// directory at the same path. Preserve the linked-worktree identity
+				// until the root's worktree list tells us whether the checkout is
+				// still registered instead of reviving the directory as a project.
+				missingLinkedCheckoutAtOccupiedPath = liveLinkedWorktreeMissing(liveWorktreePathsByRoot, worktreeRootPath, path)
 			} else {
 				worktreeRootPath = ""
 				worktreeKind = model.WorktreeKindNone
@@ -1709,6 +1727,9 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 				worktreeMergeStatus = model.WorktreeMergeStatus("")
 			}
 		} else if !presentOnDisk {
+			if wasPrunable {
+				inferredMissingLinkedWorktree = true
+			}
 			if worktreeKind == model.WorktreeKindNone || strings.TrimSpace(worktreeRootPath) == "" {
 				if inferredRootPath, ok := inferMissingLinkedWorktreeRoot(path); ok {
 					worktreeRootPath = inferredRootPath
@@ -1767,7 +1788,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		}
 		archived := archivedWithWorktreeRoot(old.Archived, worktreeRootPath, worktreeKind, oldMap)
 		forgotten := old.Forgotten
-		staleLinkedWorktree := residualLinkedWorktree
+		staleLinkedWorktree := residualLinkedWorktree || missingLinkedCheckoutAtOccupiedPath
 		if worktreeKind == model.WorktreeKindLinked && liveLinkedWorktreeMissing(liveWorktreePathsByRoot, worktreeRootPath, path) {
 			staleLinkedWorktree = true
 			forgotten = true
@@ -1778,8 +1799,14 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		if inferredMissingLinkedWorktree {
 			forgotten = true
 		}
-		if presentOnDisk && forgotten && scope.Allows(path) && !staleLinkedWorktree {
+		if isGitRepo && forgotten && scope.Allows(path) && !staleLinkedWorktree {
 			forgotten = false
+		}
+		if missingLinkedCheckoutAtOccupiedPath {
+			// PresentOnDisk describes the checkout, not an unrelated directory
+			// that merely occupies its former path. Descendant projects are
+			// discovered and persisted independently.
+			presentOnDisk = false
 		}
 		if forgotten && !presentOnDisk {
 			if inferredMissingLinkedWorktree {
@@ -2450,25 +2477,55 @@ func (s *Service) staleLinkedWorktreeOnDisk(ctx context.Context, rootPath string
 	return s.staleLinkedWorktreeOnDiskWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
 }
 
-func (s *Service) staleLinkedWorktreeOnDiskWithReader(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string, worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) bool {
-	if s == nil || worktreeListReader == nil || kind != model.WorktreeKindLinked {
-		return false
+type linkedWorktreeRegistration uint8
+
+const (
+	linkedWorktreeRegistrationUnknown linkedWorktreeRegistration = iota
+	linkedWorktreeRegistrationAbsent
+	linkedWorktreeRegistrationLive
+	linkedWorktreeRegistrationPrunable
+)
+
+func linkedWorktreeRegistrationWithReader(
+	ctx context.Context,
+	rootPath string,
+	kind model.WorktreeKind,
+	projectPath string,
+	worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error),
+) (linkedWorktreeRegistration, error) {
+	if worktreeListReader == nil || kind != model.WorktreeKindLinked {
+		return linkedWorktreeRegistrationUnknown, nil
 	}
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
-	if rootPath == "" || projectPath == "" {
-		return false
+	if rootPath == "" || rootPath == "." || projectPath == "" || projectPath == "." {
+		return linkedWorktreeRegistrationUnknown, nil
 	}
 	worktrees, err := worktreeListReader(ctx, rootPath)
-	if err != nil || len(worktrees) == 0 {
-		return false
+	if err != nil {
+		return linkedWorktreeRegistrationUnknown, err
+	}
+	if len(worktrees) == 0 {
+		return linkedWorktreeRegistrationUnknown, nil
 	}
 	for _, worktree := range worktrees {
-		if samePath(worktree.Path, projectPath) {
-			return false
+		if !samePath(worktree.Path, projectPath) {
+			continue
 		}
+		if strings.TrimSpace(worktree.PrunableReason) != "" {
+			return linkedWorktreeRegistrationPrunable, nil
+		}
+		return linkedWorktreeRegistrationLive, nil
 	}
-	return true
+	return linkedWorktreeRegistrationAbsent, nil
+}
+
+func (s *Service) staleLinkedWorktreeOnDiskWithReader(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string, worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) bool {
+	if s == nil {
+		return false
+	}
+	registration, err := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, worktreeListReader)
+	return err == nil && (registration == linkedWorktreeRegistrationAbsent || registration == linkedWorktreeRegistrationPrunable)
 }
 
 func reconcileGlobalSessionOwnership(activities map[string]*model.DetectorProjectActivity) {
@@ -3217,7 +3274,7 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		if metadata.staleLinkedWorktree {
 			forgotten = true
 		}
-		if metadata.presentOnDisk && forgotten && detail.Summary.InScope && !metadata.staleLinkedWorktree {
+		if metadata.isGitRepo && forgotten && detail.Summary.InScope && !metadata.staleLinkedWorktree {
 			forgotten = false
 		}
 
@@ -3306,6 +3363,15 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		repoSubmoduleDirtyCount:    summary.RepoSubmoduleDirtyCount,
 		repoSubmoduleUnpushedCount: summary.RepoSubmoduleUnpushedCount,
 	}
+	clearUnavailableRepoStatus := func() {
+		meta.repoDirty = false
+		meta.repoConflict = false
+		meta.repoSyncStatus = model.RepoSyncStatus("")
+		meta.repoAheadCount = 0
+		meta.repoBehindCount = 0
+		meta.repoSubmoduleDirtyCount = 0
+		meta.repoSubmoduleUnpushedCount = 0
+	}
 	projectPath := filepath.Clean(strings.TrimSpace(summary.Path))
 	meta.presentOnDisk = projectPathExists(projectPath)
 	meta.isGitRepo = meta.presentOnDisk && projectIsGitRepo(projectPath)
@@ -3317,27 +3383,30 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		if residualRootPath, ok := s.inferResidualLinkedWorktreeRoot(ctx, projectPath); ok {
 			meta.worktreeRootPath = residualRootPath
 			meta.worktreeKind = model.WorktreeKindLinked
-			meta.repoDirty = false
-			meta.repoConflict = false
-			meta.repoSyncStatus = model.RepoSyncStatus("")
-			meta.repoAheadCount = 0
-			meta.repoBehindCount = 0
-			meta.repoSubmoduleDirtyCount = 0
-			meta.repoSubmoduleUnpushedCount = 0
+			clearUnavailableRepoStatus()
 			meta.staleLinkedWorktree = true
+			return meta
+		}
+		meta.staleLinkedWorktree = s.staleLinkedWorktreeOnDiskWithReader(ctx, meta.worktreeRootPath, meta.worktreeKind, projectPath, gitWorktreeListReader)
+		if meta.staleLinkedWorktree {
+			// The checkout is gone even if a descendant repository keeps the
+			// former path present as a plain directory.
+			meta.presentOnDisk = false
+			clearUnavailableRepoStatus()
+			return meta
+		}
+		if meta.worktreeKind == model.WorktreeKindLinked && strings.TrimSpace(meta.worktreeRootPath) != "" {
+			// A failed or inconclusive root worktree read must not erase the
+			// last known linked-worktree identity or revive the path as a plain
+			// project. A later successful refresh can reconcile it.
+			clearUnavailableRepoStatus()
 			return meta
 		}
 		meta.worktreeRootPath = ""
 		meta.worktreeKind = model.WorktreeKindNone
 		meta.worktreeMergeStatus = model.WorktreeMergeStatus("")
 		meta.repoBranch = ""
-		meta.repoDirty = false
-		meta.repoConflict = false
-		meta.repoSyncStatus = model.RepoSyncStatus("")
-		meta.repoAheadCount = 0
-		meta.repoBehindCount = 0
-		meta.repoSubmoduleDirtyCount = 0
-		meta.repoSubmoduleUnpushedCount = 0
+		clearUnavailableRepoStatus()
 		return meta
 	}
 	if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, projectPath, gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {

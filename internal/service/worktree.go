@@ -1268,7 +1268,30 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		return err
 	}
 	defer unlockGitWrite()
-	staleLinkedWorktree := s.staleLinkedWorktreeOnDisk(ctx, rootPath, kind, projectPath)
+	registration, registrationErr := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
+	if registrationErr != nil {
+		registration = linkedWorktreeRegistrationUnknown
+	}
+	missingCheckoutReconciled := false
+	if registration == linkedWorktreeRegistrationPrunable {
+		// Git still remembers this path, but its checkout metadata is already
+		// gone. Pruning removes only Git's stale administrative record; the
+		// directory may now be an ancestor of an independently live nested
+		// worktree, so leave its contents untouched.
+		if err := gitWorktreePrune(ctx, rootPath); err != nil {
+			return fmt.Errorf("prune missing worktree registration for %s: %w", projectPath, err)
+		}
+		afterPrune, inspectErr := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
+		if inspectErr != nil {
+			return fmt.Errorf("verify pruned worktree registration for %s: %w", projectPath, inspectErr)
+		}
+		if afterPrune != linkedWorktreeRegistrationAbsent {
+			return fmt.Errorf("Git still registers the missing worktree %s after pruning", projectPath)
+		}
+		presentOnDisk = false
+		missingCheckoutReconciled = true
+	}
+	staleLinkedWorktree := registration == linkedWorktreeRegistrationAbsent || registration == linkedWorktreeRegistrationPrunable
 	residualDirectoryRemoved := false
 	if presentOnDisk && staleLinkedWorktree {
 		summary := s.residualWorktreeSummary(ctx, projectPath)
@@ -1286,7 +1309,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		residualDirectoryRemoved = true
 	}
 	allowSubmoduleForceFallback := false
-	if presentOnDisk && !residualDirectoryRemoved && !force && s.gitRepoStatusReader != nil {
+	if presentOnDisk && !residualDirectoryRemoved && !missingCheckoutReconciled && !force && s.gitRepoStatusReader != nil {
 		status, err := s.gitRepoStatusReader(ctx, projectPath)
 		if err != nil {
 			return fmt.Errorf("read git status before removing worktree: %w", err)
@@ -1297,10 +1320,10 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		allowSubmoduleForceFallback = true
 	}
 	expectedCommit := ""
-	if presentOnDisk && !residualDirectoryRemoved {
+	if presentOnDisk && !residualDirectoryRemoved && !missingCheckoutReconciled {
 		expectedCommit, _ = gitCommitHash(ctx, projectPath, "HEAD")
 	}
-	if !residualDirectoryRemoved {
+	if !residualDirectoryRemoved && !missingCheckoutReconciled {
 		removeErr := gitWorktreeRemove(ctx, rootPath, projectPath, force)
 		if removeErr != nil && allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(removeErr) {
 			removeErr = gitWorktreeRemove(ctx, rootPath, projectPath, true)
@@ -1311,7 +1334,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 			}
 		}
 	}
-	if !residualDirectoryRemoved {
+	if !residualDirectoryRemoved && !missingCheckoutReconciled {
 		if err := worktreeprep.PruneSubmoduleWorktrees(ctx, rootPath); err != nil {
 			return fmt.Errorf("prune submodule worktrees after removing %s: %w", projectPath, err)
 		}
@@ -1323,7 +1346,11 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	}
 	// Reconcile the persisted presence immediately so merged-and-removed worktrees
 	// do not linger as orphaned checkouts until a later scan happens to revisit them.
-	if err := s.store.SetProjectPresence(ctx, projectPath, projectPathExists(projectPath)); err != nil {
+	recordedPresence := projectPathExists(projectPath)
+	if missingCheckoutReconciled {
+		recordedPresence = false
+	}
+	if err := s.store.SetProjectPresence(ctx, projectPath, recordedPresence); err != nil {
 		unlockProjectState()
 		return fmt.Errorf("record removed worktree presence: %w", err)
 	}
@@ -1629,7 +1656,24 @@ type worktreeExpansionResult struct {
 	paths          []string
 	liveByRoot     map[string]map[string]struct{}
 	reconciled     map[string]reconciledWorktree
+	prunable       map[string]reconciledWorktree
 	failuresByRoot map[string]worktreeExpansionFailure
+}
+
+func (r worktreeExpansionResult) prunableWorktree(path string) (reconciledWorktree, bool) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return reconciledWorktree{}, false
+	}
+	if worktree, ok := r.prunable[path]; ok {
+		return worktree, true
+	}
+	for candidate, worktree := range r.prunable {
+		if samePath(candidate, path) {
+			return worktree, true
+		}
+	}
+	return reconciledWorktree{}, false
 }
 
 func (r worktreeExpansionResult) failures() []worktreeExpansionFailure {
@@ -1663,6 +1707,7 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 	result := worktreeExpansionResult{
 		liveByRoot:     map[string]map[string]struct{}{},
 		reconciled:     map[string]reconciledWorktree{},
+		prunable:       map[string]reconciledWorktree{},
 		failuresByRoot: map[string]worktreeExpansionFailure{},
 	}
 	if s == nil || worktreeListReader == nil {
@@ -1736,6 +1781,9 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 
 		mainBranch := ""
 		for _, worktree := range normalized {
+			if strings.TrimSpace(worktree.PrunableReason) != "" {
+				continue
+			}
 			if worktree.Path == rootPath || worktree.IsMain {
 				mainBranch = strings.TrimSpace(worktree.Branch)
 				break
@@ -1750,6 +1798,25 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 		}
 		for _, worktree := range normalized {
 			worktreePath := worktree.Path
+			kind := model.WorktreeKindLinked
+			if worktreePath == rootPath || worktree.IsMain {
+				kind = model.WorktreeKindMain
+			}
+			metadata := reconciledWorktree{
+				rootPath:     rootPath,
+				branch:       strings.TrimSpace(worktree.Branch),
+				parentBranch: parentBranch,
+				kind:         kind,
+			}
+			// `git worktree list` retains administratively stale entries and
+			// labels them prunable. They are evidence of a missing checkout, not
+			// live worktrees to rediscover.
+			if strings.TrimSpace(worktree.PrunableReason) != "" {
+				if kind == model.WorktreeKindLinked {
+					result.prunable[worktreePath] = metadata
+				}
+				continue
+			}
 			rootSet[worktreePath] = struct{}{}
 			if scope.Allows(worktreePath) || oldMap[worktreePath].Path != "" || oldMap[rootPath].Path != "" || trackedFamily {
 				outSet[worktreePath] = struct{}{}
@@ -1758,16 +1825,7 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 			if !trackedFamily {
 				continue
 			}
-			kind := model.WorktreeKindLinked
-			if worktreePath == rootPath || worktree.IsMain {
-				kind = model.WorktreeKindMain
-			}
-			result.reconciled[worktreePath] = reconciledWorktree{
-				rootPath:     rootPath,
-				branch:       strings.TrimSpace(worktree.Branch),
-				parentBranch: parentBranch,
-				kind:         kind,
-			}
+			result.reconciled[worktreePath] = metadata
 		}
 	}
 	result.paths = sortedPathKeys(outSet)
