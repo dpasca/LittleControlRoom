@@ -144,7 +144,7 @@ Domain-specific work such as host/process cleanup is represented by resources an
 For example, a process cleanup task is an `agent` task with process and port resources plus `process.inspect` and `process.terminate` capabilities.
 
 Agent task workspaces live under Little Control Room app data internal workspaces and are treated as managed internal paths so scanning does not promote them to normal projects.
-Completed or archived temporary tasks should remain recallable through a short summary, then be purged after their expiry.
+Completed tasks remain visible and recallable until the user explicitly moves them to Trash. Trashed tasks retain their summary, managed workspace, and durable task record for seven days before those task-owned artifacts are purged together. The persisted protocol status remains `archived` for compatibility.
 
 ## System Notices
 

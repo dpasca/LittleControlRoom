@@ -1353,6 +1353,8 @@ func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.Agent
 		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "closing the agent task")
 		if msg.err != nil {
 			msg.status = "Control request failed: " + msg.err.Error()
+		} else if msg.task.Status == model.AgentTaskStatusArchived {
+			msg.status = fmt.Sprintf("Agent task %s moved to Trash", msg.task.ID)
 		} else {
 			msg.status = fmt.Sprintf("Agent task %s is now %s", msg.task.ID, msg.task.Status)
 		}
@@ -1569,7 +1571,7 @@ func (m Model) executeProjectArchiveBatchControlWithOutcome(_ control.ProjectArc
 	for _, project := range targets {
 		switch model.NormalizeProjectKind(project.Kind) {
 		case model.ProjectKindAgentTask:
-			err := fmt.Errorf("agent tasks use agent_task.close with archived status: %s", project.Path)
+			err := fmt.Errorf("agent tasks use the Trash action (agent_task.close with archived status): %s", project.Path)
 			m.status = "Control request failed: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		case model.ProjectKindScratchTask:

@@ -1307,7 +1307,7 @@ func (m Model) openHideActionForSelection() (tea.Model, tea.Cmd) {
 			return m, m.openWorktreeRemoveConfirmForSelection()
 		}
 	}
-	m.status = "Select an agent task or linked worktree to archive or remove it"
+	m.status = "Select an agent task or linked worktree to trash or remove it"
 	return m, nil
 }
 

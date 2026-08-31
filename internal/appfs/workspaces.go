@@ -11,9 +11,11 @@ import (
 
 const internalWorkspaceDirName = "internal-workspaces"
 
+const codexHomeOverlayPrefix = "lcroom-codex-home-"
+
 var persistentWorkspacePrefixes = []string{
 	"lcroom-agent-task-",
-	"lcroom-codex-home-",
+	codexHomeOverlayPrefix,
 }
 
 var reservedWorkspacePrefixes = []string{
@@ -106,6 +108,40 @@ func CleanupStaleInternalWorkspaces(dataDir string, maxAge time.Duration) error 
 		_ = os.RemoveAll(filepath.Join(root, entry.Name()))
 	}
 	return nil
+}
+
+// CleanupStaleCodexHomeOverlays removes expired per-launch overlays. They are
+// excluded from the generic workspace cleanup because they need a longer grace
+// period for recent Codex session resumes.
+func CleanupStaleCodexHomeOverlays(dataDir string, maxAge time.Duration) (int, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	root := InternalWorkspaceRoot(dataDir)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	cutoff := time.Now().Add(-maxAge)
+	removed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), codexHomeOverlayPrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func ReservedWorkspacePrefixes() []string {

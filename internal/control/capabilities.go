@@ -499,7 +499,7 @@ func AgentTaskContinueCapability() Capability {
 func AgentTaskCloseCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskClose,
-		Description:  "Mark a delegated agent task completed, waiting, or archived; completed/archive acceptance consumes a ready result before deferred cleanup.",
+		Description:  "Mark a delegated agent task completed or waiting, or move it to Trash for automatic deletion after seven days. The Trash state is persisted as archived for protocol compatibility.",
 		InputSchema:  agentTaskCloseInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskWrite,

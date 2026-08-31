@@ -298,7 +298,7 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.agentTaskAction != nil {
 		if m.agentTaskAction.Submitting {
-			return m.renderModalFooter(width, "Agent task: waiting for archive", supplementSegments...)
+			return m.renderModalFooter(width, "Agent task: moving to Trash", supplementSegments...)
 		}
 		return m.renderModalFooter(width, "Agent task: Enter choose, Tab switch, Esc cancel", supplementSegments...)
 	}

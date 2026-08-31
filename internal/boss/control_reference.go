@@ -90,9 +90,9 @@ func bossControlReferenceSpec(domain string) ([]control.CapabilityName, []string
 				"When temporary work originates from a known project, worktree, or TODO, include those project/TODO resources. The task inherits that affiliation while keeping its isolated workspace.",
 				"Use agent_task.continue for a known open task that needs another attempt, progress, or a sharper question. Inspect its output first when a vague retry follows a just-created or just-continued task.",
 				"A completed worker queues its durable result back to the exact originating session when one is available. Inspect and integrate that result before closing the task.",
-				"Use agent_task.close status=completed when fresh evidence resolves a review/waiting task; use status=archived when the result is accepted and the user wants the task removed from the active record. Closing records result consumption before deferred cleanup.",
+				"Use agent_task.close status=completed when fresh evidence resolves a review/waiting task; completed tasks remain visible until explicitly moved to Trash. Use status=archived for Trash, which records result consumption before automatic deletion after seven days.",
 				"For cleanup, close_session=false unless the user explicitly asks to close the live engineer session too.",
-				"For multiple task records to archive, propose an agent_task_cleanup goal instead of several independent confirmations.",
+				"For multiple task records to move to Trash, propose an agent_task_cleanup goal instead of several independent confirmations.",
 				"For multiple open tasks needing progress, propose one concrete next agent_task.continue and name what remains.",
 				"Preserve the user's source, metric, timeframe, negations, exclusions, and success condition in any prompt sent to a task.",
 			}

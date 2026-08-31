@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	agentTaskActionFocusArchive = iota
+	agentTaskActionFocusTrash = iota
 	agentTaskActionFocusKeep
 )
 
@@ -42,7 +42,7 @@ func (m *Model) openAgentTaskActionConfirmForSelection() tea.Cmd {
 	task, project, ok := m.selectedAgentTask()
 	if !ok {
 		if _, ok := m.selectedProject(); ok {
-			m.status = "Archive is available for agent tasks"
+			m.status = "Trash is available for agent tasks"
 		} else {
 			m.status = "No project selected"
 		}
@@ -51,9 +51,9 @@ func (m *Model) openAgentTaskActionConfirmForSelection() tea.Cmd {
 	if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
 		m.showSessionBlockedAttentionDialog(
 			project,
-			"Archive blocked",
-			"Wait for the embedded engineer session before archiving this agent task.",
-			"archive this task",
+			"Trash blocked",
+			"Wait for the embedded engineer session before trashing this agent task.",
+			"trash this task",
 			embeddedProvider(snapshot),
 		)
 		return nil
@@ -81,7 +81,7 @@ func (m *Model) cycleAgentTaskActionSelection(delta int) {
 		return
 	}
 	if confirm.Selected == agentTaskActionFocusKeep {
-		confirm.Selected = agentTaskActionFocusArchive
+		confirm.Selected = agentTaskActionFocusTrash
 	} else {
 		confirm.Selected = agentTaskActionFocusKeep
 	}
@@ -118,9 +118,9 @@ func (m Model) updateAgentTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, tea.
 			project := model.ProjectSummary{Name: confirm.TaskTitle, Path: confirm.ProjectPath, Kind: model.ProjectKindAgentTask}
 			m.showSessionBlockedAttentionDialog(
 				project,
-				"Archive blocked",
-				"Wait for the embedded engineer session before archiving this agent task.",
-				"archive this task",
+				"Trash blocked",
+				"Wait for the embedded engineer session before trashing this agent task.",
+				"trash this task",
 				embeddedProvider(snapshot),
 			)
 			return m, nil
@@ -128,7 +128,7 @@ func (m Model) updateAgentTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, tea.
 		taskID := confirm.TaskID
 		projectPath := confirm.ProjectPath
 		selectPath := m.nextProjectSelectionPathAfter(projectPath)
-		m.status = "Archiving agent task..."
+		m.status = "Moving agent task to Trash..."
 		closeCmd, err := m.closeEmbeddedSessionForProject(projectPath)
 		if err != nil {
 			m.reportError("Agent task action failed", err, projectPath)
@@ -150,12 +150,12 @@ func (m Model) archiveAgentTaskCmd(taskID, projectPath, selectPath string) tea.C
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
 		task, err := m.svc.ArchiveAgentTask(ctx, taskID)
-		err = timeoutActionError(err, tuiQuickActionTimeout, "archiving the agent task")
+		err = timeoutActionError(err, tuiQuickActionTimeout, "moving the agent task to Trash")
 		return agentTaskActionMsg{
 			task:        task,
 			projectPath: projectPath,
 			selectPath:  selectPath,
-			status:      "Agent task archived",
+			status:      "Agent task moved to Trash",
 			err:         err,
 		}
 	}
@@ -169,7 +169,8 @@ func (m Model) renderAgentTaskActionOverlay(body string, bodyW, bodyH int) strin
 	panelW := min(max(50, bodyW-24), 76)
 	panelInnerW := max(28, panelW-4)
 	messageLines := []string{
-		detailValueStyle.Render("Archive this agent task and hide it from the dashboard."),
+		detailValueStyle.Render("Move this agent task to Trash and hide it from the dashboard."),
+		detailMutedStyle.Render("Its task record and workspace will be deleted automatically after 7 days."),
 		detailMutedStyle.Render(m.displayPathWithHomeTilde(confirm.ProjectPath)),
 	}
 	buttons := m.renderAgentTaskActionButtons(*confirm)
@@ -191,7 +192,7 @@ func (m Model) renderAgentTaskActionButtons(confirm agentTaskActionConfirmState)
 		return disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
 	}
 	return strings.Join([]string{
-		renderDialogButton("Archive", confirm.Selected == agentTaskActionFocusArchive),
+		renderDialogButton("Trash", confirm.Selected == agentTaskActionFocusTrash),
 		renderDialogButton("Keep", confirm.Selected == agentTaskActionFocusKeep),
 	}, " ")
 }
@@ -203,7 +204,7 @@ func (m Model) agentTaskFooterActions(width int) []footerAction {
 	if _, _, ok := m.selectedAgentTask(); !ok {
 		return nil
 	}
-	return []footerAction{footerHideAction("x", "archive")}
+	return []footerAction{footerHideAction("x", "trash")}
 }
 
 func agentTaskActionTitle(task model.AgentTask) string {

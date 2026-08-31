@@ -1204,7 +1204,7 @@ func (m *Model) rebuildProjectTabIndex() {
 	}
 	m.projectTabAgentTasks = make(map[string][]model.AgentTask)
 	for _, task := range m.openAgentTasks {
-		if !agentTaskIsOpen(task) {
+		if !agentTaskIsVisible(task) {
 			continue
 		}
 		categoryID := strings.TrimSpace(task.CategoryID)

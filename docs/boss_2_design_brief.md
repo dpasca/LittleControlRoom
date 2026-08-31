@@ -273,7 +273,7 @@ User: Clear stale agents that have served their scope.
 Expected Boss 2.0 behavior:
 
 1. Start a `goal_run`.
-2. Observe open, waiting, completed, and recently archived agent tasks.
+2. Observe open, waiting, completed, and recently trashed agent tasks (persisted internally as archived).
 3. Classify each candidate as `archive`, `keep`, or `needs_review`, with evidence and confidence.
 4. Propose one cleanup authority grant for the selected archive set.
 5. On approval, archive each selected task using primitive update/archive actions.

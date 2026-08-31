@@ -425,13 +425,22 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		if err := json.Unmarshal(inv.Args, &input); err != nil {
 			return "", err
 		}
-		lines := []string{
-			fmt.Sprintf("Mark agent task %s as %s?", input.TaskID, input.Status),
+		title := fmt.Sprintf("Mark agent task %s as %s?", input.TaskID, input.Status)
+		detail := ""
+		if input.Status == control.AgentTaskCloseArchived {
+			title = fmt.Sprintf("Move agent task %s to Trash?", input.TaskID)
+			detail = "Its task record and workspace will be deleted automatically after 7 days."
+		}
+		lines := []string{title}
+		if detail != "" {
+			lines = append(lines, "", detail)
+		}
+		lines = append(lines,
 			"",
 			strings.TrimSpace(input.Summary),
 			"",
 			"Enter confirms; Esc cancels.",
-		}
+		)
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityScratchTaskArchive:
 		var input control.ScratchTaskArchiveInput

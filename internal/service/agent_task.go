@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	agentTaskWorkspacePrefix = "lcroom-agent-task-"
-	archivedAgentTaskTTL     = 30 * 24 * time.Hour
+	agentTaskWorkspacePrefix  = "lcroom-agent-task-"
+	trashedAgentTaskRetention = 7 * 24 * time.Hour
 )
 
 func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTaskInput) (model.AgentTask, error) {
@@ -52,11 +52,14 @@ func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTa
 }
 
 func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.AgentTask, error) {
-	_, _ = s.PurgeExpiredAgentTasks(ctx, time.Now())
+	if _, err := s.PurgeExpiredAgentTasks(ctx, time.Now()); err != nil {
+		return nil, fmt.Errorf("purge expired agent tasks: %w", err)
+	}
 	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{
 		Statuses: []model.AgentTaskStatus{
 			model.AgentTaskStatusActive,
 			model.AgentTaskStatusWaiting,
+			model.AgentTaskStatusCompleted,
 		},
 		Limit: limit,
 	})
@@ -149,11 +152,13 @@ func (s *Service) AttachAgentTaskEngineerSession(ctx context.Context, taskID str
 func (s *Service) CompleteAgentTask(ctx context.Context, taskID, summary string) (model.AgentTask, error) {
 	status := model.AgentTaskStatusCompleted
 	completedAt := time.Now()
+	zeroTime := time.Time{}
 	summary = strings.TrimSpace(summary)
 	input := model.UpdateAgentTaskInput{
 		ID:          taskID,
 		Status:      &status,
 		Summary:     &summary,
+		ExpiresAt:   &zeroTime,
 		CompletedAt: &completedAt,
 		Touch:       true,
 	}
@@ -248,7 +253,7 @@ func agentTaskResultCallbackPrompt(task model.AgentTask) string {
 	}
 	lines = append(lines,
 		"",
-		"Inspect the durable task with work.agent_task_get before relying on this summary. Verify and integrate the result in the originating project/worktree. If the result is accepted, propose agent_task.close with status archived and close_session=true; that records consumption before deferred workspace cleanup. If more work is needed, use agent_task.continue instead.",
+		"Inspect the durable task with work.agent_task_get before relying on this summary. Verify and integrate the result in the originating project/worktree. If the result is accepted, propose agent_task.close with status completed and close_session=true; this records consumption and keeps the completed task visible until the user explicitly moves it to Trash. Use status archived only when the user explicitly wants Trash, which deletes the task record and workspace after seven days. If more work is needed, use agent_task.continue instead.",
 	)
 	return strings.Join(lines, "\n")
 }
@@ -289,7 +294,7 @@ func (s *Service) ArchiveAgentTask(ctx context.Context, taskID string) (model.Ag
 	}
 	status := model.AgentTaskStatusArchived
 	archivedAt := time.Now()
-	expiresAt := archivedAt.Add(archivedAgentTaskTTL)
+	expiresAt := archivedAt.Add(trashedAgentTaskRetention)
 	return s.store.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{
 		ID:         taskID,
 		Status:     &status,

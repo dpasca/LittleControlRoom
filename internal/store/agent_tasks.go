@@ -197,6 +197,40 @@ func (s *Store) ListExpiredAgentTasks(ctx context.Context, now time.Time) ([]mod
 	return tasks, nil
 }
 
+// ApplyAgentTaskTrashRetention clears legacy expiry values from completed
+// tasks, then backfills or caps the retention of tasks explicitly trashed.
+// Shorter explicit Trash expirations are kept.
+func (s *Store) ApplyAgentTaskTrashRetention(ctx context.Context, retention time.Duration) (int64, error) {
+	retentionSeconds := int64(retention / time.Second)
+	if retentionSeconds <= 0 {
+		return 0, errors.New("agent task retention must be positive")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agent_tasks
+		SET expires_at = CASE
+			WHEN status = ? THEN NULL
+			ELSE COALESCE(NULLIF(archived_at, 0), NULLIF(completed_at, 0), last_touched_at, updated_at, created_at) + ?
+		END
+		WHERE (status = ? AND expires_at IS NOT NULL)
+		   OR (status = ? AND (
+				expires_at IS NULL
+				OR expires_at <= 0
+				OR expires_at > COALESCE(NULLIF(archived_at, 0), NULLIF(completed_at, 0), last_touched_at, updated_at, created_at) + ?
+		   ))
+	`,
+		string(model.AgentTaskStatusCompleted), retentionSeconds,
+		string(model.AgentTaskStatusCompleted), string(model.AgentTaskStatusArchived), retentionSeconds,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("apply agent task Trash retention: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read applied agent task Trash retention count: %w", err)
+	}
+	return updated, nil
+}
+
 func (s *Store) DeleteAgentTask(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {

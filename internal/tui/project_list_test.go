@@ -1818,7 +1818,7 @@ func TestProjectRemoveHotkeyDoesNotOpenRegularProjectRemoval(t *testing.T) {
 	if got.projectRemoveConfirm != nil {
 		t.Fatalf("x on a regular project should not open the project removal dialog")
 	}
-	if got.status != "Select an agent task or linked worktree to archive or remove it" {
+	if got.status != "Select an agent task or linked worktree to trash or remove it" {
 		t.Fatalf("status = %q, want scoped x action guidance", got.status)
 	}
 }

@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"lcroom/internal/appfs"
 	"lcroom/internal/config"
@@ -62,15 +64,15 @@ func TestServiceCreatesAgentTaskWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteAgentTask() error = %v", err)
 	}
-	if completed.Status != model.AgentTaskStatusCompleted || completed.CompletedAt.IsZero() {
+	if completed.Status != model.AgentTaskStatusCompleted || completed.CompletedAt.IsZero() || !completed.ExpiresAt.IsZero() {
 		t.Fatalf("completed task = %#v", completed)
 	}
 	openTasks, err = svc.ListOpenAgentTasks(ctx, 5)
 	if err != nil {
 		t.Fatalf("ListOpenAgentTasks() after complete error = %v", err)
 	}
-	if len(openTasks) != 0 {
-		t.Fatalf("completed task should leave open set, got %#v", openTasks)
+	if len(openTasks) != 1 || openTasks[0].ID != task.ID || openTasks[0].Status != model.AgentTaskStatusCompleted {
+		t.Fatalf("completed task should remain visible, got %#v", openTasks)
 	}
 
 	archived, err := svc.ArchiveAgentTask(ctx, task.ID)
@@ -79,6 +81,16 @@ func TestServiceCreatesAgentTaskWorkspace(t *testing.T) {
 	}
 	if archived.Status != model.AgentTaskStatusArchived || archived.ArchivedAt.IsZero() || archived.ExpiresAt.IsZero() {
 		t.Fatalf("archived task = %#v", archived)
+	}
+	if got := archived.ExpiresAt.Sub(archived.ArchivedAt); got != trashedAgentTaskRetention {
+		t.Fatalf("trashed task retention = %v, want %v", got, trashedAgentTaskRetention)
+	}
+	openTasks, err = svc.ListOpenAgentTasks(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListOpenAgentTasks() after Trash error = %v", err)
+	}
+	if len(openTasks) != 0 {
+		t.Fatalf("trashed task should leave visible set, got %#v", openTasks)
 	}
 }
 
@@ -112,6 +124,111 @@ func TestServiceConsumesReadyAgentTaskBeforeArchive(t *testing.T) {
 	}
 	if archived.ResultConsumedBy != "codex caller-session" {
 		t.Fatalf("archive overwrote result consumer: %#v", archived)
+	}
+}
+
+func TestServiceStartupPreservesCompletedAgentTaskAndClearsLegacyExpiry(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	workspace := filepath.Join(appfs.InternalWorkspaceRoot(cfg.DataDir), "lcroom-agent-task-completed")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		ID:            "agt_completed_with_legacy_expiry",
+		Title:         "Completed task with legacy expiry",
+		Kind:          model.AgentTaskKindAgent,
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := model.AgentTaskStatusCompleted
+	completedAt := time.Now().Add(-8 * 24 * time.Hour)
+	legacyExpiry := completedAt.Add(7 * 24 * time.Hour)
+	if _, err := st.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{
+		ID:          task.ID,
+		Status:      &completed,
+		CompletedAt: &completedAt,
+		ExpiresAt:   &legacyExpiry,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = New(cfg, st, events.NewBus(), nil)
+	preserved, err := st.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("completed task should remain after service startup: %v", err)
+	}
+	if !preserved.ExpiresAt.IsZero() {
+		t.Fatalf("completed task legacy expiry should be cleared, got %v", preserved.ExpiresAt)
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("completed task workspace should remain, stat err = %v", err)
+	}
+}
+
+func TestServiceStartupCleansOldCodexOverlaysAndConfigBackups(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	cfg.ConfigPath = filepath.Join(cfg.DataDir, "config.toml")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	root, err := appfs.EnsureInternalWorkspaceRoot(cfg.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldOverlay := filepath.Join(root, "lcroom-codex-home-old")
+	freshOverlay := filepath.Join(root, "lcroom-codex-home-fresh")
+	for _, path := range []string{oldOverlay, freshOverlay} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldTime := time.Now().Add(-8 * 24 * time.Hour)
+	if err := os.Chtimes(oldOverlay, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	baseTime := time.Now().Add(-time.Hour)
+	for i := 0; i < 13; i++ {
+		stamp := baseTime.Add(time.Duration(i) * time.Minute)
+		backupPath := fmt.Sprintf("%s.%s.bak", cfg.ConfigPath, stamp.UTC().Format("20060102-150405.000000000"))
+		if err := os.WriteFile(backupPath, []byte("backup"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(backupPath, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_ = New(cfg, st, events.NewBus(), nil)
+	if _, err := os.Stat(oldOverlay); !os.IsNotExist(err) {
+		t.Fatalf("old Codex overlay should be removed during service startup, stat err = %v", err)
+	}
+	if _, err := os.Stat(freshOverlay); err != nil {
+		t.Fatalf("fresh Codex overlay should remain during service startup: %v", err)
+	}
+	backups, err := filepath.Glob(cfg.ConfigPath + ".*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 10 {
+		t.Fatalf("retained config backups = %d, want 10", len(backups))
 	}
 }
 

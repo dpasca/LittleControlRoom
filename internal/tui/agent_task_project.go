@@ -17,7 +17,7 @@ func (m Model) agentTaskProjectSummaries() []model.ProjectSummary {
 	}
 	out := make([]model.ProjectSummary, 0, len(m.openAgentTasks))
 	for _, task := range m.openAgentTasks {
-		if !agentTaskIsOpen(task) {
+		if !agentTaskIsVisible(task) {
 			continue
 		}
 		project, err := projectSummaryForAgentTask(task)
@@ -52,7 +52,7 @@ func (m *Model) upsertOpenAgentTask(task model.AgentTask) {
 	if selected, ok := m.selectedProject(); ok {
 		selectedPath = selected.Path
 	}
-	if agentTaskIsOpen(task) {
+	if agentTaskIsVisible(task) {
 		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
 	} else {
 		m.openAgentTasks = removeAgentTask(m.openAgentTasks, task.ID)
@@ -99,11 +99,24 @@ func agentTaskIsOpen(task model.AgentTask) bool {
 	}
 }
 
-func agentTaskProjectStatus(task model.AgentTask) model.ProjectStatus {
-	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
-		return model.StatusPossiblyStuck
+func agentTaskIsVisible(task model.AgentTask) bool {
+	switch model.NormalizeAgentTaskStatus(task.Status) {
+	case model.AgentTaskStatusActive, model.AgentTaskStatusWaiting, model.AgentTaskStatusCompleted:
+		return true
+	default:
+		return false
 	}
-	return model.StatusActive
+}
+
+func agentTaskProjectStatus(task model.AgentTask) model.ProjectStatus {
+	switch model.NormalizeAgentTaskStatus(task.Status) {
+	case model.AgentTaskStatusWaiting:
+		return model.StatusPossiblyStuck
+	case model.AgentTaskStatusCompleted:
+		return model.StatusIdle
+	default:
+		return model.StatusActive
+	}
 }
 
 func agentTaskSessionFormat(source model.SessionSource) string {
@@ -138,6 +151,8 @@ func agentTaskAttentionScore(task model.AgentTask) int {
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
 		return 100
+	case model.AgentTaskStatusCompleted:
+		return 0
 	default:
 		provider := codexProviderFromSessionSource(agentTaskDisplaySource(task))
 		if strings.TrimSpace(taskSessionIDForProvider(task, provider)) == "" {
