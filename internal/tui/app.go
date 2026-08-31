@@ -2001,6 +2001,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m, cmd = m.recordBossHostNotice(bossHostNotice{Content: notice, AnnounceInChat: true})
 			return m, cmd
 		}
+		if msg.callbackErr != nil {
+			m.appendBackgroundErrorLogEntry("Agent task result callback failed", msg.callbackErr, msg.projectPath)
+		}
 		m.upsertOpenAgentTask(msg.task)
 		label := strings.TrimSpace(msg.label)
 		if label == "" {
@@ -2015,7 +2018,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpChatMode {
 			cmd = batchCmds(cmd, m.helpChatModel.RefreshCmd())
 		}
-		return m, cmd
+		return m, batchCmds(cmd, m.requestEngineerMessagesPollCmd())
 	case bossEngineerReturnedMsg:
 		if strings.TrimSpace(msg.projectPath) != "" && msg.snapshot.Started {
 			m.storeCodexSnapshot(msg.projectPath, msg.snapshot)

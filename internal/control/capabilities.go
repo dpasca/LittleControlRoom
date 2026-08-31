@@ -471,7 +471,7 @@ func EngineerSendPromptCapability() Capability {
 func AgentTaskCreateCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskCreate,
-		Description:  "Create a delegated agent task and optionally start an embedded engineer session in its workspace.",
+		Description:  "Create a delegated agent task, preserve optional project/TODO affiliation and caller provenance, and optionally start an embedded engineer session in its workspace.",
 		InputSchema:  agentTaskCreateInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskExternal,
@@ -499,7 +499,7 @@ func AgentTaskContinueCapability() Capability {
 func AgentTaskCloseCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskClose,
-		Description:  "Mark a delegated agent task completed, waiting, or archived.",
+		Description:  "Mark a delegated agent task completed, waiting, or archived; completed/archive acceptance consumes a ready result before deferred cleanup.",
 		InputSchema:  agentTaskCloseInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskWrite,

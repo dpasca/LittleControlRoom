@@ -24,6 +24,7 @@ const (
 	projectListRowWorktree        projectListRowKind = "worktree"
 	projectListRowOrphaned        projectListRowKind = "orphaned_worktree"
 	projectListRowPendingWorktree projectListRowKind = "pending_worktree"
+	projectListRowAgentTask       projectListRowKind = "agent_task"
 )
 
 const (
@@ -60,6 +61,7 @@ type projectListRow struct {
 	LinkedStaleCount              int
 	PendingLaunchID               int64
 	OrphanedCleanupKind           service.ResidualWorktreeCleanupKind
+	Indent                        int
 }
 
 type worktreeRemoveConfirmState struct {
@@ -1268,6 +1270,36 @@ func filterProjectSummariesByCategory(projects []model.ProjectSummary, categoryI
 
 func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.ProjectSummary, []projectListRow) {
 	projects = partitionProjectsByKind(projects)
+	basePaths := make(map[string]struct{}, len(projects))
+	for _, project := range projects {
+		if model.NormalizeProjectKind(project.Kind) != model.ProjectKindAgentTask {
+			basePaths[cleanAgentTaskPath(project.Path)] = struct{}{}
+		}
+	}
+	baseProjects := make([]model.ProjectSummary, 0, len(projects))
+	affiliatedTasks := map[string][]model.ProjectSummary{}
+	standaloneTasks := []model.ProjectSummary{}
+	for _, project := range projects {
+		if model.NormalizeProjectKind(project.Kind) != model.ProjectKindAgentTask {
+			baseProjects = append(baseProjects, project)
+			continue
+		}
+		task, ok := m.agentTaskForProjectPath(project.Path)
+		if !ok {
+			standaloneTasks = append(standaloneTasks, project)
+			continue
+		}
+		anchor := cleanAgentTaskPath(task.OriginWorktreePath)
+		if _, ok := basePaths[anchor]; !ok {
+			anchor = cleanAgentTaskPath(task.OriginProjectPath)
+		}
+		if _, ok := basePaths[anchor]; !ok || anchor == "" {
+			standaloneTasks = append(standaloneTasks, project)
+			continue
+		}
+		affiliatedTasks[anchor] = append(affiliatedTasks[anchor], project)
+	}
+	projects = baseProjects
 
 	type group struct {
 		rootPath string
@@ -1295,6 +1327,17 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 
 	rows := make([]model.ProjectSummary, 0, len(projects))
 	meta := make([]projectListRow, 0, len(projects))
+	appendAffiliatedTasks := func(anchor string, indent int) {
+		for _, task := range affiliatedTasks[cleanAgentTaskPath(anchor)] {
+			rows = append(rows, task)
+			meta = append(meta, projectListRow{
+				Kind:        projectListRowAgentTask,
+				ProjectPath: task.Path,
+				RootPath:    cleanAgentTaskPath(anchor),
+				Indent:      indent,
+			})
+		}
+	}
 	for _, rootPath := range order {
 		group := groups[rootPath]
 		if group == nil || len(group.members) == 0 {
@@ -1308,6 +1351,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 				ProjectPath: project.Path,
 				RootPath:    project.Path,
 			})
+			appendAffiliatedTasks(project.Path, 1)
 			continue
 		}
 		rootIndex := -1
@@ -1326,6 +1370,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 					ProjectPath: project.Path,
 					RootPath:    rootPath,
 				})
+				appendAffiliatedTasks(project.Path, 1)
 			}
 			continue
 		}
@@ -1353,6 +1398,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 			LinkedPendingIntegrationCount: pendingIntegrationCount,
 			LinkedStaleCount:              staleCount,
 		})
+		appendAffiliatedTasks(rootProject.Path, 1)
 		for _, child := range children {
 			rowKind := projectListRowWorktree
 			pendingLaunchID := int64(0)
@@ -1367,6 +1413,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 				RootPath:        rootPath,
 				PendingLaunchID: pendingLaunchID,
 			})
+			appendAffiliatedTasks(child.Path, 2)
 		}
 		for _, orphan := range orphanedChildren {
 			rows = append(rows, orphan)
@@ -1376,7 +1423,16 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 				RootPath:            rootPath,
 				OrphanedCleanupKind: m.orphanedWorktreeCleanupKind(orphan.Path),
 			})
+			appendAffiliatedTasks(orphan.Path, 2)
 		}
+	}
+	for _, task := range standaloneTasks {
+		rows = append(rows, task)
+		meta = append(meta, projectListRow{
+			Kind:        projectListRowStandalone,
+			ProjectPath: task.Path,
+			RootPath:    task.Path,
+		})
 	}
 	return rows, meta
 }

@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"lcroom/internal/control"
 	"lcroom/internal/model"
 )
 
@@ -277,7 +279,18 @@ func (s *Store) initSchema(ctx context.Context) error {
 			provider TEXT NOT NULL DEFAULT '',
 			session_id TEXT NOT NULL DEFAULT '',
 			workspace_path TEXT NOT NULL DEFAULT '',
+			origin_operation_id TEXT NOT NULL DEFAULT '',
+			origin_project_path TEXT NOT NULL DEFAULT '',
+			origin_worktree_path TEXT NOT NULL DEFAULT '',
+			origin_provider TEXT NOT NULL DEFAULT '',
+			origin_session_id TEXT NOT NULL DEFAULT '',
+			result_message_id TEXT NOT NULL DEFAULT '',
 			expires_at INTEGER,
+			result_ready_at INTEGER,
+			result_delivered_at INTEGER,
+			result_delivery_error TEXT NOT NULL DEFAULT '',
+			result_consumed_at INTEGER,
+			result_consumed_by TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL,
 			last_touched_at INTEGER NOT NULL,
 			completed_at INTEGER,
@@ -343,6 +356,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS engineer_messages (
 			id TEXT PRIMARY KEY,
 			operation_id TEXT NOT NULL DEFAULT '',
+			agent_task_id TEXT NOT NULL DEFAULT '',
 			project_path TEXT NOT NULL,
 			provider TEXT NOT NULL,
 			session_mode TEXT NOT NULL DEFAULT 'resume_or_new',
@@ -388,6 +402,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		}
 	}
 	if err := s.ensureEngineerMessagesRequestedTargetColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureEngineerMessagesAgentTaskColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectsInScopeColumn(ctx); err != nil {
@@ -448,6 +465,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureAgentTaskResourceMetadataColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.backfillAgentTaskOrigins(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectCategoriesPrivateColumn(ctx); err != nil {
@@ -519,6 +539,39 @@ func (s *Store) ensureEngineerMessagesRequestedTargetColumn(ctx context.Context)
 		WHERE requested_target_session_id = ''
 	`); err != nil {
 		return fmt.Errorf("backfill engineer message requested targets: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureEngineerMessagesAgentTaskColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(engineer_messages)`)
+	if err != nil {
+		return fmt.Errorf("check engineer_messages schema: %w", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return fmt.Errorf("scan engineer_messages schema: %w", err)
+		}
+		found = found || name == "agent_task_id"
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read engineer_messages schema: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE engineer_messages ADD COLUMN agent_task_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add engineer_messages.agent_task_id column: %w", err)
 	}
 	return nil
 }
@@ -763,6 +816,33 @@ func (s *Store) ensureAgentTaskMetadataColumns(ctx context.Context) error {
 			return fmt.Errorf("add agent_tasks.capabilities column: %w", err)
 		}
 	}
+	textColumns := []string{
+		"origin_operation_id",
+		"origin_project_path",
+		"origin_worktree_path",
+		"origin_provider",
+		"origin_session_id",
+		"result_message_id",
+		"result_delivery_error",
+		"result_consumed_by",
+	}
+	for _, column := range textColumns {
+		if _, ok := columns[column]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN `+column+` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add agent_tasks.%s column: %w", column, err)
+		}
+	}
+	timeColumns := []string{"result_ready_at", "result_delivered_at", "result_consumed_at"}
+	for _, column := range timeColumns {
+		if _, ok := columns[column]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN `+column+` INTEGER`); err != nil {
+			return fmt.Errorf("add agent_tasks.%s column: %w", column, err)
+		}
+	}
 	return nil
 }
 
@@ -805,6 +885,150 @@ func (s *Store) ensureAgentTaskResourceMetadataColumns(ctx context.Context) erro
 		}
 	}
 	return nil
+}
+
+type agentTaskOriginBackfill struct {
+	taskID       string
+	operationID  string
+	projectPath  string
+	worktreePath string
+	provider     string
+	sessionID    string
+	resource     control.ResourceRef
+}
+
+func (s *Store) backfillAgentTaskOrigins(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, args_json, result_json, provider, session_key, project_path
+		FROM control_operations
+		WHERE capability = ? AND status = ?
+		ORDER BY created_at ASC
+	`, string(control.CapabilityAgentTaskCreate), string(control.OperationCompleted))
+	if err != nil {
+		return fmt.Errorf("list agent task origin operations: %w", err)
+	}
+	backfills := []agentTaskOriginBackfill{}
+	for rows.Next() {
+		var operationID, argsJSON, resultJSON, provider, sessionID, worktreePath string
+		if err := rows.Scan(&operationID, &argsJSON, &resultJSON, &provider, &sessionID, &worktreePath); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan agent task origin operation: %w", err)
+		}
+		var result struct {
+			Activity struct {
+				TaskID string `json:"TaskID"`
+			} `json:"activity"`
+		}
+		if err := json.Unmarshal([]byte(resultJSON), &result); err != nil || strings.TrimSpace(result.Activity.TaskID) == "" {
+			continue
+		}
+		var input control.AgentTaskCreateInput
+		if err := json.Unmarshal([]byte(argsJSON), &input); err != nil {
+			continue
+		}
+		backfill := agentTaskOriginBackfill{
+			taskID:       strings.TrimSpace(result.Activity.TaskID),
+			operationID:  strings.TrimSpace(operationID),
+			worktreePath: strings.TrimSpace(worktreePath),
+			provider:     strings.TrimSpace(provider),
+			sessionID:    strings.TrimSpace(sessionID),
+		}
+		for _, resource := range input.Resources {
+			if resource.Kind != control.ResourceTodo && resource.Kind != control.ResourceProject {
+				continue
+			}
+			backfill.projectPath = strings.TrimSpace(firstNonEmptyString(resource.ProjectPath, resource.Path))
+			backfill.resource = resource
+			break
+		}
+		backfills = append(backfills, backfill)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read agent task origin operations: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	for _, backfill := range backfills {
+		var existingOrigin string
+		if err := s.db.QueryRowContext(ctx, `SELECT origin_operation_id FROM agent_tasks WHERE id = ?`, backfill.taskID).Scan(&existingOrigin); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return fmt.Errorf("load agent task origin: %w", err)
+		}
+		if strings.TrimSpace(existingOrigin) != "" {
+			continue
+		}
+		if backfill.projectPath == "" && backfill.worktreePath != "" {
+			var rootPath string
+			if err := s.db.QueryRowContext(ctx, `SELECT worktree_root_path FROM projects WHERE path = ?`, backfill.worktreePath).Scan(&rootPath); err == nil {
+				backfill.projectPath = strings.TrimSpace(firstNonEmptyString(rootPath, backfill.worktreePath))
+			} else {
+				backfill.projectPath = backfill.worktreePath
+			}
+		}
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE agent_tasks
+			SET origin_operation_id = ?, origin_project_path = ?, origin_worktree_path = ?,
+				origin_provider = ?, origin_session_id = ?
+			WHERE id = ? AND origin_operation_id = ''
+		`, backfill.operationID, backfill.projectPath, backfill.worktreePath, backfill.provider, backfill.sessionID, backfill.taskID); err != nil {
+			return fmt.Errorf("backfill agent task origin: %w", err)
+		}
+		if backfill.resource.Kind == control.ResourceTodo {
+			refID := strings.TrimSpace(backfill.resource.ID)
+			if refID == "" && backfill.resource.TodoID > 0 {
+				refID = fmt.Sprintf("%d", backfill.resource.TodoID)
+			}
+			if _, err := s.db.ExecContext(ctx, `
+				INSERT INTO agent_task_resources(task_id, kind, ref_id, project_path, path, pid, port, provider, session_id, label, created_at)
+				SELECT ?, 'todo', ?, ?, ?, 0, 0, '', '', ?, strftime('%s', 'now')
+				WHERE NOT EXISTS (
+					SELECT 1 FROM agent_task_resources WHERE task_id = ? AND kind = 'todo' AND ref_id = ?
+				)
+			`, backfill.taskID, refID, backfill.projectPath, strings.TrimSpace(backfill.resource.Path), strings.TrimSpace(backfill.resource.Label), backfill.taskID, refID); err != nil {
+				return fmt.Errorf("backfill agent task TODO resource: %w", err)
+			}
+		}
+		var categoryID string
+		for _, categoryPath := range []string{backfill.worktreePath, backfill.projectPath} {
+			categoryPath = strings.TrimSpace(categoryPath)
+			if categoryPath == "" {
+				continue
+			}
+			if err := s.db.QueryRowContext(ctx, `
+				SELECT category_id FROM category_assignments
+				WHERE resource_kind = 'project' AND resource_id = ?
+			`, categoryPath).Scan(&categoryID); err == nil && strings.TrimSpace(categoryID) != "" {
+				break
+			}
+		}
+		if strings.TrimSpace(categoryID) != "" {
+			if err := s.SetResourceCategory(ctx, model.CategoryResourceAgentTask, backfill.taskID, categoryID); err != nil {
+				return fmt.Errorf("backfill agent task category: %w", err)
+			}
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE agent_tasks
+		SET result_ready_at = last_touched_at
+		WHERE status = ? AND summary <> '' AND result_ready_at IS NULL
+	`, string(model.AgentTaskStatusWaiting)); err != nil {
+		return fmt.Errorf("backfill agent task result readiness: %w", err)
+	}
+	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *Store) projectTableColumns(ctx context.Context) (map[string]struct{}, error) {

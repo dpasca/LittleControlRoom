@@ -97,6 +97,15 @@ type bossAgentTaskClosedMsg struct {
 	err    error
 }
 
+type agentTaskCreationContext struct {
+	originOperationID  string
+	originProjectPath  string
+	originWorktreePath string
+	originProvider     model.SessionSource
+	originSessionID    string
+	categoryID         string
+}
+
 type bossScratchTaskArchivedMsg struct {
 	project      model.ProjectSummary
 	archivedPath string
@@ -1030,16 +1039,85 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 		}
 		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
 		defer cancel()
+		creationContext, err := resolveAgentTaskCreationContext(ctx, svc, inv, input)
+		if err != nil {
+			msg.err = err
+			return msg
+		}
 		msg.task, msg.err = svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-			ParentTaskID: strings.TrimSpace(input.ParentTaskID),
-			Title:        input.Title,
-			Kind:         modelAgentTaskKindFromControl(input.Kind),
-			Capabilities: append([]string(nil), input.Capabilities...),
-			Resources:    agentTaskResourcesFromControl(input.Resources),
+			ParentTaskID:       strings.TrimSpace(input.ParentTaskID),
+			Title:              input.Title,
+			Kind:               modelAgentTaskKindFromControl(input.Kind),
+			CategoryID:         creationContext.categoryID,
+			Capabilities:       append([]string(nil), input.Capabilities...),
+			Resources:          agentTaskResourcesFromControl(input.Resources),
+			OriginOperationID:  creationContext.originOperationID,
+			OriginProjectPath:  creationContext.originProjectPath,
+			OriginWorktreePath: creationContext.originWorktreePath,
+			OriginProvider:     creationContext.originProvider,
+			OriginSessionID:    creationContext.originSessionID,
 		})
 		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "creating the agent task")
 		return msg
 	}
+}
+
+func resolveAgentTaskCreationContext(ctx context.Context, svc *service.Service, inv control.Invocation, input control.AgentTaskCreateInput) (agentTaskCreationContext, error) {
+	result := agentTaskCreationContext{originOperationID: strings.TrimSpace(inv.RequestID)}
+	for _, resource := range input.Resources {
+		switch resource.Kind {
+		case control.ResourceTodo, control.ResourceProject:
+			if result.originProjectPath == "" {
+				result.originProjectPath = cleanAgentTaskPath(firstNonEmptyTrimmed(resource.ProjectPath, resource.Path))
+			}
+		}
+	}
+	if svc == nil || svc.Store() == nil {
+		return result, nil
+	}
+	if control.IsExternalOperationID(inv.RequestID) {
+		operation, err := svc.Store().GetControlOperation(ctx, inv.RequestID)
+		if err != nil {
+			return agentTaskCreationContext{}, fmt.Errorf("load agent task origin: %w", err)
+		}
+		result.originOperationID = strings.TrimSpace(operation.ID)
+		result.originWorktreePath = cleanAgentTaskPath(operation.ProjectPath)
+		result.originProvider = modelSessionSourceFromControlProvider(control.NormalizeProvider(operation.Provider))
+		result.originSessionID = strings.TrimSpace(operation.SessionKey)
+	}
+	lookupPaths := compactStrings(result.originWorktreePath, result.originProjectPath)
+	if len(lookupPaths) == 0 {
+		return result, nil
+	}
+	var project model.ProjectSummary
+	var found bool
+	for _, lookupPath := range lookupPaths {
+		candidate, queryErr := svc.Store().GetProjectSummary(ctx, lookupPath, true)
+		if queryErr == nil {
+			project = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return result, nil
+	}
+	result.categoryID = strings.TrimSpace(project.CategoryID)
+	if result.originProjectPath == "" {
+		result.originProjectPath = cleanAgentTaskPath(project.Path)
+	}
+	if project.WorktreeKind == model.WorktreeKindLinked && strings.TrimSpace(project.WorktreeRootPath) != "" {
+		result.originProjectPath = cleanAgentTaskPath(project.WorktreeRootPath)
+		if result.originWorktreePath == "" {
+			result.originWorktreePath = cleanAgentTaskPath(project.Path)
+		}
+	}
+	if result.categoryID == "" && result.originProjectPath != "" && cleanAgentTaskPath(project.Path) != result.originProjectPath {
+		if root, rootErr := svc.Store().GetProjectSummary(ctx, result.originProjectPath, true); rootErr == nil {
+			result.categoryID = strings.TrimSpace(root.CategoryID)
+		}
+	}
+	return result, nil
 }
 
 func (m Model) applyBossAgentTaskCreated(msg bossAgentTaskCreatedMsg) (tea.Model, tea.Cmd) {
@@ -1223,10 +1301,10 @@ func (m Model) applyBossAgentTaskCloseLoaded(msg bossAgentTaskCloseLoadedMsg) (t
 		}
 	}
 	m.status = "Closing agent task " + task.ID + "..."
-	return m, bossControlExecutionCmd(msg.inv, m.closeBossAgentTaskCmd(input, task))
+	return m, bossControlExecutionCmd(msg.inv, m.closeBossAgentTaskCmd(msg.inv, input, task))
 }
 
-func (m Model) closeBossAgentTaskCmd(input control.AgentTaskCloseInput, task model.AgentTask) tea.Cmd {
+func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.AgentTaskCloseInput, task model.AgentTask) tea.Cmd {
 	svc := m.svc
 	manager := m.codexManager
 	parent := m.ctx
@@ -1245,6 +1323,14 @@ func (m Model) closeBossAgentTaskCmd(input control.AgentTaskCloseInput, task mod
 		}
 		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
 		defer cancel()
+		if input.Status != control.AgentTaskCloseWaiting {
+			consumedBy := agentTaskResultConsumer(ctx, svc, inv)
+			if _, err := svc.ConsumeAgentTaskResult(ctx, input.TaskID, consumedBy); err != nil {
+				msg.err = err
+				msg.status = "Control request failed: " + err.Error()
+				return msg
+			}
+		}
 		switch input.Status {
 		case control.AgentTaskCloseArchived:
 			msg.task, msg.err = svc.ArchiveAgentTask(ctx, input.TaskID)
@@ -1272,6 +1358,21 @@ func (m Model) closeBossAgentTaskCmd(input control.AgentTaskCloseInput, task mod
 		}
 		return msg
 	}
+}
+
+func agentTaskResultConsumer(ctx context.Context, svc *service.Service, inv control.Invocation) string {
+	if svc != nil && svc.Store() != nil && control.IsExternalOperationID(inv.RequestID) {
+		if operation, err := svc.Store().GetControlOperation(ctx, inv.RequestID); err == nil {
+			identity := strings.TrimSpace(operation.Provider)
+			if sessionID := strings.TrimSpace(operation.SessionKey); sessionID != "" {
+				identity = strings.TrimSpace(identity + " " + sessionID)
+			}
+			if identity != "" {
+				return identity
+			}
+		}
+	}
+	return "operator"
 }
 
 func (m Model) applyBossAgentTaskClosed(msg bossAgentTaskClosedMsg) (tea.Model, tea.Cmd) {
@@ -3025,6 +3126,9 @@ func agentTaskResourcesFromControl(resources []control.ResourceRef) []model.Agen
 			SessionID:   strings.TrimSpace(resource.SessionID),
 			Label:       strings.TrimSpace(resource.Label),
 		}
+		if converted.Kind == model.AgentTaskResourceTodo && converted.RefID == "" && resource.TodoID > 0 {
+			converted.RefID = fmt.Sprintf("%d", resource.TodoID)
+		}
 		if converted.Kind == "" {
 			continue
 		}
@@ -3040,6 +3144,8 @@ func modelAgentTaskResourceKindFromControl(kind control.ResourceKind) model.Agen
 	switch kind {
 	case control.ResourceProject:
 		return model.AgentTaskResourceProject
+	case control.ResourceTodo:
+		return model.AgentTaskResourceTodo
 	case control.ResourceProcess:
 		return model.AgentTaskResourceProcess
 	case control.ResourcePort:

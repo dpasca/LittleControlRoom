@@ -145,6 +145,7 @@ type agentTaskEngineerReturnedMsg struct {
 	snapshot    codexapp.Snapshot
 	task        model.AgentTask
 	err         error
+	callbackErr error
 }
 
 type bossEngineerReturnedMsg struct {
@@ -507,13 +508,11 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 		}
 		completeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		status := model.AgentTaskStatusWaiting
-		updated, err := svc.Store().UpdateAgentTask(completeCtx, model.UpdateAgentTaskInput{
-			ID:      taskID,
-			Status:  &status,
-			Summary: &summary,
-			Touch:   true,
-		})
+		updated, err := svc.MarkAgentTaskReadyForReview(completeCtx, taskID, summary)
+		var callbackErr error
+		if err == nil {
+			updated, callbackErr = svc.QueueAgentTaskResultCallback(completeCtx, taskID)
+		}
 		return agentTaskEngineerReturnedMsg{
 			projectPath: strings.TrimSpace(projectPath),
 			taskID:      taskID,
@@ -524,6 +523,7 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 			snapshot:    snapshot,
 			task:        updated,
 			err:         err,
+			callbackErr: callbackErr,
 		}
 	}
 }

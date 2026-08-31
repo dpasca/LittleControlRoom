@@ -11,7 +11,78 @@ import (
 	"time"
 
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 )
+
+func TestEngineerMessageTracksAgentTaskResultDelivery(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "agent-task-callback.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: "agt_callback", Title: "Callback task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := st.CreateEngineerMessage(ctx, control.EngineerMessage{
+		OperationID:     "agent-task-result:" + task.ID,
+		AgentTaskID:     task.ID,
+		ProjectPath:     t.TempDir(),
+		Provider:        control.ProviderCodex,
+		SessionMode:     control.SessionModeResumeOrNew,
+		TargetSessionID: "caller-session",
+		Prompt:          "Review the delegated result.",
+		State:           control.EngineerMessageQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := st.GetAgentTask(ctx, task.ID)
+	if err != nil || linked.ResultMessageID != message.ID {
+		t.Fatalf("linked task = %#v, err=%v", linked, err)
+	}
+	if _, claimed, err := st.ClaimEngineerMessage(ctx, message.ID, "caller-session"); err != nil || !claimed {
+		t.Fatalf("claim callback: claimed=%t err=%v", claimed, err)
+	}
+	if _, err := st.RecordEngineerMessageState(ctx, message.ID, control.EngineerMessageDelivered, "caller-session", "delivered", nil); err != nil {
+		t.Fatal(err)
+	}
+	delivered, err := st.GetAgentTask(ctx, task.ID)
+	if err != nil || delivered.ResultDeliveredAt.IsZero() {
+		t.Fatalf("delivered task = %#v, err=%v", delivered, err)
+	}
+
+	failedTask, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: "agt_callback_failed", Title: "Failed callback task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedMessage, err := st.CreateEngineerMessage(ctx, control.EngineerMessage{
+		OperationID:     "agent-task-result:" + failedTask.ID,
+		AgentTaskID:     failedTask.ID,
+		ProjectPath:     t.TempDir(),
+		Provider:        control.ProviderCodex,
+		SessionMode:     control.SessionModeResumeOrNew,
+		TargetSessionID: "missing-caller-session",
+		Prompt:          "Review the delegated result.",
+		State:           control.EngineerMessageQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := st.ClaimEngineerMessage(ctx, failedMessage.ID, "missing-caller-session"); err != nil || !claimed {
+		t.Fatalf("claim failed callback: claimed=%t err=%v", claimed, err)
+	}
+	deliveryErr := errors.New("target session was replaced")
+	if _, err := st.RecordEngineerMessageState(ctx, failedMessage.ID, control.EngineerMessageFailed,
+		"missing-caller-session", "Engineer message delivery failed", deliveryErr); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := st.GetAgentTask(ctx, failedTask.ID)
+	if err != nil || !strings.Contains(failed.ResultDeliveryError, deliveryErr.Error()) || !failed.ResultDeliveredAt.IsZero() {
+		t.Fatalf("failed callback task = %#v, err=%v", failed, err)
+	}
+}
 
 func TestEngineerMessageLifecyclePersistsAndCompletesControlOperation(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "engineer-messages.sqlite"))

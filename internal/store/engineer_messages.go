@@ -13,7 +13,7 @@ import (
 )
 
 const engineerMessageSelect = `
-	SELECT id, operation_id, project_path, provider, session_mode, requested_target_session_id,
+	SELECT id, operation_id, agent_task_id, project_path, provider, session_mode, requested_target_session_id,
 		target_session_id, prompt,
 		reveal, todo_id, todo_label, todo_text, state, attempt_count,
 		last_error, created_at, updated_at, delivered_at
@@ -26,6 +26,7 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	}
 	message.ID = strings.TrimSpace(message.ID)
 	message.OperationID = strings.TrimSpace(message.OperationID)
+	message.AgentTaskID = strings.TrimSpace(message.AgentTaskID)
 	message.ProjectPath = strings.TrimSpace(message.ProjectPath)
 	message.Provider = message.Provider.Normalized()
 	message.SessionMode = message.SessionMode.Normalized()
@@ -67,7 +68,7 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 			if !sameEngineerMessageRequest(existing, message) {
 				return control.EngineerMessage{}, errors.New("control operation is already bound to a different engineer message")
 			}
-			return existing, nil
+			return existing, s.linkEngineerMessageToAgentTask(ctx, existing)
 		}
 	}
 	if message.ID == "" {
@@ -84,13 +85,13 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	message.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO engineer_messages(
-			id, operation_id, project_path, provider, session_mode, requested_target_session_id,
+			id, operation_id, agent_task_id, project_path, provider, session_mode, requested_target_session_id,
 			target_session_id, prompt,
 			reveal, todo_id, todo_label, todo_text, state, attempt_count,
 			last_error, created_at, updated_at, delivered_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, message.ID, message.OperationID, message.ProjectPath, string(message.Provider),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, message.ID, message.OperationID, message.AgentTaskID, message.ProjectPath, string(message.Provider),
 		string(message.SessionMode), message.RequestedTargetSessionID, message.TargetSessionID, message.Prompt,
 		boolToInt(message.Reveal), message.TodoID,
 		message.TodoLabel, message.TodoText, string(message.State), message.AttemptCount,
@@ -102,16 +103,43 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 				if !sameEngineerMessageRequest(existing, message) {
 					return control.EngineerMessage{}, errors.New("control operation is already bound to a different engineer message")
 				}
-				return existing, nil
+				return existing, s.linkEngineerMessageToAgentTask(ctx, existing)
 			}
 		}
 		return control.EngineerMessage{}, fmt.Errorf("create engineer message: %w", err)
 	}
-	return s.GetEngineerMessage(ctx, message.ID)
+	created, err := s.GetEngineerMessage(ctx, message.ID)
+	if err != nil {
+		return control.EngineerMessage{}, err
+	}
+	return created, s.linkEngineerMessageToAgentTask(ctx, created)
+}
+
+func (s *Store) linkEngineerMessageToAgentTask(ctx context.Context, message control.EngineerMessage) error {
+	if strings.TrimSpace(message.AgentTaskID) == "" {
+		return nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE agent_tasks
+		SET result_message_id = ?, updated_at = ?
+		WHERE id = ?
+	`, message.ID, time.Now().Unix(), message.AgentTaskID)
+	if err != nil {
+		return fmt.Errorf("link engineer message to agent task: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return fmt.Errorf("link engineer message to missing agent task: %s", message.AgentTaskID)
+	}
+	return nil
 }
 
 func sameEngineerMessageRequest(existing, proposed control.EngineerMessage) bool {
-	return existing.ProjectPath == proposed.ProjectPath &&
+	return existing.AgentTaskID == proposed.AgentTaskID &&
+		existing.ProjectPath == proposed.ProjectPath &&
 		existing.Provider == proposed.Provider &&
 		existing.SessionMode == proposed.SessionMode &&
 		existing.RequestedTargetSessionID == proposed.RequestedTargetSessionID &&
@@ -344,6 +372,28 @@ func (s *Store) RecordEngineerMessageState(
 			return control.EngineerMessage{}, fmt.Errorf("record engineer message operation state: %w", err)
 		}
 	}
+	if strings.TrimSpace(current.AgentTaskID) != "" {
+		deliveryError := ""
+		if state == control.EngineerMessageFailed {
+			deliveryError = firstNonEmptyString(errText, statusText, "result callback delivery failed")
+		}
+		var deliveredAt any
+		if state == control.EngineerMessageDelivered {
+			deliveredAt = now.Unix()
+		}
+		_, err = tx.ExecContext(ctx, `
+			UPDATE agent_tasks
+			SET result_delivered_at = CASE
+					WHEN ? IS NOT NULL THEN COALESCE(result_delivered_at, ?)
+					ELSE result_delivered_at
+				END,
+				result_delivery_error = ?, updated_at = ?
+			WHERE id = ? AND result_message_id = ?
+		`, deliveredAt, deliveredAt, deliveryError, now.Unix(), current.AgentTaskID, current.ID)
+		if err != nil {
+			return control.EngineerMessage{}, fmt.Errorf("record agent task result delivery state: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return control.EngineerMessage{}, err
 	}
@@ -365,6 +415,7 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 	if err := scanner.Scan(
 		&message.ID,
 		&message.OperationID,
+		&message.AgentTaskID,
 		&message.ProjectPath,
 		&provider,
 		&sessionMode,

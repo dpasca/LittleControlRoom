@@ -160,7 +160,7 @@ func agentTaskClassificationType(task model.AgentTask) model.SessionCategory {
 
 func agentTaskLastActivity(task model.AgentTask) time.Time {
 	latest := task.CreatedAt
-	for _, candidate := range []time.Time{task.UpdatedAt, task.LastTouchedAt, task.CompletedAt, task.ArchivedAt} {
+	for _, candidate := range []time.Time{task.UpdatedAt, task.LastTouchedAt, task.ResultReadyAt, task.ResultDeliveredAt, task.ResultConsumedAt, task.CompletedAt, task.ArchivedAt} {
 		if candidate.After(latest) {
 			latest = candidate
 		}
@@ -225,6 +225,15 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 	if last := agentTaskLastActivity(task); !last.IsZero() {
 		lines = append(lines, detailField("Last touched", detailValueStyle.Render(last.Format(time.RFC3339))))
 	}
+	if affiliation := agentTaskAffiliationSummary(task); affiliation != "" {
+		lines = append(lines, renderWrappedDetailField("Affiliation", detailValueStyle, width, affiliation))
+	}
+	if origin := agentTaskOriginSummary(task); origin != "" {
+		lines = append(lines, renderWrappedDetailField("Requested by", detailValueStyle, width, origin))
+	}
+	if lifecycle := agentTaskResultLifecycleSummary(task); lifecycle != "" {
+		lines = append(lines, renderWrappedDetailField("Result", detailValueStyle, width, lifecycle))
+	}
 	if len(task.Capabilities) > 0 {
 		lines = append(lines, renderWrappedDetailField("Capabilities", detailValueStyle, width, strings.Join(task.Capabilities, ", ")))
 	}
@@ -273,6 +282,15 @@ func agentTaskResourceSummary(resource model.AgentTaskResource) string {
 			projectName = filepath.Base(projectPath)
 		}
 		return firstNonEmptyTrimmed(label, projectName, projectPath)
+	case model.AgentTaskResourceTodo:
+		todo := strings.TrimSpace(resource.RefID)
+		if todo != "" {
+			todo = "TODO #" + strings.TrimPrefix(todo, "#")
+		}
+		if label == "" || todo == "" || strings.Contains(label, todo) {
+			return firstNonEmptyTrimmed(label, todo)
+		}
+		return todo + " — " + label
 	case model.AgentTaskResourceProcess:
 		if resource.PID > 0 {
 			return strings.TrimSpace(fmt.Sprintf("pid %d %s", resource.PID, label))
@@ -294,6 +312,69 @@ func agentTaskResourceSummary(resource model.AgentTaskResource) string {
 		return firstNonEmptyTrimmed(label, sessionID)
 	}
 	return label
+}
+
+func agentTaskAffiliationSummary(task model.AgentTask) string {
+	parts := []string{}
+	if projectPath := cleanAgentTaskPath(task.OriginProjectPath); projectPath != "" {
+		parts = append(parts, filepath.Base(projectPath))
+	}
+	if worktreePath := cleanAgentTaskPath(task.OriginWorktreePath); worktreePath != "" && worktreePath != cleanAgentTaskPath(task.OriginProjectPath) {
+		parts = append(parts, "worktree "+filepath.Base(worktreePath))
+	}
+	for _, resource := range task.Resources {
+		if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceTodo {
+			continue
+		}
+		if todo := strings.TrimSpace(resource.RefID); todo != "" {
+			parts = append(parts, "TODO #"+strings.TrimPrefix(todo, "#"))
+		}
+		break
+	}
+	return strings.Join(parts, " / ")
+}
+
+func agentTaskOriginSummary(task model.AgentTask) string {
+	provider := codexProviderFromSessionSource(task.OriginProvider)
+	parts := []string{}
+	if provider != "" {
+		parts = append(parts, provider.Label())
+	}
+	if sessionID := strings.TrimSpace(task.OriginSessionID); sessionID != "" {
+		parts = append(parts, shortID(sessionID))
+	}
+	return strings.Join(parts, " ")
+}
+
+func agentTaskResultLifecycleSummary(task model.AgentTask) string {
+	switch {
+	case !task.ResultConsumedAt.IsZero():
+		consumer := strings.TrimSpace(task.ResultConsumedBy)
+		if consumer == "" {
+			consumer = "operator"
+		}
+		return "consumed by " + consumer + " at " + task.ResultConsumedAt.Format(time.RFC3339)
+	case strings.TrimSpace(task.ResultDeliveryError) != "":
+		return "callback failed: " + strings.TrimSpace(task.ResultDeliveryError)
+	case !task.ResultDeliveredAt.IsZero():
+		return "delivered to the originating session; awaiting acceptance"
+	case strings.TrimSpace(task.ResultMessageID) != "":
+		return "callback queued for the originating session"
+	case !task.ResultReadyAt.IsZero():
+		return "ready for review; no originating-session callback is available"
+	default:
+		return "worker result pending"
+	}
+}
+
+func compactStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func cleanAgentTaskPath(path string) string {

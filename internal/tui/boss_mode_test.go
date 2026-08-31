@@ -682,8 +682,12 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	svc := newControlTestService(t)
 	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-		Title: "Kill stale roguellm dev server",
-		Kind:  model.AgentTaskKindAgent,
+		Title:              "Kill stale roguellm dev server",
+		Kind:               model.AgentTaskKindAgent,
+		OriginProjectPath:  "/tmp/roguellm",
+		OriginWorktreePath: "/tmp/roguellm--cleanup",
+		OriginProvider:     model.SessionSourceCodex,
+		OriginSessionID:    "caller-session",
 	})
 	if err != nil {
 		t.Fatalf("CreateAgentTask() error = %v", err)
@@ -760,6 +764,19 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	}
 	if completed.Status != model.AgentTaskStatusWaiting {
 		t.Fatalf("agent task status = %s, want waiting", completed.Status)
+	}
+	if completed.ResultReadyAt.IsZero() || completed.ResultMessageID == "" {
+		t.Fatalf("agent task result lifecycle = %#v", completed)
+	}
+	callbacks, err := svc.Store().ListQueuedEngineerMessages(ctx, 10)
+	if err != nil || len(callbacks) != 1 {
+		t.Fatalf("result callbacks = %#v, err=%v", callbacks, err)
+	}
+	callback := callbacks[0]
+	if callback.AgentTaskID != task.ID || callback.ProjectPath != "/tmp/roguellm--cleanup" ||
+		callback.TargetSessionID != "caller-session" || !strings.Contains(callback.Prompt, "work.agent_task_get") ||
+		!strings.Contains(callback.Prompt, "agent_task.close") {
+		t.Fatalf("result callback = %#v", callback)
 	}
 	if !strings.Contains(completed.Summary, "No stale roguellm dev server is running now") || strings.Contains(completed.Summary, "now doing the requested independent verification") {
 		t.Fatalf("agent task summary = %q, want the final report instead of the earlier progress update", completed.Summary)

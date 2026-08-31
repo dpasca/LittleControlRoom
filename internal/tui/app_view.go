@@ -1237,6 +1237,9 @@ func (m Model) renderProjectList(width, height int) string {
 			statusStyle = detailWarningStyle
 			summaryStyle = detailWarningStyle
 			nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
+		case projectListRowAgentTask:
+			namePrefix = strings.Repeat("  ", max(1, rowMeta.Indent)) + "↳ "
+			nameLabel = "[A] " + p.Name
 		default:
 			switch model.NormalizeProjectKind(p.Kind) {
 			case model.ProjectKindScratchTask:

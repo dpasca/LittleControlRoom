@@ -2468,6 +2468,55 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 	}
 }
 
+func TestAgentTaskCreatePersistsExternalOriginAndTodoAffiliation(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	input := control.AgentTaskCreateInput{
+		RequestID: "lcrop_agent_origin",
+		Title:     "Texture the F-14",
+		Kind:      control.AgentTaskKindAgent,
+		Resources: []control.ResourceRef{{
+			Kind:        control.ResourceTodo,
+			TodoID:      1298,
+			ProjectPath: "/tmp/lcr-intercept",
+			Label:       "Repository TODO #1298",
+		}},
+	}
+	args, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv := control.Invocation{RequestID: input.RequestID, Capability: control.CapabilityAgentTaskCreate, Args: args}
+	if _, err := svc.Store().CreateControlOperation(ctx, control.Operation{
+		ID:          input.RequestID,
+		Capability:  control.CapabilityAgentTaskCreate,
+		Status:      control.OperationProposed,
+		Invocation:  inv,
+		Source:      "little-control-room-runtime",
+		Provider:    "codex",
+		SessionKey:  "caller-session",
+		ProjectPath: "/tmp/lcr-intercept--carrier",
+		RequestedBy: "codex",
+		Confirmed:   true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{ctx: ctx, svc: svc}
+	msg, ok := m.createBossAgentTaskCmd(inv, input, "")().(bossAgentTaskCreatedMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("created message = %#v", msg)
+	}
+	task := msg.task
+	if task.OriginOperationID != input.RequestID || task.OriginProjectPath != "/tmp/lcr-intercept" ||
+		task.OriginWorktreePath != "/tmp/lcr-intercept--carrier" || task.OriginProvider != model.SessionSourceCodex ||
+		task.OriginSessionID != "caller-session" {
+		t.Fatalf("task origin = %#v", task)
+	}
+	if len(task.Resources) != 1 || task.Resources[0].Kind != model.AgentTaskResourceTodo || task.Resources[0].RefID != "1298" {
+		t.Fatalf("task resources = %#v", task.Resources)
+	}
+}
+
 func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)

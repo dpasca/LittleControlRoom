@@ -115,6 +115,7 @@ type AgentTaskResourceKind string
 
 const (
 	AgentTaskResourceProject         AgentTaskResourceKind = "project"
+	AgentTaskResourceTodo            AgentTaskResourceKind = "todo"
 	AgentTaskResourceProcess         AgentTaskResourceKind = "process"
 	AgentTaskResourcePort            AgentTaskResourceKind = "port"
 	AgentTaskResourceFile            AgentTaskResourceKind = "file"
@@ -240,26 +241,37 @@ type CommitTodoCheck struct {
 }
 
 type AgentTask struct {
-	ID              string
-	ParentTaskID    string
-	Title           string
-	Kind            AgentTaskKind
-	Status          AgentTaskStatus
-	CategoryID      string
-	CategoryName    string
-	CategoryPrivate bool
-	Summary         string
-	Capabilities    []string
-	Provider        SessionSource
-	SessionID       string
-	WorkspacePath   string
-	ExpiresAt       time.Time
-	CreatedAt       time.Time
-	LastTouchedAt   time.Time
-	CompletedAt     time.Time
-	ArchivedAt      time.Time
-	UpdatedAt       time.Time
-	Resources       []AgentTaskResource
+	ID                  string
+	ParentTaskID        string
+	Title               string
+	Kind                AgentTaskKind
+	Status              AgentTaskStatus
+	CategoryID          string
+	CategoryName        string
+	CategoryPrivate     bool
+	Summary             string
+	Capabilities        []string
+	Provider            SessionSource
+	SessionID           string
+	WorkspacePath       string
+	OriginOperationID   string
+	OriginProjectPath   string
+	OriginWorktreePath  string
+	OriginProvider      SessionSource
+	OriginSessionID     string
+	ResultMessageID     string
+	ExpiresAt           time.Time
+	ResultReadyAt       time.Time
+	ResultDeliveredAt   time.Time
+	ResultDeliveryError string
+	ResultConsumedAt    time.Time
+	ResultConsumedBy    string
+	CreatedAt           time.Time
+	LastTouchedAt       time.Time
+	CompletedAt         time.Time
+	ArchivedAt          time.Time
+	UpdatedAt           time.Time
+	Resources           []AgentTaskResource
 }
 
 type AgentTaskResource struct {
@@ -278,18 +290,24 @@ type AgentTaskResource struct {
 }
 
 type CreateAgentTaskInput struct {
-	ID            string
-	ParentTaskID  string
-	Title         string
-	Kind          AgentTaskKind
-	Status        AgentTaskStatus
-	Summary       string
-	Capabilities  []string
-	Provider      SessionSource
-	SessionID     string
-	WorkspacePath string
-	ExpiresAt     time.Time
-	Resources     []AgentTaskResource
+	ID                 string
+	ParentTaskID       string
+	Title              string
+	Kind               AgentTaskKind
+	Status             AgentTaskStatus
+	CategoryID         string
+	Summary            string
+	Capabilities       []string
+	Provider           SessionSource
+	SessionID          string
+	WorkspacePath      string
+	OriginOperationID  string
+	OriginProjectPath  string
+	OriginWorktreePath string
+	OriginProvider     SessionSource
+	OriginSessionID    string
+	ExpiresAt          time.Time
+	Resources          []AgentTaskResource
 }
 
 type UpdateAgentTaskInput struct {
@@ -303,7 +321,13 @@ type UpdateAgentTaskInput struct {
 	Provider            *SessionSource
 	SessionID           *string
 	WorkspacePath       *string
+	ResultMessageID     *string
 	ExpiresAt           *time.Time
+	ResultReadyAt       *time.Time
+	ResultDeliveredAt   *time.Time
+	ResultDeliveryError *string
+	ResultConsumedAt    *time.Time
+	ResultConsumedBy    *string
 	CompletedAt         *time.Time
 	ArchivedAt          *time.Time
 	Resources           []AgentTaskResource
@@ -599,7 +623,7 @@ func NormalizeAgentTaskStatus(status AgentTaskStatus) AgentTaskStatus {
 
 func NormalizeAgentTaskResourceKind(kind AgentTaskResourceKind) AgentTaskResourceKind {
 	switch kind {
-	case AgentTaskResourceProject, AgentTaskResourceProcess, AgentTaskResourcePort, AgentTaskResourceFile, AgentTaskResourceAgentTask, AgentTaskResourceEngineerSession:
+	case AgentTaskResourceProject, AgentTaskResourceTodo, AgentTaskResourceProcess, AgentTaskResourcePort, AgentTaskResourceFile, AgentTaskResourceAgentTask, AgentTaskResourceEngineerSession:
 		return kind
 	default:
 		return ""

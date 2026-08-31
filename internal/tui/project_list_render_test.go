@@ -1524,6 +1524,53 @@ func TestRebuildProjectListIncludesOpenAgentTasksWithDetails(t *testing.T) {
 	}
 }
 
+func TestRebuildProjectListNestsAffiliatedAgentTaskUnderOriginWorktree(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	rootPath := "/tmp/lcr-intercept"
+	worktreePath := "/tmp/lcr-intercept--carrier"
+	task := model.AgentTask{
+		ID:                 "agt_f14",
+		Title:              "Textured packed-PBR F-14 runtime asset",
+		Status:             model.AgentTaskStatusWaiting,
+		WorkspacePath:      "/tmp/lcroom-agent-task-f14",
+		OriginProjectPath:  rootPath,
+		OriginWorktreePath: worktreePath,
+		LastTouchedAt:      now,
+		Resources: []model.AgentTaskResource{{
+			Kind:        model.AgentTaskResourceTodo,
+			RefID:       "1298",
+			ProjectPath: rootPath,
+		}},
+	}
+	m := Model{
+		nowFn: func() time.Time { return now },
+		allProjects: []model.ProjectSummary{
+			{Name: "lcr-intercept", Path: rootPath, Kind: model.ProjectKindProject, WorktreeKind: model.WorktreeKindMain, WorktreeRootPath: rootPath, PresentOnDisk: true, ManuallyAdded: true},
+			{Name: "carrier", Path: worktreePath, Kind: model.ProjectKindProject, WorktreeKind: model.WorktreeKindLinked, WorktreeRootPath: rootPath, PresentOnDisk: true, ManuallyAdded: true},
+		},
+		openAgentTasks: []model.AgentTask{task},
+		sortMode:       sortByAttention,
+		visibility:     visibilityAIFolders,
+	}
+	m.rebuildProjectList(task.WorkspacePath)
+	if len(m.projects) != 3 || m.projects[0].Path != rootPath || m.projects[1].Path != worktreePath || m.projects[2].Path != task.WorkspacePath {
+		t.Fatalf("nested project order = %#v", m.projects)
+	}
+	if len(m.projectRows) != 3 || m.projectRows[2].Kind != projectListRowAgentTask || m.projectRows[2].Indent != 2 {
+		t.Fatalf("agent task row metadata = %#v", m.projectRows)
+	}
+	rendered := ansi.Strip(m.renderProjectList(180, 8))
+	if !strings.Contains(rendered, "↳ [A] Textured packed-PB") {
+		t.Fatalf("affiliated task was not rendered under its worktree: %q", rendered)
+	}
+	detail := ansi.Strip(m.renderDetailContent(120))
+	for _, want := range []string{"lcr-intercept", "worktree lcr-intercept--carrier", "TODO #1298"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("agent task affiliation detail missing %q: %q", want, detail)
+		}
+	}
+}
+
 func TestProjectsMsgThreadsOpenAgentTasksIntoClassicList(t *testing.T) {
 	task := model.AgentTask{
 		ID:            "agt_loaded",

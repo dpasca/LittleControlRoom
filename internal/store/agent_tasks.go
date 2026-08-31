@@ -37,11 +37,15 @@ func (s *Store) CreateAgentTask(ctx context.Context, input model.CreateAgentTask
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO agent_tasks(
 			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
-			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
+			origin_operation_id, origin_project_path, origin_worktree_path, origin_provider, origin_session_id,
+			result_message_id, expires_at, result_ready_at, result_delivered_at, result_delivery_error, result_consumed_at, result_consumed_by,
+			created_at, last_touched_at, completed_at, archived_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, normalized.ID, normalized.ParentTaskID, normalized.Title, string(normalized.Kind), string(normalized.Status), normalized.Summary,
-		encodeAgentTaskCapabilities(normalized.Capabilities), string(normalized.Provider), normalized.SessionID, normalized.WorkspacePath, nullableTimeUnixValue(normalized.ExpiresAt),
+		encodeAgentTaskCapabilities(normalized.Capabilities), string(normalized.Provider), normalized.SessionID, normalized.WorkspacePath,
+		normalized.OriginOperationID, normalized.OriginProjectPath, normalized.OriginWorktreePath, string(normalized.OriginProvider), normalized.OriginSessionID,
+		"", nullableTimeUnixValue(normalized.ExpiresAt), nil, nil, "", nil, "",
 		now.Unix(), now.Unix(), nullableTimeUnixValue(time.Time{}), nullableTimeUnixValue(time.Time{}), now.Unix())
 	if err != nil {
 		return model.AgentTask{}, fmt.Errorf("create agent task: %w", err)
@@ -63,7 +67,9 @@ func (s *Store) GetAgentTask(ctx context.Context, id string) (model.AgentTask, e
 	task, err := scanAgentTask(s.db.QueryRowContext(ctx, `
 		SELECT
 			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
-			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
+			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id,
+			at.result_message_id, at.expires_at, at.result_ready_at, at.result_delivered_at, at.result_delivery_error, at.result_consumed_at, at.result_consumed_by,
+			at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
 		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
 		LEFT JOIN project_categories pc ON pc.id = ca.category_id
@@ -102,7 +108,9 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 	query := `
 		SELECT
 			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
-			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
+			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id,
+			at.result_message_id, at.expires_at, at.result_ready_at, at.result_delivered_at, at.result_delivery_error, at.result_consumed_at, at.result_consumed_by,
+			at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
 		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
 		LEFT JOIN project_categories pc ON pc.id = ca.category_id
@@ -152,7 +160,9 @@ func (s *Store) ListExpiredAgentTasks(ctx context.Context, now time.Time) ([]mod
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
-			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
+			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id,
+			at.result_message_id, at.expires_at, at.result_ready_at, at.result_delivered_at, at.result_delivery_error, at.result_consumed_at, at.result_consumed_by,
+			at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
 		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
 		LEFT JOIN project_categories pc ON pc.id = ca.category_id
@@ -259,9 +269,33 @@ func (s *Store) UpdateAgentTask(ctx context.Context, input model.UpdateAgentTask
 		set = append(set, "workspace_path = ?")
 		args = append(args, cleanOptionalPath(*input.WorkspacePath))
 	}
+	if input.ResultMessageID != nil {
+		set = append(set, "result_message_id = ?")
+		args = append(args, strings.TrimSpace(*input.ResultMessageID))
+	}
 	if input.ExpiresAt != nil {
 		set = append(set, "expires_at = ?")
 		args = append(args, nullableTimeUnixValue(*input.ExpiresAt))
+	}
+	if input.ResultReadyAt != nil {
+		set = append(set, "result_ready_at = ?")
+		args = append(args, nullableTimeUnixValue(*input.ResultReadyAt))
+	}
+	if input.ResultDeliveredAt != nil {
+		set = append(set, "result_delivered_at = ?")
+		args = append(args, nullableTimeUnixValue(*input.ResultDeliveredAt))
+	}
+	if input.ResultDeliveryError != nil {
+		set = append(set, "result_delivery_error = ?")
+		args = append(args, strings.TrimSpace(*input.ResultDeliveryError))
+	}
+	if input.ResultConsumedAt != nil {
+		set = append(set, "result_consumed_at = ?")
+		args = append(args, nullableTimeUnixValue(*input.ResultConsumedAt))
+	}
+	if input.ResultConsumedBy != nil {
+		set = append(set, "result_consumed_by = ?")
+		args = append(args, strings.TrimSpace(*input.ResultConsumedBy))
 	}
 	if input.CompletedAt != nil {
 		set = append(set, "completed_at = ?")
@@ -312,11 +346,17 @@ func normalizeCreateAgentTaskInput(input model.CreateAgentTaskInput) (model.Crea
 	}
 	input.Kind = model.NormalizeAgentTaskKind(input.Kind)
 	input.Status = model.NormalizeAgentTaskStatus(input.Status)
+	input.CategoryID = strings.TrimSpace(input.CategoryID)
 	input.Summary = strings.TrimSpace(input.Summary)
 	input.Capabilities = normalizeAgentTaskCapabilities(input.Capabilities)
 	input.Provider = model.NormalizeSessionSource(input.Provider)
 	input.SessionID = strings.TrimSpace(input.SessionID)
 	input.WorkspacePath = cleanOptionalPath(input.WorkspacePath)
+	input.OriginOperationID = strings.TrimSpace(input.OriginOperationID)
+	input.OriginProjectPath = cleanOptionalPath(input.OriginProjectPath)
+	input.OriginWorktreePath = cleanOptionalPath(input.OriginWorktreePath)
+	input.OriginProvider = model.NormalizeSessionSource(input.OriginProvider)
+	input.OriginSessionID = strings.TrimSpace(input.OriginSessionID)
 	return input, nil
 }
 
@@ -356,18 +396,22 @@ func scanAgentTask(scanner interface {
 	Scan(dest ...any) error
 }) (model.AgentTask, error) {
 	var (
-		task            model.AgentTask
-		kind            string
-		status          string
-		capabilities    string
-		provider        string
-		expiresAt       sql.NullInt64
-		createdAt       int64
-		lastTouchedAt   int64
-		completedAt     sql.NullInt64
-		archivedAt      sql.NullInt64
-		updatedAt       int64
-		categoryPrivate int
+		task              model.AgentTask
+		kind              string
+		status            string
+		capabilities      string
+		provider          string
+		originProvider    string
+		expiresAt         sql.NullInt64
+		resultReadyAt     sql.NullInt64
+		resultDeliveredAt sql.NullInt64
+		resultConsumedAt  sql.NullInt64
+		createdAt         int64
+		lastTouchedAt     int64
+		completedAt       sql.NullInt64
+		archivedAt        sql.NullInt64
+		updatedAt         int64
+		categoryPrivate   int
 	)
 	if err := scanner.Scan(
 		&task.ID,
@@ -383,7 +427,18 @@ func scanAgentTask(scanner interface {
 		&provider,
 		&task.SessionID,
 		&task.WorkspacePath,
+		&task.OriginOperationID,
+		&task.OriginProjectPath,
+		&task.OriginWorktreePath,
+		&originProvider,
+		&task.OriginSessionID,
+		&task.ResultMessageID,
 		&expiresAt,
+		&resultReadyAt,
+		&resultDeliveredAt,
+		&task.ResultDeliveryError,
+		&resultConsumedAt,
+		&task.ResultConsumedBy,
 		&createdAt,
 		&lastTouchedAt,
 		&completedAt,
@@ -399,8 +454,18 @@ func scanAgentTask(scanner interface {
 	task.CategoryPrivate = categoryPrivate != 0
 	task.Capabilities = decodeAgentTaskCapabilities(capabilities)
 	task.Provider = model.NormalizeSessionSource(model.SessionSource(provider))
+	task.OriginProvider = model.NormalizeSessionSource(model.SessionSource(originProvider))
 	if expiresAt.Valid {
 		task.ExpiresAt = time.Unix(expiresAt.Int64, 0)
+	}
+	if resultReadyAt.Valid {
+		task.ResultReadyAt = time.Unix(resultReadyAt.Int64, 0)
+	}
+	if resultDeliveredAt.Valid {
+		task.ResultDeliveredAt = time.Unix(resultDeliveredAt.Int64, 0)
+	}
+	if resultConsumedAt.Valid {
+		task.ResultConsumedAt = time.Unix(resultConsumedAt.Int64, 0)
 	}
 	task.CreatedAt = time.Unix(createdAt, 0)
 	task.LastTouchedAt = time.Unix(lastTouchedAt, 0)

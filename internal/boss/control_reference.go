@@ -87,8 +87,10 @@ func bossControlReferenceSpec(domain string) ([]control.CapabilityName, []string
 				control.CapabilityAgentTaskClose,
 			}, []string{
 				"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation and fresh external research.",
+				"When temporary work originates from a known project, worktree, or TODO, include those project/TODO resources. The task inherits that affiliation while keeping its isolated workspace.",
 				"Use agent_task.continue for a known open task that needs another attempt, progress, or a sharper question. Inspect its output first when a vague retry follows a just-created or just-continued task.",
-				"Use agent_task.close status=completed when fresh evidence resolves a review/waiting task; use status=archived when the user wants one task removed from the active record.",
+				"A completed worker queues its durable result back to the exact originating session when one is available. Inspect and integrate that result before closing the task.",
+				"Use agent_task.close status=completed when fresh evidence resolves a review/waiting task; use status=archived when the result is accepted and the user wants the task removed from the active record. Closing records result consumption before deferred cleanup.",
 				"For cleanup, close_session=false unless the user explicitly asks to close the live engineer session too.",
 				"For multiple task records to archive, propose an agent_task_cleanup goal instead of several independent confirmations.",
 				"For multiple open tasks needing progress, propose one concrete next agent_task.continue and name what remains.",

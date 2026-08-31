@@ -453,6 +453,7 @@ func (s EngineerMessageState) Terminal() bool {
 type EngineerMessage struct {
 	ID                       string               `json:"id"`
 	OperationID              string               `json:"operation_id,omitempty"`
+	AgentTaskID              string               `json:"agent_task_id,omitempty"`
 	ProjectPath              string               `json:"project_path"`
 	Provider                 Provider             `json:"provider"`
 	SessionMode              SessionMode          `json:"session_mode"`
