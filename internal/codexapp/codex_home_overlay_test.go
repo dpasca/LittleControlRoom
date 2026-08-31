@@ -612,7 +612,15 @@ func TestCodexHomeOverlayPromptInputShowsShadowPlaywrightSkill(t *testing.T) {
 	if !strings.Contains(text, "Use the embedded Playwright MCP tools already wired through Little Control Room") {
 		t.Fatalf("prompt-input missing overlay playwright skill description: %s", text)
 	}
-	if !strings.Contains(text, filepath.Join(overlay, "skills", "playwright", "SKILL.md")) {
+	skillRoot, err := filepath.EvalSymlinks(filepath.Join(overlay, "skills"))
+	if err != nil {
+		t.Fatalf("resolve overlay skill root: %v", err)
+	}
+	directSkillPath := filepath.Join(skillRoot, "playwright", "SKILL.md")
+	aliasedSkillRoot := "`r0` = `" + skillRoot + "`"
+	aliasedSkillPath := "r0/playwright/SKILL.md"
+	if !strings.Contains(text, directSkillPath) &&
+		(!strings.Contains(text, aliasedSkillRoot) || !strings.Contains(text, aliasedSkillPath)) {
 		t.Fatalf("prompt-input missing overlay playwright skill path: %s", text)
 	}
 }
