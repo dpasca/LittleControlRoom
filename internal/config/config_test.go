@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1162,6 +1163,55 @@ func TestSaveEditableSettingsBacksUpExistingConfig(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("backup mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestCleanupEditableSettingsBackupsKeepsNewestBoundedSet(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	baseTime := time.Now().Add(-time.Hour)
+	for i := 0; i < editableSettingsBackupRetention+5; i++ {
+		stamp := baseTime.Add(time.Duration(i) * time.Minute)
+		path := fmt.Sprintf("%s.%s.bak", configPath, stamp.UTC().Format("20060102-150405.000000000"))
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("backup %d", i)), 0o600); err != nil {
+			t.Fatalf("write backup %d: %v", i, err)
+		}
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatalf("chtimes backup %d: %v", i, err)
+		}
+	}
+
+	removed, err := CleanupEditableSettingsBackups(configPath)
+	if err != nil {
+		t.Fatalf("CleanupEditableSettingsBackups() error = %v", err)
+	}
+	if removed != 5 {
+		t.Fatalf("removed = %d, want 5", removed)
+	}
+	backups, err := filepath.Glob(configPath + ".*.bak")
+	if err != nil {
+		t.Fatalf("glob retained backups: %v", err)
+	}
+	if len(backups) != editableSettingsBackupRetention {
+		t.Fatalf("retained backups = %d, want %d", len(backups), editableSettingsBackupRetention)
+	}
+	oldBackup := fmt.Sprintf("%s.%s.bak", configPath, baseTime.Add(4*time.Minute).UTC().Format("20060102-150405.000000000"))
+	if _, err := os.Stat(oldBackup); !os.IsNotExist(err) {
+		t.Fatalf("old backup should be removed, stat err = %v", err)
+	}
+	retainedBackup := fmt.Sprintf("%s.%s.bak", configPath, baseTime.Add(5*time.Minute).UTC().Format("20060102-150405.000000000"))
+	if _, err := os.Stat(retainedBackup); err != nil {
+		t.Fatalf("newest retained range should start at backup 5: %v", err)
+	}
+	manualBackup := configPath + ".manual.bak"
+	if err := os.WriteFile(manualBackup, []byte("manual"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CleanupEditableSettingsBackups(configPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manualBackup); err != nil {
+		t.Fatalf("non-generated backup should be retained: %v", err)
 	}
 }
 

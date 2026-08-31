@@ -892,7 +892,7 @@ func (m Model) projectTabCount(tab projectTabDescriptor) int {
 		}
 	}
 	for _, task := range m.openAgentTasks {
-		if !agentTaskIsOpen(task) {
+		if !agentTaskIsVisible(task) {
 			continue
 		}
 		if strings.TrimSpace(task.CategoryID) == strings.TrimSpace(tab.categoryID) {
@@ -927,7 +927,7 @@ func (m Model) projectTabHasActionableAttentionAt(tab projectTabDescriptor, now 
 			}
 		}
 		for _, task := range tasks {
-			if !agentTaskIsOpen(task) || (m.projectTabAgentTasks == nil && strings.TrimSpace(task.CategoryID) != categoryID) {
+			if !agentTaskIsVisible(task) || (m.projectTabAgentTasks == nil && strings.TrimSpace(task.CategoryID) != categoryID) {
 				continue
 			}
 			if agentTaskHasTabAttention(task) {

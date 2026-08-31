@@ -472,7 +472,7 @@ func (m Model) categoryMoveItems() ([]categoryMoveItem, string) {
 		})
 	}
 	for _, task := range m.openAgentTasks {
-		if !agentTaskIsOpen(task) {
+		if !agentTaskIsVisible(task) {
 			continue
 		}
 		if m.privacyMode && task.CategoryPrivate {

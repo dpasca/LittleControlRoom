@@ -115,7 +115,7 @@ func (s *Service) executeAgentTaskCloseGoalStep(ctx context.Context, runID, step
 		entry.Summary = err.Error()
 	} else {
 		entry.Status = "completed"
-		entry.Summary = "Archived agent task record."
+		entry.Summary = "Moved agent task record to Trash."
 	}
 	if traceErr := s.store.AppendGoalRunTrace(ctx, runID, entry); traceErr != nil && entry.Status != "failed" {
 		entry.Status = "failed"

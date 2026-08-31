@@ -1685,8 +1685,8 @@ func TestAgentTaskRemoveHotkeyOpensAgentTaskActionDialog(t *testing.T) {
 	}
 
 	footer := ansi.Strip(m.renderFooter(160))
-	if !strings.Contains(footer, "x archive") {
-		t.Fatalf("renderFooter() should advertise agent task archiving, got %q", footer)
+	if !strings.Contains(footer, "x trash") {
+		t.Fatalf("renderFooter() should advertise moving the agent task to Trash, got %q", footer)
 	}
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -1704,8 +1704,8 @@ func TestAgentTaskRemoveHotkeyOpensAgentTaskActionDialog(t *testing.T) {
 		t.Fatalf("default agent task action selection = %d, want keep", got.agentTaskAction.Selected)
 	}
 	rendered := ansi.Strip(got.renderAgentTaskActionOverlay("", 100, 24))
-	if strings.Contains(rendered, "linked worktree") || !strings.Contains(rendered, "Archive") || !strings.Contains(rendered, "Keep") {
-		t.Fatalf("agent task action overlay should offer archive/keep without worktree copy, got %q", rendered)
+	if strings.Contains(rendered, "linked worktree") || !strings.Contains(rendered, "Trash") || !strings.Contains(rendered, "Keep") || !strings.Contains(rendered, "task record and workspace will be deleted automatically after 7 days") {
+		t.Fatalf("agent task action overlay should offer trash/keep with retention copy and without worktree copy, got %q", rendered)
 	}
 }
 
@@ -1782,13 +1782,13 @@ func TestAgentTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
 
 	updated, _ := m.updateAgentTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyTab})
 	got := updated.(Model)
-	if got.agentTaskAction.Selected != agentTaskActionFocusArchive {
+	if got.agentTaskAction.Selected != agentTaskActionFocusTrash {
 		t.Fatalf("first tab should move focus to archive, got %d", got.agentTaskAction.Selected)
 	}
 
 	updated, cmd := got.updateAgentTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
-	if got.status != "Archiving agent task..." {
+	if got.status != "Moving agent task to Trash..." {
 		t.Fatalf("status = %q, want archive progress", got.status)
 	}
 	if cmd == nil {
@@ -1802,7 +1802,7 @@ func TestAgentTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
 	if msg.err != nil {
 		t.Fatalf("agentTaskActionMsg.err = %v, want nil", msg.err)
 	}
-	if msg.status != "Agent task archived" {
+	if msg.status != "Agent task moved to Trash" {
 		t.Fatalf("agentTaskActionMsg.status = %q, want archive status", msg.status)
 	}
 	if msg.selectPath != "/tmp/neighbor" {
@@ -1879,8 +1879,8 @@ func TestOpenAgentTaskActionWithBusySessionShowsAttentionDialog(t *testing.T) {
 	if m.attentionDialog == nil {
 		t.Fatalf("blocked archive should show the attention dialog")
 	}
-	if m.attentionDialog.Title != "Archive blocked" {
-		t.Fatalf("attention dialog title = %q, want archive blocked", m.attentionDialog.Title)
+	if m.attentionDialog.Title != "Trash blocked" {
+		t.Fatalf("attention dialog title = %q, want trash blocked", m.attentionDialog.Title)
 	}
 	if strings.Contains(m.status, "linked worktree") {
 		t.Fatalf("status should not mention linked worktrees, got %q", m.status)

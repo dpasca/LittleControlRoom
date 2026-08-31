@@ -181,7 +181,7 @@ func normalizeGoalRunDefaults(proposal *GoalProposal) {
 			proposal.Run.Title = "Clear stale delegated agent tasks"
 		}
 		if proposal.Run.Objective == "" {
-			proposal.Run.Objective = "Archive delegated agent task records that have served their scope."
+			proposal.Run.Objective = "Move delegated agent task records that have served their scope to Trash."
 		}
 		if proposal.Run.SuccessCriteria == "" {
 			proposal.Run.SuccessCriteria = "Selected delegated agent tasks are no longer active or waiting after execution."
@@ -219,7 +219,7 @@ func normalizeAgentTaskCleanupGoalProposal(proposal GoalProposal) (GoalProposal,
 	}
 	proposal.Authority.ForbiddenSideEffects = normalizeStrings(proposal.Authority.ForbiddenSideEffects)
 	if len(proposal.Authority.ForbiddenSideEffects) == 0 {
-		proposal.Authority.ForbiddenSideEffects = []string{"close live engineer sessions", "delete files or workspaces"}
+		proposal.Authority.ForbiddenSideEffects = []string{"close live engineer sessions", "delete task files or workspaces before the seven-day Trash retention ends"}
 	}
 	switch proposal.Authority.MaxRisk {
 	case "", control.RiskWrite:
@@ -322,7 +322,7 @@ func FormatGoalProposalPreview(proposal GoalProposal) string {
 		return formatLCAgentGoalProposalPreview(proposal)
 	}
 	ids := AgentTaskResourceIDs(proposal.Authority.Resources)
-	lines := []string{fmt.Sprintf("Archive %d delegated agent task record%s?", len(ids), pluralSuffix(len(ids)))}
+	lines := []string{fmt.Sprintf("Move %d delegated agent task record%s to Trash?", len(ids), pluralSuffix(len(ids)))}
 	for _, resource := range proposal.Authority.Resources {
 		if resource.Kind != control.ResourceAgentTask {
 			continue
@@ -343,10 +343,10 @@ func FormatGoalProposalPreview(proposal GoalProposal) string {
 		lines = appendResourceLines(lines, proposal.KeepResources)
 	}
 	if len(proposal.ReviewResources) > 0 {
-		lines = append(lines, "", "Needs review instead of automatic archive:")
+		lines = append(lines, "", "Needs review instead of moving to Trash:")
 		lines = appendResourceLines(lines, proposal.ReviewResources)
 	}
-	lines = append(lines, "", "Allowed action: agent_task.close with archived status.")
+	lines = append(lines, "", "Allowed action: move to Trash (stored as agent_task.close with archived status).")
 	if len(proposal.Authority.ForbiddenSideEffects) > 0 {
 		lines = append(lines, "Forbidden side effects: "+strings.Join(proposal.Authority.ForbiddenSideEffects, "; ")+".")
 	}
@@ -382,13 +382,13 @@ func FormatGoalResult(result GoalResult) string {
 	failed := len(result.FailedTasks)
 	switch {
 	case failed == 0 && result.Verified:
-		return fmt.Sprintf("Archived %d delegated agent task record%s and verified the selected tasks are out of the active set.", archived, pluralSuffix(archived))
+		return fmt.Sprintf("Moved %d delegated agent task record%s to Trash and verified the selected tasks are out of the active set.", archived, pluralSuffix(archived))
 	case failed == 0:
-		return fmt.Sprintf("Archived %d delegated agent task record%s, but verification did not confirm every selected task left the active set.", archived, pluralSuffix(archived))
+		return fmt.Sprintf("Moved %d delegated agent task record%s to Trash, but verification did not confirm every selected task left the active set.", archived, pluralSuffix(archived))
 	case archived == 0:
-		return fmt.Sprintf("The goal run could not archive the selected delegated agent task records; %d task%s failed.", failed, pluralSuffix(failed))
+		return fmt.Sprintf("The goal run could not move the selected delegated agent task records to Trash; %d task%s failed.", failed, pluralSuffix(failed))
 	default:
-		return fmt.Sprintf("Archived %d delegated agent task record%s; %d task%s still need review.", archived, pluralSuffix(archived), failed, pluralSuffix(failed))
+		return fmt.Sprintf("Moved %d delegated agent task record%s to Trash; %d task%s still need review.", archived, pluralSuffix(archived), failed, pluralSuffix(failed))
 	}
 }
 
@@ -444,10 +444,10 @@ func normalizePlan(plan Plan, resources []control.ResourceRef) Plan {
 	}
 	if len(plan.Steps) == 0 {
 		plan.Steps = []PlanStep{
-			{ID: "select-agent-tasks", Kind: PlanStepSelect, Title: "Select the delegated agent task records to archive", Resources: resources, Confidence: 1},
-			{ID: "archive-agent-tasks", Kind: PlanStepAct, Title: "Archive the selected delegated agent task records", Capability: control.CapabilityAgentTaskClose, Resources: resources, Confidence: 1},
+			{ID: "select-agent-tasks", Kind: PlanStepSelect, Title: "Select the delegated agent task records to move to Trash", Resources: resources, Confidence: 1},
+			{ID: "archive-agent-tasks", Kind: PlanStepAct, Title: "Move the selected delegated agent task records to Trash", Capability: control.CapabilityAgentTaskClose, Resources: resources, Confidence: 1},
 			{ID: "verify-active-set", Kind: PlanStepVerify, Title: "Confirm selected task records are no longer active or waiting", Resources: resources, Confidence: 1},
-			{ID: "report-result", Kind: PlanStepReport, Title: "Report archived records, failures, and verification", Resources: resources, Confidence: 1},
+			{ID: "report-result", Kind: PlanStepReport, Title: "Report records moved to Trash, failures, and verification", Resources: resources, Confidence: 1},
 		}
 		return plan
 	}

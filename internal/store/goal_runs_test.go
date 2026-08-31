@@ -76,7 +76,7 @@ func TestStorePersistsGoalRunTraceAndResult(t *testing.T) {
 	if len(completed.Trace) != 2 || len(completed.Result.Trace) != 2 {
 		t.Fatalf("trace record/result lengths = %d/%d, want 2/2", len(completed.Trace), len(completed.Result.Trace))
 	}
-	if !completed.Result.Verified || !strings.Contains(completed.Result.Summary, "Archived 2 delegated agent task records") {
+	if !completed.Result.Verified || !strings.Contains(completed.Result.Summary, "Moved 2 delegated agent task records to Trash") {
 		t.Fatalf("result = %#v, want verified archive summary", completed.Result)
 	}
 }

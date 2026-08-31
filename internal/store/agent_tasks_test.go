@@ -126,6 +126,77 @@ func TestAgentTaskLifecyclePersistsResources(t *testing.T) {
 	}
 }
 
+func TestApplyAgentTaskTrashRetentionPreservesCompletedAndCapsTrashedTasks(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "agent-task-retention.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	now := time.Now().Truncate(time.Second)
+	completedAt := now.Add(-8 * 24 * time.Hour)
+	legacyCompletedExpiry := completedAt.Add(7 * 24 * time.Hour)
+	archivedAt := now.Add(-8 * 24 * time.Hour)
+	longExpiry := archivedAt.Add(30 * 24 * time.Hour)
+	completedTask, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: "agt_completed_retention", Title: "Completed task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedStatus := model.AgentTaskStatusCompleted
+	if _, err := st.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{
+		ID:          completedTask.ID,
+		Status:      &completedStatus,
+		CompletedAt: &completedAt,
+		ExpiresAt:   &legacyCompletedExpiry,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	archivedTask, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: "agt_archived_retention", Title: "Archived task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedStatus := model.AgentTaskStatusArchived
+	if _, err := st.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{
+		ID:         archivedTask.ID,
+		Status:     &archivedStatus,
+		ArchivedAt: &archivedAt,
+		ExpiresAt:  &longExpiry,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := st.ApplyAgentTaskTrashRetention(ctx, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("ApplyAgentTaskTrashRetention() error = %v", err)
+	}
+	if updated != 2 {
+		t.Fatalf("updated = %d, want 2", updated)
+	}
+	completedTask, err = st.GetAgentTask(ctx, completedTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !completedTask.ExpiresAt.IsZero() {
+		t.Fatalf("completed expiry = %v, want none", completedTask.ExpiresAt)
+	}
+	archivedTask, err = st.GetAgentTask(ctx, archivedTask.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := archivedTask.ExpiresAt, archivedAt.Add(7*24*time.Hour); !got.Equal(want) {
+		t.Fatalf("archived expiry = %v, want %v", got, want)
+	}
+	expired, err := st.ListExpiredAgentTasks(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired) != 1 || expired[0].ID != archivedTask.ID {
+		t.Fatalf("expired tasks = %#v, want trashed task", expired)
+	}
+}
+
 func TestAgentTaskResultLifecyclePersists(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

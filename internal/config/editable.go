@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"lcroom/internal/codexcli"
 	"lcroom/internal/todocapture"
 )
+
+const editableSettingsBackupRetention = 10
 
 type EditableSettings struct {
 	AIBackend                 AIBackend
@@ -608,7 +611,71 @@ func backupExistingEditableSettings(path string) error {
 		return err
 	}
 	backupPath := fmt.Sprintf("%s.%s.bak", path, time.Now().UTC().Format("20060102-150405.000000000"))
-	return os.WriteFile(backupPath, raw, 0o600)
+	if err := os.WriteFile(backupPath, raw, 0o600); err != nil {
+		return err
+	}
+	_, err = CleanupEditableSettingsBackups(path)
+	return err
+}
+
+// CleanupEditableSettingsBackups retains a small recovery set for one exact
+// config path instead of allowing timestamped backups to grow without bound.
+func CleanupEditableSettingsBackups(path string) (int, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return 0, nil
+	}
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read config backup directory: %w", err)
+	}
+	type backupFile struct {
+		path    string
+		name    string
+		modTime time.Time
+	}
+	backups := []backupFile{}
+	prefix := base + "."
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".bak") {
+			continue
+		}
+		timestamp := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".bak")
+		if _, err := time.Parse("20060102-150405.000000000", timestamp); err != nil {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return 0, fmt.Errorf("inspect config backup %s: %w", name, err)
+		}
+		backups = append(backups, backupFile{
+			path:    filepath.Join(dir, name),
+			name:    name,
+			modTime: info.ModTime(),
+		})
+	}
+	if len(backups) <= editableSettingsBackupRetention {
+		return 0, nil
+	}
+	sort.Slice(backups, func(i, j int) bool {
+		if backups[i].modTime.Equal(backups[j].modTime) {
+			return backups[i].name < backups[j].name
+		}
+		return backups[i].modTime.Before(backups[j].modTime)
+	})
+	removeCount := len(backups) - editableSettingsBackupRetention
+	for i := 0; i < removeCount; i++ {
+		if err := os.Remove(backups[i].path); err != nil && !os.IsNotExist(err) {
+			return i, fmt.Errorf("remove old config backup %s: %w", backups[i].name, err)
+		}
+	}
+	return removeCount, nil
 }
 
 func validateEditableSettings(settings EditableSettings) error {

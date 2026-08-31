@@ -2767,7 +2767,7 @@ func TestExecuteBossControlInvocationClosesAgentTaskOutsideUpdate(t *testing.T) 
 	}
 	updated, _ = got.Update(closed)
 	got = updated.(Model)
-	if result.Err != nil || !strings.Contains(result.Status, "is now archived") {
+	if result.Err != nil || !strings.Contains(result.Status, "moved to Trash") {
 		t.Fatalf("control result = %#v", result)
 	}
 	archived, err := svc.GetAgentTask(ctx, task.ID)

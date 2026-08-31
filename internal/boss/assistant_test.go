@@ -1303,8 +1303,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Open agent tasks are delegated engineer work items",
 		"one tracked task with its linked engineer thread",
 		"separate from project TODOs",
-		"Delegated agent tasks can be archived",
-		"do not route that request to project TODO cleanup",
+		"Completed delegated agent tasks remain visible until explicitly moved to Trash",
+		"Do not route that request to project TODO cleanup",
 		"Scratch-task projects are project records with kind=scratch_task",
 		"separate from both project TODOs and delegated agent tasks",
 		"the AI assistant",
@@ -1854,7 +1854,7 @@ func TestAssistantPlannerUserTextSteersDelegatedTaskRemovalToArchive(t *testing.
 	normal := bossActionPlannerUserText(req, nil, false)
 	for _, want := range []string{
 		"agent_task_report with include_historical=true",
-		"manage/continue/solve/archive/remove an agent task",
+		"manage/continue/solve/trash/remove one agent task",
 		`task_close_status="archived"`,
 	} {
 		if !strings.Contains(normal, want) {
@@ -1885,7 +1885,7 @@ func TestAssistantPlannerUserTextSteersOpenTaskCleanupToArchive(t *testing.T) {
 	}
 	normal := bossActionPlannerUserText(req, nil, false)
 	for _, want := range []string{
-		"any delegated task the user wants gone from the active record",
+		"any delegated task the user wants moved to Trash or gone from the active record",
 		"multiple tasks the user wants removed",
 		`task_close_status="archived"`,
 	} {
@@ -2776,7 +2776,8 @@ func TestAssistantReplyCanArchiveOpenAgentTaskForCleanup(t *testing.T) {
 	if resp.ControlInvocation.Capability != control.CapabilityAgentTaskClose {
 		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
 	}
-	if !strings.Contains(resp.Content, "Mark agent task agt_cpu as archived?") ||
+	if !strings.Contains(resp.Content, "Move agent task agt_cpu to Trash?") ||
+		!strings.Contains(resp.Content, "task record and workspace will be deleted automatically after 7 days") ||
 		!strings.Contains(resp.Content, "Stray CPU investigation task removed") {
 		t.Fatalf("proposal content = %q, want archive-task confirmation", resp.Content)
 	}
@@ -2804,7 +2805,7 @@ func TestAssistantReplyCanProposeAgentTaskCleanupGoal(t *testing.T) {
 					{Kind: control.ResourceAgentTask, ID: "agt_two", Label: "old follow-up"},
 				},
 				GoalAllowedCapabilities:  []string{"agent_task.close"},
-				GoalForbiddenSideEffects: []string{"close live engineer sessions", "delete files or workspaces"},
+				GoalForbiddenSideEffects: []string{"close live engineer sessions", "delete task files or workspaces before the seven-day Trash retention ends"},
 				GoalMaxRisk:              "write",
 				Reason:                   "The user asked to clear multiple stale delegated agents.",
 			}),
@@ -2836,7 +2837,7 @@ func TestAssistantReplyCanProposeAgentTaskCleanupGoal(t *testing.T) {
 	if ids := bossrun.AgentTaskResourceIDs(resp.GoalProposal.Authority.Resources); len(ids) != 2 || ids[0] != "agt_one" || ids[1] != "agt_two" {
 		t.Fatalf("goal task ids = %#v, want both stale tasks", ids)
 	}
-	if !strings.Contains(resp.Content, "Archive 2 delegated agent task records?") ||
+	if !strings.Contains(resp.Content, "Move 2 delegated agent task records to Trash?") ||
 		!strings.Contains(resp.Content, "Forbidden side effects") {
 		t.Fatalf("goal proposal content = %q, want scoped confirmation preview", resp.Content)
 	}

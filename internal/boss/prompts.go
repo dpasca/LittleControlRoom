@@ -152,7 +152,7 @@ var bossAssistantCoordinationPrompt = []string{
 
 var bossAssistantTaskRecordPrompt = []string{
 	"Open agent tasks are delegated engineer work items, separate from project TODOs; an agent task should read as one tracked task with its linked engineer thread, not as random separate memory.",
-	"Delegated agent tasks can be archived to get them out of the active record, including externally spawned or stray tasks; do not route that request to project TODO cleanup.",
+	"Completed delegated agent tasks remain visible until explicitly moved to Trash. Trash gets them out of the active record, including externally spawned or stray tasks; the control protocol stores Trash as archived and deletes the task record/workspace after seven days. Do not route that request to project TODO cleanup.",
 	"Scratch-task projects are project records with kind=scratch_task, separate from both project TODOs and delegated agent tasks; a completed scratch task can be archived out of the active dashboard.",
 }
 
@@ -433,7 +433,7 @@ var helpPlannerReadOnlyPrompt = []string{
 var bossPlannerCapabilityCatalogPrompt = []string{
 	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, project.create_and_start_engineer, project.set_category, todo.create_worktree_and_start_engineer, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
 	"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. " +
-		"agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
+		"agent_task_cleanup moves multiple delegated agent task records to Trash under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
 		"lcagent_task creates one LCR-managed LCAgent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
 }
 
@@ -457,7 +457,7 @@ var bossPlannerControlRoutingPrompt = []string{
 	"For engineer.send_prompt with a todo_id, set project_path to the TODO's owning project path, not its work_project_path; the host follows the TODO's recorded work_project_path to the existing worktree/session.",
 	"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation or external web/product/market research. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
 	"If temporary delegated work is triggered from a known project, linked worktree, or project TODO, include the project and TODO in agent_task.create resources. LCR preserves that optional affiliation, caller session, and isolated task workspace.",
-	"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
+	"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should move to Trash; Trash maps to the persisted archived status.",
 	"Use project.set_archive_state when project metadata identifies an in-scope regular loaded project, meaning it is not marked kind=scratch_task or kind=agent_task, and the user asks to archive, unarchive, hide, or move it between the Active and Archived tabs. This control does not add out-of-scope projects back to scope.",
 	"When the user asks to archive, unarchive, hide, restore, or move all projects matching a term, use search_context with include_historical=true first. The search_context exact project matches section is meant for bulk project selection; do not stop at a capped snippet list when exact matches are present.",
 	"For project.set_archive_state with multiple regular loaded projects, leave project_path and project_name empty and put every confirmed target in resources as kind=project with project_path and label. Use one batch control proposal instead of one confirmation per project.",
@@ -465,16 +465,16 @@ var bossPlannerControlRoutingPrompt = []string{
 }
 
 var bossPlannerAgentTaskPrompt = []string{
-	"When a delegated worker completes, LCR durably returns the result to the exact originating session when available. Inspect and integrate that result before proposing agent_task.close; completed or archived close records consumption and cleanup remains deferred.",
+	"When a delegated worker completes, LCR durably returns the result to the exact originating session when available. Inspect and integrate that result before proposing agent_task.close; completed or Trash/archived close records consumption and cleanup is deferred for seven days.",
 	"If a visible agent task is in review/waiting and fresh read-only evidence resolves it with no remaining work, propose agent_task.close with status completed instead of merely answering that the task is still open.",
 	"A status or situation question is enough to close a review/waiting agent task when the gathered evidence directly says the review found no issue, completed the check, or needs no further action.",
-	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task, propose agent_task.close with task_close_status=archived even when the task is open, active, review, or waiting. Do not use waiting for cleanup/removal requests.",
+	"If the user asks to trash, remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task, propose agent_task.close with task_close_status=archived even when the task is open, active, review, or waiting. Present archived as Trash to the user. Do not use waiting for cleanup/removal requests.",
 	"For cleanup of stale or stray agent-task records, set close_session=false unless the user explicitly asks to close the live engineer session too.",
 	"If the user asks to remove multiple delegated agent tasks and concrete task ids are known from state or gathered evidence, use propose_goal with goal_kind=agent_task_cleanup instead of splitting the cleanup into one confirmation per task.",
-	"For agent_task_cleanup goals, put every task to archive in goal_resources as kind=agent_task. Put tasks intentionally excluded from the run in goal_keep_resources, and uncertain tasks that need a human look in goal_review_resources.",
-	"For agent_task_cleanup goals, set goal_allowed_capabilities to [\"agent_task.close\"], goal_max_risk to write, and goal_forbidden_side_effects to include closing live engineer sessions and deleting files or workspaces.",
+	"For agent_task_cleanup goals, put every task to move to Trash in goal_resources as kind=agent_task. Put tasks intentionally excluded from the run in goal_keep_resources, and uncertain tasks that need a human look in goal_review_resources.",
+	"For agent_task_cleanup goals, set goal_allowed_capabilities to [\"agent_task.close\"], goal_max_risk to write, and goal_forbidden_side_effects to include closing live engineer sessions and deleting task files or workspaces before the seven-day Trash retention ends.",
 	"For lcagent_task goals, use goal_allowed_capabilities=[\"agent_task.create\"], goal_max_risk=external, put scoped project/file/process/session resources in goal_resources, and write goal_objective as the exact LCAgent task to execute. Prefer lcagent_task when the user explicitly asks Chat to have LCAgent take a scoped task or when one approval should create and start a traceable LCAgent worker.",
-	"If only one delegated agent task should be archived, use propose_control with agent_task.close instead of propose_goal.",
+	"If only one delegated agent task should move to Trash, use propose_control with agent_task.close instead of propose_goal.",
 	"When the user asks to solve, finish, continue, or make progress on open agent tasks, treat that as a request to manage those agent tasks, not as a request for only a status answer.",
 	"If the user asks to solve or make progress on multiple open agent tasks, propose exactly one agent_task.continue for the next concrete task. Prefer the user-selected task; otherwise choose the stalest or highest-risk task from the available agent-task evidence, and mention that the remaining tasks can follow after this one is confirmed.",
 	"If the user assents to a prior Chat plan for clearing open agent tasks, propose agent_task.continue for the next task in that plan instead of restating the plan.",
@@ -496,7 +496,7 @@ var bossPlannerProposalPayloadPrompt = []string{
 	"For project.set_category, include project_category_name and either an absolute existing project_path or the exact name of an already loaded project. The destination category must already exist. Do not fill todo_text, prompt, provider, or session fields.",
 	"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
 	"For settings.update, put every app settings change in settings_changes. Use values for list settings, value for scalar settings, and bool_value for boolean settings. Project category placement uses project.set_category; category privacy itself is managed through the category UI, not settings.update.",
-	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and the task id is known, propose agent_task.close with task_close_status=archived. This applies to open/review/waiting tasks too; do not downgrade cleanup to task_close_status=waiting.",
+	"If the user asks to trash, remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and the task id is known, propose agent_task.close with task_close_status=archived and describe that action to the user as moving it to Trash. This applies to open/review/waiting tasks too; do not downgrade cleanup to task_close_status=waiting.",
 	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For project.create_and_start_engineer and todo.create_worktree_and_start_engineer, also put a durable task description in todo_text. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
 	"For prompt-bearing propose_control actions, fill intent_excerpt with a short excerpt of the user's wording that must survive reframing; fill preserved_meaning with source, metric, timeframe, negations, and explicit exclusions; fill success_condition with what the engineer must return or what missing evidence must be reported.",
 }
@@ -695,7 +695,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"If the user asks to mark/close/finish/resolve a project TODO as done, or gathered evidence directly satisfies a linked project TODO, choose kind=\"propose_control\" with control_capability=\"todo.complete\" and fill todo_id, todo_text, and todo_evidence.",
 	"If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer.",
 	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record multiple delegated agent tasks and gathered data identifies more than one task id, choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" and put all selected ids in goal_resources.",
-	"If exactly one delegated task should be removed and the task id is known, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" and task_close_status=\"archived\".",
+	"If exactly one delegated task should be moved to Trash or removed and the task id is known, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" and task_close_status=\"archived\".",
 	"This applies to open/review/waiting tasks too; do not use task_close_status=\"waiting\" for cleanup.",
 
 	// LCR goal runs.
@@ -741,7 +741,7 @@ var bossActionPlannerNormalInstructions = []string{
 
 	// Control and goal selection.
 	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
-	"Choose kind=\"propose_control\" if the user asked to create and start work in a brand-new repository, register and work in an existing untracked Git repository, register or categorize an existing project without starting work, change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
+	"Choose kind=\"propose_control\" if the user asked to create and start work in a brand-new repository, register and work in an existing untracked Git repository, register or categorize an existing project without starting work, change app settings, delegate project work, add or complete a project TODO/backlog item, or manage/continue/solve/trash/remove one agent task.",
 	"Also choose kind=\"propose_control\" if the user wants to archive/unarchive one or more regular loaded projects, or archive/remove a scratch task whose project metadata says kind=scratch_task.",
 	"Also choose kind=\"propose_control\" if the user wants fresh external research from an engineer.",
 	"Also choose kind=\"propose_control\" if fresh gathered data resolves a visible review/waiting agent task and a task id is clear.",
@@ -755,7 +755,7 @@ var bossActionPlannerNormalInstructions = []string{
 	// Concrete action mapping.
 	"For a resolved review/waiting task use control_capability=\"agent_task.close\".",
 	"For a satisfied project TODO use control_capability=\"todo.complete\".",
-	"For any delegated task the user wants gone from the active record and exactly one task is selected, use control_capability=\"agent_task.close\" with task_close_status=\"archived\".",
+	"For any delegated task the user wants moved to Trash or gone from the active record and exactly one task is selected, use control_capability=\"agent_task.close\" with task_close_status=\"archived\".",
 	"For multiple tasks the user wants removed, use propose_goal agent_task_cleanup.",
 	"For multiple delegated task records the user wants gone use propose_goal agent_task_cleanup.",
 	"For a scratch task project the user wants gone use control_capability=\"scratch_task.archive\".",

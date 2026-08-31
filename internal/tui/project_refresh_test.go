@@ -192,6 +192,37 @@ func TestAgentTaskPathsDoNotUseProjectRefreshPipeline(t *testing.T) {
 	}
 }
 
+func TestCompletedAgentTaskRemainsVisibleUntilTrashed(t *testing.T) {
+	t.Parallel()
+	completed := model.AgentTask{
+		ID:            "agt_completed_visible",
+		Title:         "Completed delegated task",
+		Status:        model.AgentTaskStatusCompleted,
+		WorkspacePath: "/tmp/lcroom-agent-task-completed-visible",
+	}
+	if agentTaskIsOpen(completed) {
+		t.Fatal("completed task should not count as open work")
+	}
+	if !agentTaskIsVisible(completed) {
+		t.Fatal("completed task should remain visible")
+	}
+
+	m := Model{openAgentTasks: []model.AgentTask{completed}}
+	projects := m.agentTaskProjectSummaries()
+	if len(projects) != 1 {
+		t.Fatalf("completed task project summaries = %#v, want one visible row", projects)
+	}
+	if projects[0].Status != model.StatusIdle || projects[0].AttentionScore != 0 || projects[0].LatestSessionClassificationType != model.SessionCategoryCompleted {
+		t.Fatalf("completed task project summary = %#v, want idle completed row without attention", projects[0])
+	}
+
+	trashed := completed
+	trashed.Status = model.AgentTaskStatusArchived
+	if agentTaskIsVisible(trashed) {
+		t.Fatal("trashed task should leave the visible list")
+	}
+}
+
 func TestEmbeddedSessionTransitionsCoalesceWhilePersistenceIsInFlight(t *testing.T) {
 	projectPath := "/tmp/demo"
 	now := time.Date(2026, 6, 2, 5, 52, 40, 0, time.UTC)

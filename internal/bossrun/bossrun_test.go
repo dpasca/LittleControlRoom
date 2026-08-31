@@ -36,8 +36,8 @@ func TestNormalizeGoalProposalDefaultsAgentTaskCleanupAuthority(t *testing.T) {
 	if len(proposal.Plan.Steps) < 3 {
 		t.Fatalf("plan steps = %#v, want default executable plan", proposal.Plan.Steps)
 	}
-	if !strings.Contains(proposal.Preview, "Archive 2 delegated agent task records?") ||
-		!strings.Contains(proposal.Preview, "delete files or workspaces") {
+	if !strings.Contains(proposal.Preview, "Move 2 delegated agent task records to Trash?") ||
+		!strings.Contains(proposal.Preview, "seven-day Trash retention") {
 		t.Fatalf("preview = %q, want scoped cleanup preview", proposal.Preview)
 	}
 }
@@ -175,7 +175,7 @@ func TestFormatGoalResultSummarizesVerifiedArchive(t *testing.T) {
 		ArchivedTaskIDs: []string{"agt_one", "agt_two"},
 		Verified:        true,
 	})
-	if !strings.Contains(got, "Archived 2 delegated agent task records") ||
+	if !strings.Contains(got, "Moved 2 delegated agent task records to Trash") ||
 		!strings.Contains(got, "verified") {
 		t.Fatalf("FormatGoalResult() = %q, want archive and verification summary", got)
 	}

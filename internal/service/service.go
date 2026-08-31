@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,6 +40,7 @@ const bossAssistantHTTPTimeout = 90 * time.Second
 const missingLinkedWorktreeRetention = 7 * 24 * time.Hour
 const fullScanLockPollInterval = 25 * time.Millisecond
 const scanGitMetadataTimeoutPathLimit = 8
+const codexHomeOverlayRetention = 7 * 24 * time.Hour
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -1211,13 +1213,28 @@ func hasMeaningfulLLMUsage(snapshot model.LLMSessionUsage) bool {
 
 func (s *Service) bestEffortPrepareInternalWorkspaceState() {
 	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(s.cfg.DataDir)
-	_ = appfs.CleanupStaleInternalWorkspaces(s.cfg.DataDir, 24*time.Hour)
+	if err := appfs.CleanupStaleInternalWorkspaces(s.cfg.DataDir, 24*time.Hour); err != nil {
+		log.Printf("WARN service: clean stale internal workspaces: %v", err)
+	}
+	if _, err := appfs.CleanupStaleCodexHomeOverlays(s.cfg.DataDir, codexHomeOverlayRetention); err != nil {
+		log.Printf("WARN service: clean stale Codex home overlays: %v", err)
+	}
+	if appfs.IsManagedInternalPath(s.cfg.ConfigPath, []string{s.cfg.DataDir}) {
+		if _, err := config.CleanupEditableSettingsBackups(s.cfg.ConfigPath); err != nil {
+			log.Printf("WARN service: rotate config backups: %v", err)
+		}
+	}
 	if s.store == nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if _, err := s.store.ApplyAgentTaskTrashRetention(ctx, trashedAgentTaskRetention); err != nil {
+		log.Printf("WARN service: apply agent task Trash retention: %v", err)
+	} else if _, err := s.PurgeExpiredAgentTasks(ctx, time.Now()); err != nil {
+		log.Printf("WARN service: purge expired agent tasks: %v", err)
+	}
 
 	summaries, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
@@ -1295,6 +1312,13 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 	gitDefaultBranchReader := withScanGitMetadataTimeout(runtime.gitDefaultBranchReader, scanGitMetadataTimeout, timedOutGitPaths)
 	bus := runtime.bus
 	now := time.Now()
+	progress.setPhase("purging expired agent tasks")
+	if _, err := s.store.ApplyAgentTaskTrashRetention(ctx, trashedAgentTaskRetention); err != nil {
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("apply agent task Trash retention: %w", err))
+	}
+	if _, err := s.PurgeExpiredAgentTasks(ctx, now); err != nil {
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("purge expired agent tasks: %w", err))
+	}
 	progress.setPhase("purging expired missing linked worktrees")
 	if _, err := s.store.DeleteExpiredMissingLinkedWorktrees(ctx, now, missingLinkedWorktreeRetention); err != nil {
 		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("purge expired missing linked worktrees: %w", err))
