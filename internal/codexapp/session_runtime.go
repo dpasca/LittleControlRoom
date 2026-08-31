@@ -258,9 +258,9 @@ func (s *appServerSession) resumeThread(ctx context.Context, threadID string) (s
 	s.initializeHistoryPagination(response.Thread)
 	s.hydrateResumedThread(response.Thread)
 	if snapshot := s.Snapshot(); snapshot.BusyExternal {
-		s.appendSystemNotice("Resumed embedded Codex session " + shortID(response.Thread.ID) + ". It is already active in another Codex process, so embedded controls are read-only until it finishes.")
+		s.appendSystemNotice("Opened existing embedded Codex session " + shortID(response.Thread.ID) + ". It is already active in another Codex process, so embedded controls are read-only until it finishes.")
 	} else {
-		s.appendSystemNotice("Resumed embedded Codex session " + shortID(response.Thread.ID) + ".")
+		s.appendSystemNotice("Opened existing embedded Codex session " + shortID(response.Thread.ID) + ".")
 	}
 	return response.Thread.ID, nil
 }

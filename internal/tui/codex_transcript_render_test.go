@@ -312,7 +312,7 @@ func TestVisibleCodexViewShowsBusyElsewhereWarningBlock(t *testing.T) {
 			Busy:             true,
 			BusyExternal:     true,
 			ThreadID:         "019cccc3abcdef",
-			LastSystemNotice: "Resumed embedded Codex session 019cccc3. It is already active in another Codex process, so embedded controls are read-only until it finishes.",
+			LastSystemNotice: "Opened existing embedded Codex session 019cccc3. It is already active in another Codex process, so embedded controls are read-only until it finishes.",
 			Entries: []codexapp.TranscriptEntry{
 				{Kind: codexapp.TranscriptAgent, Text: "Still waiting on the other run."},
 			},
@@ -343,7 +343,7 @@ func TestVisibleCodexViewShowsBusyElsewhereWarningBlock(t *testing.T) {
 	if !strings.Contains(rendered, "Read-only") {
 		t.Fatalf("busy-elsewhere view should show a read-only warning block: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Resumed embedded Codex session 019cccc3") {
+	if !strings.Contains(rendered, "Opened existing embedded Codex session 019cccc3") {
 		t.Fatalf("busy-elsewhere view should surface the resume warning prominently: %q", rendered)
 	}
 }

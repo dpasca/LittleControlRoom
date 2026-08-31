@@ -890,7 +890,7 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 	}
 
 	if resumed {
-		s.appendSystemNotice("Resumed embedded OpenCode session " + shortID(sessionID) + ".")
+		s.appendSystemNotice("Opened existing embedded OpenCode session " + shortID(sessionID) + ".")
 	} else {
 		s.appendSystemNotice("Started a new embedded OpenCode session " + shortID(sessionID) + ".")
 	}
