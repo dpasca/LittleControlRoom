@@ -799,11 +799,14 @@ func threadHasRetainedHistory(thread resumedThread) bool {
 	return false
 }
 
-func isFreshThreadUnmaterializedError(err error) bool {
+func isFreshThreadHistoryUnavailableError(err error) bool {
 	if err == nil {
 		return false
 	}
 	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(message, "list_turns is not supported yet") {
+		return true
+	}
 	return strings.Contains(message, "not materialized yet") &&
 		strings.Contains(message, "includeturns is unavailable before first user message")
 }

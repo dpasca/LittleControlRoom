@@ -4420,17 +4420,17 @@ func TestEnsureFreshThreadRejectsRetainedHistory(t *testing.T) {
 		notify:      func() {},
 		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
 			callCount++
-			if method != "thread/read" {
-				t.Fatalf("method = %q, want thread/read", method)
+			if method != "thread/turns/list" {
+				t.Fatalf("method = %q, want thread/turns/list", method)
 			}
-			request, ok := params.(threadReadParams)
+			request, ok := params.(threadTurnsListParams)
 			if !ok {
-				t.Fatalf("params = %#v, want threadReadParams", params)
+				t.Fatalf("params = %#v, want threadTurnsListParams", params)
 			}
-			if request.ThreadID != "thread_456" {
-				t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+			if request.ThreadID != "thread_456" || request.Limit != 1 || request.SortDirection != "desc" || request.ItemsView != "notLoaded" {
+				t.Fatalf("turn list params = %#v, want one descending metadata-only turn", request)
 			}
-			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[{"id":"turn_old","status":"completed","items":[{"id":"item_user","type":"userMessage"}]}]}}`), nil
+			return json.RawMessage(`{"data":[{"id":"turn_old","status":"completed","items":[],"itemsView":"notLoaded"}],"nextCursor":null}`), nil
 		},
 	}
 
@@ -4458,10 +4458,10 @@ func TestEnsureFreshThreadAcceptsEmptyThread(t *testing.T) {
 		notify:      func() {},
 		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
 			callCount++
-			if method != "thread/read" {
-				t.Fatalf("method = %q, want thread/read", method)
+			if method != "thread/turns/list" {
+				t.Fatalf("method = %q, want thread/turns/list", method)
 			}
-			return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[]}}`), nil
+			return json.RawMessage(`{"data":[],"nextCursor":null}`), nil
 		},
 	}
 
@@ -4473,7 +4473,7 @@ func TestEnsureFreshThreadAcceptsEmptyThread(t *testing.T) {
 	}
 }
 
-func TestEnsureFreshThreadAcceptsUnmaterializedFreshThread(t *testing.T) {
+func TestEnsureFreshThreadAcceptsUnmaterializedLegacyThread(t *testing.T) {
 	callCount := 0
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
@@ -4481,18 +4481,65 @@ func TestEnsureFreshThreadAcceptsUnmaterializedFreshThread(t *testing.T) {
 		notify:      func() {},
 		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
 			callCount++
-			if method != "thread/read" {
-				t.Fatalf("method = %q, want thread/read", method)
+			switch callCount {
+			case 1:
+				if method != "thread/turns/list" {
+					t.Fatalf("first method = %q, want thread/turns/list", method)
+				}
+				return nil, errors.New("method not found")
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("fallback method = %q, want thread/read", method)
+				}
+				request, ok := params.(threadReadParams)
+				if !ok || !request.IncludeTurns {
+					t.Fatalf("fallback params = %#v, want includeTurns threadReadParams", params)
+				}
+				return nil, errors.New("thread thread_456 is not materialized yet; includeTurns is unavailable before first user message")
+			default:
+				t.Fatalf("unexpected RPC call %d to %q", callCount, method)
 			}
-			return nil, errors.New("thread thread_456 is not materialized yet; includeTurns is unavailable before first user message")
+			return nil, nil
 		},
 	}
 
 	if err := s.ensureFreshThread(context.Background(), "thread_456"); err != nil {
 		t.Fatalf("ensureFreshThread() error = %v", err)
 	}
-	if callCount != 1 {
-		t.Fatalf("rpc call count = %d, want 1", callCount)
+	if callCount != 2 {
+		t.Fatalf("rpc call count = %d, want paginated probe plus legacy fallback", callCount)
+	}
+}
+
+func TestEnsureFreshThreadAcceptsPaginatedHistoryUnavailableError(t *testing.T) {
+	callCount := 0
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, _ any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "thread/turns/list" {
+					t.Fatalf("first method = %q, want thread/turns/list", method)
+				}
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("fallback method = %q, want thread/read", method)
+				}
+			default:
+				t.Fatalf("unexpected RPC call %d to %q", callCount, method)
+			}
+			return nil, errors.New("list_turns is not supported yet")
+		},
+	}
+
+	if err := s.ensureFreshThread(context.Background(), "thread_456"); err != nil {
+		t.Fatalf("ensureFreshThread() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("rpc call count = %d, want paginated probe plus compatibility fallback", callCount)
 	}
 }
 

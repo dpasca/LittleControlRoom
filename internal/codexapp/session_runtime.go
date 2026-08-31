@@ -166,12 +166,40 @@ func (s *appServerSession) ensureFreshThread(ctx context.Context, threadID strin
 	if threadID == "" {
 		return nil
 	}
+	// Paginated Codex threads may not support full-history thread/read calls.
+	// A single metadata-only turn is enough to detect retained history without
+	// materializing the conversation.
+	result, listErr := s.call(ctx, "thread/turns/list", threadTurnsListParams{
+		ThreadID:      threadID,
+		Limit:         1,
+		SortDirection: "desc",
+		ItemsView:     "notLoaded",
+	})
+	if listErr == nil {
+		var page threadTurnsPage
+		if err := json.Unmarshal(result, &page); err != nil {
+			return fmt.Errorf("decode fresh Codex thread history: %w", err)
+		}
+		if page.Data == nil {
+			return fmt.Errorf("decode fresh Codex thread history: response contained no turn data")
+		}
+		if len(page.Data) > 0 {
+			return &ForceNewSessionReusedError{Provider: ProviderCodex, ThreadID: threadID}
+		}
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Older app-server versions do not expose thread/turns/list. Preserve the
+	// legacy full-history check for those versions.
 	thread, err := s.readThreadState(ctx, threadID)
 	if err != nil {
-		if isFreshThreadUnmaterializedError(err) {
+		if isFreshThreadHistoryUnavailableError(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("verify fresh Codex thread: thread/turns/list: %v; thread/read: %w", listErr, err)
 	}
 	if threadHasRetainedHistory(thread) {
 		return &ForceNewSessionReusedError{Provider: ProviderCodex, ThreadID: threadID}
