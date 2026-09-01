@@ -171,8 +171,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != settingsFieldConflictResolverProvider+1 {
-		t.Fatalf("settings field count = %d, want %d", len(got.settingsFields), settingsFieldConflictResolverProvider+1)
+	if len(got.settingsFields) != settingsFieldLCAgentVisionReasoning+1 {
+		t.Fatalf("settings field count = %d, want %d", len(got.settingsFields), settingsFieldLCAgentVisionReasoning+1)
 	}
 }
 

@@ -2783,6 +2783,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			LCAgentRequestTimeout:      m.lcagentRequestTimeout(),
 			LCAgentUtilityProvider:     m.lcagentUtilityProvider(),
 			LCAgentUtilityModel:        m.lcagentUtilityModel(),
+			LCAgentUtilityReasoning:    m.lcagentUtilityReasoning(),
 		}
 		if !msg.openModelFirst {
 			if len(codexAttachments) > 0 {

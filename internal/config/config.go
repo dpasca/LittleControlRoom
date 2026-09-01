@@ -25,7 +25,9 @@ type AppConfig struct {
 	BossChatBackend           AIBackend
 	BossChatModel             string
 	BossHelmModel             string
+	BossHelmReasoning         string
 	BossUtilityModel          string
+	BossUtilityReasoning      string
 	BossChatOllamaThinking    bool
 	OpenAIAPIKey              string
 	OpenRouterAPIKey          string
@@ -77,8 +79,10 @@ type AppConfig struct {
 	LCAgentRequestTimeout     time.Duration
 	LCAgentUtilityProvider    string
 	LCAgentUtilityModel       string
+	LCAgentUtilityReasoning   string
 	LCAgentVisionProvider     string
 	LCAgentVisionModel        string
+	LCAgentVisionReasoning    string
 	LCAgentMainVisionProvider string
 	LCAgentMainVisionModel    string
 	LCAgentWebSearchBackend   string
@@ -201,7 +205,9 @@ type fileConfig struct {
 	BossChatBackend           string                   `toml:"boss_chat_backend"`
 	BossChatModel             *string                  `toml:"boss_chat_model"`
 	BossHelmModel             *string                  `toml:"boss_helm_model"`
+	BossHelmReasoning         *string                  `toml:"boss_helm_reasoning_effort"`
 	BossUtilityModel          *string                  `toml:"boss_utility_model"`
+	BossUtilityReasoning      *string                  `toml:"boss_utility_reasoning_effort"`
 	BossChatOllamaThinking    *bool                    `toml:"boss_chat_ollama_thinking"`
 	OpenAIAPIKey              *string                  `toml:"openai_api_key"`
 	OpenRouterAPIKey          *string                  `toml:"openrouter_api_key"`
@@ -249,8 +255,10 @@ type fileConfig struct {
 	LCAgentRequestTimeout     *string                  `toml:"lcagent_request_timeout"`
 	LCAgentUtilityProvider    *string                  `toml:"lcagent_utility_provider"`
 	LCAgentUtilityModel       *string                  `toml:"lcagent_utility_model"`
+	LCAgentUtilityReasoning   *string                  `toml:"lcagent_utility_reasoning_effort"`
 	LCAgentVisionProvider     *string                  `toml:"lcagent_vision_provider"`
 	LCAgentVisionModel        *string                  `toml:"lcagent_vision_model"`
+	LCAgentVisionReasoning    *string                  `toml:"lcagent_vision_reasoning_effort"`
 	LCAgentMainVisionProvider *string                  `toml:"lcagent_main_vision_provider"`
 	LCAgentMainVisionModel    *string                  `toml:"lcagent_main_vision_model"`
 	LCAgentWebSearchBackend   *string                  `toml:"lcagent_web_search_backend"`
@@ -294,6 +302,8 @@ func Default() AppConfig {
 		LCAgentRequestTimeout:    10 * time.Minute,
 		LCAgentUtilityProvider:   "main",
 		LCAgentVisionProvider:    "auto",
+		BossHelmReasoning:        "high",
+		BossUtilityReasoning:     "low",
 		LCAgentWebSearchBackend:  "off",
 		BossChatOllamaThinking:   true,
 		ClaudePermissionMode:     claudecli.DefaultPermissionMode(),
@@ -358,8 +368,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
 	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement; blank with provider main uses the main model")
+	lcagentUtilityReasoning := fs.String("lcagent-utility-reasoning-effort", cfg.LCAgentUtilityReasoning, "Optional reasoning effort for the LCAgent utility model")
 	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	lcagentVisionModel := fs.String("lcagent-vision-model", cfg.LCAgentVisionModel, "LCAgent image-analysis model; blank with provider main uses the main model")
+	lcagentVisionReasoning := fs.String("lcagent-vision-reasoning-effort", cfg.LCAgentVisionReasoning, "Optional reasoning effort for the LCAgent vision model")
 	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, searxng, or browser")
 	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
@@ -470,11 +482,13 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.LCAgentUtilityModel = strings.TrimSpace(*lcagentUtilityModel)
+	cfg.LCAgentUtilityReasoning = strings.TrimSpace(*lcagentUtilityReasoning)
 	cfg.LCAgentVisionProvider, err = parseLCAgentVisionProvider(*lcagentVisionProvider)
 	if err != nil {
 		return AppConfig{}, err
 	}
 	cfg.LCAgentVisionModel = strings.TrimSpace(*lcagentVisionModel)
+	cfg.LCAgentVisionReasoning = strings.TrimSpace(*lcagentVisionReasoning)
 	cfg.LCAgentVisionModel = normalizeLCAgentModelForProvider(lcagentEffectiveVisionProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider, cfg.LCAgentVisionProvider), cfg.LCAgentVisionModel)
 	cfg.LCAgentWebSearchBackend, err = parseLCAgentWebSearchBackend(*lcagentWebSearchBackend)
 	if err != nil {
@@ -636,7 +650,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	applyOptionalTrimmedString(&cfg.BossChatModel, fc.BossChatModel)
 	applyOptionalTrimmedString(&cfg.BossHelmModel, fc.BossHelmModel)
+	applyOptionalTrimmedString(&cfg.BossHelmReasoning, fc.BossHelmReasoning)
 	applyOptionalTrimmedString(&cfg.BossUtilityModel, fc.BossUtilityModel)
+	applyOptionalTrimmedString(&cfg.BossUtilityReasoning, fc.BossUtilityReasoning)
 	if fc.BossChatOllamaThinking != nil {
 		cfg.BossChatOllamaThinking = *fc.BossChatOllamaThinking
 	}
@@ -761,6 +777,7 @@ func applyConfigFile(cfg *AppConfig) error {
 		cfg.LCAgentUtilityProvider = value
 	}
 	applyOptionalTrimmedString(&cfg.LCAgentUtilityModel, fc.LCAgentUtilityModel)
+	applyOptionalTrimmedString(&cfg.LCAgentUtilityReasoning, fc.LCAgentUtilityReasoning)
 	if fc.LCAgentVisionProvider != nil {
 		value, err := parseLCAgentVisionProvider(*fc.LCAgentVisionProvider)
 		if err != nil {
@@ -769,6 +786,7 @@ func applyConfigFile(cfg *AppConfig) error {
 		cfg.LCAgentVisionProvider = value
 	}
 	applyOptionalTrimmedString(&cfg.LCAgentVisionModel, fc.LCAgentVisionModel)
+	applyOptionalTrimmedString(&cfg.LCAgentVisionReasoning, fc.LCAgentVisionReasoning)
 	applyOptionalTrimmedString(&cfg.LCAgentMainVisionProvider, fc.LCAgentMainVisionProvider)
 	applyOptionalTrimmedString(&cfg.LCAgentMainVisionModel, fc.LCAgentMainVisionModel)
 	cfg.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider), cfg.EmbeddedLCAgentModel)

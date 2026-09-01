@@ -95,7 +95,9 @@ func CheckLCAgentVisionAccess(ctx context.Context, req LaunchRequest) (LCAgentVi
 	}
 	defer cancel()
 
-	completion, err := client.CompleteVision(checkCtx, lcagentVisionCheckPrompt(), lcagentVisionCheckImage())
+	completion, err := client.CompleteVisionWithOptions(checkCtx, lcagentVisionCheckPrompt(), lcagentVisionCheckImage(), modeladapter.CompletionOptions{
+		ReasoningEffort: lcagentReasoningEffortForProvider(resolvedProvider, visionModel, req.LCAgentVisionReasoning),
+	})
 	if err != nil {
 		return LCAgentVisionCheckResult{}, err
 	}

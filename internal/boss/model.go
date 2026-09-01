@@ -320,6 +320,16 @@ func (m Model) WithViewContext(view ViewContext) Model {
 	return m
 }
 
+// ReloadAssistant rebuilds the inference clients from the service's current
+// settings while preserving this model's transcript and session state.
+func (m Model) ReloadAssistant() Model {
+	m.assistant = NewAssistant(m.svc)
+	if !m.sending {
+		m.status = m.assistant.Label()
+	}
+	return m
+}
+
 func (m Model) WithChatOnly(chatOnly bool) Model {
 	m.chatOnly = chatOnly
 	return m

@@ -1076,8 +1076,10 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		LCAgentRequestTimeout:      m.lcagentRequestTimeout(),
 		LCAgentUtilityProvider:     m.lcagentUtilityProvider(),
 		LCAgentUtilityModel:        m.lcagentUtilityModel(),
+		LCAgentUtilityReasoning:    m.lcagentUtilityReasoning(),
 		LCAgentVisionProvider:      m.lcagentVisionProvider(),
 		LCAgentVisionModel:         m.lcagentVisionModel(),
+		LCAgentVisionReasoning:     m.lcagentVisionReasoning(),
 		LCAgentWebSearchBackend:    m.lcagentWebSearchBackend(),
 		LCAgentWebSearchAPIKey:     m.lcagentWebSearchAPIKey(),
 		LCAgentWebSearchEngineID:   m.lcagentWebSearchEngineID(),
@@ -1228,8 +1230,10 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		previous.LCAgentRequestTimeout != saved.LCAgentRequestTimeout ||
 		strings.TrimSpace(previous.LCAgentUtilityProvider) != strings.TrimSpace(saved.LCAgentUtilityProvider) ||
 		strings.TrimSpace(previous.LCAgentUtilityModel) != strings.TrimSpace(saved.LCAgentUtilityModel) ||
+		strings.TrimSpace(previous.LCAgentUtilityReasoning) != strings.TrimSpace(saved.LCAgentUtilityReasoning) ||
 		strings.TrimSpace(previous.LCAgentVisionProvider) != strings.TrimSpace(saved.LCAgentVisionProvider) ||
 		strings.TrimSpace(previous.LCAgentVisionModel) != strings.TrimSpace(saved.LCAgentVisionModel) ||
+		strings.TrimSpace(previous.LCAgentVisionReasoning) != strings.TrimSpace(saved.LCAgentVisionReasoning) ||
 		strings.TrimSpace(previous.LCAgentWebSearchBackend) != strings.TrimSpace(saved.LCAgentWebSearchBackend) ||
 		strings.TrimSpace(previous.LCAgentWebSearchAPIKey) != strings.TrimSpace(saved.LCAgentWebSearchAPIKey) ||
 		strings.TrimSpace(previous.LCAgentWebSearchEngineID) != strings.TrimSpace(saved.LCAgentWebSearchEngineID) ||
@@ -1272,8 +1276,10 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentRequestTimeout:      settings.LCAgentRequestTimeout,
 		LCAgentUtilityProvider:     strings.TrimSpace(settings.LCAgentUtilityProvider),
 		LCAgentUtilityModel:        strings.TrimSpace(settings.LCAgentUtilityModel),
+		LCAgentUtilityReasoning:    strings.TrimSpace(settings.LCAgentUtilityReasoning),
 		LCAgentVisionProvider:      settingsLCAgentVisionProviderForLaunch(settings),
 		LCAgentVisionModel:         settingsLCAgentVisionModelForLaunch(settings),
+		LCAgentVisionReasoning:     strings.TrimSpace(settings.LCAgentVisionReasoning),
 		LCAgentWebSearchBackend:    strings.TrimSpace(settings.LCAgentWebSearchBackend),
 		LCAgentWebSearchAPIKey:     strings.TrimSpace(settings.LCAgentWebSearchAPIKey),
 		LCAgentWebSearchEngineID:   strings.TrimSpace(settings.LCAgentWebSearchEngineID),
@@ -1458,12 +1464,20 @@ func (m Model) lcagentUtilityModel() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentUtilityModel)
 }
 
+func (m Model) lcagentUtilityReasoning() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentUtilityReasoning)
+}
+
 func (m Model) lcagentVisionProvider() string {
 	return settingsLCAgentVisionProviderForLaunch(m.currentSettingsBaseline())
 }
 
 func (m Model) lcagentVisionModel() string {
 	return settingsLCAgentVisionModelForLaunch(m.currentSettingsBaseline())
+}
+
+func (m Model) lcagentVisionReasoning() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentVisionReasoning)
 }
 
 func (m Model) lcagentWebSearchBackend() string {

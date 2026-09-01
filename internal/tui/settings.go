@@ -82,6 +82,10 @@ const (
 	settingsFieldEngineerTodoCaptureMode
 	settingsFieldAIBackend
 	settingsFieldConflictResolverProvider
+	settingsFieldBossChatReasoning
+	settingsFieldBossUtilityReasoning
+	settingsFieldLCAgentUtilityReasoning
+	settingsFieldLCAgentVisionReasoning
 )
 
 type settingsSectionID string
@@ -902,6 +906,10 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.LCAgentProvider = lcagentProvider
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentModel))
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentReasoning))
+	settings.BossHelmReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldBossChatReasoning))
+	settings.BossUtilityReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldBossUtilityReasoning))
+	settings.LCAgentUtilityReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentUtilityReasoning))
+	settings.LCAgentVisionReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentVisionReasoning))
 	if issue, ok := settingsBossKnownModelProviderIssue(settings); ok {
 		m.err = nil
 		m.settingsSaving = false
@@ -1934,7 +1942,9 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.AIBackend = config.AIBackend(m.settingsFieldValue(settingsFieldAIBackend))
 	settings.BossChatBackend = config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend))
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
+	settings.BossHelmReasoning = m.settingsFieldValue(settingsFieldBossChatReasoning)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
+	settings.BossUtilityReasoning = m.settingsFieldValue(settingsFieldBossUtilityReasoning)
 	settings.BossChatOllamaThinking = strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldBossChatOllamaThinking, m.settingsFieldValue(settingsFieldBossChatOllamaThinking)), "true")
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
 	settings.OpenRouterAPIKey = m.settingsFieldValue(settingsFieldOpenRouterAPIKey)
@@ -1965,8 +1975,10 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
 	settings.LCAgentUtilityProvider = m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
+	settings.LCAgentUtilityReasoning = m.settingsFieldValue(settingsFieldLCAgentUtilityReasoning)
 	settings.LCAgentVisionProvider = m.settingsFieldValue(settingsFieldLCAgentVisionProvider)
 	settings.LCAgentVisionModel = m.settingsFieldValue(settingsFieldLCAgentVisionModel)
+	settings.LCAgentVisionReasoning = m.settingsFieldValue(settingsFieldLCAgentVisionReasoning)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
@@ -4156,6 +4168,34 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			32,
 			settingsSectionAI,
 		),
+		newSettingsField(
+			"Chat main reasoning",
+			"Internal value managed by the Chat main model picker.",
+			settings.BossHelmReasoning,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"Chat utility reasoning",
+			"Internal value managed by the Chat utility model picker.",
+			settings.BossUtilityReasoning,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
+			"LCAgent utility reasoning",
+			"Internal value managed by the LCAgent utility model picker.",
+			settings.LCAgentUtilityReasoning,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
+			"LCAgent vision reasoning",
+			"Internal value managed by the LCAgent vision model picker.",
+			settings.LCAgentVisionReasoning,
+			32,
+			settingsSectionLCAgent,
+		),
 	}
 }
 
@@ -4205,7 +4245,9 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.BossChatBackend = config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
 	settings.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	settings.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
+	settings.BossHelmReasoning = strings.TrimSpace(settings.BossHelmReasoning)
 	settings.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
+	settings.BossUtilityReasoning = strings.TrimSpace(settings.BossUtilityReasoning)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
 	settings.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
@@ -4234,8 +4276,10 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
 	settings.LCAgentUtilityProvider = strings.TrimSpace(settings.LCAgentUtilityProvider)
 	settings.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
+	settings.LCAgentUtilityReasoning = strings.TrimSpace(settings.LCAgentUtilityReasoning)
 	settings.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
 	settings.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
+	settings.LCAgentVisionReasoning = strings.TrimSpace(settings.LCAgentVisionReasoning)
 	settings.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)

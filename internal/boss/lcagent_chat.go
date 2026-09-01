@@ -55,7 +55,7 @@ func (a *Assistant) replyWithLCAgent(ctx context.Context, req AssistantRequest, 
 		Tools:            tools,
 		MaxTurns:         helpChatAgentMaxTurns,
 		ProgressInterval: helpChatAgentProgressInterval,
-		Completion:       helpChatAgentCompletionOptions(a.agentProvider, a.agentModel.Model()),
+		Completion:       helpChatAgentCompletionOptions(a.agentProvider, a.agentModel.Model(), a.mainReasoningEffort()),
 		Emit: func(event lcagent.AgentRuntimeEvent) {
 			emitHelpChatAgentEvent(emit, event)
 		},
@@ -91,8 +91,8 @@ func (a *Assistant) replyWithLCAgent(ctx context.Context, req AssistantRequest, 
 	return response, nil
 }
 
-func helpChatAgentCompletionOptions(provider, modelName string) modeladapter.CompletionOptions {
-	effort := bossAssistantReasoningEffort
+func helpChatAgentCompletionOptions(provider, modelName, configuredEffort string) modeladapter.CompletionOptions {
+	effort := strings.TrimSpace(configuredEffort)
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "ollama", "mlx":
 		effort = ""

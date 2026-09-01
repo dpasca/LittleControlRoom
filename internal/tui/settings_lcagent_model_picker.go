@@ -877,9 +877,15 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 		if len(m.settingsFields) > settingsFieldLCAgentUtilityProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentUtilityProvider].input.SetValue(provider)
 		}
+		if len(m.settingsFields) > settingsFieldLCAgentUtilityReasoning {
+			m.settingsFields[settingsFieldLCAgentUtilityReasoning].input.SetValue(strings.TrimSpace(state.PendingReasoning))
+		}
 	case settingsFieldLCAgentVisionModel:
 		if len(m.settingsFields) > settingsFieldLCAgentVisionProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(provider)
+		}
+		if len(m.settingsFields) > settingsFieldLCAgentVisionReasoning {
+			m.settingsFields[settingsFieldLCAgentVisionReasoning].input.SetValue(strings.TrimSpace(state.PendingReasoning))
 		}
 	}
 	if state.EmbeddedApply {
@@ -1001,6 +1007,14 @@ func (m Model) applySettingsBossCloudModelPickerSelection(provider, model string
 		m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(model))
 		m.settingsFields[fieldIndex].input.CursorEnd()
 	}
+	reasoningFieldIndex := settingsFieldBossChatReasoning
+	if fieldIndex == settingsFieldBossUtilityModel {
+		reasoningFieldIndex = settingsFieldBossUtilityReasoning
+	}
+	if m.settingsLCAgentModelPicker != nil && reasoningFieldIndex >= 0 && reasoningFieldIndex < len(m.settingsFields) {
+		m.settingsFields[reasoningFieldIndex].input.SetValue(strings.TrimSpace(m.settingsLCAgentModelPicker.PendingReasoning))
+		m.settingsFields[reasoningFieldIndex].input.CursorEnd()
+	}
 	hint := "Press ctrl+s to save."
 	if m.setupMode {
 		hint = "Press ctrl+s to continue."
@@ -1008,6 +1022,10 @@ func (m Model) applySettingsBossCloudModelPickerSelection(provider, model string
 	providerLabel := backend.Label()
 	if strings.TrimSpace(model) == "" {
 		m.closeSettingsLCAgentModelPicker(label + " reset to " + providerLabel + " default. " + hint)
+		return m, nil
+	}
+	if m.settingsLCAgentModelPicker != nil && strings.TrimSpace(m.settingsLCAgentModelPicker.PendingReasoning) != "" {
+		m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + " / " + strings.TrimSpace(model) + " with " + strings.TrimSpace(m.settingsLCAgentModelPicker.PendingReasoning) + " reasoning. " + hint)
 		return m, nil
 	}
 	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + " / " + strings.TrimSpace(model) + ". " + hint)
@@ -1467,13 +1485,23 @@ func settingsLCAgentModelPickerRawModel(settings config.EditableSettings, fieldI
 }
 
 func settingsLCAgentModelPickerRawReasoning(settings config.EditableSettings, fieldIndex int) string {
-	if fieldIndex == settingsFieldLCAgentModel {
-		return strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
-	}
 	if settingsFieldUsesProjectCloudModelPicker(fieldIndex) {
 		return strings.TrimSpace(settings.ProjectReasoningEffort)
 	}
-	return ""
+	switch fieldIndex {
+	case settingsFieldBossChatModel:
+		return strings.TrimSpace(settings.BossHelmReasoning)
+	case settingsFieldBossUtilityModel:
+		return strings.TrimSpace(settings.BossUtilityReasoning)
+	case settingsFieldLCAgentModel:
+		return strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
+	case settingsFieldLCAgentUtilityModel:
+		return strings.TrimSpace(settings.LCAgentUtilityReasoning)
+	case settingsFieldLCAgentVisionModel:
+		return strings.TrimSpace(settings.LCAgentVisionReasoning)
+	default:
+		return ""
+	}
 }
 
 func settingsLCAgentModelPickerUsesReasoning(fieldIndex int) bool {
@@ -1517,15 +1545,6 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	if settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
 		options[0] = settingsProjectReasoningDefaultChoiceOption()
 	}
-	if state.FieldIndex != settingsFieldLCAgentModel && !settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
-		options[0].Summary = "Use provider default reasoning."
-		if settingsFieldUsesLCAgentModelPicker(state.FieldIndex) {
-			options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
-		} else {
-			options[0].Description = "This model setting does not store a separate reasoning effort yet, so the selected provider or model decides."
-		}
-		return options
-	}
 	modelOption := state.PendingModelOption
 	if state.PendingModelAuto || strings.TrimSpace(modelOption.Model) == "" {
 		modelOption = settingsLCAgentModelPickerDefaultOption(state.Models)
@@ -1565,9 +1584,6 @@ func settingsLCAgentModelPickerDefaultOption(models []codexapp.ModelOption) code
 func settingsLCAgentModelPickerReasoningSelection(options []settingsChoiceOption, state *settingsLCAgentModelPickerState) int {
 	desired := ""
 	if state != nil {
-		if state.FieldIndex != settingsFieldLCAgentModel && !settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
-			return 0
-		}
 		desired = strings.TrimSpace(state.CurrentReasoning)
 		if settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
 			for i, option := range options {
@@ -1685,10 +1701,8 @@ func settingsModelPickerReasoningDisplay(settings config.EditableSettings, field
 		}
 		return "LCR Default"
 	}
-	if fieldIndex == settingsFieldLCAgentModel || strings.EqualFold(strings.TrimSpace(provider), "main") {
-		if effort := strings.TrimSpace(settings.EmbeddedLCAgentReasoning); effort != "" {
-			return effort
-		}
+	if effort := settingsLCAgentModelPickerRawReasoning(settings, fieldIndex); effort != "" {
+		return effort
 	}
 	return "Provider Default"
 }

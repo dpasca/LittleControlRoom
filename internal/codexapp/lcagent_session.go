@@ -71,8 +71,10 @@ type lcagentSession struct {
 	requestTimeout      time.Duration
 	utilityProvider     string
 	utilityModel        string
+	utilityReasoning    string
 	visionProvider      string
 	visionModel         string
+	visionReasoning     string
 	modelWarning        string
 	webSearchBackend    string
 	webSearchAPIKey     string
@@ -204,6 +206,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 			utilityModel = model
 		}
 	}
+	utilityReasoning := lcagentReasoningEffortForProvider(utilityProvider, utilityModel, req.LCAgentUtilityReasoning)
 	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
 	if visionProvider == "auto" {
 		if inferred := lcagentDirectProviderForKnownModel(req.LCAgentVisionModel); inferred != "" {
@@ -211,7 +214,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	}
 	visionModel := ""
-	if resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider); resolvedVisionProvider != "" {
+	resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
+	if resolvedVisionProvider != "" {
 		visionModel = modeladapter.NormalizeModelForProvider(resolvedVisionProvider, req.LCAgentVisionModel)
 		if visionModel == "" && strings.EqualFold(resolvedVisionProvider, "ollama") {
 			visionModel = strings.TrimSpace(req.LCAgentOllamaModel)
@@ -220,6 +224,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 			}
 		}
 	}
+	visionReasoning := lcagentReasoningEffortForProvider(resolvedVisionProvider, visionModel, req.LCAgentVisionReasoning)
 	session := &lcagentSession{
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
@@ -245,8 +250,10 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		requestTimeout:           requestTimeout,
 		utilityProvider:          utilityProvider,
 		utilityModel:             utilityModel,
+		utilityReasoning:         utilityReasoning,
 		visionProvider:           visionProvider,
 		visionModel:              visionModel,
+		visionReasoning:          visionReasoning,
 		modelWarning:             modelWarning,
 		webSearchBackend:         lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:          strings.TrimSpace(req.LCAgentWebSearchAPIKey),
@@ -1520,10 +1527,12 @@ type lcagentPreparedRun struct {
 	ollamaBaseURL       string
 	utilityProvider     string
 	utilityModel        string
+	utilityReasoning    string
 	utilityAPIKeyName   string
 	utilityAPIKey       string
 	visionProvider      string
 	visionModel         string
+	visionReasoning     string
 	visionAPIKeyName    string
 	visionAPIKey        string
 	browserControl      string
@@ -1669,6 +1678,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		}
 	}
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
+	utilityReasoning := lcagentReasoningEffortForProvider(utilityProvider, utilityModel, s.utilityReasoning)
 	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
 	if lcagentVisionProviderValue(visionProvider) == "auto" {
 		if inferred := lcagentDirectProviderForKnownModel(s.visionModel); inferred != "" {
@@ -1689,6 +1699,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		visionModel = ""
 	}
 	visionAPIKeyName, visionAPIKey := s.providerCredentialLocked(visionCredentialProvider)
+	visionReasoning := lcagentReasoningEffortForProvider(visionCredentialProvider, visionModel, s.visionReasoning)
 	browserControl := "off"
 	browserSessionKey := strings.TrimSpace(s.managedBrowserSessionKey)
 	browserProfileKey := strings.TrimSpace(s.browserProfileKey)
@@ -1734,10 +1745,12 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		ollamaBaseURL:       ollamaBaseURL,
 		utilityProvider:     utilityProvider,
 		utilityModel:        utilityModel,
+		utilityReasoning:    utilityReasoning,
 		utilityAPIKeyName:   utilityAPIKeyName,
 		utilityAPIKey:       utilityAPIKey,
 		visionProvider:      visionProvider,
 		visionModel:         visionModel,
+		visionReasoning:     visionReasoning,
 		visionAPIKeyName:    visionAPIKeyName,
 		visionAPIKey:        visionAPIKey,
 		browserControl:      browserControl,
@@ -1814,8 +1827,14 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	if prepared.utilityModel != "" {
 		args = append(args, "--utility-model", prepared.utilityModel)
 	}
+	if prepared.utilityReasoning != "" {
+		args = append(args, "--utility-reasoning-effort", prepared.utilityReasoning)
+	}
 	if prepared.visionModel != "" {
 		args = append(args, "--vision-model", prepared.visionModel)
+	}
+	if prepared.visionReasoning != "" {
+		args = append(args, "--vision-reasoning-effort", prepared.visionReasoning)
 	}
 	if prepared.adminWrite {
 		args = append(args, "--admin-write")

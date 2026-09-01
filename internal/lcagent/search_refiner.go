@@ -27,8 +27,9 @@ type searchRefineProfile struct {
 }
 
 type utilitySearchRefiner struct {
-	provider string
-	client   *modeladapter.Client
+	provider        string
+	reasoningEffort string
+	client          *modeladapter.Client
 }
 
 type searchRefinePayload struct {
@@ -85,6 +86,7 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 	}
 	cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), defaultMainModelForProvider(provider))
 	cfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
+	cfg.ReasoningEffort = openRouterReasoningEffortForProvider(provider, cfg.Model, cfg.ReasoningEffort)
 	client, err := newChatProviderClient(provider, cfg)
 	if err != nil {
 		return searchRefineProfile{
@@ -100,7 +102,7 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 	if sameAsMain {
 		message = "LCAgent utility model uses the Main Model."
 	}
-	refiner := utilitySearchRefiner{provider: provider, client: client}
+	refiner := utilitySearchRefiner{provider: provider, reasoningEffort: cfg.ReasoningEffort, client: client}
 	return searchRefineProfile{
 		Enabled:  true,
 		Provider: provider,
@@ -172,8 +174,9 @@ func (r utilitySearchRefiner) RefineSearch(ctx context.Context, req script.Searc
 	}
 	options := modeladapter.CompletionOptions{
 		MaxCompletionTokens: 1400,
+		ReasoningEffort:     strings.TrimSpace(r.reasoningEffort),
 	}
-	if !strings.EqualFold(r.provider, "openai") {
+	if !strings.EqualFold(r.provider, "openai") && options.ReasoningEffort == "" {
 		options.DisableThinking = true
 	}
 	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)
@@ -204,8 +207,9 @@ func (r utilitySearchRefiner) ScoutFiles(ctx context.Context, req script.ScoutFi
 	}
 	options := modeladapter.CompletionOptions{
 		MaxCompletionTokens: 1800,
+		ReasoningEffort:     strings.TrimSpace(r.reasoningEffort),
 	}
-	if !strings.EqualFold(r.provider, "openai") {
+	if !strings.EqualFold(r.provider, "openai") && options.ReasoningEffort == "" {
 		options.DisableThinking = true
 	}
 	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)

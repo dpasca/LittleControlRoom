@@ -24,7 +24,9 @@ type EditableSettings struct {
 	BossChatBackend           AIBackend
 	BossChatModel             string
 	BossHelmModel             string
+	BossHelmReasoning         string
 	BossUtilityModel          string
+	BossUtilityReasoning      string
 	BossChatOllamaThinking    bool
 	OpenAIAPIKey              string
 	OpenRouterAPIKey          string
@@ -72,8 +74,10 @@ type EditableSettings struct {
 	LCAgentRequestTimeout     time.Duration
 	LCAgentUtilityProvider    string
 	LCAgentUtilityModel       string
+	LCAgentUtilityReasoning   string
 	LCAgentVisionProvider     string
 	LCAgentVisionModel        string
+	LCAgentVisionReasoning    string
 	LCAgentMainVisionProvider string
 	LCAgentMainVisionModel    string
 	LCAgentWebSearchBackend   string
@@ -102,7 +106,9 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		BossChatBackend:           cfg.EffectiveBossChatBackend(),
 		BossChatModel:             cfg.BossChatModel,
 		BossHelmModel:             firstNonEmptyTrimmed(cfg.BossHelmModel, cfg.BossChatModel),
+		BossHelmReasoning:         cfg.BossHelmReasoning,
 		BossUtilityModel:          cfg.BossUtilityModel,
+		BossUtilityReasoning:      cfg.BossUtilityReasoning,
 		BossChatOllamaThinking:    cfg.BossChatOllamaThinking,
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
 		OpenRouterAPIKey:          cfg.OpenRouterAPIKey,
@@ -149,8 +155,10 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentRequestTimeout:     cfg.LCAgentRequestTimeout,
 		LCAgentUtilityProvider:    cfg.LCAgentUtilityProvider,
 		LCAgentUtilityModel:       cfg.LCAgentUtilityModel,
+		LCAgentUtilityReasoning:   cfg.LCAgentUtilityReasoning,
 		LCAgentVisionProvider:     cfg.LCAgentVisionProvider,
 		LCAgentVisionModel:        cfg.LCAgentVisionModel,
+		LCAgentVisionReasoning:    cfg.LCAgentVisionReasoning,
 		LCAgentMainVisionProvider: cfg.LCAgentMainVisionProvider,
 		LCAgentMainVisionModel:    cfg.LCAgentMainVisionModel,
 		LCAgentWebSearchBackend:   cfg.LCAgentWebSearchBackend,
@@ -249,6 +257,10 @@ func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 		settings.IncludePaths = append([]string(nil), Default().IncludePaths...)
 	}
 	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
+	settings.BossHelmReasoning = strings.ToLower(strings.TrimSpace(settings.BossHelmReasoning))
+	settings.BossUtilityReasoning = strings.ToLower(strings.TrimSpace(settings.BossUtilityReasoning))
+	settings.LCAgentUtilityReasoning = strings.ToLower(strings.TrimSpace(settings.LCAgentUtilityReasoning))
+	settings.LCAgentVisionReasoning = strings.ToLower(strings.TrimSpace(settings.LCAgentVisionReasoning))
 	if mode, err := claudecli.ParsePermissionMode(string(settings.ClaudePermissionMode)); err == nil {
 		settings.ClaudePermissionMode = mode
 	}
@@ -682,7 +694,9 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg := AppConfigFromEditableSettings(Default(), settings)
 	cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
+	cfg.BossHelmReasoning = strings.TrimSpace(settings.BossHelmReasoning)
 	cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
+	cfg.BossUtilityReasoning = strings.TrimSpace(settings.BossUtilityReasoning)
 	cfg.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
 	cfg.DeepSeekModel = strings.TrimSpace(settings.DeepSeekModel)
 	cfg.MoonshotModel = strings.TrimSpace(settings.MoonshotModel)
@@ -712,8 +726,10 @@ func validateEditableSettings(settings EditableSettings) error {
 	}
 	cfg.LCAgentUtilityProvider = strings.TrimSpace(settings.LCAgentUtilityProvider)
 	cfg.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
+	cfg.LCAgentUtilityReasoning = strings.TrimSpace(settings.LCAgentUtilityReasoning)
 	cfg.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
 	cfg.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
+	cfg.LCAgentVisionReasoning = strings.TrimSpace(settings.LCAgentVisionReasoning)
 	cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
@@ -788,20 +804,16 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(firstNonEmptyTrimmed(settings.BossHelmModel, settings.BossChatModel)); value != "" {
 		lines = append(lines, fmt.Sprintf("boss_helm_model = %s", strconv.Quote(value)))
 	}
+	lines = append(lines, fmt.Sprintf("boss_helm_reasoning_effort = %s", strconv.Quote(strings.TrimSpace(settings.BossHelmReasoning))))
 	if value := strings.TrimSpace(settings.BossUtilityModel); value != "" {
 		lines = append(lines, fmt.Sprintf("boss_utility_model = %s", strconv.Quote(value)))
 	}
+	lines = append(lines, fmt.Sprintf("boss_utility_reasoning_effort = %s", strconv.Quote(strings.TrimSpace(settings.BossUtilityReasoning))))
 	bossChatOllamaThinkingDiffersFromDefault := settings.BossChatOllamaThinking != Default().BossChatOllamaThinking
 	if settings.BossChatBackend == AIBackendOllama || bossChatOllamaThinkingDiffersFromDefault {
 		lines = append(lines, fmt.Sprintf("boss_chat_ollama_thinking = %t", settings.BossChatOllamaThinking))
 	}
-	if settings.BossChatBackend != AIBackendUnset ||
-		strings.TrimSpace(settings.BossChatModel) != "" ||
-		strings.TrimSpace(settings.BossHelmModel) != "" ||
-		strings.TrimSpace(settings.BossUtilityModel) != "" ||
-		bossChatOllamaThinkingDiffersFromDefault {
-		lines = append(lines, "")
-	}
+	lines = append(lines, "")
 	if settings.OpenAIAPIKey != "" {
 		lines = append(lines, fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)))
 	}
@@ -969,12 +981,20 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, fmt.Sprintf("lcagent_utility_model = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
+	if value := strings.TrimSpace(settings.LCAgentUtilityReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_utility_reasoning_effort = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
 	if value, err := parseLCAgentVisionProvider(settings.LCAgentVisionProvider); err == nil && value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_vision_provider = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if value := strings.TrimSpace(settings.LCAgentVisionModel); value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_vision_model = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentVisionReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_vision_reasoning_effort = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if value := strings.TrimSpace(settings.LCAgentMainVisionProvider); value != "" {

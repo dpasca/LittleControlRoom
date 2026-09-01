@@ -2,16 +2,56 @@ package tui
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	bossui "lcroom/internal/boss"
+	"lcroom/internal/brand"
+	"lcroom/internal/config"
+	"lcroom/internal/events"
+	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
+
+func TestReopeningHelpChatReloadsSavedChatModel(t *testing.T) {
+	t.Setenv(brand.BossAssistantModelEnvVar, "")
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.OpenAIAPIKey = "test-openai-key"
+	cfg.BossHelmModel = "gpt-5.5"
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+	help := bossui.NewEmbeddedHelp(context.Background(), svc)
+	if status := help.StatusText(); !strings.Contains(status, "gpt-5.5") {
+		t.Fatalf("initial Chat status = %q, want gpt-5.5", status)
+	}
+
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.BossHelmModel = "gpt-5.6-luna"
+	if err := svc.ApplyEditableSettings(settings); err != nil {
+		t.Fatalf("ApplyEditableSettings() error = %v", err)
+	}
+	m := Model{
+		ctx:                 context.Background(),
+		svc:                 svc,
+		helpChatModel:       help,
+		helpChatModelActive: true,
+		width:               100,
+		height:              24,
+	}
+	updated, _ := m.openHelpChatMode()
+	got := updated.(Model)
+	if status := got.helpChatModel.StatusText(); !strings.Contains(status, "gpt-5.6-luna") || strings.Contains(status, "gpt-5.5") {
+		t.Fatalf("reopened Chat status = %q, want refreshed gpt-5.6-luna assistant", status)
+	}
+}
 
 func TestUnconfiguredHelpChatOpensSetupPrompt(t *testing.T) {
 	t.Parallel()

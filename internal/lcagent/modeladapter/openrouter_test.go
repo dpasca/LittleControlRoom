@@ -687,6 +687,7 @@ func TestCompleteVisionSendsChatCompletionsImageContent(t *testing.T) {
 func TestCompleteVisionSendsOpenAIResponsesImageInput(t *testing.T) {
 	var sawImageURL string
 	var sawPrompt string
+	var sawReasoning string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
 			t.Fatalf("request path = %s, want /responses", r.URL.Path)
@@ -705,6 +706,9 @@ func TestCompleteVisionSendsOpenAIResponsesImageInput(t *testing.T) {
 		if body["store"] != false {
 			t.Fatalf("store = %#v, want false", body["store"])
 		}
+		if reasoning, ok := body["reasoning"].(map[string]any); ok {
+			sawReasoning, _ = reasoning["effort"].(string)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"resp-test","model":"gpt-vision-test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ground plane missing"}]}],"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}`))
 	}))
@@ -718,10 +722,10 @@ func TestCompleteVisionSendsOpenAIResponsesImageInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, err := client.CompleteVision(context.Background(), "Inspect visual render", ImageInput{
+	completion, err := client.CompleteVisionWithOptions(context.Background(), "Inspect visual render", ImageInput{
 		MIMEType: "image/jpeg",
 		Data:     []byte("jpeg-bytes"),
-	})
+	}, CompletionOptions{ReasoningEffort: "xhigh"})
 	if err != nil {
 		t.Fatalf("CompleteVision() error = %v", err)
 	}
@@ -733,6 +737,9 @@ func TestCompleteVisionSendsOpenAIResponsesImageInput(t *testing.T) {
 	}
 	if !strings.HasPrefix(sawImageURL, "data:image/jpeg;base64,") {
 		t.Fatalf("image url = %q", sawImageURL)
+	}
+	if sawReasoning != "xhigh" {
+		t.Fatalf("reasoning effort = %q, want xhigh", sawReasoning)
 	}
 }
 

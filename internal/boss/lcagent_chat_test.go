@@ -19,6 +19,7 @@ type scriptedHelpChatModel struct {
 	completions []modeladapter.Completion
 	requests    [][]modeladapter.Message
 	tools       [][]modeladapter.ToolDefinition
+	options     []modeladapter.CompletionOptions
 }
 
 func (m *scriptedHelpChatModel) Model() string {
@@ -29,11 +30,12 @@ func (m *scriptedHelpChatModel) MaxTurns() int {
 	return 12
 }
 
-func (m *scriptedHelpChatModel) CompleteWithOptions(_ context.Context, messages []modeladapter.Message, tools []modeladapter.ToolDefinition, _ modeladapter.CompletionOptions) (modeladapter.Completion, error) {
+func (m *scriptedHelpChatModel) CompleteWithOptions(_ context.Context, messages []modeladapter.Message, tools []modeladapter.ToolDefinition, opts modeladapter.CompletionOptions) (modeladapter.Completion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requests = append(m.requests, append([]modeladapter.Message(nil), messages...))
 	m.tools = append(m.tools, append([]modeladapter.ToolDefinition(nil), tools...))
+	m.options = append(m.options, opts)
 	if len(m.completions) == 0 {
 		return modeladapter.Completion{}, context.Canceled
 	}
@@ -65,6 +67,8 @@ func TestHelpChatLCAgentUsesGeneratedHelpForRecording(t *testing.T) {
 		agentQueryReader: store,
 		query:            newQueryExecutor(store),
 		model:            "test-model",
+		reasoningEffort:  "xhigh",
+		reasoningSet:     true,
 		backend:          config.AIBackendOpenRouter,
 	}
 	var events []AssistantStreamEvent
@@ -84,6 +88,9 @@ func TestHelpChatLCAgentUsesGeneratedHelpForRecording(t *testing.T) {
 	}
 	if len(modelClient.requests) != 1 {
 		t.Fatalf("model requests = %d, want one model turn plus local help lookup", len(modelClient.requests))
+	}
+	if len(modelClient.options) != 1 || modelClient.options[0].ReasoningEffort != "xhigh" {
+		t.Fatalf("completion options = %#v, want xhigh reasoning", modelClient.options)
 	}
 	toolNames := helpChatToolNames(modelClient.tools[0])
 	for _, want := range []string{"lookup_lcr_help", "list_lcr_queries", "run_lcr_query", "list_control_capabilities", "propose_control_operation", "scout_repository"} {

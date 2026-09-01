@@ -59,7 +59,7 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 		m.helpChatModelActive = true
 		initCmd = m.helpChatModel.Init()
 	} else {
-		m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+		m.helpChatModel = m.helpChatModel.ReloadAssistant().WithViewContext(m.bossViewContext())
 		initCmd = m.helpChatModel.ActivateCmd()
 	}
 	m.status = "Chat open. Drag transcript text to copy; ask a question, or press Esc/backtick to hide."

@@ -758,8 +758,10 @@ type LaunchRequest struct {
 	LCAgentRequestTimeout      time.Duration
 	LCAgentUtilityProvider     string
 	LCAgentUtilityModel        string
+	LCAgentUtilityReasoning    string
 	LCAgentVisionProvider      string
 	LCAgentVisionModel         string
+	LCAgentVisionReasoning     string
 	LCAgentWebSearchBackend    string
 	LCAgentWebSearchAPIKey     string
 	LCAgentWebSearchEngineID   string

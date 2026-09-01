@@ -24,6 +24,40 @@ func useTempHome(t *testing.T) string {
 	return home
 }
 
+func TestRoleSpecificReasoningEffortsRoundTripThroughConfig(t *testing.T) {
+	useTempHome(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.BossHelmReasoning = "xhigh"
+	settings.BossUtilityReasoning = "medium"
+	settings.LCAgentUtilityReasoning = "low"
+	settings.LCAgentVisionReasoning = "high"
+	if err := SaveEditableSettings(path, settings); err != nil {
+		t.Fatalf("SaveEditableSettings() error = %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", path})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.BossHelmReasoning != "xhigh" || cfg.BossUtilityReasoning != "medium" || cfg.LCAgentUtilityReasoning != "low" || cfg.LCAgentVisionReasoning != "high" {
+		t.Fatalf("reasoning round trip = Chat %q/%q LCAgent %q/%q", cfg.BossHelmReasoning, cfg.BossUtilityReasoning, cfg.LCAgentUtilityReasoning, cfg.LCAgentVisionReasoning)
+	}
+
+	settings.BossHelmReasoning = ""
+	settings.BossUtilityReasoning = ""
+	if err := SaveEditableSettings(path, settings); err != nil {
+		t.Fatalf("SaveEditableSettings(provider defaults) error = %v", err)
+	}
+	cfg, err = Parse("scan", []string{"--config", path})
+	if err != nil {
+		t.Fatalf("Parse(provider defaults) error = %v", err)
+	}
+	if cfg.BossHelmReasoning != "" || cfg.BossUtilityReasoning != "" {
+		t.Fatalf("provider-default Chat reasoning round trip = %q/%q, want blank", cfg.BossHelmReasoning, cfg.BossUtilityReasoning)
+	}
+}
+
 func TestParseLoadsIncludePathsFromConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()
