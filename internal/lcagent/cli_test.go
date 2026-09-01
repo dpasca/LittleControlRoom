@@ -2080,13 +2080,18 @@ func TestSearchRefineProfileNormalizesDirectDeepSeekUtilityModel(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
 
 	profile := newSearchRefineProfile("deepseek", modeladapter.OpenRouterConfig{
-		Model: "deepseek/deepseek-v4-flash",
+		Model:           "deepseek/deepseek-v4-flash",
+		ReasoningEffort: "max",
 	}, 1, "openrouter", "deepseek/deepseek-v4-pro")
 	if !profile.Enabled {
 		t.Fatalf("search refine profile disabled: %v", profile.DisabledErr)
 	}
 	if profile.Model != "deepseek-v4-flash" {
 		t.Fatalf("utility model = %q, want deepseek-v4-flash", profile.Model)
+	}
+	refiner, ok := profile.Refiner.(utilitySearchRefiner)
+	if !ok || refiner.reasoningEffort != "max" {
+		t.Fatalf("utility refiner = %#v, want max reasoning", profile.Refiner)
 	}
 }
 

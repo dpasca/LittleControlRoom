@@ -20,9 +20,8 @@ import (
 )
 
 const (
-	bossAssistantReasoningEffort        = "high"
-	bossReadOnlyRouterReasoningEffort   = "low"
-	bossStructuredRepairReasoningEffort = "low"
+	bossAssistantReasoningEffort      = "high"
+	bossReadOnlyRouterReasoningEffort = "low"
 )
 
 type ChatMessage struct {
@@ -91,17 +90,21 @@ type assistantPreparedReadOnlyRoute struct {
 }
 
 type Assistant struct {
-	agentModel       lcagent.ConversationModel
-	agentProvider    string
-	agentQueryReader agentquery.Reader
-	runner           llm.TextRunner
-	planner          llm.JSONSchemaRunner
-	queryRouter      llm.JSONSchemaRunner
-	query            *QueryExecutor
-	model            string
-	utilityModel     string
-	backend          config.AIBackend
-	dataDir          string
+	agentModel          lcagent.ConversationModel
+	agentProvider       string
+	agentQueryReader    agentquery.Reader
+	runner              llm.TextRunner
+	planner             llm.JSONSchemaRunner
+	queryRouter         llm.JSONSchemaRunner
+	query               *QueryExecutor
+	model               string
+	utilityModel        string
+	reasoningEffort     string
+	utilityReasoning    string
+	reasoningSet        bool
+	utilityReasoningSet bool
+	backend             config.AIBackend
+	dataDir             string
 }
 
 func NewAssistant(svc *service.Service) *Assistant {
@@ -139,18 +142,23 @@ func NewAssistant(svc *service.Service) *Assistant {
 		query.projectScout = svc.NewRepositoryScout()
 		query.dataDir = strings.TrimSpace(svc.Config().DataDir)
 	}
+	cfg := svc.Config()
 	return &Assistant{
-		agentModel:       agentModel,
-		agentProvider:    strings.TrimSpace(agentProvider),
-		agentQueryReader: svc.Store(),
-		runner:           runner,
-		planner:          planner,
-		queryRouter:      queryRouter,
-		query:            query,
-		model:            strings.TrimSpace(modelName),
-		utilityModel:     strings.TrimSpace(utilityModel),
-		backend:          backend,
-		dataDir:          strings.TrimSpace(svc.Config().DataDir),
+		agentModel:          agentModel,
+		agentProvider:       strings.TrimSpace(agentProvider),
+		agentQueryReader:    svc.Store(),
+		runner:              runner,
+		planner:             planner,
+		queryRouter:         queryRouter,
+		query:               query,
+		model:               strings.TrimSpace(modelName),
+		utilityModel:        strings.TrimSpace(utilityModel),
+		reasoningEffort:     strings.TrimSpace(cfg.BossHelmReasoning),
+		utilityReasoning:    strings.TrimSpace(cfg.BossUtilityReasoning),
+		reasoningSet:        true,
+		utilityReasoningSet: true,
+		backend:             backend,
+		dataDir:             strings.TrimSpace(svc.Config().DataDir),
 	}
 }
 
@@ -185,6 +193,26 @@ func (a *Assistant) Label() string {
 		return fmt.Sprintf("(%s/%s)", a.model, utilityModel)
 	}
 	return fmt.Sprintf("(%s)", a.model)
+}
+
+func (a *Assistant) mainReasoningEffort() string {
+	if a == nil {
+		return ""
+	}
+	if !a.reasoningSet {
+		return bossAssistantReasoningEffort
+	}
+	return strings.TrimSpace(a.reasoningEffort)
+}
+
+func (a *Assistant) utilityReasoningEffort() string {
+	if a == nil {
+		return ""
+	}
+	if !a.utilityReasoningSet {
+		return bossReadOnlyRouterReasoningEffort
+	}
+	return strings.TrimSpace(a.utilityReasoning)
 }
 
 func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
@@ -246,7 +274,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 		Model:           modelName,
 		SystemText:      bossAssistantSystemPromptForRequest(req),
 		Messages:        bossDirectMessages(req),
-		ReasoningEffort: bossAssistantReasoningEffort,
+		ReasoningEffort: a.mainReasoningEffort(),
 	})
 	if err != nil {
 		return AssistantResponse{}, err
@@ -277,7 +305,7 @@ func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest,
 		Model:           modelName,
 		SystemText:      bossAssistantSystemPromptForRequest(req),
 		Messages:        bossDirectMessages(req),
-		ReasoningEffort: bossAssistantReasoningEffort,
+		ReasoningEffort: a.mainReasoningEffort(),
 	}, emit)
 	if err != nil {
 		return AssistantResponse{}, err
@@ -685,7 +713,7 @@ func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest,
 		Model:           strings.TrimSpace(a.model),
 		SystemText:      bossAssistantSystemPromptForRequest(req),
 		Messages:        bossFinalAnswerMessages(req, toolResults, plannerAnswer),
-		ReasoningEffort: bossAssistantReasoningEffort,
+		ReasoningEffort: a.mainReasoningEffort(),
 	}, emit)
 	if err != nil {
 		return AssistantResponse{}, err
@@ -805,7 +833,7 @@ func (a *Assistant) planReadOnlyQueryRoute(ctx context.Context, req AssistantReq
 		UserText:        bossReadOnlyRouterUserText(req),
 		SchemaName:      "boss_read_only_query_route",
 		Schema:          bossReadOnlyRouteSchema(),
-		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+		ReasoningEffort: a.utilityReasoningEffort(),
 	})
 	if err != nil {
 		return llm.JSONSchemaResponse{}, bossReadOnlyRoute{}, err
@@ -828,7 +856,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		UserText:        bossActionPlannerUserText(req, toolResults, forceAnswer),
 		SchemaName:      "boss_next_action",
 		Schema:          bossActionSchemaForRequest(req),
-		ReasoningEffort: bossAssistantReasoningEffort,
+		ReasoningEffort: a.mainReasoningEffort(),
 	})
 	if err != nil {
 		return llm.JSONSchemaResponse{}, bossAction{}, err
@@ -941,7 +969,7 @@ func (a *Assistant) structuredRepairReasoningEffort() string {
 		// budget. Schema repair is narrow enough to reserve that budget for JSON.
 		return "none"
 	}
-	return bossStructuredRepairReasoningEffort
+	return a.mainReasoningEffort()
 }
 
 func decodeBossJSONResponse(response llm.JSONSchemaResponse, decoded any) error {
@@ -966,7 +994,7 @@ func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantReques
 		UserText:        bossTodoAddPolicyReviewUserText(req, action),
 		SchemaName:      "boss_todo_add_policy_review",
 		Schema:          bossTodoAddPolicyReviewSchema(),
-		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+		ReasoningEffort: a.utilityReasoningEffort(),
 	})
 	if err != nil {
 		return action, false, response, err
@@ -1021,7 +1049,7 @@ func (a *Assistant) reviewHelpProjectWorkPolicy(ctx context.Context, req Assista
 		UserText:        bossHelpProjectWorkPolicyReviewUserText(req, action),
 		SchemaName:      "boss_help_project_work_policy_review",
 		Schema:          bossHelpProjectWorkPolicyReviewSchema(),
-		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+		ReasoningEffort: a.utilityReasoningEffort(),
 	})
 	if err != nil {
 		return action, false, response, err

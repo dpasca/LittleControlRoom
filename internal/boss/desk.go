@@ -109,7 +109,11 @@ func (m Model) bossDeskChatStatsRows(width int) []string {
 	}
 	if modelName != "" {
 		rows = append(rows, bossDeskFieldRow("Model", modelName, width))
-		rows = append(rows, bossDeskFieldRow("Reasoning", bossAssistantReasoningEffort, width))
+		reasoning := "provider default"
+		if m.assistant != nil && m.assistant.mainReasoningEffort() != "" {
+			reasoning = m.assistant.mainReasoningEffort()
+		}
+		rows = append(rows, bossDeskFieldRow("Reasoning", reasoning, width))
 	}
 	if contextRows := m.bossDeskContextRows(width); len(contextRows) > 0 {
 		rows = append(rows, contextRows...)

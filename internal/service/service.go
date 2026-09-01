@@ -625,7 +625,9 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) error 
 	s.cfg.BossChatBackend = settings.BossChatBackend
 	s.cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	s.cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
+	s.cfg.BossHelmReasoning = strings.TrimSpace(settings.BossHelmReasoning)
 	s.cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
+	s.cfg.BossUtilityReasoning = strings.TrimSpace(settings.BossUtilityReasoning)
 	s.cfg.BossChatOllamaThinking = settings.BossChatOllamaThinking
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
@@ -672,8 +674,10 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) error 
 	s.cfg.LCAgentRequestTimeout = settings.LCAgentRequestTimeout
 	s.cfg.LCAgentUtilityProvider = strings.TrimSpace(settings.LCAgentUtilityProvider)
 	s.cfg.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
+	s.cfg.LCAgentUtilityReasoning = strings.TrimSpace(settings.LCAgentUtilityReasoning)
 	s.cfg.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
 	s.cfg.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
+	s.cfg.LCAgentVisionReasoning = strings.TrimSpace(settings.LCAgentVisionReasoning)
 	s.cfg.LCAgentMainVisionProvider = strings.TrimSpace(settings.LCAgentMainVisionProvider)
 	s.cfg.LCAgentMainVisionModel = strings.TrimSpace(settings.LCAgentMainVisionModel)
 	s.cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)

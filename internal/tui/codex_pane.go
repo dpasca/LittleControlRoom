@@ -1514,11 +1514,17 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 		if strings.TrimSpace(req.LCAgentUtilityModel) == "" {
 			req.LCAgentUtilityModel = m.lcagentUtilityModel()
 		}
+		if strings.TrimSpace(req.LCAgentUtilityReasoning) == "" {
+			req.LCAgentUtilityReasoning = m.lcagentUtilityReasoning()
+		}
 		if strings.TrimSpace(req.LCAgentVisionProvider) == "" {
 			req.LCAgentVisionProvider = m.lcagentVisionProvider()
 		}
 		if strings.TrimSpace(req.LCAgentVisionModel) == "" {
 			req.LCAgentVisionModel = m.lcagentVisionModel()
+		}
+		if strings.TrimSpace(req.LCAgentVisionReasoning) == "" {
+			req.LCAgentVisionReasoning = m.lcagentVisionReasoning()
 		}
 		if strings.TrimSpace(req.LCAgentWebSearchBackend) == "" {
 			req.LCAgentWebSearchBackend = m.lcagentWebSearchBackend()

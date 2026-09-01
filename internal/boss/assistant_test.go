@@ -256,6 +256,24 @@ func TestAssistantReplyIncludesStateBriefAndRecentChat(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyUsesConfiguredChatReasoning(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeTextRunner{resp: llm.TextResponse{Model: "gpt-test", OutputText: "Done."}}
+	assistant := &Assistant{
+		runner:          runner,
+		model:           "gpt-test",
+		reasoningEffort: "xhigh",
+		reasoningSet:    true,
+	}
+	if _, err := assistant.Reply(context.Background(), AssistantRequest{Messages: []ChatMessage{{Role: "user", Content: "Help"}}}); err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if runner.req.ReasoningEffort != "xhigh" {
+		t.Fatalf("reasoning effort = %q, want xhigh", runner.req.ReasoningEffort)
+	}
+}
+
 func TestQueryExecutorGoalRunReport(t *testing.T) {
 	t.Parallel()
 
@@ -763,8 +781,8 @@ func TestAssistantReplyRepairsPlainTextPlannerOutputAsFinalAnswer(t *testing.T) 
 	if !strings.Contains(planner.reqs[1].UserText, answer) || !strings.Contains(planner.reqs[1].SystemText, "Repair one invalid") {
 		t.Fatalf("repair request should include the malformed output and repair instructions: %+v", planner.reqs[1])
 	}
-	if planner.reqs[1].ReasoningEffort != bossStructuredRepairReasoningEffort {
-		t.Fatalf("repair reasoning = %q, want %q", planner.reqs[1].ReasoningEffort, bossStructuredRepairReasoningEffort)
+	if planner.reqs[1].ReasoningEffort != bossAssistantReasoningEffort {
+		t.Fatalf("repair reasoning = %q, want %q", planner.reqs[1].ReasoningEffort, bossAssistantReasoningEffort)
 	}
 }
 

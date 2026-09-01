@@ -415,6 +415,10 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 }
 
 func (c *Client) CompleteVision(ctx context.Context, prompt string, image ImageInput) (Completion, error) {
+	return c.CompleteVisionWithOptions(ctx, prompt, image, CompletionOptions{})
+}
+
+func (c *Client) CompleteVisionWithOptions(ctx context.Context, prompt string, image ImageInput, opts CompletionOptions) (Completion, error) {
 	if c == nil {
 		return Completion{}, fmt.Errorf("provider client is not configured")
 	}
@@ -434,9 +438,9 @@ func (c *Client) CompleteVision(ctx context.Context, prompt string, image ImageI
 	}
 	dataURL := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
 	if c.reasoningStyle == "openai" {
-		return c.completeVisionResponses(ctx, prompt, dataURL)
+		return c.completeVisionResponses(ctx, prompt, dataURL, opts)
 	}
-	return c.completeVisionChat(ctx, prompt, dataURL)
+	return c.completeVisionChat(ctx, prompt, dataURL, opts)
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
@@ -677,7 +681,7 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	}, nil
 }
 
-func (c *Client) completeVisionChat(ctx context.Context, prompt, dataURL string) (Completion, error) {
+func (c *Client) completeVisionChat(ctx context.Context, prompt, dataURL string, opts CompletionOptions) (Completion, error) {
 	body := map[string]any{
 		"model": c.model,
 		"messages": []map[string]any{
@@ -702,6 +706,26 @@ func (c *Client) completeVisionChat(ctx context.Context, prompt, dataURL string)
 			"only":               c.providerOnly,
 			"allow_fallbacks":    false,
 			"require_parameters": true,
+		}
+	}
+	if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
+		switch c.reasoningStyle {
+		case "deepseek":
+			if c.providerName == "deepseek" {
+				body["thinking"] = map[string]any{"type": "enabled"}
+				body["reasoning_effort"] = effort
+			} else {
+				body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
+			}
+		case "moonshot":
+			if !MoonshotSupportsReasoningEffort(c.model) {
+				return Completion{}, fmt.Errorf("%s model %s does not support lcagent reasoning effort option", c.providerLabel(), c.model)
+			}
+			body["reasoning_effort"] = effort
+		case "ollama":
+			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning effort option", c.providerLabel())
+		default:
+			body["reasoning"] = map[string]any{"effort": effort}
 		}
 	}
 	var buf bytes.Buffer
@@ -879,7 +903,7 @@ func (c *Client) completeResponses(ctx context.Context, messages []Message, tool
 	}, nil
 }
 
-func (c *Client) completeVisionResponses(ctx context.Context, prompt, dataURL string) (Completion, error) {
+func (c *Client) completeVisionResponses(ctx context.Context, prompt, dataURL string, opts CompletionOptions) (Completion, error) {
 	body := map[string]any{
 		"model": c.model,
 		"input": []map[string]any{
@@ -892,6 +916,9 @@ func (c *Client) completeVisionResponses(ctx context.Context, prompt, dataURL st
 			},
 		},
 		"store": false,
+	}
+	if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
+		body["reasoning"] = map[string]any{"effort": effort}
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {

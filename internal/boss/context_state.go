@@ -87,7 +87,7 @@ func (a *Assistant) compactBossPromptContext(ctx context.Context, existingSummar
 		UserText:        bossContextCompactionUserText(existingSummary, existingCount, messages),
 		SchemaName:      "boss_chat_context_compaction",
 		Schema:          bossContextCompactionSchema(),
-		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+		ReasoningEffort: a.utilityReasoningEffort(),
 	})
 	modelName := strings.TrimSpace(response.Model)
 	if err != nil {

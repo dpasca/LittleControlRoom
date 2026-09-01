@@ -35,8 +35,9 @@ type visionProfile struct {
 }
 
 type traceVisionAnalyzer struct {
-	provider string
-	client   *modeladapter.Client
+	provider        string
+	reasoningEffort string
+	client          *modeladapter.Client
 }
 
 type visionAnalyzer struct {
@@ -68,6 +69,7 @@ func newVisionProfile(provider string, cfg modeladapter.OpenRouterConfig, mainPr
 	}
 	cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), defaultMainModelForProvider(provider))
 	cfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
+	cfg.ReasoningEffort = openRouterReasoningEffortForProvider(provider, cfg.Model, cfg.ReasoningEffort)
 	client, err := newChatProviderClient(provider, cfg)
 	if err != nil {
 		return visionProfile{
@@ -87,7 +89,7 @@ func newVisionProfile(provider string, cfg modeladapter.OpenRouterConfig, mainPr
 		Provider: provider,
 		Model:    client.Model(),
 		Message:  message,
-		Analyzer: traceVisionAnalyzer{provider: provider, client: client},
+		Analyzer: traceVisionAnalyzer{provider: provider, reasoningEffort: cfg.ReasoningEffort, client: client},
 	}
 }
 
@@ -127,10 +129,10 @@ func (v visionAnalyzer) AnalyzeImage(ctx context.Context, request script.ImageAn
 		}
 	}
 	prompt := buildVisionPrompt(request, promptImage)
-	completion, err := v.profile.Analyzer.client.CompleteVision(ctx, prompt, modeladapter.ImageInput{
+	completion, err := v.profile.Analyzer.client.CompleteVisionWithOptions(ctx, prompt, modeladapter.ImageInput{
 		MIMEType: promptImage.MIMEType,
 		Data:     promptImage.Data,
-	})
+	}, modeladapter.CompletionOptions{ReasoningEffort: strings.TrimSpace(v.profile.Analyzer.reasoningEffort)})
 	if err != nil {
 		result := script.ImageAnalysisResult{
 			Provider: v.profile.Provider,

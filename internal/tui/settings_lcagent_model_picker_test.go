@@ -749,7 +749,7 @@ func TestSettingsLCAgentModelPickerReasoningMovesWithProviderFallback(t *testing
 	}
 }
 
-func TestSettingsLCAgentModelPickerUtilityReasoningUsesProviderDefault(t *testing.T) {
+func TestSettingsLCAgentModelPickerUtilityReasoningOffersSupportedEfforts(t *testing.T) {
 	option := codexapp.ModelOption{
 		Model:         "deepseek-v4-flash",
 		ModelProvider: "deepseek",
@@ -781,8 +781,73 @@ func TestSettingsLCAgentModelPickerUtilityReasoningUsesProviderDefault(t *testin
 		t.Fatalf("picker step = %v, want reasoning", state.Step)
 	}
 	options := settingsLCAgentModelPickerReasoningOptions(state)
-	if len(options) != 1 || options[0].Value != "" {
-		t.Fatalf("utility reasoning options = %#v, want provider default only", options)
+	if len(options) != 2 || options[0].Value != "" || options[1].Value != "low" {
+		t.Fatalf("utility reasoning options = %#v, want provider default plus low", options)
+	}
+}
+
+func TestSettingsModelPickerOffersReasoningForEveryCloudModelRole(t *testing.T) {
+	option := codexapp.ModelOption{
+		Model:         "gpt-5.6-luna",
+		ModelProvider: "openai",
+		SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+			{ReasoningEffort: "low", Description: "Light"},
+			{ReasoningEffort: "xhigh", Description: "Extra deliberate"},
+		},
+	}
+	for _, fieldIndex := range []int{
+		settingsFieldBossChatModel,
+		settingsFieldBossUtilityModel,
+		settingsFieldLCAgentModel,
+		settingsFieldLCAgentUtilityModel,
+		settingsFieldLCAgentVisionModel,
+	} {
+		state := &settingsLCAgentModelPickerState{
+			FieldIndex:         fieldIndex,
+			Provider:           "openai",
+			PendingModelOption: option,
+		}
+		options := settingsLCAgentModelPickerReasoningOptions(state)
+		if len(options) != 3 || options[0].Value != "" || options[1].Value != "low" || options[2].Value != "xhigh" {
+			t.Fatalf("field %d reasoning options = %#v, want provider default plus low/xhigh", fieldIndex, options)
+		}
+	}
+}
+
+func TestSettingsModelPickerPersistsRoleSpecificReasoning(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.LCAgentRoutePreset = ""
+	settings.LCAgentProvider = "openai"
+	for _, tt := range []struct {
+		name           string
+		modelField     int
+		reasoningField int
+	}{
+		{name: "Chat main", modelField: settingsFieldBossChatModel, reasoningField: settingsFieldBossChatReasoning},
+		{name: "Chat utility", modelField: settingsFieldBossUtilityModel, reasoningField: settingsFieldBossUtilityReasoning},
+		{name: "LCAgent utility", modelField: settingsFieldLCAgentUtilityModel, reasoningField: settingsFieldLCAgentUtilityReasoning},
+		{name: "LCAgent vision", modelField: settingsFieldLCAgentVisionModel, reasoningField: settingsFieldLCAgentVisionReasoning},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				settingsFields: newSettingsFields(settings),
+				settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+					FieldIndex:       tt.modelField,
+					Provider:         "openai",
+					PendingModel:     "gpt-5.6-luna",
+					PendingReasoning: "xhigh",
+				},
+			}
+			updated, _ := m.applySettingsLCAgentModelPickerSelection()
+			got := updated.(Model)
+			if reasoning := got.settingsFieldValue(tt.reasoningField); reasoning != "xhigh" {
+				t.Fatalf("saved reasoning = %q, want xhigh", reasoning)
+			}
+			if reasoning := settingsLCAgentModelPickerRawReasoning(got.settingsDraftForInferenceStatus(), tt.modelField); reasoning != "xhigh" {
+				t.Fatalf("settings draft reasoning = %q, want xhigh", reasoning)
+			}
+		})
 	}
 }
 
@@ -792,11 +857,13 @@ func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
 		EmbeddedLCAgentModel:     "gpt-5.5",
 		EmbeddedLCAgentReasoning: "high",
 		LCAgentUtilityProvider:   "main",
+		LCAgentUtilityReasoning:  "medium",
 		LCAgentVisionProvider:    "off",
 		LCAgentVisionModel:       "",
 		OpenRouterModel:          "deepseek/deepseek-v4-pro",
 		BossChatBackend:          config.AIBackendOpenRouter,
 		BossHelmModel:            "openai/gpt-5.5",
+		BossHelmReasoning:        "xhigh",
 		BossUtilityModel:         "",
 	}
 
@@ -805,16 +872,16 @@ func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
 		t.Fatalf("main label = %q, want reasoning effort", mainLabel)
 	}
 	utilityLabel := settingsLCAgentModelValueLabel(settings, settingsFieldLCAgentUtilityModel)
-	if !strings.Contains(utilityLabel, "Same as Main") || !strings.Contains(utilityLabel, "reasoning: high") {
-		t.Fatalf("utility label = %q, want same-as-main reasoning", utilityLabel)
+	if !strings.Contains(utilityLabel, "Same as Main") || !strings.Contains(utilityLabel, "reasoning: medium") {
+		t.Fatalf("utility label = %q, want role-specific reasoning", utilityLabel)
 	}
 	projectLabel := settingsLCAgentModelValueLabel(settings, settingsFieldOpenRouterModel)
 	if !strings.Contains(projectLabel, "OpenRouter / deepseek/deepseek-v4-pro") || !strings.Contains(projectLabel, "reasoning: LCR Default") {
 		t.Fatalf("project label = %q, want model and LCR-default reasoning", projectLabel)
 	}
 	bossLabel := settingsLCAgentModelValueLabel(settings, settingsFieldBossChatModel)
-	if !strings.Contains(bossLabel, "OpenRouter / openai/gpt-5.5") || !strings.Contains(bossLabel, "reasoning: Provider Default") {
-		t.Fatalf("chat label = %q, want Chat model and provider-default reasoning", bossLabel)
+	if !strings.Contains(bossLabel, "OpenRouter / openai/gpt-5.5") || !strings.Contains(bossLabel, "reasoning: xhigh") {
+		t.Fatalf("chat label = %q, want Chat model and selected reasoning", bossLabel)
 	}
 }
 

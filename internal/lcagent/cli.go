@@ -417,8 +417,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw, todoCaptureModeRaw, lcrDBPath, lcrQueryScopeRaw, lcrControlScopeRaw string
-	var utilityProviderRaw, utilityModel string
-	var visionProviderRaw, visionModel string
+	var utilityProviderRaw, utilityModel, utilityReasoning string
+	var visionProviderRaw, visionModel, visionReasoning string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
 	var requestTimeout time.Duration
@@ -445,8 +445,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
+	fs.StringVar(&utilityReasoning, "utility-reasoning-effort", "", "optional reasoning effort for the utility model")
 	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
+	fs.StringVar(&visionReasoning, "vision-reasoning-effort", "", "optional reasoning effort for the vision model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets and unknown hosted models assume a 250k window")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
@@ -598,7 +600,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if searchRefineMinBytes < 0 {
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
-	reasoningEffort = openRouterReasoningEffortForProvider(provider, model, reasoningEffort)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
 		return err
@@ -634,6 +635,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	model = modeladapter.NormalizeModelForProvider(provider, model)
 	finalModel = modeladapter.NormalizeModelForProvider(provider, finalModel)
+	reasoningEffort = openRouterReasoningEffortForProvider(provider, model, reasoningEffort)
 	contextOptions := openRouterContextOptionsForProfileAndModel(contextProfile, provider, model)
 	resumeContext, err := loadResumeContext(dataDir, resumeSourceRaw, workspace.Root)
 	if err != nil {
@@ -918,6 +920,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			EnvFile:         envFile,
 			MaxTurns:        1,
 			RequestTimeout:  requestTimeout,
+			ReasoningEffort: utilityReasoning,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 		}, modeladapter.OpenRouterConfig{
@@ -925,6 +928,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			EnvFile:         envFile,
 			MaxTurns:        1,
 			RequestTimeout:  requestTimeout,
+			ReasoningEffort: visionReasoning,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled, opts.ReadOnlyTools)
