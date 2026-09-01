@@ -1402,6 +1402,10 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 
 func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.LaunchRequest {
 	req = m.applyEmbeddedModelPreference(req)
+	return m.enrichEmbeddedLaunchRequestBase(req)
+}
+
+func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codexapp.LaunchRequest {
 	// Launch preparation runs on Bubble Tea's Update path. Use the TUI-owned
 	// config snapshot here so a contended service lock cannot freeze input.
 	if strings.TrimSpace(req.AppDBPath) == "" {
@@ -1540,7 +1544,21 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 // session is touched. This keeps prerequisite disk work off Bubble Tea's
 // Update path and lets callers abort replacement without closing the source.
 func (m *Model) openCodexSessionCmdPrepared(req codexapp.LaunchRequest, revealOnOpen, restartWarmup bool, prepare func() error) tea.Cmd {
-	req = m.enrichEmbeddedLaunchRequest(req)
+	return m.openCodexSessionCmdPreparedWithModelPreference(req, revealOnOpen, restartWarmup, prepare, true)
+}
+
+func (m *Model) openCodexSessionCmdPreparedWithModelPreference(
+	req codexapp.LaunchRequest,
+	revealOnOpen bool,
+	restartWarmup bool,
+	prepare func() error,
+	applyModelPreference bool,
+) tea.Cmd {
+	if applyModelPreference {
+		req = m.enrichEmbeddedLaunchRequest(req)
+	} else {
+		req = m.enrichEmbeddedLaunchRequestBase(req)
+	}
 	restartIntentKey := ""
 	if req.ContinueInterruptedTurn {
 		restartIntentKey = (codexapp.RestartIntent{
@@ -2063,6 +2081,17 @@ func (m *Model) handoffVisibleCodexSessionCmd(source codexapp.Snapshot, note str
 }
 
 func (m *Model) handoffVisibleCodexSessionToProviderCmd(source codexapp.Snapshot, note string, targetProvider codexapp.Provider) tea.Cmd {
+	return m.handoffVisibleCodexSessionToSelectionCmd(source, note, targetProvider, codexapp.ModelOption{}, "", false)
+}
+
+func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
+	source codexapp.Snapshot,
+	note string,
+	targetProvider codexapp.Provider,
+	modelOption codexapp.ModelOption,
+	reasoning string,
+	modelSelected bool,
+) tea.Cmd {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
 		return nil
@@ -2097,18 +2126,26 @@ func (m *Model) handoffVisibleCodexSessionToProviderCmd(source codexapp.Snapshot
 		AppDataDir:       m.appDataDir(),
 		CodexHome:        m.codexHome(),
 	}
+	if modelSelected {
+		req.PendingModel = strings.TrimSpace(modelOption.Model)
+		req.PendingReasoning = strings.TrimSpace(reasoning)
+		if req.Provider.Normalized() == codexapp.ProviderLCAgent {
+			req.LCAgentRoutePreset = ""
+			req.LCAgentProvider = strings.TrimSpace(modelOption.ModelProvider)
+		}
+	}
 	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
 	}
 
 	handoffSaved := false
-	cmd := m.openCodexSessionCmdPrepared(req, true, false, func() error {
+	cmd := m.openCodexSessionCmdPreparedWithModelPreference(req, true, false, func() error {
 		if err := handoff.Write(); err != nil {
 			return fmt.Errorf("save embedded session handoff: %w", err)
 		}
 		handoffSaved = true
 		return nil
-	})
+	}, !modelSelected)
 	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok {

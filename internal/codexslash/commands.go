@@ -69,7 +69,7 @@ var specs = []Spec{
 	{Name: "show-status", Usage: "/show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
-	{Name: "handoff", Usage: "/handoff [note]", Summary: "Save a host-generated continuation brief and start a fresh embedded session"},
+	{Name: "handoff", Usage: "/handoff [note]", Summary: "Choose an agent, model, and reasoning effort, then continue from a host-generated continuation brief"},
 	{Name: "lcagent-handoff", Usage: "/lcagent-handoff [note]", Summary: "Save a host-generated continuation brief and continue in a fresh LCAgent session"},
 	{Name: "pause", Usage: "/pause", Summary: "Interrupt the active turn locally without sending another model request"},
 	{Name: "suspend", Usage: "/suspend", Summary: "Alias for /pause", Hidden: true},
@@ -152,7 +152,7 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/handoff",
 			Display: "/handoff [note]",
-			Summary: "Save a mechanical continuation brief locally, then start a fresh embedded session from it",
+			Summary: "Choose an agent, model, and reasoning effort, then continue from a host-generated continuation brief",
 		}}
 	case "lcagent-handoff":
 		return []Suggestion{{

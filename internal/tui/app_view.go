@@ -124,6 +124,9 @@ func (m Model) View() string {
 			return m.renderCodexArtifactPickerOverlay(body, width, height)
 		}
 		if m.codexModelPickerVisible() {
+			if m.codexHandoffDialog != nil {
+				body = m.renderCodexHandoffOverlay(body, width, height)
+			}
 			if m.worktreeMergeRecoveryDialog != nil {
 				body = m.renderWorktreeMergeRecoveryOverlay(body, width, height)
 			}
@@ -132,6 +135,9 @@ func (m Model) View() string {
 				body = m.renderCodexLCAgentProviderSetupOverlay(body, width, height)
 			}
 			return body
+		}
+		if m.codexHandoffDialog != nil {
+			return m.renderCodexHandoffOverlay(body, width, height)
 		}
 		if m.settingsLCAgentModelPicker != nil {
 			return m.renderSettingsLCAgentModelPickerOverlay(body, width, height)

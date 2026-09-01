@@ -27,12 +27,15 @@ type codexModelPickerTarget string
 
 const (
 	codexModelPickerTargetLeader           codexModelPickerTarget = ""
+	codexModelPickerTargetHandoff          codexModelPickerTarget = "handoff"
 	codexModelPickerTargetNewTask          codexModelPickerTarget = "new_task"
 	codexModelPickerTargetWorktreeRecovery codexModelPickerTarget = "worktree_recovery"
 )
 
 func (target codexModelPickerTarget) prelaunch() bool {
-	return target == codexModelPickerTargetNewTask || target == codexModelPickerTargetWorktreeRecovery
+	return target == codexModelPickerTargetHandoff ||
+		target == codexModelPickerTargetNewTask ||
+		target == codexModelPickerTargetWorktreeRecovery
 }
 
 type codexModelPickerState struct {
@@ -345,6 +348,8 @@ func (m Model) codexModelPickerTitleLabel() string {
 	provider := m.codexModelPickerProvider()
 	if state := m.codexModelPicker; state != nil {
 		switch state.Target {
+		case codexModelPickerTargetHandoff:
+			return "Handoff / " + provider.Label()
 		case codexModelPickerTargetNewTask:
 			return "New Task / " + provider.Label()
 		case codexModelPickerTargetWorktreeRecovery:
@@ -355,6 +360,9 @@ func (m Model) codexModelPickerTitleLabel() string {
 }
 
 func (m Model) codexModelPickerTargetLabel() string {
+	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetHandoff {
+		return "handoff"
+	}
 	return "model"
 }
 
@@ -1029,6 +1037,8 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	}
 	if state := m.codexModelPicker; state != nil {
 		switch state.Target {
+		case codexModelPickerTargetHandoff:
+			return m.applyCodexHandoffModelPickerSelection(modelOption, effort)
 		case codexModelPickerTargetNewTask:
 			return m.applyNewTaskModelPickerSelection(modelOption, effort)
 		case codexModelPickerTargetWorktreeRecovery:

@@ -13,6 +13,7 @@ import (
 
 type codexLCAgentProviderSetupState struct {
 	ProjectPath  string
+	Target       codexModelPickerTarget
 	Provider     string
 	Model        codexapp.ModelOption
 	Reasoning    string
@@ -70,6 +71,9 @@ func (m Model) openCodexLCAgentProviderSetup(option codexapp.ModelOption, reason
 		FieldIndexes: fieldIndexes,
 		Fields:       fields,
 		Selected:     selected,
+	}
+	if picker := m.codexModelPicker; picker != nil {
+		state.Target = picker.Target
 	}
 	state.focusSelected()
 	m.codexLCAgentProviderSetup = state
@@ -182,6 +186,8 @@ func (m Model) saveCodexLCAgentProviderSetup() (tea.Model, tea.Cmd) {
 			projectPath: projectPath,
 			settings:    settings,
 			path:        path,
+			prelaunch:   state.Target.prelaunch(),
+			target:      state.Target,
 			err:         err,
 		}
 	}
@@ -273,6 +279,7 @@ func appendRecentString(values []string, value string, limit int) []string {
 }
 
 func (m Model) applyCodexLCAgentProviderSetupSavedMsg(msg codexLCAgentProviderSetupSavedMsg) (tea.Model, tea.Cmd) {
+	setup := m.codexLCAgentProviderSetup
 	if state := m.codexLCAgentProviderSetup; state != nil {
 		state.Saving = false
 	}
@@ -300,6 +307,15 @@ func (m Model) applyCodexLCAgentProviderSetupSavedMsg(msg codexLCAgentProviderSe
 		modelLabel = settingsLCAgentMainModel(saved)
 	}
 	cmds := []tea.Cmd{m.applyEditableSettingsCmd(saved)}
+	if msg.target == codexModelPickerTargetHandoff && setup != nil {
+		updated, handoffCmd := m.startCodexHandoff(
+			codexapp.ProviderLCAgent,
+			setup.Model,
+			setup.Provider,
+			setup.Reasoning,
+		)
+		return updated, batchCmds(append(cmds, handoffCmd)...)
+	}
 	if msg.prelaunch {
 		m.status = fmt.Sprintf("TODO launch will use LCAgent %s / %s", settingsLCAgentModelPickerProviderLabel(saved.LCAgentProvider), modelLabel)
 		if reasoning := strings.TrimSpace(saved.EmbeddedLCAgentReasoning); reasoning != "" {

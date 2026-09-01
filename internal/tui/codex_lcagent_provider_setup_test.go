@@ -280,3 +280,62 @@ func TestLCAgentModelPickerOpensProviderSetupWhenMissingKey(t *testing.T) {
 		t.Fatalf("setup save should return apply/reload command")
 	}
 }
+
+func TestLCAgentHandoffProviderSetupContinuesConfirmedHandoff(t *testing.T) {
+	projectPath := "/tmp/demo-lcagent-handoff-setup"
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "openai"
+	settings.OpenAIAPIKey = "sk-openai-test"
+	option := codexapp.ModelOption{
+		ID:            "gpt-5.5",
+		Model:         "gpt-5.5",
+		ModelProvider: "openai",
+		DisplayName:   "GPT-5.5",
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		appDataDirPath:      t.TempDir(),
+		settingsBaseline:    &settings,
+		codexHandoffDialog: &codexHandoffDialogState{
+			Source: codexapp.Snapshot{
+				Provider:    codexapp.ProviderCodex,
+				ProjectPath: projectPath,
+				ThreadID:    "codex-source",
+			},
+			Note:     "keep the verified diagnosis",
+			Provider: codexapp.ProviderLCAgent,
+		},
+		codexModelPicker: &codexModelPickerState{
+			Target:   codexModelPickerTargetHandoff,
+			Provider: codexapp.ProviderLCAgent,
+		},
+		codexLCAgentProviderSetup: &codexLCAgentProviderSetupState{
+			ProjectPath: projectPath,
+			Target:      codexModelPickerTargetHandoff,
+			Provider:    "openai",
+			Model:       option,
+			Reasoning:   "high",
+		},
+	}
+
+	updated, cmd := m.applyCodexLCAgentProviderSetupSavedMsg(codexLCAgentProviderSetupSavedMsg{
+		projectPath: projectPath,
+		settings:    settings,
+		path:        filepath.Join(t.TempDir(), "config.toml"),
+		prelaunch:   true,
+		target:      codexModelPickerTargetHandoff,
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("saved LCAgent handoff setup should continue the confirmed handoff")
+	}
+	if got.codexLCAgentProviderSetup != nil || got.codexModelPicker != nil || got.codexHandoffDialog != nil {
+		t.Fatalf("confirmed handoff dialogs still open: setup=%#v model=%#v handoff=%#v", got.codexLCAgentProviderSetup, got.codexModelPicker, got.codexHandoffDialog)
+	}
+	if got.codexPendingOpen == nil || !got.codexPendingOpen.newSession || got.codexPendingOpen.provider != codexapp.ProviderLCAgent {
+		t.Fatalf("handoff pending state = %#v, want fresh LCAgent", got.codexPendingOpen)
+	}
+	if !strings.Contains(got.status, "gpt-5.5") || !strings.Contains(got.status, "high reasoning") {
+		t.Fatalf("handoff status = %q, want selected model and reasoning", got.status)
+	}
+}

@@ -965,17 +965,76 @@ func TestVisibleCodexSlashHandoffSavesBriefAndStartsFreshSession(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatal("enter should run the host-side /handoff command")
+	if cmd != nil {
+		t.Fatal("/handoff should wait for agent and model choices before launching")
 	}
 	if got.codexInput.Value() != "" {
 		t.Fatalf("codex input should clear after /handoff, got %q", got.codexInput.Value())
 	}
-	if got.codexPendingOpen == nil || !got.codexPendingOpen.newSession {
-		t.Fatalf("handoff should mark a fresh pending session: %#v", got.codexPendingOpen)
+	if got.codexHandoffDialog == nil || got.codexHandoffDialog.Provider != codexapp.ProviderCodex {
+		t.Fatalf("handoff agent choice = %#v, want source Codex selected", got.codexHandoffDialog)
 	}
-	if !strings.Contains(got.status, "Saving a continuation brief") {
-		t.Fatalf("handoff pending status = %q", got.status)
+	if got.codexPendingOpen != nil || source.snapshot.Closed || len(requests) != 1 {
+		t.Fatalf("handoff changed the source before choices: pending=%#v closed=%t requests=%d", got.codexPendingOpen, source.snapshot.Closed, len(requests))
+	}
+	rendered := ansi.Strip(got.renderCodexHandoffOverlay("session", 100, 30))
+	for _, want := range []string{"Handoff", "Codex", "OpenCode", "Claude Code", "LCAgent", "choose model"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("handoff chooser missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateCodexHandoffDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateCodexHandoffDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.codexHandoffDialog.Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("handoff provider after two down keys = %q, want Claude Code", got.codexHandoffDialog.Provider)
+	}
+	updated, cmd = got.updateCodexHandoffDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil || got.codexModelPicker == nil || !got.codexModelPicker.Loading {
+		t.Fatalf("agent confirmation should load the model picker: picker=%#v cmd=%v", got.codexModelPicker, cmd)
+	}
+	if got.codexModelPicker.Target != codexModelPickerTargetHandoff || got.codexModelPicker.Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("handoff model picker = %#v, want Claude Code handoff target", got.codexModelPicker)
+	}
+	if source.snapshot.Closed || len(requests) != 1 {
+		t.Fatalf("loading handoff models changed the source: closed=%t requests=%d", source.snapshot.Closed, len(requests))
+	}
+
+	listMsg, ok := cmd().(codexModelListMsg)
+	if !ok {
+		t.Fatalf("handoff model command returned %T, want codexModelListMsg", cmd())
+	}
+	updated, _ = got.Update(listMsg)
+	got = updated.(Model)
+	if got.codexModelPicker == nil || got.codexModelPicker.Loading {
+		t.Fatalf("loaded handoff model picker = %#v", got.codexModelPicker)
+	}
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.codexModelPicker.Focus != codexModelPickerFocusEfforts {
+		t.Fatalf("model confirmation focus = %q, want reasoning efforts", got.codexModelPicker.Focus)
+	}
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("reasoning confirmation should run the handoff")
+	}
+	if got.codexHandoffDialog != nil || got.codexModelPicker != nil {
+		t.Fatalf("confirmed handoff dialogs still open: handoff=%#v model=%#v", got.codexHandoffDialog, got.codexModelPicker)
+	}
+	if got.codexPendingOpen == nil || !got.codexPendingOpen.newSession || got.codexPendingOpen.provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("confirmed handoff pending state = %#v, want fresh Claude Code", got.codexPendingOpen)
 	}
 
 	msg := cmd()
@@ -989,7 +1048,7 @@ func TestVisibleCodexSlashHandoffSavesBriefAndStartsFreshSession(t *testing.T) {
 	if opened.snapshot.ThreadID != "thread-fresh" {
 		t.Fatalf("fresh thread id = %q, want thread-fresh", opened.snapshot.ThreadID)
 	}
-	if !strings.Contains(opened.status, "Handoff saved to ") || !strings.Contains(opened.status, "Prompt sent to fresh embedded Codex") {
+	if !strings.Contains(opened.status, "Handoff saved to ") || !strings.Contains(opened.status, "Prompt sent to fresh embedded Claude Code") {
 		t.Fatalf("handoff success status = %q", opened.status)
 	}
 	if len(requests) != 2 {
@@ -999,8 +1058,11 @@ func TestVisibleCodexSlashHandoffSavesBriefAndStartsFreshSession(t *testing.T) {
 	if !fresh.ForceNew || fresh.ResumeID != "" {
 		t.Fatalf("handoff launch should be fresh, got ForceNew=%t ResumeID=%q", fresh.ForceNew, fresh.ResumeID)
 	}
-	if fresh.Provider != codexapp.ProviderCodex || fresh.Preset != codexcli.PresetYolo {
-		t.Fatalf("handoff launch lost provider/preset: provider=%q preset=%q", fresh.Provider, fresh.Preset)
+	if fresh.Provider != codexapp.ProviderClaudeCode || fresh.Preset != codexcli.PresetYolo {
+		t.Fatalf("handoff launch lost selected provider/source preset: provider=%q preset=%q", fresh.Provider, fresh.Preset)
+	}
+	if fresh.PendingModel != "sonnet" || fresh.PendingReasoning != "xhigh" {
+		t.Fatalf("handoff launch model/reasoning = %q/%q, want sonnet/xhigh", fresh.PendingModel, fresh.PendingReasoning)
 	}
 	if source.submitted != nil || source.submissions != nil {
 		t.Fatal("handoff should not submit work through the unavailable source session")

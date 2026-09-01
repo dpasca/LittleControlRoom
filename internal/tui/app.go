@@ -154,6 +154,7 @@ type Model struct {
 	newProjectDialog                    *newProjectDialogState
 	cloneProjectDialog                  *cloneProjectDialogState
 	newTaskDialog                       *newTaskDialogState
+	codexHandoffDialog                  *codexHandoffDialogState
 	mergeConflictResolverProviderDialog *mergeConflictResolverProviderDialogState
 	runCommandDialog                    *runCommandDialogState
 	runCommandRequestSeq                int64
@@ -671,6 +672,7 @@ type codexLCAgentProviderSetupSavedMsg struct {
 	settings    config.EditableSettings
 	path        string
 	prelaunch   bool
+	target      codexModelPickerTarget
 	err         error
 }
 
@@ -1762,6 +1764,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.codexModelPickerVisible() {
 			return m.updateCodexModelPickerMode(msg)
+		}
+		if m.codexHandoffDialog != nil {
+			return m.updateCodexHandoffDialogMode(msg)
 		}
 		if m.codexPickerVisible {
 			return m.updateCodexPickerMode(msg)
