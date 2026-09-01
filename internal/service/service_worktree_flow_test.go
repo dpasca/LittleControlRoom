@@ -949,6 +949,130 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeFailsWhenGitRegistrationCannotBeVerifiedGone(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Create a worktree whose removal cannot be verified",
+		"feat/unverifiable-removal",
+		"feat-unverifiable-removal",
+	)
+	originalWorktreeListReader := svc.gitWorktreeListReader
+	listCalls := 0
+	svc.gitWorktreeListReader = func(ctx context.Context, path string) ([]scanner.GitWorktree, error) {
+		listCalls++
+		worktrees, err := originalWorktreeListReader(ctx, path)
+		if err != nil || listCalls == 1 {
+			return worktrees, err
+		}
+		return append(worktrees, scanner.GitWorktree{
+			Path:   result.WorktreePath,
+			Branch: result.BranchName,
+		}), nil
+	}
+
+	err = svc.RemoveWorktree(ctx, result.WorktreePath, false)
+	if err == nil || !strings.Contains(err.Error(), "still registers") {
+		t.Fatalf("RemoveWorktree() error = %v, want failed Git-registration postcondition", err)
+	}
+	detail, detailErr := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if detailErr != nil {
+		t.Fatalf("GetProjectDetail() after failed verification error = %v", detailErr)
+	}
+	if detail.Summary.Forgotten {
+		t.Fatalf("unverified removal was recorded as successful: %#v", detail.Summary)
+	}
+}
+
+func TestRemoveWorktreeFailsWhenUnverifiedFilesReappearAtRemovedPath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Create a worktree whose path is repopulated during removal",
+		"feat/repopulated-removal",
+		"feat-repopulated-removal",
+	)
+	originalWorktreeListReader := svc.gitWorktreeListReader
+	listCalls := 0
+	importantPath := filepath.Join(result.WorktreePath, "important.txt")
+	svc.gitWorktreeListReader = func(ctx context.Context, path string) ([]scanner.GitWorktree, error) {
+		listCalls++
+		worktrees, err := originalWorktreeListReader(ctx, path)
+		if err == nil && listCalls == 2 {
+			if mkdirErr := os.MkdirAll(result.WorktreePath, 0o755); mkdirErr != nil {
+				return nil, mkdirErr
+			}
+			if writeErr := os.WriteFile(importantPath, []byte("keep me"), 0o644); writeErr != nil {
+				return nil, writeErr
+			}
+		}
+		return worktrees, err
+	}
+
+	err = svc.RemoveWorktree(ctx, result.WorktreePath, false)
+	if err == nil || !strings.Contains(err.Error(), "could not verify the remaining folder") {
+		t.Fatalf("RemoveWorktree() error = %v, want failed filesystem postcondition", err)
+	}
+	if content, readErr := os.ReadFile(importantPath); readErr != nil || string(content) != "keep me" {
+		t.Fatalf("unverified file = %q, %v; want untouched", content, readErr)
+	}
+	detail, detailErr := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if detailErr != nil {
+		t.Fatalf("GetProjectDetail() after failed verification error = %v", detailErr)
+	}
+	if detail.Summary.Forgotten {
+		t.Fatalf("filesystem verification failure was recorded as successful: %#v", detail.Summary)
+	}
+}
+
 func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
 	t.Parallel()
 
@@ -1649,6 +1773,102 @@ func TestRemoveWorktreeWaitsForScanAndStaysForgotten(t *testing.T) {
 	}
 	if _, err := os.Stat(result.WorktreePath); !os.IsNotExist(err) {
 		t.Fatalf("worktree path still exists after concurrent removal: stat err = %v", err)
+	}
+}
+
+func TestRemoveWorktreeWinsOverStaleProjectStatusRefresh(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Create a worktree removed during a targeted status refresh",
+		"feat/remove-during-refresh",
+		"feat-remove-during-refresh",
+	)
+
+	originalWorktreeListReader := svc.gitWorktreeListReader
+	refreshSnapshotRead := make(chan struct{})
+	releaseStaleRefresh := make(chan struct{})
+	listCalls := 0
+	var listCallsMu sync.Mutex
+	svc.gitWorktreeListReader = func(ctx context.Context, path string) ([]scanner.GitWorktree, error) {
+		worktrees, err := originalWorktreeListReader(ctx, path)
+		listCallsMu.Lock()
+		listCalls++
+		blockThisRead := listCalls == 1
+		listCallsMu.Unlock()
+		if blockThisRead {
+			close(refreshSnapshotRead)
+			select {
+			case <-releaseStaleRefresh:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return worktrees, err
+	}
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		refreshDone <- svc.RefreshProjectStatus(ctx, result.WorktreePath)
+	}()
+
+	select {
+	case <-refreshSnapshotRead:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the targeted refresh to capture live worktree state")
+	}
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+	close(releaseStaleRefresh)
+	if err := <-refreshDone; err != nil {
+		t.Fatalf("RefreshProjectStatus() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after stale refresh error = %v", err)
+	}
+	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
+		t.Fatalf("stale targeted refresh resurrected removed worktree: %#v", detail.Summary)
+	}
+	if _, err := os.Lstat(result.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree path exists after removal and refresh: %v", err)
+	}
+	visible, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() after stale refresh error = %v", err)
+	}
+	for _, project := range visible {
+		if samePath(project.Path, result.WorktreePath) {
+			t.Fatalf("removed worktree resurfaced in visible projects: %#v", project)
+		}
 	}
 }
 

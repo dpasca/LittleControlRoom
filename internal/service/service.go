@@ -41,6 +41,9 @@ const missingLinkedWorktreeRetention = 7 * 24 * time.Hour
 const fullScanLockPollInterval = 25 * time.Millisecond
 const scanGitMetadataTimeoutPathLimit = 8
 const codexHomeOverlayRetention = 7 * 24 * time.Hour
+const projectStatusRefreshMaxAttempts = 3
+
+var errProjectStatusRefreshSuperseded = errors.New("project checkout state changed during status refresh")
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -3220,6 +3223,16 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 }
 
 func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPath string, opts ScanOptions) error {
+	for attempt := 0; attempt < projectStatusRefreshMaxAttempts; attempt++ {
+		err := s.refreshProjectStatusWithOptions(ctx, projectPath, opts)
+		if !errors.Is(err, errProjectStatusRefreshSuperseded) {
+			return err
+		}
+	}
+	return fmt.Errorf("refresh project status for %s: checkout state kept changing", projectPath)
+}
+
+func (s *Service) refreshProjectStatusWithOptions(ctx context.Context, projectPath string, opts ScanOptions) error {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	runtime := s.runtimeSnapshot()
 	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, scanGitRepoStatusTimeout, nil)
@@ -3244,6 +3257,9 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
 		if err != nil {
 			return err
+		}
+		if projectCheckoutLifecycleChanged(initialDetail.Summary, detail.Summary) {
+			return errProjectStatusRefreshSuperseded
 		}
 
 		worktreeRootPath := detail.Summary.WorktreeRootPath
@@ -3347,6 +3363,17 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		return s.refreshLinkedWorktreeStatusesForRoot(ctx, refreshLinkedRootPath)
 	}
 	return nil
+}
+
+func projectCheckoutLifecycleChanged(before, after model.ProjectSummary) bool {
+	return before.PresentOnDisk != after.PresentOnDisk ||
+		before.Forgotten != after.Forgotten ||
+		before.InScope != after.InScope ||
+		before.ManuallyAdded != after.ManuallyAdded ||
+		!samePath(before.WorktreeRootPath, after.WorktreeRootPath) ||
+		before.WorktreeKind != after.WorktreeKind ||
+		before.WorktreeParentBranch != after.WorktreeParentBranch ||
+		before.WorktreeMergeStatus != after.WorktreeMergeStatus
 }
 
 type projectStatusRefreshMetadata struct {

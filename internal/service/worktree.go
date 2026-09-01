@@ -1339,6 +1339,9 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 			return fmt.Errorf("prune submodule worktrees after removing %s: %w", projectPath, err)
 		}
 	}
+	if err := s.verifyWorktreeRemoval(ctx, rootPath, kind, projectPath, expectedCommit, missingCheckoutReconciled); err != nil {
+		return err
+	}
 	unlockProjectState := s.lockProjectStateMutation(projectPath)
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
 		unlockProjectState()
@@ -1346,11 +1349,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	}
 	// Reconcile the persisted presence immediately so merged-and-removed worktrees
 	// do not linger as orphaned checkouts until a later scan happens to revisit them.
-	recordedPresence := projectPathExists(projectPath)
-	if missingCheckoutReconciled {
-		recordedPresence = false
-	}
-	if err := s.store.SetProjectPresence(ctx, projectPath, recordedPresence); err != nil {
+	if err := s.store.SetProjectPresence(ctx, projectPath, false); err != nil {
 		unlockProjectState()
 		return fmt.Errorf("record removed worktree presence: %w", err)
 	}
@@ -1358,6 +1357,7 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		unlockProjectState()
 		return fmt.Errorf("clear TODO work session for removed worktree: %w", err)
 	}
+	s.forgetProjectState(projectPath)
 	unlockProjectState()
 
 	now := time.Now()
@@ -1378,6 +1378,71 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		Type:        string(events.ActionApplied),
 		Payload:     "remove_worktree",
 	})
+	return nil
+}
+
+// verifyWorktreeRemoval makes successful removal mean that Git has forgotten
+// the exact checkout and no unverified checkout files remain at its path. A
+// prunable checkout may leave an ancestor directory that contains an
+// independently live nested repository; in that case the missing outer .git
+// entry and absent Git registration are the relevant postconditions.
+func (s *Service) verifyWorktreeRemoval(
+	ctx context.Context,
+	rootPath string,
+	kind model.WorktreeKind,
+	projectPath string,
+	expectedCommit string,
+	allowOccupiedAncestor bool,
+) error {
+	registration, err := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
+	if err != nil {
+		return fmt.Errorf("verify Git worktree removal for %s: %w", projectPath, err)
+	}
+	if registration == linkedWorktreeRegistrationPrunable {
+		if err := gitWorktreePrune(ctx, rootPath); err != nil {
+			return fmt.Errorf("prune residual Git worktree registration for %s: %w", projectPath, err)
+		}
+		registration, err = linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
+		if err != nil {
+			return fmt.Errorf("verify pruned Git worktree registration for %s: %w", projectPath, err)
+		}
+	}
+	switch registration {
+	case linkedWorktreeRegistrationAbsent:
+	case linkedWorktreeRegistrationLive:
+		return fmt.Errorf("Git still registers worktree %s after removal", projectPath)
+	default:
+		return fmt.Errorf("could not verify that Git stopped registering worktree %s after removal", projectPath)
+	}
+
+	if !projectPathExists(projectPath) {
+		return nil
+	}
+	if allowOccupiedAncestor {
+		if projectIsGitRepo(projectPath) {
+			return fmt.Errorf("worktree checkout %s still exists after its Git registration was removed", projectPath)
+		}
+		return nil
+	}
+
+	summary := s.residualWorktreeSummary(ctx, projectPath)
+	inspection, err := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, expectedCommit)
+	if err != nil {
+		return fmt.Errorf("inspect remaining worktree folder after removal: %w", err)
+	}
+	if !inspection.Safe {
+		return fmt.Errorf(
+			"Git no longer registers this worktree, but Little Control Room could not verify the remaining folder for safe cleanup: %s; Little Control Room left the folder untouched: %s",
+			inspection.Reason,
+			projectPath,
+		)
+	}
+	if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
+		return fmt.Errorf("remove verified worktree residue after Git removal: %w", err)
+	}
+	if projectPathExists(projectPath) {
+		return fmt.Errorf("worktree path still exists after verified removal: %s", projectPath)
+	}
 	return nil
 }
 
