@@ -2975,14 +2975,20 @@ func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	}
 }
 
-func TestMergeWorktreeBackRepairsStaleRootSubmoduleWorktreeMetadata(t *testing.T) {
+func TestMergeWorktreeBackRepairsStaleNestedRootSubmoduleWorktreeMetadata(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "repo")
-	submoduleRootPath := filepath.Join(root, "assets")
-	rootSubmodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	appOriginPath := filepath.Join(root, "app-origin")
+	assetOriginPath := filepath.Join(root, "asset-origin")
+	initGitRepoWithSubmodule(t, appOriginPath, assetOriginPath, "Assets")
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "-c", "protocol.file.allow=always", "submodule", "add", appOriginPath, "Apps/TheRun2")
+	runGit(t, projectPath, "git", "commit", "-m", "add app submodule")
+	runGit(t, projectPath, "git", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+	rootSubmodulePath := filepath.Join(projectPath, "Apps", "TheRun2", "Assets")
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -3014,7 +3020,7 @@ func TestMergeWorktreeBackRepairsStaleRootSubmoduleWorktreeMetadata(t *testing.T
 	runGit(t, result.WorktreePath, "git", "commit", "-m", "add mergeable feature")
 
 	submoduleGitDir := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "--absolute-git-dir"))
-	staleSubmodulePath := filepath.Join(root, "repo--removed-worktree", "assets_src")
+	staleSubmodulePath := filepath.Join(root, "repo--removed-worktree", "Apps", "TheRun2", "Assets")
 	staleCoreWorktree, err := filepath.Rel(submoduleGitDir, staleSubmodulePath)
 	if err != nil {
 		t.Fatalf("resolve stale core.worktree: %v", err)

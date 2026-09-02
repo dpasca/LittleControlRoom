@@ -91,7 +91,7 @@ When two parent worktrees update the same submodule pointer differently, Git can
 
 ## Cleanup
 
-When LCR removes a linked worktree, it also prunes stale nested submodule worktree registrations from initialized root submodules. Merge-back and worktree update also repair a canonical submodule `core.worktree` value if an older sync path left it pointing at a removed linked checkout. This keeps Git metadata tidy and prevents a stale submodule path from making root `git status` fail.
+When LCR removes a linked worktree, it also prunes stale nested submodule worktree registrations from initialized root submodules. Merge-back and worktree update also repair canonical submodule `core.worktree` values recursively if an older sync path left one pointing at a removed linked checkout. This includes submodules inside submodules, and keeps a stale nested path from making root `git status` fail.
 
 ## Git Lock Handling
 

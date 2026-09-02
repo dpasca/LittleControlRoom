@@ -463,32 +463,47 @@ func PruneSubmoduleWorktrees(ctx context.Context, rootPath string) error {
 // rewrite the shared core.worktree value to a nested checkout; after that
 // checkout was removed, even `git status` in the parent repository failed.
 //
-// Only submodule gitdirs owned by the parent repository's modules directory are
-// eligible. This keeps repair bounded to metadata that the parent repo owns.
+// Only submodule gitdirs owned by each parent repository's modules directory are
+// eligible. This keeps repair bounded to metadata that the root repo owns while
+// still covering recursively initialized submodules.
 func RepairRootSubmoduleWorktrees(ctx context.Context, rootPath string) ([]string, error) {
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
 	if rootPath == "" || rootPath == "." {
 		return nil, fmt.Errorf("root path is required")
 	}
-	paths, err := listConfiguredSubmodulePaths(ctx, rootPath)
+	repaired := []string{}
+	visited := map[string]struct{}{}
+	if err := repairRootSubmoduleWorktrees(ctx, rootPath, "", visited, &repaired); err != nil {
+		return repaired, err
+	}
+	return repaired, nil
+}
+
+func repairRootSubmoduleWorktrees(ctx context.Context, repoPath, pathPrefix string, visited map[string]struct{}, repaired *[]string) error {
+	paths, err := listConfiguredSubmodulePaths(ctx, repoPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if len(paths) == 0 {
-		return nil, nil
+		return nil
 	}
-	rootGitDir, err := gitCommonDir(ctx, rootPath)
+	repoGitDir, err := gitCommonDir(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("resolve root git directory for submodule repair in %s: %w", rootPath, err)
+		return fmt.Errorf("resolve Git directory for submodule repair in %s: %w", repoPath, err)
 	}
-	modulesDir := filepath.Join(rootGitDir, "modules")
+	repoGitDir = filepath.Clean(repoGitDir)
+	if _, ok := visited[repoGitDir]; ok {
+		return nil
+	}
+	visited[repoGitDir] = struct{}{}
+	modulesDir := filepath.Join(repoGitDir, "modules")
 
-	repaired := make([]string, 0, len(paths))
 	for _, path := range paths {
-		submodulePath := filepath.Join(rootPath, filepath.FromSlash(path))
+		displayPath := filepath.ToSlash(filepath.Join(pathPrefix, filepath.FromSlash(path)))
+		submodulePath := filepath.Join(repoPath, filepath.FromSlash(path))
 		submoduleGitDir, initialized, err := directSubmoduleGitDir(submodulePath)
 		if err != nil {
-			return repaired, fmt.Errorf("inspect root submodule metadata for %s: %w", path, err)
+			return fmt.Errorf("inspect root submodule metadata for %s: %w", displayPath, err)
 		}
 		if !initialized || !pathContainedBy(modulesDir, submoduleGitDir) {
 			continue
@@ -496,29 +511,29 @@ func RepairRootSubmoduleWorktrees(ctx context.Context, rootPath string) ([]strin
 
 		configuredWorktree, configured, err := gitCoreWorktree(ctx, submoduleGitDir, submodulePath)
 		if err != nil {
-			return repaired, fmt.Errorf("read root submodule worktree metadata for %s: %w", path, err)
+			return fmt.Errorf("read root submodule worktree metadata for %s: %w", displayPath, err)
 		}
-		if !configured {
-			continue
+		if configured {
+			configuredPath := filepath.Clean(configuredWorktree)
+			if !filepath.IsAbs(configuredPath) {
+				configuredPath = filepath.Join(submoduleGitDir, configuredPath)
+			}
+			if !sameCleanPath(configuredPath, submodulePath) {
+				expectedWorktree, err := filepath.Rel(submoduleGitDir, submodulePath)
+				if err != nil {
+					return fmt.Errorf("resolve canonical root worktree for submodule %s: %w", displayPath, err)
+				}
+				if err := setGitCoreWorktree(ctx, submoduleGitDir, submodulePath, expectedWorktree); err != nil {
+					return fmt.Errorf("repair root submodule worktree metadata for %s: %w", displayPath, err)
+				}
+				*repaired = append(*repaired, displayPath)
+			}
 		}
-		configuredPath := filepath.Clean(configuredWorktree)
-		if !filepath.IsAbs(configuredPath) {
-			configuredPath = filepath.Join(submoduleGitDir, configuredPath)
+		if err := repairRootSubmoduleWorktrees(ctx, submodulePath, displayPath, visited, repaired); err != nil {
+			return err
 		}
-		if sameCleanPath(configuredPath, submodulePath) {
-			continue
-		}
-
-		expectedWorktree, err := filepath.Rel(submoduleGitDir, submodulePath)
-		if err != nil {
-			return repaired, fmt.Errorf("resolve canonical root worktree for submodule %s: %w", path, err)
-		}
-		if err := setGitCoreWorktree(ctx, submoduleGitDir, submodulePath, expectedWorktree); err != nil {
-			return repaired, fmt.Errorf("repair root submodule worktree metadata for %s: %w", path, err)
-		}
-		repaired = append(repaired, path)
 	}
-	return repaired, nil
+	return nil
 }
 
 func directSubmoduleGitDir(submodulePath string) (string, bool, error) {

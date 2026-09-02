@@ -440,6 +440,49 @@ func TestRepairRootSubmoduleWorktreesRestoresCanonicalCheckout(t *testing.T) {
 	}
 }
 
+func TestRepairRootSubmoduleWorktreesRestoresNestedCanonicalCheckout(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	appOriginPath := filepath.Join(root, "app-origin")
+	assetOriginPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, appOriginPath, assetOriginPath, "Assets")
+	initGitRepo(t, mainPath)
+	runGit(t, mainPath, "-c", "protocol.file.allow=always", "submodule", "add", appOriginPath, "Apps/TheRun2")
+	runGit(t, mainPath, "commit", "-m", "add app submodule")
+	runGit(t, mainPath, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+
+	nestedSubmodulePath := filepath.Join(mainPath, "Apps", "TheRun2", "Assets")
+	nestedSubmoduleGitDir := gitOutputTest(t, nestedSubmodulePath, "rev-parse", "--absolute-git-dir")
+	staleSubmodulePath := filepath.Join(root, "main--removed-task", "Apps", "TheRun2", "Assets")
+	staleCoreWorktree, err := filepath.Rel(nestedSubmoduleGitDir, staleSubmodulePath)
+	if err != nil {
+		t.Fatalf("resolve stale nested core.worktree: %v", err)
+	}
+	runGit(t, nestedSubmodulePath, "config", "--local", "core.worktree", staleCoreWorktree)
+
+	statusCmd := exec.Command("git", "-C", mainPath, "status", "--porcelain=v2")
+	if out, err := statusCmd.CombinedOutput(); err == nil {
+		t.Fatalf("git status unexpectedly succeeded with stale nested submodule metadata: %s", strings.TrimSpace(string(out)))
+	}
+
+	repaired, err := RepairRootSubmoduleWorktrees(ctx, mainPath)
+	if err != nil {
+		t.Fatalf("RepairRootSubmoduleWorktrees() error = %v", err)
+	}
+	if len(repaired) != 1 || repaired[0] != "Apps/TheRun2/Assets" {
+		t.Fatalf("repaired paths = %#v, want [Apps/TheRun2/Assets]", repaired)
+	}
+	if got := gitOutputTest(t, mainPath, "status", "--porcelain=v2"); strings.TrimSpace(got) != "" {
+		t.Fatalf("parent status after nested repair = %q, want clean", got)
+	}
+	if got := gitOutputTest(t, nestedSubmodulePath, "rev-parse", "--show-toplevel"); !samePath(t, got, nestedSubmodulePath) {
+		t.Fatalf("nested root submodule top-level after repair = %q, want %q", got, nestedSubmodulePath)
+	}
+}
+
 func initRepoWithSubmodule(t *testing.T, mainPath, originPath, submoduleName string) {
 	t.Helper()
 	initGitRepo(t, originPath)
