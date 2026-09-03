@@ -420,6 +420,7 @@ func (s *PlaywrightBrowserSession) monitorWorker(rootPID int) {
 	defer ticker.Stop()
 	keepHidden := s.paths.LaunchMode == ManagedLaunchModeBackground
 	hiddenByLCR := false
+	lastHideAttempt := time.Time{}
 	for range ticker.C {
 		s.mu.Lock()
 		running := s.cmd != nil
@@ -432,7 +433,7 @@ func (s *PlaywrightBrowserSession) monitorWorker(rootPID int) {
 			continue
 		}
 		shouldHide := false
-		revealed := false
+		now := time.Now()
 		_ = WithManagedPlaywrightStateLock(s.paths.DataDir, s.paths.SessionKey, func() error {
 			state, readErr := ReadManagedPlaywrightState(s.paths.DataDir, s.paths.SessionKey)
 			if readErr != nil {
@@ -443,15 +444,12 @@ func (s *PlaywrightBrowserSession) monitorWorker(rootPID int) {
 			state.BrowserAppName = detected.AppName
 			state.BrowserExecutable = detected.ExecutablePath
 			state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
-			shouldHide = keepHidden && !hiddenByLCR && !state.Hidden
-			revealed = keepHidden && hiddenByLCR && !state.Hidden
+			shouldHide = shouldEnforceManagedPlaywrightHide(keepHidden, hiddenByLCR, state.Hidden, lastHideAttempt, now)
 			state.UpdatedAt = time.Now().UTC()
 			return WriteManagedPlaywrightState(s.paths, state)
 		})
-		if revealed {
-			keepHidden = false
-		}
 		if shouldHide {
+			lastHideAttempt = now
 			if hidden, err := HideManagedPlaywrightSession(s.paths.DataDir, s.paths.SessionKey, detected); err == nil && hidden {
 				hiddenByLCR = true
 			}

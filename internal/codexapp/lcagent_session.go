@@ -413,10 +413,15 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 			s.appendAsync(TranscriptError, "LCAgent steer failed: "+err.Error())
 			return err
 		}
+		requestManagedBrowserHideAfterSubmission(s.dataDir, s.managedBrowserSessionKey, s.playwrightPolicy)
 		return nil
 	}
 	s.mu.Unlock()
-	return s.startRunAsync(transcriptText, input.TranscriptDisplayText())
+	if err := s.startRunAsync(transcriptText, input.TranscriptDisplayText()); err != nil {
+		return err
+	}
+	requestManagedBrowserHideAfterSubmission(s.dataDir, s.managedBrowserSessionKey, s.playwrightPolicy)
+	return nil
 }
 
 func (s *lcagentSession) ShowStatus() error {

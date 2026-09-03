@@ -16,6 +16,7 @@ func stubLiveManagedBrowserStateReader(t *testing.T) {
 	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
 		return browserctl.ManagedPlaywrightState{
 			SessionKey:      sessionKey,
+			LaunchMode:      browserctl.ManagedLaunchModeBackground,
 			MCPPID:          122,
 			BrowserPID:      123,
 			RevealSupported: true,

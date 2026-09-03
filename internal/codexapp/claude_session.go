@@ -80,6 +80,7 @@ type claudeCodeSession struct {
 	checkAuthentication      func(context.Context) error
 	playwrightPolicy         browserctl.Policy
 	managedBrowserSessionKey string
+	dataDir                  string
 	browserActivity          browserctl.SessionActivity
 	browserHandoffPending    bool
 	browserHandoffAt         time.Time
@@ -321,6 +322,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		checkAuthentication:      CheckClaudeCodeAuthentication,
 		playwrightPolicy:         policy,
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
+		dataDir:                  browserctl.EffectiveDataDir(req.AppDataDir),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
 		runtimeManager:           req.RuntimeManager,
 		mcpOptions:               mcpOptions,
@@ -710,6 +712,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		s.mu.Lock()
 		s.clearClaudeBrowserHandoffLocked()
 		s.mu.Unlock()
+		requestManagedBrowserHideAfterSubmission(s.dataDir, s.managedBrowserSessionKey, s.playwrightPolicy)
 	}
 	s.notifyAsync()
 	return nil

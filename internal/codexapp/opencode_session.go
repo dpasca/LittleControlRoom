@@ -40,6 +40,7 @@ type openCodeSession struct {
 	notify                   func()
 	playwrightPolicy         browserctl.Policy
 	managedBrowserSessionKey string
+	dataDir                  string
 	browserActivity          browserctl.SessionActivity
 	browserHandoffPending    bool
 	browserHandoffAt         time.Time
@@ -295,6 +296,7 @@ func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		notify:                   notify,
 		playwrightPolicy:         policy,
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
+		dataDir:                  browserctl.EffectiveDataDir(req.AppDataDir),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
 		runtimeManager:           req.RuntimeManager,
 		http:                     newOpenCodeHTTPClient(),
@@ -509,6 +511,7 @@ func (s *openCodeSession) SubmitInput(input Submission) error {
 		s.activeTurnID = sessionID
 	}
 	s.mu.Unlock()
+	requestManagedBrowserHideAfterSubmission(s.dataDir, s.managedBrowserSessionKey, s.playwrightPolicy)
 	s.notify()
 	return nil
 }

@@ -204,7 +204,170 @@ func TestRevealManagedPlaywrightSessionRestoresHiddenStateOnRevealFailure(t *tes
 	}
 }
 
-func TestHideManagedPlaywrightSessionDoesNotCollapseForegroundSibling(t *testing.T) {
+func TestRevealManagedPlaywrightSessionRejectsHeadlessStateWithoutMutatingIt(t *testing.T) {
+	paths, err := ManagedPlaywrightPathsFor(
+		t.TempDir(),
+		"codex",
+		"/tmp/demo",
+		"session-headless",
+		"profile-headless",
+		ManagedLaunchModeHeadless,
+	)
+	if err != nil {
+		t.Fatalf("ManagedPlaywrightPathsFor() error = %v", err)
+	}
+	initial := ManagedPlaywrightState{
+		SessionKey:  paths.SessionKey,
+		ProfileKey:  paths.ProfileKey,
+		Provider:    paths.Provider,
+		ProjectPath: paths.ProjectPath,
+		LaunchMode:  paths.LaunchMode,
+		Policy:      DefaultPolicy(),
+		BrowserPID:  123,
+		Hidden:      true,
+	}
+	if err := WriteManagedPlaywrightState(paths, initial); err != nil {
+		t.Fatalf("write initial state: %v", err)
+	}
+
+	previousRevealer := managedPlaywrightStateRevealer
+	t.Cleanup(func() {
+		managedPlaywrightStateRevealer = previousRevealer
+	})
+	revealerCalled := false
+	managedPlaywrightStateRevealer = func(ManagedPlaywrightState) error {
+		revealerCalled = true
+		return nil
+	}
+
+	_, err = RevealManagedPlaywrightSession(paths.DataDir, paths.SessionKey)
+	if err == nil || !strings.Contains(err.Error(), "launched headless and has no window to reveal") {
+		t.Fatalf("RevealManagedPlaywrightSession() error = %v, want explicit headless error", err)
+	}
+	if revealerCalled {
+		t.Fatal("headless reveal should fail before attempting OS window control")
+	}
+	stored, err := ReadManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Hidden {
+		t.Fatal("rejected headless reveal should preserve hidden state")
+	}
+	if foreground, ok, foregroundErr := readManagedPlaywrightForegroundState(paths.DataDir); foregroundErr != nil || ok {
+		t.Fatalf("foreground state after rejected headless reveal = %#v, ok=%v, err=%v; want absent", foreground, ok, foregroundErr)
+	}
+}
+
+func TestRequestManagedPlaywrightSessionHideMarksIntentAndClearsForeground(t *testing.T) {
+	dataDir := t.TempDir()
+	paths, err := ManagedPlaywrightPathsFor(
+		dataDir,
+		"codex",
+		"/tmp/demo",
+		"session-demo",
+		"profile-demo",
+		ManagedLaunchModeBackground,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := ManagedPlaywrightState{
+		SessionKey:  paths.SessionKey,
+		ProfileKey:  paths.ProfileKey,
+		Provider:    paths.Provider,
+		ProjectPath: paths.ProjectPath,
+		LaunchMode:  paths.LaunchMode,
+		Policy:      DefaultPolicy(),
+		MCPPID:      os.Getpid(),
+		BrowserPID:  os.Getpid(),
+		Hidden:      false,
+		UpdatedAt:   time.Now().UTC(),
+	}
+	if err := WriteManagedPlaywrightState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedPlaywrightForegroundState(dataDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, requested, err := RequestManagedPlaywrightSessionHide(dataDir, state.SessionKey)
+	if err != nil {
+		t.Fatalf("RequestManagedPlaywrightSessionHide() error = %v", err)
+	}
+	if !requested || !updated.Hidden {
+		t.Fatalf("RequestManagedPlaywrightSessionHide() requested=%v Hidden=%v, want true true", requested, updated.Hidden)
+	}
+	stored, err := ReadManagedPlaywrightState(dataDir, state.SessionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Hidden {
+		t.Fatal("stored managed browser state should carry the renewed hide intent")
+	}
+	if foreground, ok, foregroundErr := readManagedPlaywrightForegroundState(dataDir); foregroundErr != nil || ok {
+		t.Fatalf("foreground state after hide request = %#v, ok=%v, err=%v; want absent", foreground, ok, foregroundErr)
+	}
+
+	_, requested, err = RequestManagedPlaywrightSessionHide(dataDir, state.SessionKey)
+	if err != nil {
+		t.Fatalf("idempotent RequestManagedPlaywrightSessionHide() error = %v", err)
+	}
+	if requested {
+		t.Fatal("already-hidden managed browser should not report another state transition")
+	}
+}
+
+func TestRequestManagedPlaywrightSessionHideLeavesHeadedBrowserForeground(t *testing.T) {
+	dataDir := t.TempDir()
+	paths, err := ManagedPlaywrightPathsFor(
+		dataDir,
+		"codex",
+		"/tmp/demo",
+		"session-demo",
+		"profile-demo",
+		ManagedLaunchModeHeaded,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := ManagedPlaywrightState{
+		SessionKey:  paths.SessionKey,
+		ProfileKey:  paths.ProfileKey,
+		Provider:    paths.Provider,
+		ProjectPath: paths.ProjectPath,
+		LaunchMode:  paths.LaunchMode,
+		Policy: Policy{
+			ManagementMode:     ManagementModeManaged,
+			DefaultBrowserMode: BrowserModeHeaded,
+			LoginMode:          LoginModePromote,
+			IsolationScope:     IsolationScopeTask,
+		},
+		MCPPID:     os.Getpid(),
+		BrowserPID: os.Getpid(),
+		Hidden:     false,
+		UpdatedAt:  time.Now().UTC(),
+	}
+	if err := WriteManagedPlaywrightState(paths, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedPlaywrightForegroundState(dataDir, state); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, requested, err := RequestManagedPlaywrightSessionHide(dataDir, state.SessionKey)
+	if err != nil {
+		t.Fatalf("RequestManagedPlaywrightSessionHide() error = %v", err)
+	}
+	if requested || updated.Hidden {
+		t.Fatalf("headed hide request requested=%v Hidden=%v, want false false", requested, updated.Hidden)
+	}
+	if foreground, ok, foregroundErr := readManagedPlaywrightForegroundState(dataDir); foregroundErr != nil || !ok || foreground.SessionKey != state.SessionKey {
+		t.Fatalf("headed foreground state = %#v, ok=%v, err=%v; want preserved", foreground, ok, foregroundErr)
+	}
+}
+
+func TestHideManagedPlaywrightSessionHidesDistinctForegroundSiblingProcess(t *testing.T) {
 	dataDir := t.TempDir()
 	foregroundPaths, err := ManagedPlaywrightPathsFor(
 		dataDir,
@@ -285,8 +448,46 @@ func TestHideManagedPlaywrightSessionDoesNotCollapseForegroundSibling(t *testing
 	if err != nil {
 		t.Fatalf("HideManagedPlaywrightSession() error = %v", err)
 	}
-	if hidden || hideCount != 0 {
-		t.Fatalf("HideManagedPlaywrightSession() hidden=%v hideCount=%d, want suppressed", hidden, hideCount)
+	if !hidden || hideCount != 1 {
+		t.Fatalf("HideManagedPlaywrightSession() hidden=%v hideCount=%d, want one PID-specific hide", hidden, hideCount)
+	}
+}
+
+func TestManagedForegroundBrowserMatchesExactPID(t *testing.T) {
+	foreground := ManagedPlaywrightState{
+		BrowserPID:        123,
+		BrowserAppPath:    "/Applications/Chromium.app",
+		BrowserAppName:    "Chromium",
+		BrowserExecutable: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+	}
+	if !managedForegroundBrowserMatches(foreground, ManagedBrowserProcess{PID: 123, AppPath: foreground.BrowserAppPath}) {
+		t.Fatal("exact foreground PID should remain protected")
+	}
+	if managedForegroundBrowserMatches(foreground, ManagedBrowserProcess{PID: 456, AppPath: foreground.BrowserAppPath}) {
+		t.Fatal("a sibling PID should not inherit foreground protection from the shared app bundle")
+	}
+	foreground.BrowserPID = 0
+	if !managedForegroundBrowserMatches(foreground, ManagedBrowserProcess{PID: 456, AppPath: foreground.BrowserAppPath}) {
+		t.Fatal("missing foreground PID should retain the conservative app-identity fallback")
+	}
+}
+
+func TestShouldEnforceManagedPlaywrightHideRearmsAfterSubmission(t *testing.T) {
+	now := time.Unix(100, 0)
+	if !shouldEnforceManagedPlaywrightHide(true, false, false, time.Time{}, now) {
+		t.Fatal("a new background browser should be hidden on first detection")
+	}
+	if shouldEnforceManagedPlaywrightHide(true, true, false, now.Add(-time.Second), now) {
+		t.Fatal("a revealed background browser should remain visible")
+	}
+	if !shouldEnforceManagedPlaywrightHide(true, true, true, now.Add(-time.Second), now) {
+		t.Fatal("a renewed hidden state should re-arm enforcement after submission")
+	}
+	if shouldEnforceManagedPlaywrightHide(true, true, true, now.Add(-managedPlaywrightHideEnforcement/2), now) {
+		t.Fatal("hidden-state enforcement should be throttled between attempts")
+	}
+	if shouldEnforceManagedPlaywrightHide(false, false, true, time.Time{}, now) {
+		t.Fatal("an Always show browser should never be hidden")
 	}
 }
 
@@ -392,7 +593,7 @@ func TestMacApplicationProcessVisibilityScriptRaisesTargetWindowWhenFrontmost(t 
 	}
 }
 
-func TestMacApplicationProcessVisibilityScriptWaitsUntilLaunchBeforeHiding(t *testing.T) {
+func TestMacApplicationProcessVisibilityScriptAttemptsEarlyHideBeforeAXFallback(t *testing.T) {
 	args, err := macApplicationProcessVisibilityScript(49916, false, false)
 	if err != nil {
 		t.Fatalf("macApplicationProcessVisibilityScript() error = %v", err)
@@ -401,6 +602,8 @@ func TestMacApplicationProcessVisibilityScriptWaitsUntilLaunchBeforeHiding(t *te
 	for _, want := range []string{
 		`const pid = 49916`,
 		`state.terminated`,
+		`const earlyHideAccepted = Boolean(state.application.hide)`,
+		`earlyHideAccepted || Boolean(state.application.hidden)`,
 		`!state.finishedLaunching`,
 		`NSApplicationActivationPolicyProhibited`,
 		`state.activationPolicy < 0`,
@@ -410,8 +613,11 @@ func TestMacApplicationProcessVisibilityScriptWaitsUntilLaunchBeforeHiding(t *te
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
-	if readyIndex, hideIndex := strings.Index(script, `!state.finishedLaunching`), strings.Index(script, `setAXBoolean("AXHidden", $.kCFBooleanTrue)`); readyIndex < 0 || hideIndex < 0 || readyIndex >= hideIndex {
-		t.Fatalf("launch readiness check must precede hide:\n%s", script)
+	earlyIndex := strings.Index(script, `const earlyHideAccepted`)
+	readyIndex := strings.Index(script, `!state.finishedLaunching`)
+	axIndex := strings.Index(script, `setAXBoolean("AXHidden", $.kCFBooleanTrue)`)
+	if earlyIndex < 0 || readyIndex < 0 || axIndex < 0 || earlyIndex >= readyIndex || readyIndex >= axIndex {
+		t.Fatalf("safe early hide must precede the launch-gated AX fallback:\n%s", script)
 	}
 }
 

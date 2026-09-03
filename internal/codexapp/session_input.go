@@ -306,6 +306,7 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 	s.bindLatestUnassignedUserTurnLocked(response.Turn.ID)
 	s.status = "Codex is working..."
 	s.mu.Unlock()
+	requestManagedBrowserHideAfterSubmission(s.dataDir, s.managedBrowserSessionKey, s.playwrightPolicy)
 	s.notify()
 	return nil
 }
@@ -339,6 +340,7 @@ func (s *appServerSession) recordSteerSubmission(turnID string) {
 	}
 	s.status = "Sent follow-up to Codex"
 	s.mu.Unlock()
+	requestManagedBrowserHideAfterSubmission(s.dataDir, s.managedBrowserSessionKey, s.playwrightPolicy)
 	s.notify()
 }
 

@@ -85,6 +85,7 @@ var (
 const (
 	managedPlaywrightMacScriptTimeout   = 4 * time.Second
 	managedPlaywrightMacScriptWaitDelay = 250 * time.Millisecond
+	managedPlaywrightHideEnforcement    = 250 * time.Millisecond
 )
 
 type macApplicationCommandFactory func(context.Context, string, ...string) *exec.Cmd
@@ -239,6 +240,9 @@ func markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey string) (Manag
 	if err != nil {
 		return ManagedPlaywrightState{}, err
 	}
+	if err := managedPlaywrightRevealModeError(state); err != nil {
+		return ManagedPlaywrightState{}, err
+	}
 	state.Hidden = false
 	state.UpdatedAt = time.Now().UTC()
 	if err := writeManagedPlaywrightStateFor(dataDir, sessionKey, state); err != nil {
@@ -293,11 +297,65 @@ func RevealManagedPlaywrightSession(dataDir, sessionKey string) (ManagedPlaywrig
 	return revealed.Normalize(), err
 }
 
+// RequestManagedPlaywrightSessionHide returns a revealed background browser to
+// its launch-time hidden state. The wrapper monitor performs the OS-level hide
+// asynchronously, so accepting a follow-up prompt does not wait on macOS
+// Accessibility. Clearing this session's foreground marker lets that monitor
+// resume enforcement without weakening another session's active handoff.
+func RequestManagedPlaywrightSessionHide(dataDir, sessionKey string) (ManagedPlaywrightState, bool, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return ManagedPlaywrightState{}, false, fmt.Errorf("managed browser session key required")
+	}
+
+	var updated ManagedPlaywrightState
+	requested := false
+	background := false
+	err := withManagedPlaywrightVisibilityLock(dataDir, func() error {
+		if err := WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
+			state, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+			if err != nil {
+				return err
+			}
+			updated = state.Normalize()
+			if updated.LaunchMode != ManagedLaunchModeBackground {
+				return nil
+			}
+			background = true
+			if !updated.Hidden {
+				updated.Hidden = true
+				updated.UpdatedAt = time.Now().UTC()
+				if err := writeManagedPlaywrightStateFor(dataDir, sessionKey, updated); err != nil {
+					return err
+				}
+				requested = true
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !background {
+			return nil
+		}
+
+		foreground, ok, err := readManagedPlaywrightForegroundState(dataDir)
+		if err != nil {
+			return err
+		}
+		if ok && foreground.SessionKey == sessionKey {
+			if err := os.Remove(managedPlaywrightForegroundStatePath(dataDir)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	})
+	return updated.Normalize(), requested, err
+}
+
 // HideManagedPlaywrightSession hides one managed browser only when no live
-// foreground handoff uses the same browser application. Multiple Playwright
-// sessions launch separate Chromium processes from the same macOS app bundle;
-// hiding one of those processes can otherwise hide a different session that a
-// user just revealed.
+// foreground handoff targets that exact browser process. All managed Chromium
+// sessions commonly share one app bundle, so app identity alone is too broad:
+// it would leave every background sibling visible while one handoff is open.
 func HideManagedPlaywrightSession(dataDir, sessionKey string, browser ManagedBrowserProcess) (bool, error) {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" {
@@ -310,7 +368,7 @@ func HideManagedPlaywrightSession(dataDir, sessionKey string, browser ManagedBro
 	hidden := false
 	err := withManagedPlaywrightVisibilityLock(dataDir, func() error {
 		foreground, active := activeManagedPlaywrightForegroundStateLocked(dataDir)
-		if active && managedBrowserApplicationsOverlap(foreground, browser) {
+		if active && managedForegroundBrowserMatches(foreground, browser) {
 			return nil
 		}
 		return WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
@@ -338,6 +396,33 @@ func HideManagedPlaywrightSession(dataDir, sessionKey string, browser ManagedBro
 		})
 	})
 	return hidden, err
+}
+
+func managedForegroundBrowserMatches(foreground ManagedPlaywrightState, candidate ManagedBrowserProcess) bool {
+	foregroundPID := foreground.Normalize().BrowserPID
+	if foregroundPID > 0 && candidate.PID > 0 {
+		return foregroundPID == candidate.PID
+	}
+	return managedBrowserApplicationsOverlap(foreground, candidate)
+}
+
+func managedPlaywrightRevealModeError(state ManagedPlaywrightState) error {
+	normalized := state.Normalize()
+	if normalized.LaunchMode != ManagedLaunchModeHeadless {
+		return nil
+	}
+	return fmt.Errorf("managed browser session %s was launched headless and has no window to reveal; reconnect it with a revealable browser mode", normalized.SessionKey)
+}
+
+func shouldEnforceManagedPlaywrightHide(keepHidden, hiddenByLCR, stateHidden bool, lastAttempt, now time.Time) bool {
+	if !keepHidden || (hiddenByLCR && !stateHidden) {
+		return false
+	}
+	if lastAttempt.IsZero() {
+		return true
+	}
+	elapsed := now.Sub(lastAttempt)
+	return elapsed < 0 || elapsed >= managedPlaywrightHideEnforcement
 }
 
 func managedPlaywrightFirstNonEmpty(values ...string) string {
@@ -583,6 +668,9 @@ func (s ManagedPlaywrightState) Normalize() ManagedPlaywrightState {
 
 func RevealManagedPlaywrightState(state ManagedPlaywrightState) error {
 	normalized := state.Normalize()
+	if err := managedPlaywrightRevealModeError(normalized); err != nil {
+		return err
+	}
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("managed browser reveal is currently only supported on macOS")
 	}
@@ -670,7 +758,14 @@ func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]
 			`function hideProcessWhenReady() {`,
 			`  const state = currentApplicationState();`,
 			`  const prohibited = Number($.NSApplicationActivationPolicyProhibited);`,
-			`  if (!state.application || state.terminated || !state.finishedLaunching || !isFinite(state.activationPolicy) || state.activationPolicy < 0 || state.activationPolicy === prohibited) {`,
+			`  if (!state.application || state.terminated) {`,
+			`    throw new Error("managed browser process " + pid + " is not available for background hiding (" + applicationStateSummary(state) + ")");`,
+			`  }`,
+			`  const earlyHideAccepted = Boolean(state.application.hide);`,
+			`  if (earlyHideAccepted || Boolean(state.application.hidden)) {`,
+			`    return;`,
+			`  }`,
+			`  if (!state.finishedLaunching || !isFinite(state.activationPolicy) || state.activationPolicy < 0 || state.activationPolicy === prohibited) {`,
 			`    throw new Error("managed browser process " + pid + " is not ready for background hiding (" + applicationStateSummary(state) + ")");`,
 			`  }`,
 			`  setAXBoolean("AXHidden", `+visibleLiteral+`);`,

@@ -281,7 +281,13 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 		codexViewport:       viewport.New(0, 0),
 		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
+			"managed-demo": {
+				SessionKey: "managed-demo",
+				LaunchMode: browserctl.ManagedLaunchModeBackground,
+				BrowserPID: 123,
+				Hidden:     true,
+				UpdatedAt:  now,
+			},
 		},
 		width:  100,
 		height: 24,
