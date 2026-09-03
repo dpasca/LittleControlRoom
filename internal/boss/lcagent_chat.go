@@ -124,7 +124,8 @@ func helpChatAgentSystemPrompt(req AssistantRequest) string {
 		"",
 		"You are running inside the lean Help Chat LCAgent profile. Use only the exact tools supplied to this turn; coding, shell, filesystem-write, browser, and generic MCP tools are intentionally unavailable.",
 		"Answer directly without tools for greetings, acknowledgements, ordinary conversation, and questions already established in this same Chat session.",
-		"For Little Control Room commands, keybindings, launch flags, recording, or workflows, call lookup_lcr_help before answering. Its generated help corpus is authoritative; do not say a feature is unavailable merely because you do not remember it.",
+		"For Little Control Room commands, keybindings, launch flags, recording, or instructions for using a workflow, call lookup_lcr_help before answering. Its generated help corpus is authoritative; do not say a feature is unavailable merely because you do not remember it.",
+		"Distinguish app-usage help from questions about what is happening now. A question about the status, history, health, or meaning of a visible project, worktree, task, session, process, or dashboard item needs state inspection, not lookup_lcr_help.",
 		"For persisted LCR state, use the progressive query catalog: list_lcr_queries without a domain, list it again with one exact domain, describe_lcr_query, then run_lcr_query. Do not invent query names or argument fields.",
 		"For live TUI state, processes, Chat recall, linked transcript context, installed skills, or fresh repository inspection, use the matching Help Chat inspection tool.",
 		"For an app mutation or engineer handoff, use list_control_capabilities, describe_control_capability, then propose_control_operation. A proposal is terminal and is not execution: the host will show the existing confirmation UI, and you must never claim it already ran.",
@@ -572,7 +573,7 @@ func (a *Assistant) helpChatInspectionTools(req AssistantRequest) []lcagent.Agen
 		}
 	}
 	return []lcagent.AgentRuntimeTool{
-		tool("lookup_lcr_help", "Search the generated Little Control Room command, keybinding, capability, and workflow corpus. Use for every app-usage question, including recording and launch commands.", map[string]any{
+		tool("lookup_lcr_help", "Search the generated Little Control Room command, keybinding, capability, and workflow corpus. Use only when the user asks how to use LCR or asks for a command, keybinding, setting, or workflow; do not use it for the current status of a project, worktree, task, session, process, or dashboard item.", map[string]any{
 			"query": map[string]any{"type": "string", "minLength": 1},
 			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
 		}, []string{"query"}, func(raw json.RawMessage) (bossAction, error) {
@@ -584,7 +585,7 @@ func (a *Assistant) helpChatInspectionTools(req AssistantRequest) []lcagent.Agen
 				return bossAction{}, err
 			}
 			return bossAction{Kind: bossActionHelpReference, Query: args.Query, Limit: args.Limit}, nil
-		}, true),
+		}, false),
 		tool("inspect_current_tui", "Read the current Little Control Room TUI/view state and compact host snapshot.", map[string]any{}, nil, func(raw json.RawMessage) (bossAction, error) {
 			var args struct{}
 			if err := decodeHelpChatToolArgs(raw, &args); err != nil {

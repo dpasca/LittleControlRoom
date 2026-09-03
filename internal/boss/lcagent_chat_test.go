@@ -47,18 +47,27 @@ func (m *scriptedHelpChatModel) CompleteWithOptions(_ context.Context, messages 
 func TestHelpChatLCAgentUsesGeneratedHelpForRecording(t *testing.T) {
 	modelClient := &scriptedHelpChatModel{
 		model: "test-model",
-		completions: []modeladapter.Completion{{
-			Model: "test-model",
-			Message: modeladapter.Message{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
-				ID:   "help-call",
-				Type: "function",
-				Function: modeladapter.FunctionCall{
-					Name:      "lookup_lcr_help",
-					Arguments: json.RawMessage(`{"query":"recording","limit":5}`),
+		completions: []modeladapter.Completion{
+			{
+				Model: "test-model",
+				Message: modeladapter.Message{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+					ID:   "help-call",
+					Type: "function",
+					Function: modeladapter.FunctionCall{
+						Name:      "lookup_lcr_help",
+						Arguments: json.RawMessage(`{"query":"recording","limit":5}`),
+					},
+				}}},
+				UsageSummary: model.LLMUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
+			},
+			{
+				Model: "test-model",
+				Message: modeladapter.Message{
+					Role:    "assistant",
+					Content: "Use `lcroom tui --demo-record` to launch with recording enabled. Once inside, `/record` controls capture; `make tui-record` is the development shortcut.",
 				},
-			}}},
-			UsageSummary: model.LLMUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
-		}},
+			},
+		},
 	}
 	store := &fakeBossStore{}
 	assistant := &Assistant{
@@ -86,10 +95,10 @@ func TestHelpChatLCAgentUsesGeneratedHelpForRecording(t *testing.T) {
 			t.Fatalf("response missing %q:\n%s", want, response.Content)
 		}
 	}
-	if len(modelClient.requests) != 1 {
-		t.Fatalf("model requests = %d, want one model turn plus local help lookup", len(modelClient.requests))
+	if len(modelClient.requests) != 2 {
+		t.Fatalf("model requests = %d, want lookup turn plus a synthesis turn", len(modelClient.requests))
 	}
-	if len(modelClient.options) != 1 || modelClient.options[0].ReasoningEffort != "xhigh" {
+	if len(modelClient.options) != 2 || modelClient.options[0].ReasoningEffort != "xhigh" || modelClient.options[1].ReasoningEffort != "xhigh" {
 		t.Fatalf("completion options = %#v, want xhigh reasoning", modelClient.options)
 	}
 	toolNames := helpChatToolNames(modelClient.tools[0])
@@ -120,6 +129,76 @@ func TestHelpChatLCAgentUsesGeneratedHelpForRecording(t *testing.T) {
 	}
 	if !sawThinking || !sawHelp || !sawText {
 		t.Fatalf("stream events missing visible progress/help/text: %#v", events)
+	}
+}
+
+func TestHelpChatLCAgentCanRecoverFromIrrelevantHelpLookup(t *testing.T) {
+	modelClient := &scriptedHelpChatModel{
+		model: "test-model",
+		completions: []modeladapter.Completion{
+			{
+				Model: "test-model",
+				Message: modeladapter.Message{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+					ID:   "mistaken-help-call",
+					Type: "function",
+					Function: modeladapter.FunctionCall{
+						Name:      "lookup_lcr_help",
+						Arguments: json.RawMessage(`{"query":"what's up with the orphaned f14 teture wroktree","limit":5}`),
+					},
+				}}},
+			},
+			{
+				Model: "test-model",
+				Message: modeladapter.Message{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+					ID:   "current-state-call",
+					Type: "function",
+					Function: modeladapter.FunctionCall{
+						Name:      "inspect_current_tui",
+						Arguments: json.RawMessage(`{}`),
+					},
+				}}},
+			},
+			{
+				Model: "test-model",
+				Message: modeladapter.Message{
+					Role:    "assistant",
+					Content: "The F-14 texture worktree is clean and ready to merge; its checkout remains only because the task record no longer owns it.",
+				},
+			},
+		},
+	}
+	assistant := &Assistant{
+		agentModel:    modelClient,
+		agentProvider: "openrouter",
+		query:         newQueryExecutor(&fakeBossStore{}),
+		model:         "test-model",
+		backend:       config.AIBackendOpenRouter,
+	}
+	response, err := assistant.Reply(context.Background(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{Role: "user", Content: "what's up with the orphaned f14 teture wroktree ?"}},
+		Snapshot: StateSnapshot{HotProjects: []ProjectBrief{{
+			Name:          "F-14 texture worktree",
+			RepoBranch:    "asset/f14-textured-packed-pbr",
+			LatestSummary: "Orphaned worktree is clean and ready to merge.",
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if len(modelClient.requests) != 3 {
+		t.Fatalf("model requests = %d, want state inspection and synthesis after the help lookup", len(modelClient.requests))
+	}
+	if strings.Contains(response.Content, "Show current context use") || !strings.Contains(response.Content, "ready to merge") {
+		t.Fatalf("response should recover instead of returning the top help hit: %q", response.Content)
+	}
+	helpResult := modelClient.requests[1][len(modelClient.requests[1])-1]
+	if helpResult.Role != "tool" || !strings.Contains(helpResult.Content, "help reference") {
+		t.Fatalf("recovery turn did not receive the help lookup evidence: %#v", helpResult)
+	}
+	stateResult := modelClient.requests[2][len(modelClient.requests[2])-1]
+	if stateResult.Role != "tool" || !strings.Contains(stateResult.Content, "Orphaned worktree is clean and ready to merge") {
+		t.Fatalf("synthesis turn did not receive current state evidence: %#v", stateResult)
 	}
 }
 
