@@ -1271,25 +1271,14 @@ func TestClaudeReasoningEffortsIncludeXHigh(t *testing.T) {
 }
 
 func TestClaudeSubmitReportsMissingAuthenticationBeforeStartingTurn(t *testing.T) {
-	binDir := t.TempDir()
-	claudePath := filepath.Join(binDir, "claude")
-	script := `#!/bin/sh
-if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
-	printf '%s\n' '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}'
-	exit 1
-fi
-exit 99
-`
-	if err := os.WriteFile(claudePath, []byte(script), 0o700); err != nil {
-		t.Fatalf("write fake Claude CLI: %v", err)
-	}
-	t.Setenv("PATH", binDir)
-
 	notified := false
 	session := &claudeCodeSession{
-		projectPath:     t.TempDir(),
-		claudeHome:      t.TempDir(),
-		preset:          codexcli.PresetSafe,
+		projectPath: t.TempDir(),
+		claudeHome:  t.TempDir(),
+		preset:      codexcli.PresetSafe,
+		checkAuthentication: func(context.Context) error {
+			return ErrClaudeCodeAuthenticationRequired
+		},
 		status:          claudeFreshReadyStatus,
 		closedCh:        make(chan struct{}),
 		assistantBlocks: make(map[string]map[string]struct{}),

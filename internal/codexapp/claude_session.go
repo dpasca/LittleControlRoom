@@ -77,6 +77,7 @@ type claudeCodeSession struct {
 	preset                   codexcli.Preset
 	requestedPermissionMode  claudecli.PermissionMode
 	notify                   func()
+	checkAuthentication      func(context.Context) error
 	playwrightPolicy         browserctl.Policy
 	managedBrowserSessionKey string
 	browserActivity          browserctl.SessionActivity
@@ -317,6 +318,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		preset:                   preset,
 		requestedPermissionMode:  requestedPermissionMode,
 		notify:                   notify,
+		checkAuthentication:      CheckClaudeCodeAuthentication,
 		playwrightPolicy:         policy,
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
@@ -586,7 +588,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 	if s.cmd == nil {
 		s.mu.Unlock()
-		if err := CheckClaudeCodeAuthentication(context.Background()); err != nil {
+		if err := s.authenticationError(context.Background()); err != nil {
 			s.mu.Lock()
 			if s.closed {
 				s.mu.Unlock()
@@ -711,6 +713,13 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 	s.notifyAsync()
 	return nil
+}
+
+func (s *claudeCodeSession) authenticationError(ctx context.Context) error {
+	if s.checkAuthentication != nil {
+		return s.checkAuthentication(ctx)
+	}
+	return CheckClaudeCodeAuthentication(ctx)
 }
 
 func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
@@ -1522,7 +1531,7 @@ func (s *claudeCodeSession) consumeClaudeTurn(ctx context.Context, cmd *exec.Cmd
 		waitErr = nil
 	}
 	if waitErr != nil {
-		if authErr := CheckClaudeCodeAuthentication(context.Background()); authErr != nil {
+		if authErr := s.authenticationError(context.Background()); authErr != nil {
 			waitErr = authErr
 		}
 	}
