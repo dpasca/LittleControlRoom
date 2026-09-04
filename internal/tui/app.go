@@ -125,6 +125,7 @@ type Model struct {
 	worktreeMergeRecoveryDialog *worktreeMergeRecoveryDialogState
 	worktreePostMerge           *worktreePostMergeState
 	worktreeRemoveConfirm       *worktreeRemoveConfirmState
+	orphanedWorktreeInspection  *orphanedWorktreeInspectionState
 	worktreeRestore             *worktreeRestoreDialogState
 	staleWorktreeCleanup        *staleWorktreeCleanupDialogState
 	codexCleanup                *codexCleanupDialogState
@@ -1858,6 +1859,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.worktreeRemoveConfirm != nil {
 			return m.updateWorktreeRemoveConfirmMode(msg)
 		}
+		if m.orphanedWorktreeInspection != nil {
+			return m.updateOrphanedWorktreeInspectionMode(msg)
+		}
 		if m.repositoryIntegrityDialog != nil {
 			return m.updateRepositoryIntegrityDialogMode(msg)
 		}
@@ -2828,6 +2832,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexCleanupAudit(msg)
 	case codexCleanupDeleteMsg:
 		return m.applyCodexCleanupDelete(msg)
+	case orphanedWorktreeInspectionMsg:
+		return m.applyOrphanedWorktreeInspection(msg)
+	case orphanedWorktreeResolutionMsg:
+		return m.applyOrphanedWorktreeResolution(msg)
 	case worktreeActionMsg:
 		if msg.closedEmbeddedSession {
 			m.dropCodexSnapshot(msg.projectPath)

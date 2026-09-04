@@ -366,6 +366,9 @@ func (m Model) View() string {
 	if m.worktreeRemoveConfirm != nil {
 		body = m.renderWorktreeRemoveConfirmOverlay(body, layout.width, layout.height)
 	}
+	if m.orphanedWorktreeInspection != nil {
+		body = m.renderOrphanedWorktreeInspectionOverlay(body, layout.width, layout.height)
+	}
 	if m.repositoryIntegrityDialog != nil {
 		body = m.renderRepositoryIntegrityDialogOverlay(body, layout.width, layout.height)
 	}

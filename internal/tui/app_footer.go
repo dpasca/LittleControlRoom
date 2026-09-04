@@ -284,6 +284,12 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", supplementSegments...)
 	}
+	if m.orphanedWorktreeInspection != nil {
+		if m.orphanedWorktreeInspection.Busy {
+			return m.renderModalFooter(width, "Worktree inspection: checking ownership and Git state", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Worktree inspection: Enter choose, Tab switch, Esc keep", supplementSegments...)
+	}
 	if m.repositoryIntegrityDialog != nil {
 		if m.repositoryIntegrityDialog.Busy {
 			return m.renderModalFooter(width, "Home branch: action in progress", supplementSegments...)

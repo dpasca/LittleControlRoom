@@ -1020,7 +1020,7 @@ func orphanedWorktreeListSummary(cleanupKind service.ResidualWorktreeCleanupKind
 	case service.ResidualWorktreeCleanupPartialGitDir:
 		return "Partial Git removal residue. Use /remove to verify and clear."
 	default:
-		return "Orphaned worktree needs inspection before removal."
+		return "Unclassified worktree. Press x to inspect and resolve."
 	}
 }
 
@@ -1658,6 +1658,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	}
 	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind != service.ResidualWorktreeCleanupUnknown {
 		actions = append(actions, footerHideAction("x", "cleanup"))
+	}
+	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind == service.ResidualWorktreeCleanupUnknown {
+		actions = append(actions, footerPrimaryAction("x", "inspect"))
 	}
 	if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
 		actions = append(actions, footerHideAction("x", "cleanup"))
@@ -2352,10 +2355,6 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	if row.Kind == projectListRowOrphaned {
-		if row.OrphanedCleanupKind == service.ResidualWorktreeCleanupUnknown {
-			m.status = "This orphaned worktree needs inspection before it can be removed"
-			return nil
-		}
 		if _, pending := m.pendingGitOperation(project.Path); pending {
 			m.status = "Cleanup is already in progress for this orphaned worktree"
 			return nil
@@ -2363,6 +2362,9 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		if _, pending := m.pendingGitOperation(row.RootPath); pending {
 			m.status = "A worktree cleanup is already in progress for this repository"
 			return nil
+		}
+		if row.OrphanedCleanupKind == service.ResidualWorktreeCleanupUnknown {
+			return m.openOrphanedWorktreeInspection(project, row.RootPath)
 		}
 		state := &worktreeRemoveConfirmState{
 			ProjectPath:           project.Path,
