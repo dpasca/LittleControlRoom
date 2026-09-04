@@ -159,8 +159,9 @@ worktree without touching the canonical checkout. `/wt merge`, `/wt remove`, and
 `/wt prune` handle the rest. `/wt restore` can rebuild an accidentally deleted
 worktree from Git evidence and resume the exact Codex conversation that was in it.
 Merged, clean worktrees whose latest assessed turn is done become **stale** after
-24 hours without activity. They are marked in the project list, and `/clean`
-opens a batch review with every safe candidate selected by default.
+24 hours without activity. Worktrees with no recorded session use their own Git
+activity date and can also become stale. They are marked in the project list,
+and `/clean` opens a batch review with every safe candidate selected by default.
 
 | TODO list | Embedded session | Diff | Commit preview |
 | --- | --- | --- | --- |
@@ -316,9 +317,11 @@ rather than pretending to be a sandbox:
 - **Explicit confirmation.** Every action an agent proposes through the control
   surface waits for you in the TUI.
 - **Conservative cleanup.** `/clean` only offers present, unpinned linked
-  worktrees that are merged, clean, conflict-free, assessed done, on a completed
-  turn, and inactive for more than 24 hours. Every selection is revalidated
-  before removal; active turns and runtimes are skipped, while an idle
+  worktrees that are merged, clean, conflict-free, and inactive for more than
+  24 hours. Recorded sessions must have a completed turn assessed done;
+  worktrees without a recorded session use their own Git activity for age.
+  Every selection is revalidated before removal; active turns and runtimes are
+  skipped, while an idle
   LCR-managed engineer session is closed first. Branches and conversation
   history are preserved. Orphaned folders are deleted only when they contain
   a single `.DS_Store`, or when a stale worktree pointer and byte-for-byte Git

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseGitRepoStatusOutputAhead(t *testing.T) {
@@ -140,6 +141,74 @@ func TestParseGitRepoStatusOutputSubmoduleCommitChangeIsParentCommitEligible(t *
 	}
 	if !change.ParentCommitEligible() {
 		t.Fatalf("submodule commit change should be parent-commit eligible: %#v", change)
+	}
+}
+
+func TestReadGitWorktreeInfoTracksOnlyCheckoutLocalActivity(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--external")
+	scannerInitGitRepo(t, repoPath)
+	scannerRunGit(t, repoPath, "worktree", "add", "-b", "feature/external", worktreePath)
+	gitDir, err := readGitSingleLine(ctx, worktreePath, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Truncate(time.Second).Add(-72 * time.Hour)
+	paths := []string{
+		filepath.Join(worktreePath, ".git"),
+		filepath.Join(gitDir, "HEAD"),
+		filepath.Join(gitDir, "index"),
+		filepath.Join(gitDir, "logs", "HEAD"),
+	}
+	for _, path := range paths {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkActivity := func(want time.Time) {
+		t.Helper()
+		info, err := ReadGitWorktreeInfo(ctx, worktreePath)
+		if err != nil || !info.LastActivity.Equal(want) {
+			t.Fatalf("worktree activity = %v, err = %v; want %v", info.LastActivity, err, want)
+		}
+	}
+	// The shared repository and gitdir back-pointer are recent, but must not
+	// make this worktree recent. Repeated status reads must not refresh its index.
+	for range 2 {
+		if _, err := ReadGitRepoStatus(ctx, worktreePath); err != nil {
+			t.Fatal(err)
+		}
+		checkActivity(old)
+	}
+	for _, path := range paths {
+		recent := old.Add(48 * time.Hour)
+		if err := os.Chtimes(path, recent, recent); err != nil {
+			t.Fatal(err)
+		}
+		checkActivity(recent)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A new checkout of an old commit still has recent checkout metadata.
+	newPath := filepath.Join(root, "repo--new")
+	scannerRunGit(t, repoPath, "worktree", "add", "-b", "feature/new", newPath)
+	info, err := ReadGitWorktreeInfo(ctx, newPath)
+	if err != nil || !info.LastActivity.After(old.Add(48*time.Hour)) {
+		t.Fatalf("new checkout activity = %v, err = %v", info.LastActivity, err)
+	}
+	if info, err := ReadGitWorktreeInfo(ctx, repoPath); err != nil || !info.LastActivity.IsZero() {
+		t.Fatalf("main checkout should have no Git fallback: %#v, %v", info, err)
+	}
+	if err := os.Remove(filepath.Join(gitDir, "logs", "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	checkActivity(old)
+	if got := readGitWorktreeActivity(worktreePath, filepath.Join(root, "missing-admin")); !got.IsZero() {
+		t.Fatalf("missing admin metadata activity = %v, want unknown", got)
 	}
 }
 

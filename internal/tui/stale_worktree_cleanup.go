@@ -460,7 +460,10 @@ func staleWorktreeCleanupCandidateName(candidate service.StaleWorktreeCleanupCan
 
 func staleWorktreeCleanupSummary(candidate service.StaleWorktreeCleanupCandidate, idleProvider codexapp.Provider, now time.Time) string {
 	parts := []string{"merged", "clean", "idle " + formatCleanupAge(now, candidate.LastActivity)}
-	if idleProvider.Normalized() != "" {
+	if candidate.NoRecordedSession {
+		parts = append(parts, "no recorded session; Git activity")
+	}
+	if idleProvider != "" {
 		parts = append(parts, "idle "+idleProvider.Label()+" open")
 	}
 	return strings.Join(parts, " · ")
@@ -468,7 +471,10 @@ func staleWorktreeCleanupSummary(candidate service.StaleWorktreeCleanupCandidate
 
 func staleWorktreeCleanupDetail(candidate service.StaleWorktreeCleanupCandidate, idleProvider codexapp.Provider, now time.Time) string {
 	text := "stale — merged, clean, idle " + formatCleanupAge(now, candidate.LastActivity)
-	if idleProvider.Normalized() != "" {
+	if candidate.NoRecordedSession {
+		text += "; no recorded session; age from Git activity"
+	}
+	if idleProvider != "" {
 		text += "; idle " + idleProvider.Label() + " session will be closed"
 	}
 	return text
@@ -515,7 +521,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 	lines := []string{commandPaletteTitleStyle.Render("Clean stale worktrees")}
 	if dialog.Loading {
 		lines = append(lines,
-			commandPaletteHintStyle.Render("Read-only audit: finding merged, clean, completed linked worktrees idle for more than 24 hours."),
+			commandPaletteHintStyle.Render("Read-only audit: finding merged, clean linked worktrees idle for more than 24 hours."),
 			"",
 			commandPaletteHintStyle.Render(spinnerFrames[m.spinnerFrame%len(spinnerFrames)]+" Checking worktree and assessment state..."),
 			"",
@@ -531,7 +537,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 	}
 
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
-		"Eligible worktrees are present, unpinned, merged into their recorded parent, conflict-free, clean, assessed done, on a completed turn, and unused for more than 24 hours. Active turns, runtimes, and Git actions are excluded; idle managed sessions close immediately before removal.")...)
+		"Eligible worktrees are present, unpinned, merged into their recorded parent, conflict-free, clean, and unused for more than 24 hours. Recorded sessions must be assessed done with a completed turn; worktrees without a recorded session use Git activity for their age. Active turns, runtimes, and Git actions are excluded; idle managed sessions close immediately before removal.")...)
 	lines = append(lines, "")
 	if dialog.ErrorMessage != "" {
 		lines = append(lines,

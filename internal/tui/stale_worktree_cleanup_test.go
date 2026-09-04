@@ -138,6 +138,58 @@ func TestStaleWorktreeCuesShowInRowDetailFamilyAndFooter(t *testing.T) {
 	}
 }
 
+func TestStaleWorktreeCleanupShowsExternalGitActivity(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	project := model.ProjectSummary{
+		Path:                 "/tmp/demo--external",
+		Name:                 "demo--external",
+		PresentOnDisk:        true,
+		WorktreeRootPath:     "/tmp/demo",
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
+		RepoBranch:           "feature/external",
+		LastActivity:         now.Add(-48 * time.Hour),
+	}
+	m := Model{nowFn: func() time.Time { return now }, renderCachedSessionStateOnly: true}
+	candidate, _, ok := m.staleWorktreeCleanupCandidate(project)
+	if !ok || !candidate.NoRecordedSession {
+		t.Fatalf("external candidate = %#v, %t", candidate, ok)
+	}
+	for _, text := range []string{
+		m.projectDetailLastActivityText(project),
+		ansi.Strip(m.projectDetailLastActivityRenderedText(project)),
+	} {
+		if !strings.Contains(text, "Git") || strings.Contains(strings.ToLower(text), "never") {
+			t.Fatalf("last activity = %q, want Git date", text)
+		}
+	}
+	m.staleWorktreeCleanup = &staleWorktreeCleanupDialogState{Loading: true}
+	updated, _ := m.applyStaleWorktreeCleanupAudit(staleWorktreeCleanupAuditMsg{audit: service.StaleWorktreeCleanupAudit{
+		AuditedAt: now, ScannedLinkedWorktrees: 1, Candidates: []service.StaleWorktreeCleanupCandidate{candidate},
+	}})
+	m = updated.(Model)
+	if !m.staleWorktreeCleanup.Chosen[project.Path] {
+		t.Fatal("external worktree should be selected for review")
+	}
+	rendered := ansi.Strip(m.renderStaleWorktreeCleanupOverlay("", 120, 40))
+	for _, want := range []string{"[x] feature/external", "no recorded session", "age from Git activity"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("cleanup missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "idle Codex") {
+		t.Fatalf("cleanup invented an open engineer session:\n%s", rendered)
+	}
+	// External/sessionless candidates still obey the host's live-session guard.
+	m.codexSnapshots = map[string]codexapp.Snapshot{project.Path: {
+		Provider: codexapp.ProviderCodex, Started: true, Busy: true, Phase: codexapp.SessionPhaseRunning,
+	}}
+	if _, _, ok := m.staleWorktreeCleanupCandidate(project); ok {
+		t.Fatal("external worktree with a busy engineer must not be eligible")
+	}
+}
+
 func TestStaleWorktreeCleanupSessionBlockReasonCoversLiveProviderWork(t *testing.T) {
 	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

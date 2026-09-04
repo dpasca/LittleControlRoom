@@ -156,6 +156,22 @@ Primary (filesystem-first):
 5. For latest-session classification, read only a bounded tail of recent conversational events from the JSONL instead of reparsing full history.
 6. Optionally scan recent output text for non-zero process exit markers.
 
+Linked worktrees discovered through Git can have no session recorded against
+their own `cwd`, for example when an agent in another project creates and works
+on them. For these checkouts, LCR uses the newest modification time of the
+checkout's `.git` pointer and its private Git `HEAD`, `index`, and `logs/HEAD`
+files as the last-activity fallback. This date is labeled Git in project detail;
+it does not fabricate an engineer session or assessment. Shared repository
+metadata and the admin `gitdir` back-pointer are excluded, and LCR's read-only
+Git commands disable optional index refreshes so polling does not renew the age.
+Missing required or unreadable metadata leaves the age unknown.
+
+`/clean` accepts these sessionless worktrees only when present, unpinned, merged
+into the recorded parent, conflict-free, clean, and older than 24 hours. Git age
+is refreshed before removal, and the host still excludes active engineers,
+runtimes, and Git actions. A checkout with recorded session evidence continues
+to require a completed latest turn and a completed `done` assessment.
+
 Optional secondary accelerator:
 
 - Read `~/.codex/state_5.sqlite` `threads` rows for quick latest `cwd` activity snapshots and recovery-oriented Git identity. LCR inspects the table schema before selecting optional columns so older Codex databases remain compatible.

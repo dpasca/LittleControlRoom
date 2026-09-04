@@ -246,7 +246,7 @@ func CuratedTopics() []Topic {
 			Kind:    TopicKindWorkflow,
 			Surface: SurfaceMainTUI,
 			Title:   "Clean stale worktrees",
-			Summary: "Use /clean to review and remove merged, clean worktrees whose latest assessed turn is done and has been inactive for more than 24 hours.",
+			Summary: "Use /clean to review and remove merged, clean worktrees inactive for more than 24 hours. Recorded sessions must have a completed turn assessed done; worktrees without a recorded session use their own Git activity for age.",
 			Usage:   []string{"/clean"},
 			ManualSteps: []string{
 				"Run /clean from the dashboard or an embedded engineer pane. Every currently eligible worktree starts selected.",

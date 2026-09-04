@@ -21,6 +21,7 @@ type StaleWorktreeCleanupCandidate struct {
 	LastActivity      time.Time
 	LinkedTodoID      int64
 	AssessmentSummary string
+	NoRecordedSession bool
 }
 
 type StaleWorktreeCleanupAudit struct {
@@ -66,17 +67,20 @@ func EvaluateStaleWorktreeCleanupCandidate(summary model.ProjectSummary, now tim
 	if summary.RepoDirty {
 		return StaleWorktreeCleanupCandidate{}, "worktree has uncommitted changes", false
 	}
-	if summary.LatestSessionClassification != model.ClassificationCompleted {
-		return StaleWorktreeCleanupCandidate{}, "latest assessment is not complete", false
-	}
-	if summary.LatestSessionClassificationType != model.SessionCategoryCompleted {
-		return StaleWorktreeCleanupCandidate{}, "latest assessment is not done", false
-	}
-	if !summary.LatestTurnStateKnown {
-		return StaleWorktreeCleanupCandidate{}, "latest engineer turn state is unknown", false
-	}
-	if !summary.LatestTurnCompleted {
-		return StaleWorktreeCleanupCandidate{}, "latest engineer turn is unfinished", false
+	hasSession := summary.HasRecordedSession()
+	if hasSession {
+		if summary.LatestSessionClassification != model.ClassificationCompleted {
+			return StaleWorktreeCleanupCandidate{}, "latest assessment is not complete", false
+		}
+		if summary.LatestSessionClassificationType != model.SessionCategoryCompleted {
+			return StaleWorktreeCleanupCandidate{}, "latest assessment is not done", false
+		}
+		if !summary.LatestTurnStateKnown {
+			return StaleWorktreeCleanupCandidate{}, "latest engineer turn state is unknown", false
+		}
+		if !summary.LatestTurnCompleted {
+			return StaleWorktreeCleanupCandidate{}, "latest engineer turn is unfinished", false
+		}
 	}
 
 	lastActivity := summary.LastActivity
@@ -99,6 +103,7 @@ func EvaluateStaleWorktreeCleanupCandidate(summary model.ProjectSummary, now tim
 		LastActivity:      lastActivity,
 		LinkedTodoID:      summary.WorktreeOriginTodoID,
 		AssessmentSummary: summary.LatestSessionSummary,
+		NoRecordedSession: !hasSession,
 	}, "", true
 }
 

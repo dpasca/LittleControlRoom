@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type GitFingerprint struct {
@@ -48,6 +49,7 @@ type GitWorktreeInfo struct {
 	RootPath     string
 	TopLevelPath string
 	Kind         GitWorktreeKind
+	LastActivity time.Time
 }
 
 type GitWorktree struct {
@@ -300,11 +302,43 @@ func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, err
 		kind = GitWorktreeKindMain
 		rootPath = topLevel
 	}
+	lastActivity := time.Time{}
+	if kind == GitWorktreeKindLinked {
+		lastActivity = readGitWorktreeActivity(topLevel, gitDir)
+	}
 	return GitWorktreeInfo{
 		RootPath:     rootPath,
 		TopLevelPath: topLevel,
 		Kind:         kind,
+		LastActivity: lastActivity,
 	}, nil
+}
+
+// readGitWorktreeActivity uses checkout-local metadata so commits, switches,
+// staging, and checkout creation count even without a session at this cwd.
+// Shared refs and the admin gitdir back-pointer are excluded: unrelated work
+// and read-only Git commands can update them. Our status reads disable optional
+// index refreshes with GIT_OPTIONAL_LOCKS=0.
+func readGitWorktreeActivity(topLevel, gitDir string) time.Time {
+	lastActivity := time.Time{}
+	for i, path := range []string{
+		filepath.Join(topLevel, ".git"),
+		filepath.Join(gitDir, "HEAD"),
+		filepath.Join(gitDir, "index"),
+		filepath.Join(gitDir, "logs", "HEAD"),
+	} {
+		info, err := os.Stat(path)
+		if i >= 2 && os.IsNotExist(err) {
+			continue // Unborn checkouts or disabled/expired reflogs.
+		}
+		if err != nil || !info.Mode().IsRegular() {
+			return time.Time{}
+		}
+		if modifiedAt := info.ModTime().UTC().Truncate(time.Second); modifiedAt.After(lastActivity) {
+			lastActivity = modifiedAt
+		}
+	}
+	return lastActivity
 }
 
 func readGitWorktreeInfoFromGitFile(path string) (GitWorktreeInfo, error) {

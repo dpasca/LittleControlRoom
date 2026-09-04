@@ -533,6 +533,16 @@ type ProjectSummary struct {
 	LatestCompletedSessionClassificationUpdatedAt time.Time
 }
 
+// HasRecordedSession also accepts partial session projections. Missing turn or
+// classification fields must not make a recorded session look sessionless.
+func (p ProjectSummary) HasRecordedSession() bool {
+	return p.LatestSessionID != "" || p.LatestRawSessionID != "" ||
+		p.LatestSessionSource != "" || p.LatestSessionFormat != "" ||
+		!p.LatestSessionLastEventAt.IsZero() || !p.LatestTurnStartedAt.IsZero() ||
+		p.LatestTurnStateKnown || p.LatestTurnCompleted ||
+		p.LatestSessionClassification != "" || p.LatestSessionClassificationType != ""
+}
+
 type TodoItem struct {
 	ID                 int64
 	ProjectPath        string

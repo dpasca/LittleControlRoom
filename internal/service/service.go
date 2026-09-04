@@ -1901,6 +1901,11 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			latestSessionStart = sessions[0].StartedAt
 			latestTurnKnown = sessions[0].LatestTurnStateKnown
 			latestTurnComplete = sessions[0].LatestTurnCompleted
+		} else if worktreeKind == model.WorktreeKindLinked && presentOnDisk && !old.HasRecordedSession() {
+			// External worktrees may only have sessions in a different cwd.
+			// Keep their Git age visible without inventing engineer activity.
+			lastActivity = currentWorktreeInfo[path].LastActivity
+			hasActivity = false
 		}
 		classificationKnown, classificationCategory := s.latestSessionClassification(ctx, path, sessions, now)
 		createdAt := old.CreatedAt
@@ -3342,6 +3347,7 @@ func (s *Service) refreshProjectStatusWithOptions(ctx context.Context, projectPa
 			worktreeKind:               worktreeKind,
 			worktreeParentBranch:       worktreeParentBranch,
 			worktreeMergeStatus:        worktreeMergeStatus,
+			worktreeLastActivity:       metadata.worktreeLastActivity,
 			repoBranch:                 repoBranch,
 			repoDirty:                  repoDirty,
 			repoConflict:               repoConflict,
@@ -3386,6 +3392,7 @@ type projectStatusRefreshMetadata struct {
 	worktreeRootPath           string
 	worktreeKind               model.WorktreeKind
 	worktreeMergeStatus        model.WorktreeMergeStatus
+	worktreeLastActivity       time.Time
 	repoBranch                 string
 	repoDirty                  bool
 	repoConflict               bool
@@ -3464,7 +3471,17 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		clearUnavailableRepoStatus()
 		return meta
 	}
-	if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, projectPath, gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
+	readWorktreeInfo := func(ctx context.Context, path string) (scanner.GitWorktreeInfo, error) {
+		if gitWorktreeInfoReader == nil {
+			return scanner.GitWorktreeInfo{}, fmt.Errorf("Git worktree inspection is unavailable")
+		}
+		info, err := gitWorktreeInfoReader(ctx, path)
+		if err == nil {
+			meta.worktreeLastActivity = info.LastActivity
+		}
+		return info, err
+	}
+	if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, projectPath, readWorktreeInfo); nextRootPath != "" || nextKind != model.WorktreeKindNone {
 		meta.worktreeRootPath = nextRootPath
 		meta.worktreeKind = nextKind
 	}
@@ -3524,6 +3541,7 @@ type projectStatusRefreshOverrides struct {
 	worktreeKind               model.WorktreeKind
 	worktreeParentBranch       string
 	worktreeMergeStatus        model.WorktreeMergeStatus
+	worktreeLastActivity       time.Time
 	repoBranch                 string
 	repoDirty                  bool
 	repoConflict               bool
@@ -3550,12 +3568,20 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 	for _, session := range detail.Sessions {
 		errorCount += session.ErrorCount
 	}
+	lastActivity := detail.Summary.LastActivity
+	hasActivity := !lastActivity.IsZero()
+	if overrides.worktreeKind == model.WorktreeKindLinked && len(detail.Sessions) == 0 && !detail.Summary.HasRecordedSession() {
+		// Re-read the fallback during cleanup revalidation, including clearing
+		// it when current metadata is unavailable so cleanup fails closed.
+		lastActivity = overrides.worktreeLastActivity
+		hasActivity = false
+	}
 
 	classificationKnown, classificationCategory := s.latestSessionClassificationWithConfig(ctx, projectPath, detail.Sessions, now, cfg)
 	score := attention.Score(attention.Input{
 		Path:                       detail.Summary.Path,
 		Now:                        now,
-		LastActivity:               detail.Summary.LastActivity,
+		LastActivity:               lastActivity,
 		CreatedAt:                  detail.Summary.CreatedAt,
 		RepoDirty:                  overrides.repoDirty,
 		RepoSubmoduleDirtyCount:    overrides.repoSubmoduleDirtyCount,
@@ -3569,7 +3595,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		LatestTurnComplete:         latestTurnComplete,
 		LatestSessionCategoryKnown: classificationKnown,
 		LatestSessionCategory:      classificationCategory,
-		HasActivity:                !detail.Summary.LastActivity.IsZero(),
+		HasActivity:                hasActivity,
 		ActiveThreshold:            cfg.ActiveThreshold,
 		StuckThreshold:             cfg.StuckThreshold,
 		OpenTodoCount:              detail.Summary.OpenTODOCount,
@@ -3579,7 +3605,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		Path:                       detail.Summary.Path,
 		Name:                       detail.Summary.Name,
 		Kind:                       model.NormalizeProjectKind(detail.Summary.Kind),
-		LastActivity:               detail.Summary.LastActivity,
+		LastActivity:               lastActivity,
 		Status:                     score.Status,
 		AttentionScore:             score.Score,
 		PresentOnDisk:              overrides.presentOnDisk,
@@ -3655,6 +3681,7 @@ func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath
 		worktreeKind:               detail.Summary.WorktreeKind,
 		worktreeParentBranch:       detail.Summary.WorktreeParentBranch,
 		worktreeMergeStatus:        detail.Summary.WorktreeMergeStatus,
+		worktreeLastActivity:       detail.Summary.LastActivity,
 		repoBranch:                 detail.Summary.RepoBranch,
 		repoDirty:                  detail.Summary.RepoDirty,
 		repoConflict:               detail.Summary.RepoConflict,

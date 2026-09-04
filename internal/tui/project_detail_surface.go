@@ -370,6 +370,8 @@ func (m Model) projectDetailLastActivityText(project model.ProjectSummary) strin
 		lastSource := "None"
 		if project.LatestSessionFormat != "" {
 			lastSource = sourceLabel(project.LatestSessionFormat)
+		} else if project.WorktreeKind == model.WorktreeKindLinked && !project.HasRecordedSession() && !project.LastActivity.IsZero() {
+			lastSource = "Git"
 		}
 		text += "  " + lastSource
 	}
@@ -385,6 +387,8 @@ func (m Model) projectDetailLastActivityRenderedText(project model.ProjectSummar
 		lastSource := detailMutedStyle.Render("None")
 		if project.LatestSessionFormat != "" {
 			lastSource = sourceStyle(project.LatestSessionFormat, m.projectHasLiveCodexSession(project.Path)).Render(sourceLabel(project.LatestSessionFormat))
+		} else if project.WorktreeKind == model.WorktreeKindLinked && !project.HasRecordedSession() && !project.LastActivity.IsZero() {
+			lastSource = detailMutedStyle.Render("Git")
 		}
 		text += "  " + lastSource
 	}
