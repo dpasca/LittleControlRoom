@@ -27,15 +27,17 @@ var (
 )
 
 type PlaywrightBrowserSession struct {
-	cfg    BrowserSessionConfig
-	paths  ManagedPlaywrightPaths
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  *bufio.Writer
-	pipeIn *os.File
-	respCh map[string]chan playwrightWorkerResponse
-	done   chan struct{}
-	seq    uint64
+	cfg     BrowserSessionConfig
+	paths   ManagedPlaywrightPaths
+	mu      sync.Mutex
+	startMu sync.Mutex // Serializes launch-time extension files and bridge ownership.
+	cmd     *exec.Cmd
+	stdin   *bufio.Writer
+	pipeIn  *os.File
+	respCh  map[string]chan playwrightWorkerResponse
+	done    chan struct{}
+	seq     uint64
+	audio   *ManagedBrowserAudio
 }
 
 func NewPlaywrightBrowserSession(cfg BrowserSessionConfig) (*PlaywrightBrowserSession, error) {
@@ -119,10 +121,13 @@ func (s *PlaywrightBrowserSession) Close() error {
 	s.mu.Lock()
 	cmd := s.cmd
 	pipeIn := s.pipeIn
+	audio := s.audio
+	s.audio = nil
 	s.cmd = nil
 	s.pipeIn = nil
 	s.stdin = nil
 	s.mu.Unlock()
+	audio.Close()
 	if pipeIn != nil {
 		_ = pipeIn.Close()
 	}
@@ -178,6 +183,8 @@ func (s *PlaywrightBrowserSession) call(ctx context.Context, method string, para
 }
 
 func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 	s.mu.Lock()
 	if s.cmd != nil {
 		s.mu.Unlock()
@@ -190,18 +197,39 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	browserChannel := s.browserChannel()
-	preflight, err := PrepareManagedPlaywrightProfileForLaunch(s.paths, s.browserExecutablePathForCompatibilityCheck(browserChannel))
+	// Prefer the same revealable Chromium executable as the MCP-backed path.
+	// An explicitly configured channel still selects its own browser.
+	browserPath := ""
+	if s.paths.LaunchMode == ManagedLaunchModeBackground && strings.TrimSpace(s.cfg.BrowserChannel) == "" && strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_BROWSER_CHANNEL")) == "" {
+		browserPath = managedBrowserExecutablePathForConfig(s.cfg, s.paths.LaunchMode)
+	}
+	compatibilityPath := browserPath
+	if compatibilityPath == "" {
+		compatibilityPath = s.browserExecutablePathForCompatibilityCheck(browserChannel)
+	}
+	preflight, err := PrepareManagedPlaywrightProfileForLaunch(s.paths, compatibilityPath)
 	if err != nil {
 		return err
 	}
 	s.markProfilePreflight(preflight)
-
+	audio, err := PrepareManagedBrowserAudio(s.paths, browserPath)
+	if err != nil {
+		return err
+	}
+	attachedAudio := false
+	defer func() {
+		if !attachedAudio {
+			audio.Close()
+		}
+	}()
 	config := map[string]any{
 		"profileDir":     s.paths.ProfileDir,
 		"outputDir":      s.paths.OutputDir,
 		"launchMode":     string(s.paths.LaunchMode),
 		"browserChannel": browserChannel,
 		"viewport":       playwrightWorkerViewport(s.paths.LaunchMode),
+		"executablePath": browserPath,
+		"launchOptions":  audio.LaunchOptions,
 	}
 	configRaw, err := json.Marshal(config)
 	if err != nil {
@@ -232,6 +260,8 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 		return nil
 	}
 	s.cmd = cmd
+	s.audio = audio
+	attachedAudio = true
 	if file, ok := stdin.(*os.File); ok {
 		s.pipeIn = file
 	}
@@ -239,7 +269,10 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.markWorkerStarted(cmd.Process.Pid)
-	go s.readResponses(stdout)
+	go func() {
+		defer audio.Close()
+		s.readResponses(stdout)
+	}()
 	go s.monitorWorker(cmd.Process.Pid)
 	return nil
 }

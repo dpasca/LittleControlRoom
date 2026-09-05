@@ -20,14 +20,16 @@ import (
 var playwrightMCPCommand = "mcp-server-playwright"
 
 type PlaywrightMCPBrowserSession struct {
-	cfg    BrowserSessionConfig
-	paths  ManagedPlaywrightPaths
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  *bufio.Writer
-	pipeIn io.Closer
-	respCh map[string]chan playwrightMCPResponse
-	seq    uint64
+	cfg     BrowserSessionConfig
+	paths   ManagedPlaywrightPaths
+	mu      sync.Mutex
+	startMu sync.Mutex // Serializes launch-time extension files and bridge ownership.
+	cmd     *exec.Cmd
+	stdin   *bufio.Writer
+	pipeIn  io.Closer
+	respCh  map[string]chan playwrightMCPResponse
+	seq     uint64
+	audio   *ManagedBrowserAudio
 }
 
 func NewPlaywrightMCPBrowserSession(cfg BrowserSessionConfig) (*PlaywrightMCPBrowserSession, error) {
@@ -156,10 +158,13 @@ func (s *PlaywrightMCPBrowserSession) Close() error {
 	s.mu.Lock()
 	cmd := s.cmd
 	pipeIn := s.pipeIn
+	audio := s.audio
+	s.audio = nil
 	s.cmd = nil
 	s.pipeIn = nil
 	s.stdin = nil
 	s.mu.Unlock()
+	audio.Close()
 	if pipeIn != nil {
 		_ = pipeIn.Close()
 	}
@@ -287,6 +292,8 @@ func playwrightMCPBlankTabURL(raw string) bool {
 }
 
 func (s *PlaywrightMCPBrowserSession) ensureStarted(ctx context.Context) error {
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 	s.mu.Lock()
 	if s.cmd != nil {
 		s.mu.Unlock()
@@ -309,6 +316,19 @@ func (s *PlaywrightMCPBrowserSession) ensureStarted(ctx context.Context) error {
 		args = append(args, "--executable-path", browserPath)
 	} else if browser := strings.TrimSpace(s.cfg.BrowserChannel); browser != "" {
 		args = append(args, "--browser", browser)
+	}
+	audio, err := PrepareManagedBrowserAudio(s.paths, browserPath)
+	if err != nil {
+		return err
+	}
+	attachedAudio := false
+	defer func() {
+		if !attachedAudio {
+			audio.Close()
+		}
+	}()
+	if audio.ConfigPath != "" {
+		args = append(args, "--config", audio.ConfigPath)
 	}
 	cmd := exec.CommandContext(ctx, playwrightMCPCommand, args...)
 	if info, statErr := os.Stat(s.paths.ProjectPath); statErr == nil && info.IsDir() {
@@ -334,12 +354,17 @@ func (s *PlaywrightMCPBrowserSession) ensureStarted(ctx context.Context) error {
 		return nil
 	}
 	s.cmd = cmd
+	s.audio = audio
+	attachedAudio = true
 	s.pipeIn = stdin
 	s.stdin = bufio.NewWriter(stdin)
 	s.mu.Unlock()
 
 	s.markMCPStarted(cmd.Process.Pid)
-	go s.readResponses(stdout)
+	go func() {
+		defer audio.Close()
+		s.readResponses(stdout)
+	}()
 	go s.monitorMCP(cmd.Process.Pid)
 	if _, err := s.call(ctx, "initialize", map[string]any{
 		"protocolVersion": "2024-11-05",

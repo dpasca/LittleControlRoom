@@ -93,6 +93,20 @@ func runPlaywrightMCP(args []string) int {
 	}
 
 	childArgs := playwrightMCPChildArgsWithExecutable(paths, opts.launchMode, browserExecutable)
+	audio, err := browserctl.PrepareManagedBrowserAudio(paths, browserExecutable)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "playwright-mcp audio setup failed: %v\n", err)
+		return 1
+	}
+	defer audio.Close()
+	state, err = readManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "playwright-mcp audio state read failed: %v\n", err)
+		return 1
+	}
+	if audio.ConfigPath != "" {
+		childArgs = append(childArgs, "--config", audio.ConfigPath)
+	}
 
 	cmd := exec.Command("mcp-server-playwright", childArgs...)
 	cmd.Stdin = os.Stdin
