@@ -34,6 +34,10 @@ async function ensurePage() {
 }
 
 async function launchPersistentContext(options) {
+  options = { ...options, ...config.launchOptions };
+  if (config.executablePath) {
+    return chromium.launchPersistentContext(config.profileDir, { ...options, executablePath: config.executablePath });
+  }
   const channel = typeof config.browserChannel === "string" ? config.browserChannel.trim() : "";
   if (channel) {
     try {

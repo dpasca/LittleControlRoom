@@ -60,6 +60,8 @@ type ManagedPlaywrightState struct {
 	ProfileRecoveryReason   string            `json:"profile_recovery_reason,omitempty"`
 	ProfilePreflightWarning string            `json:"profile_preflight_warning,omitempty"`
 	Hidden                  bool              `json:"hidden"`
+	AudioMode               string            `json:"audio_mode,omitempty"`
+	AudioAllowed            bool              `json:"audio_allowed,omitempty"`
 	RevealSupported         bool              `json:"reveal_supported"`
 	UpdatedAt               time.Time         `json:"updated_at"`
 }
@@ -291,7 +293,10 @@ func RevealManagedPlaywrightSession(dataDir, sessionKey string) (ManagedPlaywrig
 				revealed = restored.Normalize()
 				return err
 			}
-			return nil
+			// Reveal intent alone must not enable sound: macOS may still be
+			// activating the window, or activation may fail altogether.
+			revealed.AudioAllowed = true
+			return writeManagedPlaywrightStateFor(dataDir, sessionKey, revealed)
 		})
 	})
 	return revealed.Normalize(), err
@@ -322,8 +327,9 @@ func RequestManagedPlaywrightSessionHide(dataDir, sessionKey string) (ManagedPla
 				return nil
 			}
 			background = true
-			if !updated.Hidden {
+			if !updated.Hidden || updated.AudioAllowed {
 				updated.Hidden = true
+				updated.AudioAllowed = false
 				updated.UpdatedAt = time.Now().UTC()
 				if err := writeManagedPlaywrightStateFor(dataDir, sessionKey, updated); err != nil {
 					return err
@@ -387,6 +393,7 @@ func HideManagedPlaywrightSession(dataDir, sessionKey string, browser ManagedBro
 			state.BrowserAppName = managedPlaywrightFirstNonEmpty(browser.AppName, state.BrowserAppName)
 			state.BrowserExecutable = managedPlaywrightFirstNonEmpty(browser.ExecutablePath, state.BrowserExecutable)
 			state.Hidden = true
+			state.AudioAllowed = false
 			state.UpdatedAt = time.Now().UTC()
 			if err := writeManagedPlaywrightStateFor(dataDir, sessionKey, state); err != nil {
 				return err
