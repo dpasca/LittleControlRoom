@@ -576,6 +576,11 @@ If latest_turn_state_known is true, treat latest_turn_completed as a strong work
 - true usually means the assistant finished that turn, but it does not automatically mean the project is completed
 - false means the assistant may still be mid-turn unless the transcript clearly shows a handoff
 Dirty or unsynced git state can be evidence of unfinished follow-up, but transcript evidence should remain primary.
+For repository facts, current git_status evidence supersedes stale transcript claims about uncommitted, unmerged, or unpushed work. LCR or the user may have completed these steps after the engineer's last message.
+When git_status.integration is present, merge_status describes integration into target_branch. A clean worktree with merge_status=merged resolves commit-and-merge follow-ups, including old requests for approval to perform those now-completed actions.
+For a requested push of integrated work, use integration.target_remote_status and target_ahead_count, not the linked branch's own remote status. A synced or behind target with zero commits ahead establishes publication according to local remote-tracking refs. Unknown target remote status or commits ahead do not prove a push happened. A specifically requested push of the source branch still requires source-branch evidence.
+Mark completed only if all concrete remaining actions are resolved. A merge never proves an application was rebuilt, restarted, launched, deployed, or manually verified; preserve those follow-ups and any remaining implementation tasks.
+Update the summary to reflect the current evidence and any remaining action; do not repeat a resolved commit/merge/push request. When resolving a stale handoff, mention the observed repository outcome without attributing the action to the engineer.
 Do not label a session in_progress only because the worktree is dirty after a completed turn.
 Prefer completed when the assistant clearly wrapped up the asked task and no concrete tracked project action remains.
 Treat optional follow-up offers like “if you want, I can also ...” as optional unless the user actually asked for that extra step or the assistant says it still must happen.

@@ -8,7 +8,52 @@ import (
 	"time"
 
 	"lcroom/internal/llm"
+	"lcroom/internal/model"
 )
+
+func TestCodexClassifierPostMergeFollowupsLive(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("LCROOM_RUN_LIVE_CODEX_HELPER_TEST")) == "" {
+		t.Skip("set LCROOM_RUN_LIVE_CODEX_HELPER_TEST=1 to test post-merge assessment semantics")
+	}
+	client := NewCodexClientWithUsageTracker(nil)
+	for _, tc := range []struct {
+		name, handoff string
+		remote        model.RepoSyncStatus
+		ahead         int
+		want          model.SessionCategory
+	}{
+		{"merge_done", "Implementation and tests are complete. Please commit and merge the work into master.", "unknown", 0, model.SessionCategoryCompleted},
+		{"push_done", "Implementation and tests are complete. Please commit, merge into master, and push master.", model.RepoSyncSynced, 0, model.SessionCategoryCompleted},
+		{"push_pending", "Implementation and tests are complete. Please commit, merge into master, and push master.", model.RepoSyncAhead, 1, model.SessionCategoryNeedsFollowUp},
+		{"push_unknown", "Implementation and tests are complete. Please commit, merge into master, and push master.", "unknown", 0, model.SessionCategoryNeedsFollowUp},
+		{"restart_pending", "Fix validated. Commit and merge the changes, then rebuild and restart LCR to activate the fix.", model.RepoSyncSynced, 0, model.SessionCategoryNeedsFollowUp},
+		{"verification_pending", "Changes and automated tests are complete. Merge and push, then launch the game and manually verify the new controls.", model.RepoSyncSynced, 0, model.SessionCategoryNeedsFollowUp},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			result, err := client.Classify(ctx, SessionSnapshot{
+				ProjectPath: "/tmp/post-merge-eval", SessionID: "post-merge-eval", SessionFormat: "modern",
+				LatestTurnStateKnown: true, LatestTurnCompleted: true,
+				GitStatus: GitStatusSnapshot{RemoteStatus: "no_upstream", Integration: &WorktreeIntegrationSnapshot{
+					TargetBranch: "master", MergeStatus: model.WorktreeMergeStatusMerged,
+					TargetRemoteStatus: tc.remote, TargetAheadCount: tc.ahead,
+				}},
+				Transcript: []TranscriptItem{
+					{Role: "user", Text: "Implement the requested fix and run the automated tests."},
+					{Role: "assistant", Text: tc.handoff},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("%s: %s", result.Category, result.Summary)
+			if result.Category != tc.want {
+				t.Fatalf("category = %s, want %s", result.Category, tc.want)
+			}
+		})
+	}
+}
 
 func TestCodexClassifierClientLive(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("LCROOM_RUN_LIVE_CODEX_HELPER_TEST")) == "" {

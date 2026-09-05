@@ -20,7 +20,7 @@ import (
 
 const (
 	DefaultModel      = config.DefaultOpenAIProjectModel
-	ClassifierVersion = "session-v6"
+	ClassifierVersion = "session-v7"
 )
 
 type Result struct {
@@ -210,7 +210,7 @@ func (m *Manager) QueueProjectRetry(ctx context.Context, state model.ProjectStat
 	client, modelName, unavailableReason := m.currentClientState()
 	prepared := state
 	if len(prepared.Sessions) > 0 && strings.TrimSpace(prepared.Sessions[0].SnapshotHash) == "" {
-		gitStatus := NewGitStatusSnapshot(prepared.RepoDirty, prepared.RepoSyncStatus, prepared.RepoAheadCount, prepared.RepoBehindCount)
+		gitStatus := GitStatusForState(ctx, prepared)
 		if hash, err := ComputeSnapshotHash(ctx, prepared.Path, prepared.Sessions[0], gitStatus); err == nil && strings.TrimSpace(hash) != "" {
 			prepared.Sessions[0].SnapshotHash = hash
 		}
@@ -468,7 +468,7 @@ func (m *Manager) processOne(ctx context.Context) (processed bool, err error) {
 		LastEventAt:  classification.SourceUpdatedAt,
 	}
 	if detail, detailErr := m.store.GetProjectDetail(ctx, classification.ProjectPath, 1); detailErr == nil {
-		gitStatus = NewGitStatusSnapshot(detail.Summary.RepoDirty, detail.Summary.RepoSyncStatus, detail.Summary.RepoAheadCount, detail.Summary.RepoBehindCount)
+		gitStatus = GitStatusForSummary(ctx, detail.Summary)
 		for _, session := range detail.Sessions {
 			if session.SessionID != classification.SessionID {
 				continue

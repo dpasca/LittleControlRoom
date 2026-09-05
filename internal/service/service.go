@@ -1880,7 +1880,11 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			artifacts = dedupeArtifacts(activity.Artifacts)
 			errorCount = activity.ErrorCount
 			if len(sessions) > 0 {
-				gitStatus := sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount)
+				gitStatus := sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount).
+					WithWorktree(ctx, path, worktreeKind, worktreeParentBranch, worktreeMergeStatus)
+				if gitStatus.Integration != nil {
+					sessions[0].SnapshotHash = ""
+				}
 				reuseLatestSessionTurnState(old, &sessions[0])
 				ensureLatestSessionTurnState(&sessions[0])
 				reuseLatestSessionSnapshotHash(old, &sessions[0], gitStatus)
@@ -3183,6 +3187,12 @@ func reuseLatestSessionSnapshotHash(old model.ProjectSummary, session *model.Ses
 }
 
 func projectSummaryMatchesGitStatus(summary model.ProjectSummary, gitStatus sessionclassify.GitStatusSnapshot) bool {
+	// Target-branch publication is not stored on the project row. Recompute
+	// linked-worktree hashes so a merge or parent push can invalidate the model
+	// result even when the engineer transcript and source branch are unchanged.
+	if gitStatus.Integration != nil {
+		return false
+	}
 	return summary.RepoDirty == gitStatus.WorktreeDirty &&
 		summary.RepoSyncStatus == model.RepoSyncStatus(gitStatus.RemoteStatus) &&
 		summary.RepoAheadCount == gitStatus.AheadCount &&
@@ -3339,7 +3349,12 @@ func (s *Service) refreshProjectStatusWithOptions(ctx context.Context, projectPa
 				)
 			}
 			ensureLatestSessionTurnState(&detail.Sessions[0])
-			ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
+			gitStatus := sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount).
+				WithWorktree(ctx, projectPath, worktreeKind, worktreeParentBranch, worktreeMergeStatus)
+			if !projectSummaryMatchesGitStatus(detail.Summary, gitStatus) {
+				detail.Sessions[0].SnapshotHash = ""
+			}
+			ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], gitStatus)
 		}
 		if _, err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
 			presentOnDisk:              metadata.presentOnDisk,

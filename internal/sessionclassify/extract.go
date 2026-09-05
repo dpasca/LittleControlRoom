@@ -48,10 +48,11 @@ type SessionPreview struct {
 }
 
 type GitStatusSnapshot struct {
-	WorktreeDirty bool   `json:"worktree_dirty"`
-	RemoteStatus  string `json:"remote_status,omitempty"`
-	AheadCount    int    `json:"ahead_count,omitempty"`
-	BehindCount   int    `json:"behind_count,omitempty"`
+	WorktreeDirty bool                         `json:"worktree_dirty"`
+	RemoteStatus  string                       `json:"remote_status,omitempty"`
+	AheadCount    int                          `json:"ahead_count,omitempty"`
+	BehindCount   int                          `json:"behind_count,omitempty"`
+	Integration   *WorktreeIntegrationSnapshot `json:"integration,omitempty"`
 }
 
 type TranscriptItem struct {

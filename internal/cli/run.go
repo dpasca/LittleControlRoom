@@ -751,12 +751,7 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 		if !choice.Session.LastEventAt.IsZero() {
 			entry.LastEventAt = choice.Session.LastEventAt.UTC().Format(time.RFC3339)
 		}
-		gitStatus := sessionclassify.NewGitStatusSnapshot(
-			choice.State.RepoDirty,
-			choice.State.RepoSyncStatus,
-			choice.State.RepoAheadCount,
-			choice.State.RepoBehindCount,
-		)
+		gitStatus := sessionclassify.GitStatusForState(ctx, choice.State)
 		snapshot, err := sessionclassify.ExtractSnapshot(ctx, model.SessionClassification{
 			Source:          choice.Session.Source,
 			SessionID:       choice.Session.SessionID,
@@ -1434,12 +1429,7 @@ func runSanitizeSummaries(ctx context.Context, st *store.Store, cfg config.AppCo
 			SnapshotHash: strings.TrimSpace(classification.SnapshotHash),
 		}
 
-		gitStatus := sessionclassify.NewGitStatusSnapshot(
-			detail.Summary.RepoDirty,
-			detail.Summary.RepoSyncStatus,
-			detail.Summary.RepoAheadCount,
-			detail.Summary.RepoBehindCount,
-		)
+		gitStatus := sessionclassify.GitStatusForSummary(ctx, detail.Summary)
 		snapshot, err := sessionclassify.ExtractSnapshot(ctx, model.SessionClassification{
 			Source:          classification.Source,
 			SessionID:       classification.SessionID,
