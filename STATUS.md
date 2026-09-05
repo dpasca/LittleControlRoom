@@ -44,6 +44,8 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 
 ## Durable Assumptions
 
+- Agent integration management is native-config-first and UI-independent: `/skills`, Help Chat, and embedded engineers share the integrations query/control domain, explicit provider/scope, revision checks, and confirmed changes. Disk configuration and separate MCP probes never imply availability in a running session; provider support and activation limits are documented in [docs/agent_integrations.md](docs/agent_integrations.md).
+
 - Codex artifacts live primarily under `~/.codex`, not per-project `.codex` directories.
 - Project mapping comes from session metadata `cwd` values.
 - OpenCode artifacts live primarily under `~/.local/share/opencode` and are mapped via session and project metadata.

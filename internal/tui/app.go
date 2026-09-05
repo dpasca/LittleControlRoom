@@ -346,6 +346,7 @@ type Model struct {
 	modelSettlePending            map[string]pendingModelSettleOp
 	lastSpinnerTickAt             time.Time
 	skillsInventorySeq            int64
+	integrationDialogBusy         bool
 	pendingBossHostNotices        []bossHostNotice
 	bossTrackedTodos              map[string]bossTrackedTodo
 	engineerMessagesPollInFlight  bool
@@ -1681,6 +1682,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, codexTranscriptCmd
 	case cursor.BlinkMsg:
+		if m.skillsDialog != nil && m.skillsDialog.Editor != nil {
+			e := m.skillsDialog.Editor
+			var cmd tea.Cmd
+			e.Fields[e.Focus], cmd = e.Fields[e.Focus].Update(msg)
+			return m, cmd
+		}
 		if m.codexVisible() && m.codexInput.Focused() {
 			var cmd tea.Cmd
 			m.codexInput, cmd = m.codexInput.Update(msg)
@@ -2540,6 +2547,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyCPUSnapshotMsg(msg)
 	case skillsInventoryMsg:
 		return m.applySkillsInventoryMsg(msg)
+	case integrationAppliedMsg:
+		return m.applyIntegrationResult(msg)
 	case runCommandSavedMsg:
 		if m.runCommandDialog != nil && m.runCommandDialog.ProjectPath == msg.projectPath {
 			m.runCommandDialog.Submitting = false

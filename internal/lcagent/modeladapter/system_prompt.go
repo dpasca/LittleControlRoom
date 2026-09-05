@@ -89,7 +89,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.LCRQueriesEnabled {
 		lines = append(lines,
 			"For cross-project LCR state, use the progressive query catalog: call list_lcr_queries without a domain, then with one exact domain, then describe_lcr_query before run_lcr_query.",
-			"Follow next_cursor for more results. Query responses are bounded persisted snapshots with as_of timestamps, not live TUI state.",
+			"Follow next_cursor for more results. Most query responses are bounded persisted snapshots with as_of timestamps, not live TUI state. Integrations queries read native configuration or fetch catalogs. For skill, plugin, or MCP management, discover the integrations query/control domains, inspect the chosen provider and scope, then propose changes with the inspected revision. Never submit literal credentials; use environment-variable references and native authentication. Saved configuration does not establish running-session availability.",
 			"The LCR query catalog excludes other private-category projects, Help Chat transcripts, raw event payloads, and arbitrary repository files.",
 		)
 	}

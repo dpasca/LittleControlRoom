@@ -7,7 +7,7 @@ import (
 
 const (
 	PrivacyContract   = "Private-category projects and tasks are hidden except when they are the originating project. Demo recording package paths require portfolio scope or a host-provided attachment/confirmation grant. Help Chat transcripts, raw event payloads, and arbitrary repository files are not available through this catalog."
-	FreshnessContract = "Query results are bounded persisted snapshots and include an as_of timestamp; they do not claim to mirror transient in-memory TUI state."
+	FreshnessContract = "Query results are bounded and include an as_of timestamp. Most use persisted snapshots; integrations queries read native configuration or fetch catalogs as their freshness metadata specifies. They do not claim to mirror transient in-memory TUI state or running-session tool availability."
 )
 
 func ListReport(domainRaw string, scope Scope, available bool) (map[string]any, error) {

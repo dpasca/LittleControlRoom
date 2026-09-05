@@ -30,6 +30,7 @@ const (
 )
 
 type Options struct {
+	Visibility          map[string]bool
 	WorkspaceRoot       string
 	CodexHome           string
 	AgentsHome          string
@@ -103,6 +104,16 @@ func Discover(ctx context.Context, opts Options) (Catalog, error) {
 			return Catalog{}, err
 		}
 		for _, skill := range skills {
+			if enabled, ok := opts.Visibility[skill.Path]; ok && !enabled {
+				continue
+			}
+			if len(opts.Visibility) > 0 {
+				if canonical, err := filepath.EvalSymlinks(skill.Path); err == nil {
+					if enabled, ok := opts.Visibility[canonical]; ok && !enabled {
+						continue
+					}
+				}
+			}
 			key := normalizeName(skill.Name)
 			if key == "" {
 				continue

@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/control"
 	"lcroom/internal/demorecord"
+	"lcroom/internal/integrations"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
@@ -141,6 +142,7 @@ func New(opts Options) (*Server, error) {
 		}
 		var queryErr error
 		queryExecutor, queryErr = agentquery.NewExecutor(agentquery.Options{
+			Integrations:      integrations.New(integrations.Options{DataDir: opts.DataDir}),
 			Reader:            stateStore,
 			OriginProjectPath: projectPath,
 			Scope:             queryScope,
@@ -236,7 +238,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 				"version": "0.1.0",
 			},
 		}
-		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded persisted snapshots and never include private-category projects outside the originating project. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. When the user asks you to tell, hand off to, continue, trigger, or steer another embedded engineer, inspect the target session and propose engineer.send_prompt instead of asking the operator to relay the message. Supply the matching explicit provider and exact target_session_id for a known Codex, OpenCode, Claude Code, or LCAgent recipient. After confirmation LCR persists the message, steers an eligible active Codex turn, or waits to resume the exact recipient when idle. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
+		instructions := "Little Control Room exposes project runtime tools plus progressively discoverable read and control catalogs. For current LCR state, call list_lcr_queries with one exact domain, then describe_lcr_query and run_lcr_query. Query results are bounded snapshots and never include private-category projects outside the originating project. For skills, plugins, or MCP setup, discover the integrations query/control domains. These queries read native configuration or fetch catalogs; saved configuration is not proof of running-session tool availability. Inspect the provider and user/project scope before proposing changes with the inspected revision. Never submit literal credentials; use environment-variable references and native authentication. For actions, use list_control_capabilities, then describe_control_capability before propose_control_operation. When the user asks you to tell, hand off to, continue, trigger, or steer another embedded engineer, inspect the target session and propose engineer.send_prompt instead of asking the operator to relay the message. Supply the matching explicit provider and exact target_session_id for a known Codex, OpenCode, Claude Code, or LCAgent recipient. After confirmation LCR persists the message, steers an eligible active Codex turn, or waits to resume the exact recipient when idle. Every proposed write or external action is validated by LCR and waits for explicit operator confirmation. Use get_control_operation on a later turn to inspect its result."
 		if s.todoMode.Enabled() {
 			instructions += "\n\n" + todocapture.AgentInstructions(s.todoMode)
 		}
@@ -1121,7 +1123,7 @@ func queryCatalogTools(structuredTools bool) []mcpTool {
 		},
 		{
 			Name:        "run_lcr_query",
-			Description: "Run one previously described read-only LCR query. Results are bounded structured persisted snapshots with freshness and privacy metadata; this tool never performs a control action.",
+			Description: "Run one previously described read-only LCR query. Results are bounded structured snapshots with freshness and privacy metadata; integrations may read native configuration or fetch catalogs. This tool never performs a control action.",
 			InputSchema: map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,

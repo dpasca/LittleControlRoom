@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/buildinfo"
 	"lcroom/internal/control"
 	"lcroom/internal/demorecord"
+	"lcroom/internal/integrations"
 	projectinstructions "lcroom/internal/lcagent/instructions"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/policy"
@@ -546,6 +547,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		}
 		defer lcrStateStore.Close()
 		lcrQueries, err = agentquery.NewExecutor(agentquery.Options{
+			Integrations:      integrations.New(integrations.Options{DataDir: dataDir}),
 			Reader:            lcrStateStore,
 			OriginProjectPath: workspace.Root,
 			Scope:             lcrQueryScope,
@@ -562,6 +564,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var catalog skillcatalog.Catalog
 	if !opts.DisableSkills {
 		skillOptions := skillcatalog.DefaultOptions(workspace.Root)
+		skillOptions.Visibility, err = integrations.SkillVisibility(dataDir, workspace.Root)
+		if err != nil {
+			return fmt.Errorf("load skill visibility: %w", err)
+		}
 		if browserCapability.Enabled {
 			skillOptions.BrowserMode = skillcatalog.BrowserModeNativeTools
 		} else {

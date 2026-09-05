@@ -43,6 +43,31 @@ func TestDiscoverIndexesMetadataAndLoadsBody(t *testing.T) {
 	}
 }
 
+func TestDiscoverHonorsDisabledCanonicalAndOverlayPaths(t *testing.T) {
+	root, codexHome, overlay := t.TempDir(), t.TempDir(), t.TempDir()
+	projectPath := filepath.Join(root, ".agents", "skills", "project-skill", "SKILL.md")
+	userPath := filepath.Join(codexHome, "skills", "user-skill", "SKILL.md")
+	writeSkill(t, projectPath, "project-skill", "Project", "Body")
+	writeSkill(t, userPath, "user-skill", "User", "Body")
+	if err := os.Symlink(filepath.Join(codexHome, "skills"), filepath.Join(overlay, "skills")); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Discover(t.Context(), Options{WorkspaceRoot: root, CodexHome: overlay, Visibility: map[string]bool{projectPath: false, canonical: false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Skills) != 0 {
+		t.Fatalf("disabled skills exposed: %#v", catalog.Skills)
+	}
+	if _, err := catalog.Load("project-skill"); err == nil {
+		t.Fatal("disabled skill remains loadable")
+	}
+}
+
 func TestDiscoverPrefersProjectSkillDuplicate(t *testing.T) {
 	root := t.TempDir()
 	codexHome := t.TempDir()

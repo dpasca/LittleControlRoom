@@ -2,55 +2,89 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"lcroom/internal/codexskills"
+	"lcroom/internal/control"
+	"lcroom/internal/integrations"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
 type skillsDialogState struct {
-	Loading   bool
-	Inventory codexskills.Inventory
-	Err       error
-	Selected  int
-	Offset    int
-	RequestID int64
+	Loading       bool
+	Busy          bool
+	Inventory     integrations.Inventory
+	Target        integrations.Target
+	ProjectPath   string
+	Kind          string
+	Err           error
+	Selected      int
+	Offset        int
+	RequestID     int64
+	Notice        string
+	LastResult    *integrations.Result
+	Pending       *control.Invocation
+	Preview       string
+	PreviewOffset int
+	ShowingResult bool
+	DetailText    string
+	Editor        *integrationEditor
 }
 
+type integrationEditor struct {
+	Kind   string
+	Labels []string
+	Fields []textinput.Model
+	Focus  int
+	Err    string
+}
 type skillsInventoryMsg struct {
 	requestID int64
-	inventory codexskills.Inventory
+	inventory integrations.Inventory
 	err       error
 }
 
 func (m *Model) openSkillsDialog() tea.Cmd {
-	m.skillsInventorySeq++
-	requestID := m.skillsInventorySeq
-	m.skillsDialog = &skillsDialogState{
-		Loading:   true,
-		RequestID: requestID,
+	target := integrations.Target{Provider: "codex", Scope: "user"}
+	projectPath := ""
+	if project, ok := m.selectedProject(); ok {
+		projectPath = project.Path
 	}
+	if m.codexVisibleProject != "" {
+		projectPath = m.codexVisibleProject
+		if snapshot, ok := m.codexSnapshots[projectPath]; ok {
+			target.Provider = string(embeddedProvider(snapshot))
+		}
+	}
+	if projectPath != "" {
+		target.Scope = "project"
+		target.ProjectPath = projectPath
+	}
+	m.skillsInventorySeq++
+	m.skillsDialog = &skillsDialogState{Loading: true, Busy: m.integrationDialogBusy, RequestID: m.skillsInventorySeq, Target: target, ProjectPath: projectPath, Kind: "skill"}
 	m.commandMode = false
 	m.err = nil
-	m.status = "Loading Codex skills..."
-	return m.loadSkillsInventoryCmd(requestID)
+	m.status = "Loading agent integrations..."
+	return m.loadSkillsInventoryCmd(m.skillsInventorySeq)
 }
 
 func (m Model) loadSkillsInventoryCmd(requestID int64) tea.Cmd {
-	codexHome := m.codexHome()
+	manager := m.integrationManager()
+	target := m.skillsDialog.Target
 	parent := m.ctx
 	if parent == nil {
 		parent = context.Background()
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 		defer cancel()
-		inv, err := codexskills.LoadInventory(ctx, codexHome, time.Now())
+		inv, err := manager.Inventory(ctx, target)
 		return skillsInventoryMsg{requestID: requestID, inventory: inv, err: err}
 	}
 }
@@ -59,346 +93,478 @@ func (m Model) applySkillsInventoryMsg(msg skillsInventoryMsg) (tea.Model, tea.C
 	if m.skillsDialog == nil || m.skillsDialog.RequestID != msg.requestID {
 		return m, nil
 	}
-	m.skillsDialog.Loading = false
-	m.skillsDialog.Inventory = msg.inventory
-	m.skillsDialog.Err = msg.err
+	d := m.skillsDialog
+	d.Loading = false
+	d.Inventory = msg.inventory
+	d.Err = msg.err
 	if msg.err != nil {
-		m.status = "Codex skills scan failed: " + msg.err.Error()
-		return m, nil
-	}
-	attentionCount := len(codexskills.AttentionSkills(msg.inventory))
-	if attentionCount > 0 {
-		m.status = fmt.Sprintf("Codex skills loaded. %d skill(s) need review.", attentionCount)
+		m.status = "Integration inventory failed: " + msg.err.Error()
 	} else {
-		m.status = fmt.Sprintf("Codex skills loaded. %d skill(s) installed.", len(msg.inventory.Skills))
+		m.status = fmt.Sprintf("Loaded %d integration entries for %s", len(msg.inventory.Entries), d.Target.Provider)
 	}
 	m.syncSkillsDialogSelection()
-	return m, nil
-}
-
-func (m Model) updateSkillsDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.skillsDialog == nil {
-		return m, nil
-	}
-	switch msg.String() {
-	case "esc", "q":
-		m.skillsDialog = nil
-		m.status = "Codex skills closed"
-		return m, nil
-	case "r":
-		return m, m.refreshSkillsDialog()
-	case "up", "k":
-		m.moveSkillsDialogSelection(-1)
-		return m, nil
-	case "down", "j":
-		m.moveSkillsDialogSelection(1)
-		return m, nil
-	case "pgup", "ctrl+u":
-		m.moveSkillsDialogSelection(-m.skillsDialogListHeight())
-		return m, nil
-	case "pgdown", "ctrl+d":
-		m.moveSkillsDialogSelection(m.skillsDialogListHeight())
-		return m, nil
-	case "home":
-		m.skillsDialog.Selected = 0
-		m.syncSkillsDialogSelection()
-		return m, nil
-	case "end":
-		m.skillsDialog.Selected = len(m.skillsDialog.Inventory.Skills) - 1
-		m.syncSkillsDialogSelection()
-		return m, nil
-	case "c", "enter":
-		return m.copySelectedSkillPath()
-	}
 	return m, nil
 }
 
 func (m *Model) refreshSkillsDialog() tea.Cmd {
-	if m.skillsDialog == nil || m.skillsDialog.Loading {
+	if m.skillsDialog == nil || m.skillsDialog.Loading || m.skillsDialog.Busy {
 		return nil
 	}
 	m.skillsInventorySeq++
-	m.skillsDialog.RequestID = m.skillsInventorySeq
-	m.skillsDialog.Loading = true
-	m.skillsDialog.Err = nil
-	m.status = "Refreshing Codex skills..."
-	return m.loadSkillsInventoryCmd(m.skillsDialog.RequestID)
+	d := m.skillsDialog
+	d.RequestID = m.skillsInventorySeq
+	d.Loading = true
+	d.Err = nil
+	return m.loadSkillsInventoryCmd(d.RequestID)
 }
 
-func (m *Model) moveSkillsDialogSelection(delta int) {
-	if m.skillsDialog == nil || delta == 0 {
-		return
+func (m Model) integrationRows() []integrations.Entry {
+	rows := []integrations.Entry{}
+	if m.skillsDialog == nil {
+		return rows
 	}
-	m.skillsDialog.Selected += delta
-	m.syncSkillsDialogSelection()
+	for _, entry := range m.skillsDialog.Inventory.Entries {
+		if entry.Kind == m.skillsDialog.Kind {
+			rows = append(rows, entry)
+		}
+	}
+	return rows
+}
+
+func (m Model) selectedIntegration() (integrations.Entry, bool) {
+	rows := m.integrationRows()
+	if m.skillsDialog == nil || len(rows) == 0 {
+		return integrations.Entry{}, false
+	}
+	return rows[min(max(m.skillsDialog.Selected, 0), len(rows)-1)], true
 }
 
 func (m *Model) syncSkillsDialogSelection() {
-	dialog := m.skillsDialog
-	if dialog == nil {
-		return
-	}
-	items := dialog.Inventory.Skills
-	if len(items) == 0 {
-		dialog.Selected = 0
-		dialog.Offset = 0
-		return
-	}
-	if dialog.Selected < 0 {
-		dialog.Selected = 0
-	}
-	if dialog.Selected >= len(items) {
-		dialog.Selected = len(items) - 1
-	}
-	listHeight := m.skillsDialogListHeight()
-	if dialog.Offset < 0 {
-		dialog.Offset = 0
-	}
-	maxOffset := max(0, len(items)-listHeight)
-	if dialog.Offset > maxOffset {
-		dialog.Offset = maxOffset
-	}
-	if dialog.Selected < dialog.Offset {
-		dialog.Offset = dialog.Selected
-	}
-	if dialog.Selected >= dialog.Offset+listHeight {
-		dialog.Offset = dialog.Selected - listHeight + 1
-	}
-}
-
-func (m Model) selectedSkill() (codexskills.Skill, bool) {
 	if m.skillsDialog == nil {
-		return codexskills.Skill{}, false
+		return
 	}
-	items := m.skillsDialog.Inventory.Skills
-	if len(items) == 0 {
-		return codexskills.Skill{}, false
+	d := m.skillsDialog
+	count := len(m.integrationRows())
+	d.Selected = min(max(d.Selected, 0), max(count-1, 0))
+	height := m.skillsDialogListHeight()
+	d.Offset = min(max(d.Offset, 0), max(count-height, 0))
+	if d.Selected < d.Offset {
+		d.Offset = d.Selected
 	}
-	index := m.skillsDialog.Selected
-	if index < 0 || index >= len(items) {
-		return codexskills.Skill{}, false
+	if d.Selected >= d.Offset+height {
+		d.Offset = d.Selected - height + 1
 	}
-	return items[index], true
 }
 
-func (m Model) copySelectedSkillPath() (tea.Model, tea.Cmd) {
-	skill, ok := m.selectedSkill()
-	if !ok || strings.TrimSpace(skill.Path) == "" {
-		m.status = "No Codex skill selected"
+func (m Model) updateSkillsDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	d := m.skillsDialog
+	if d == nil {
 		return m, nil
 	}
-	if err := clipboardTextWriter(skill.Path); err != nil {
-		m.status = "Copy failed: " + err.Error()
+	if d.Busy {
+		if msg.String() == "esc" {
+			m.skillsDialog = nil
+			m.status = "Integration action continues in the background"
+		}
 		return m, nil
 	}
-	m.status = "Copied Codex skill path to clipboard"
+	if d.ShowingResult || d.DetailText != "" {
+		switch msg.String() {
+		case "esc", "enter", "v":
+			d.ShowingResult = false
+			d.DetailText = ""
+		case "down", "j":
+			d.PreviewOffset++
+		case "up", "k":
+			d.PreviewOffset = max(0, d.PreviewOffset-1)
+		case "pgdown":
+			d.PreviewOffset += 5
+		case "pgup":
+			d.PreviewOffset = max(0, d.PreviewOffset-5)
+		}
+		return m, nil
+	}
+	if d.Pending != nil {
+		switch msg.String() {
+		case "esc":
+			d.Pending = nil
+			d.Preview = ""
+		case "enter":
+			inv := *d.Pending
+			d.Pending = nil
+			d.Busy = true
+			m.integrationDialogBusy = true
+			d.Notice = "Applying integration change..."
+			return m, m.applyIntegrationCmd(inv, true)
+		case "down", "j":
+			d.PreviewOffset++
+		case "up", "k":
+			d.PreviewOffset = max(0, d.PreviewOffset-1)
+		case "pgdown":
+			d.PreviewOffset += 5
+		case "pgup":
+			d.PreviewOffset = max(0, d.PreviewOffset-5)
+		}
+		return m, nil
+	}
+	if d.Editor != nil {
+		return m.updateIntegrationEditor(msg)
+	}
+	switch msg.String() {
+	case "esc", "q":
+		m.skillsDialog = nil
+		m.status = "Integrations closed"
+		return m, nil
+	case "r":
+		return m, m.refreshSkillsDialog()
+	case "v":
+		if d.LastResult != nil {
+			d.ShowingResult = true
+			d.PreviewOffset = 0
+		}
+	case "tab":
+		kinds := []string{"skill", "mcp", "plugin"}
+		for i, kind := range kinds {
+			if d.Kind == kind {
+				d.Kind = kinds[(i+1)%len(kinds)]
+				break
+			}
+		}
+		d.Selected = 0
+		d.Offset = 0
+	case "p":
+		if d.Loading {
+			return m, nil
+		}
+		providers := []string{"codex", "claude_code", "opencode", "lcagent"}
+		for i, p := range providers {
+			if d.Target.Provider == p {
+				d.Target.Provider = providers[(i+1)%len(providers)]
+				break
+			}
+		}
+		d.Selected = 0
+		d.Offset = 0
+		return m, m.refreshSkillsDialog()
+	case "s":
+		if d.Loading {
+			return m, nil
+		}
+		if d.Target.Scope == "project" {
+			d.Target.Scope = "user"
+			d.Target.ProjectPath = ""
+		} else if d.ProjectPath != "" {
+			d.Target.Scope = "project"
+			d.Target.ProjectPath = d.ProjectPath
+		} else {
+			d.Notice = "Select a project before choosing project scope"
+			return m, nil
+		}
+		d.Selected = 0
+		d.Offset = 0
+		return m, m.refreshSkillsDialog()
+	case "up", "k":
+		d.Selected--
+	case "down", "j":
+		d.Selected++
+	case "pgup", "ctrl+u":
+		d.Selected -= m.skillsDialogListHeight()
+	case "pgdown", "ctrl+d":
+		d.Selected += m.skillsDialogListHeight()
+	case "home":
+		d.Selected = 0
+	case "end":
+		d.Selected = len(m.integrationRows()) - 1
+	case "enter":
+		if entry, ok := m.selectedIntegration(); ok {
+			d.DetailText = fmt.Sprintf("%s\n\n%s\n\nSource: %s / %s\nPath: %s\nConfiguration: %s\nState: %s\n%s\nActions: %s", entry.Name, entry.Description, entry.Scope, entry.Source, entry.Path, entry.ConfigPath, entry.State, entry.Detail, strings.Join(entry.Actions, ", "))
+		} else {
+			d.DetailText = "No integration entries at this scope."
+		}
+		for _, warning := range d.Inventory.Warnings {
+			d.DetailText += "\n\nWarning: " + warning
+		}
+		d.DetailText += "\n\n" + d.Inventory.Activation
+		d.PreviewOffset = 0
+	case "c":
+		if entry, ok := m.selectedIntegration(); ok {
+			path := entry.Path
+			if path == "" {
+				path = entry.ConfigPath
+			}
+			if err := clipboardTextWriter(path); err != nil {
+				d.Notice = "Copy failed"
+			} else {
+				d.Notice = "Copied integration path"
+			}
+		}
+	case "a":
+		if d.Loading || d.Err != nil {
+			return m, nil
+		}
+		return m, m.openIntegrationEditor()
+	case " ", "d", "t":
+		if d.Loading || d.Err != nil {
+			return m, nil
+		}
+		entry, ok := m.selectedIntegration()
+		if !ok {
+			return m, nil
+		}
+		action := "set_enabled"
+		if msg.String() == "d" {
+			action = "remove"
+		}
+		if msg.String() == "t" {
+			action = "check_mcp"
+		}
+		if !entry.Can(action) {
+			d.Notice = "This action is unavailable for the selected source or scope"
+			return m, nil
+		}
+		change := integrations.Change{Target: d.Target, Action: action, ExpectedRevision: d.Inventory.Revision, EntryID: entry.ID, EntryName: entry.Name}
+		if action == "set_enabled" {
+			enabled := !entry.Enabled
+			change.Enabled = &enabled
+		}
+		m.prepareIntegrationChange(change)
+	}
+	m.syncSkillsDialogSelection()
 	return m, nil
+}
+
+func (m *Model) prepareIntegrationChange(change integrations.Change) {
+	inv, err := integrationInvocation(change)
+	if err != nil {
+		m.skillsDialog.Notice = err.Error()
+		return
+	}
+	d := m.skillsDialog
+	d.Pending = &inv
+	d.Preview = integrations.Preview(change)
+	d.PreviewOffset = 0
+	d.Editor = nil
+}
+
+func (m *Model) openIntegrationEditor() tea.Cmd {
+	d := m.skillsDialog
+	editor := &integrationEditor{Kind: d.Kind}
+	switch d.Kind {
+	case "skill":
+		editor.Labels = []string{"Local skill directory (or leave empty for Git)", "Git HTTPS URL (alternative to local directory)", "Git revision", "Subdirectory"}
+	case "mcp":
+		editor.Labels = []string{"Server name", "Remote URL (or leave empty for local command)", "Command as JSON array, e.g. [\"uvx\",\"server\"]", "Environment variable names, comma separated", "Header environment references as JSON object"}
+	case "plugin":
+		editor.Labels = []string{"Plugin name@marketplace"}
+	}
+	for _, label := range editor.Labels {
+		field := textinput.New()
+		field.Placeholder = label
+		field.CharLimit = 2000
+		field.Width = 70
+		editor.Fields = append(editor.Fields, field)
+	}
+	editor.Fields[0].Focus()
+	d.Editor = editor
+	return textinput.Blink
+}
+
+func (m Model) updateIntegrationEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	d := m.skillsDialog
+	e := d.Editor
+	switch msg.String() {
+	case "esc":
+		d.Editor = nil
+		return m, nil
+	case "tab", "shift+tab":
+		e.Fields[e.Focus].Blur()
+		delta := 1
+		if msg.String() == "shift+tab" {
+			delta = -1
+		}
+		e.Focus = (e.Focus + delta + len(e.Fields)) % len(e.Fields)
+		return m, e.Fields[e.Focus].Focus()
+	case "enter":
+		get := func(i int) string { return strings.TrimSpace(e.Fields[i].Value()) }
+		change := integrations.Change{Target: d.Target, ExpectedRevision: d.Inventory.Revision}
+		switch e.Kind {
+		case "skill":
+			change.Action = "install_skill"
+			change.SourcePath = get(0)
+			change.GitURL = get(1)
+			change.GitRef = get(2)
+			change.Subdirectory = get(3)
+		case "plugin":
+			change.Action = "install_plugin"
+			change.Plugin = get(0)
+		case "mcp":
+			change.Action = "add_mcp"
+			change.MCP = &integrations.MCPConfig{Name: get(0), URL: get(1)}
+			if get(2) != "" {
+				if err := json.Unmarshal([]byte(get(2)), &change.MCP.Command); err != nil {
+					e.Err = "Command must be a JSON array of strings"
+					return m, nil
+				}
+			}
+			for _, name := range strings.Split(get(3), ",") {
+				if name = strings.TrimSpace(name); name != "" {
+					change.MCP.EnvVars = append(change.MCP.EnvVars, name)
+				}
+			}
+			if get(4) != "" {
+				if err := json.Unmarshal([]byte(get(4)), &change.MCP.HeaderEnv); err != nil {
+					e.Err = "Header references must be a JSON object mapping headers to environment names"
+					return m, nil
+				}
+			}
+		}
+		if _, err := integrations.ValidateChange(change); err != nil {
+			e.Err = err.Error()
+			return m, nil
+		}
+		m.prepareIntegrationChange(change)
+		return m, nil
+	}
+	var cmd tea.Cmd
+	e.Fields[e.Focus], cmd = e.Fields[e.Focus].Update(msg)
+	return m, cmd
 }
 
 func (m Model) renderSkillsDialogOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderSkillsDialog(bodyW, bodyH)
-	panelWidth := lipgloss.Width(panel)
-	panelHeight := lipgloss.Height(panel)
-	left := max(0, (bodyW-panelWidth)/2)
-	top := max(0, (bodyH-panelHeight)/4)
-	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+	return overlayBlock(body, panel, bodyW, bodyH, max(0, (bodyW-lipgloss.Width(panel))/2), max(0, (bodyH-lipgloss.Height(panel))/3))
 }
 
 func (m Model) renderSkillsDialog(bodyW, bodyH int) string {
-	panelWidth := min(bodyW, min(max(64, bodyW-8), 108))
-	panelInnerWidth := max(32, panelWidth-4)
-	content := m.renderSkillsDialogContent(panelInnerWidth)
-	return renderDialogPanel(panelWidth, panelInnerWidth, content)
+	panelWidth := max(1, min(bodyW-2, min(max(64, bodyW-8), 112)))
+	inner := max(1, panelWidth-2)
+	return renderDialogPanel(panelWidth, inner, m.renderSkillsDialogContent(inner))
 }
 
 func (m Model) renderSkillsDialogContent(width int) string {
-	dialog := m.skillsDialog
-	if dialog == nil {
+	d := m.skillsDialog
+	if d == nil {
 		return ""
 	}
-	lines := []string{
-		commandPaletteTitleStyle.Render("Codex Skills"),
-		commandPaletteHintStyle.Render(skillsFitLine(skillsDialogSummary(*dialog), width)),
+	lines := []string{commandPaletteTitleStyle.Render("Agent Integrations"), commandPaletteHintStyle.Render(skillsFitLine(fmt.Sprintf("%s  |  %s scope  |  %s", d.Target.Provider, d.Target.Scope, d.Kind), width))}
+	if d.Target.ProjectPath != "" {
+		lines = append(lines, skillsFitLine(d.Target.ProjectPath, width))
 	}
-	if dialog.Loading {
-		lines = append(lines, "", detailMutedStyle.Render("Loading "+skillsSpinnerDots(m.spinnerFrame)))
-		return strings.Join(lines, "\n")
-	}
-	if dialog.Err != nil {
-		lines = append(lines, "", detailDangerStyle.Render(skillsFitLine(dialog.Err.Error(), width)))
-		return strings.Join(lines, "\n")
-	}
-	items := dialog.Inventory.Skills
-	if len(items) == 0 {
-		lines = append(lines, "", detailMutedStyle.Render("No Codex skills found."))
-		return strings.Join(lines, "\n")
-	}
-	lines = append(lines, "")
-	lines = append(lines, m.renderSkillsDialogRows(width)...)
-	if skill, ok := m.selectedSkill(); ok {
+	if d.Pending != nil || d.ShowingResult || d.DetailText != "" {
+		content := d.Preview
+		footer := "↑↓ scroll  |  Enter confirms  |  Esc cancels"
+		if d.ShowingResult && d.LastResult != nil {
+			content = d.Notice + "\n\n" + d.LastResult.Activation
+			for _, path := range d.LastResult.ChangedPaths {
+				content += "\nChanged: " + path
+			}
+			for _, path := range d.LastResult.BackupPaths {
+				content += "\nRecovery: " + path
+			}
+			if check := d.LastResult.Check; check != nil {
+				content += "\nTools: " + strings.Join(check.Tools, ", ")
+			}
+			footer = "↑↓ scroll  |  Enter / Esc returns"
+		}
+		if d.DetailText != "" {
+			content = d.DetailText
+			footer = "↑↓ scroll  |  Enter / Esc returns"
+		}
+		parts := strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")
+		height := max(3, m.height-12)
+		start := min(d.PreviewOffset, max(0, len(parts)-height))
+		end := min(len(parts), start+height)
 		lines = append(lines, "")
-		lines = append(lines, m.renderSkillDetail(skill, width)...)
+		lines = append(lines, parts[start:end]...)
+		lines = append(lines, "", commandPaletteHintStyle.Render(skillsFitLine(footer, width)))
+		return strings.Join(lines, "\n")
 	}
-	lines = append(lines, "")
-	lines = append(lines, renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-		renderDialogAction("c/Enter", "copy path", commitActionKeyStyle, commitActionTextStyle)+"   "+
-		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle))
+	if d.Editor != nil {
+		e := d.Editor
+		lines = append(lines, "", detailMutedStyle.Render("Use environment-variable names for credentials."))
+		visible := max(1, (m.height-13)/2)
+		start := max(0, e.Focus-visible+1)
+		for i := start; i < min(len(e.Labels), start+visible); i++ {
+			label := e.Labels[i]
+			field := e.Fields[i]
+			field.Width = max(1, width-2)
+			lines = append(lines, skillsFitLine(label, width), field.View())
+		}
+		if e.Err != "" {
+			lines = append(lines, detailDangerStyle.Render(skillsFitLine(e.Err, width)))
+		}
+		lines = append(lines, "", commandPaletteHintStyle.Render(skillsFitLine("Tab selects field  |  Enter reviews  |  Esc cancels", width)))
+		return strings.Join(lines, "\n")
+	}
+	if d.Busy {
+		lines = append(lines, "", detailMutedStyle.Render("Applying change"+skillsSpinnerDots(m.spinnerFrame)), "Esc hides this panel; the action continues.")
+		return strings.Join(lines, "\n")
+	}
+	if d.Loading {
+		lines = append(lines, "", detailMutedStyle.Render("Loading"+skillsSpinnerDots(m.spinnerFrame)))
+		return strings.Join(lines, "\n")
+	}
+	if d.Err != nil {
+		lines = append(lines, "", detailDangerStyle.Render(skillsFitLine(d.Err.Error(), width)))
+	} else {
+		rows := m.integrationRows()
+		lines = append(lines, "")
+		if len(rows) == 0 {
+			lines = append(lines, detailMutedStyle.Render("No entries found at this scope."))
+		}
+		for i := d.Offset; i < min(len(rows), d.Offset+m.skillsDialogListHeight()); i++ {
+			entry := rows[i]
+			prefix := "  "
+			if i == d.Selected {
+				prefix = "> "
+			}
+			line := skillsFitLine(fmt.Sprintf("%s%-30s  %-12s  %s / %s", prefix, entry.Name, entry.State, entry.Scope, entry.Source), width)
+			if i == d.Selected {
+				line = detailValueStyle.Render(line)
+			}
+			lines = append(lines, line)
+		}
+		if entry, ok := m.selectedIntegration(); ok {
+			lines = append(lines, "", skillsDialogField("Name", entry.Name, width))
+			path := entry.Path
+			if path == "" {
+				path = entry.ConfigPath
+			}
+			lines = append(lines, skillsDialogField("Path", path, width))
+			if entry.Description != "" {
+				lines = append(lines, skillsDialogField("About", entry.Description, width))
+			}
+			lines = append(lines, skillsDialogField("State", entry.Detail, width), skillsDialogField("Actions", strings.Join(entry.Actions, ", "), width))
+		}
+		if len(d.Inventory.Warnings) > 0 {
+			lines = append(lines, detailDangerStyle.Render(skillsFitLine(d.Inventory.Warnings[0], width)))
+		}
+	}
+	if d.Notice != "" {
+		lines = append(lines, "", skillsFitLine(d.Notice, width))
+	}
+	for _, hint := range []string{"", "Disk configuration; reconnect idle sessions after changes.", "Tab kind | p agent | s scope | a add | Space toggle", "Enter details | t test | d remove | v result | c copy | r refresh"} {
+		lines = append(lines, commandPaletteHintStyle.Render(skillsFitLine(hint, width)))
+	}
 	return strings.Join(lines, "\n")
 }
 
-func skillsDialogSummary(dialog skillsDialogState) string {
-	if dialog.Loading {
-		return "Scanning Codex home..."
-	}
-	inv := dialog.Inventory
-	attentionCount := len(codexskills.AttentionSkills(inv))
-	return fmt.Sprintf("%d installed | %d user | %d system | %d plugin | %d review | %s",
-		len(inv.Skills),
-		codexskills.CountBySource(inv, codexskills.SourceUser),
-		codexskills.CountBySource(inv, codexskills.SourceSystem),
-		codexskills.CountBySource(inv, codexskills.SourcePlugin),
-		attentionCount,
-		inv.CodexHome,
-	)
-}
-
-func (m Model) renderSkillsDialogRows(width int) []string {
-	dialog := m.skillsDialog
-	if dialog == nil {
-		return nil
-	}
-	items := dialog.Inventory.Skills
-	listHeight := m.skillsDialogListHeight()
-	start := dialog.Offset
-	if start < 0 {
-		start = 0
-	}
-	end := min(len(items), start+listHeight)
-	lines := make([]string, 0, listHeight+2)
-	if start > 0 {
-		lines = append(lines, commandPaletteHintStyle.Render(skillsFitLine("up more", width)))
-	}
-	nameWidth := min(28, max(14, width/4))
-	sourceWidth := min(16, max(8, width/6))
-	statusWidth := 8
-	descWidth := max(10, width-nameWidth-sourceWidth-statusWidth-8)
-	for i := start; i < end; i++ {
-		skill := items[i]
-		selected := i == dialog.Selected
-		marker := " "
-		if selected {
-			marker = ">"
-		}
-		status := "ok"
-		if len(skill.Attention) > 0 {
-			status = "review"
-		}
-		line := fmt.Sprintf("%s %-*s %-*s %-*s %s",
-			marker,
-			nameWidth,
-			truncateText(skill.InvocationName, nameWidth),
-			sourceWidth,
-			truncateText(skill.SourceLabel, sourceWidth),
-			statusWidth,
-			status,
-			truncateText(skill.Description, descWidth),
-		)
-		style := commandPaletteRowStyle
-		if selected {
-			style = commandPaletteSelectStyle
-		} else if len(skill.Attention) > 0 {
-			style = detailWarningStyle
-		}
-		lines = append(lines, style.Render(skillsFitLine(line, width)))
-	}
-	if end < len(items) {
-		lines = append(lines, commandPaletteHintStyle.Render(skillsFitLine("down more", width)))
-	}
-	return lines
-}
-
-func (m Model) renderSkillDetail(skill codexskills.Skill, width int) []string {
-	lines := []string{
-		detailSectionStyle.Render("Selected"),
-		skillsDialogField("Name", skill.InvocationName, width),
-		skillsDialogField("Source", skill.SourceLabel, width),
-		skillsDialogField("Updated", formatSkillModifiedAt(skill.ModifiedAt), width),
-		skillsDialogField("Path", skill.Path, width),
-	}
-	if strings.TrimSpace(skill.SymlinkTarget) != "" {
-		lines = append(lines, skillsDialogField("Link", skill.SymlinkTarget, width))
-	}
-	if strings.TrimSpace(skill.Description) != "" {
-		lines = append(lines, skillsDialogWrappedField("About", skill.Description, width)...)
-	}
-	if len(skill.Attention) > 0 {
-		lines = append(lines, detailWarningStyle.Render("Review"))
-		for _, item := range skill.Attention {
-			lines = append(lines, detailWarningStyle.Render(skillsFitLine("- "+item, width)))
-		}
-	}
-	return lines
-}
-
 func skillsDialogField(label, value string, width int) string {
-	if strings.TrimSpace(value) == "" {
+	if value == "" {
 		value = "-"
 	}
-	prefix := detailLabelStyle.Render(label + ":")
-	prefixWidth := ansi.StringWidth(label + ": ")
-	return prefix + " " + detailValueStyle.Render(truncateText(value, max(1, width-prefixWidth)))
+	return skillsFitLine(label+": "+value, width)
 }
-
-func skillsDialogWrappedField(label, value string, width int) []string {
-	prefix := detailLabelStyle.Render(label + ":")
-	prefixPlainWidth := ansi.StringWidth(label + ": ")
-	textWidth := max(1, width-prefixPlainWidth)
-	wrapped := lipgloss.NewStyle().Width(textWidth).Render(strings.TrimSpace(value))
-	parts := strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n")
-	lines := make([]string, 0, len(parts))
-	for i, part := range parts {
-		if i == 0 {
-			lines = append(lines, prefix+" "+detailValueStyle.Render(part))
-			continue
-		}
-		lines = append(lines, strings.Repeat(" ", prefixPlainWidth)+detailValueStyle.Render(part))
-	}
-	return lines
-}
-
 func (m Model) skillsDialogListHeight() int {
 	if m.height <= 0 {
 		return 8
 	}
-	return min(10, max(4, m.height-18))
+	return min(10, max(2, m.height-22))
 }
-
-func formatSkillModifiedAt(t time.Time) string {
-	if t.IsZero() {
-		return "-"
-	}
-	return t.Format("2006-01-02 15:04")
-}
-
 func skillsFitLine(text string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if ansi.StringWidth(text) <= width {
-		return text
-	}
 	return ansi.Truncate(text, width, "...")
 }
-
-func skillsSpinnerDots(frame int) string {
-	switch frame % 4 {
-	case 0:
-		return "."
-	case 1:
-		return ".."
-	case 2:
-		return "..."
-	default:
-		return ""
-	}
-}
+func skillsSpinnerDots(frame int) string { return strings.Repeat(".", frame%4) }

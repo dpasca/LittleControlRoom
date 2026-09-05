@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"lcroom/internal/control"
+	"lcroom/internal/integrations"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -27,6 +28,7 @@ type ControlInvocationCanceledMsg struct {
 }
 
 type ControlInvocationResultMsg struct {
+	IntegrationResult *integrations.Result
 	Invocation        control.Invocation
 	Status            string
 	Activity          *ViewEngineerActivity
@@ -351,6 +353,13 @@ func bossActionHasLosslessPacket(action bossAction) bool {
 }
 
 func controlConfirmationContent(inv control.Invocation) (string, error) {
+	if inv.Capability == control.CapabilityIntegrationsManage {
+		var input control.IntegrationsManageInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		return integrations.Preview(input.Change), nil
+	}
 	switch inv.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		var input control.EngineerSendPromptInput
@@ -713,6 +722,18 @@ func controlResultContent(msg ControlInvocationResultMsg) string {
 	}
 	if status == "" {
 		status = "Control action completed."
+	}
+	if result := msg.IntegrationResult; result != nil {
+		status += "\n\n" + result.Activation
+		for _, path := range result.ChangedPaths {
+			status += "\nChanged: " + path
+		}
+		for _, path := range result.BackupPaths {
+			status += "\nRecovery: " + path
+		}
+		if result.Check != nil && len(result.Check.Tools) > 0 {
+			status += "\nDiscovered tools: " + strings.Join(result.Check.Tools, ", ")
+		}
 	}
 	return status
 }

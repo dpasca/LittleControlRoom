@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/bossrun"
 	"lcroom/internal/control"
 	"lcroom/internal/demorecord"
+	"lcroom/internal/integrations"
 	"lcroom/internal/model"
 )
 
@@ -57,6 +58,7 @@ const (
 )
 
 type Executor struct {
+	integrations      integrations.Reader
 	reader            Reader
 	originProjectPath string
 	scope             Scope
@@ -67,6 +69,7 @@ type Executor struct {
 }
 
 type Options struct {
+	Integrations      integrations.Reader
 	Reader            Reader
 	OriginProjectPath string
 	Scope             Scope
@@ -110,6 +113,7 @@ func NewExecutor(options Options) (*Executor, error) {
 		return nil, err
 	}
 	return &Executor{
+		integrations:      options.Integrations,
 		reader:            options.Reader,
 		originProjectPath: originProjectPath,
 		scope:             scope,
@@ -142,6 +146,10 @@ func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMes
 	var result map[string]any
 	var err error
 	switch capability.Name {
+	case QueryIntegrationsList:
+		result, err = e.integrationList(ctx, arguments)
+	case QueryIntegrationsCatalog:
+		result, err = e.integrationCatalog(ctx, arguments)
 	case QueryPortfolioOverview:
 		result, err = e.portfolioOverview(ctx, arguments)
 	case QueryProjectList:

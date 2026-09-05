@@ -127,7 +127,8 @@ func helpChatAgentSystemPrompt(req AssistantRequest) string {
 		"For Little Control Room commands, keybindings, launch flags, recording, or instructions for using a workflow, call lookup_lcr_help before answering. Its generated help corpus is authoritative; do not say a feature is unavailable merely because you do not remember it.",
 		"Distinguish app-usage help from questions about what is happening now. A question about the status, history, health, or meaning of a visible project, worktree, task, session, process, or dashboard item needs state inspection, not lookup_lcr_help.",
 		"For persisted LCR state, use the progressive query catalog: list_lcr_queries without a domain, list it again with one exact domain, describe_lcr_query, then run_lcr_query. Do not invent query names or argument fields.",
-		"For live TUI state, processes, Chat recall, linked transcript context, installed skills, or fresh repository inspection, use the matching Help Chat inspection tool.",
+		"For live TUI state, processes, Chat recall, linked transcript context, or fresh repository inspection, use the matching Help Chat inspection tool.",
+		"For skills, plugins, and MCP setup, discover the integrations query and control domains. Inspect integrations.list for the chosen provider and user/project scope; use integrations.catalog for available sources, then propose integrations.manage with the inspected revision. Configuration saved on disk is not proof that the running engineer can use it. Never request or submit literal credentials; use environment-variable references and native authentication.",
 		"For an app mutation or engineer handoff, use list_control_capabilities, describe_control_capability, then propose_control_operation. A proposal is terminal and is not execution: the host will show the existing confirmation UI, and you must never claim it already ran.",
 		"Use project.set_category for registering or organizing an existing folder in an LCR category. Use todo.add only to park explicit backlog work. Use todo.create_worktree_and_start_engineer for loaded-project implementation requested now. Use project.create_and_start_engineer for a new or untracked repository that should be worked on now.",
 		"For prompt-bearing controls, preserve named sources, metrics, timeframes, negations, and exclusions in intent_excerpt, preserved_meaning, and success_condition. Do not silently broaden or substitute the task.",
@@ -289,6 +290,7 @@ func (a *Assistant) helpChatAgentQueryExecutor(req AssistantRequest) (*agentquer
 		demoRecordings = demorecord.NewDiscovery(a.dataDir)
 	}
 	return agentquery.NewExecutor(agentquery.Options{
+		Integrations:   a.integrationManager(),
 		Reader:         a.agentQueryReader,
 		Scope:          agentquery.ScopePortfolio,
 		Disclosure:     disclosure,
@@ -402,6 +404,27 @@ func addHelpChatLosslessPacket(args helpChatControlProposalArgs) (json.RawMessag
 }
 
 func (a *Assistant) reviewHelpChatControlProposal(ctx context.Context, req AssistantRequest, invocation control.Invocation, scopeNote string) (control.Invocation, string, model.LLMUsage, error) {
+	if invocation.Capability == control.CapabilityIntegrationsManage {
+		var input control.IntegrationsManageInput
+		if err := json.Unmarshal(invocation.Args, &input); err != nil {
+			return control.Invocation{}, "", model.LLMUsage{}, err
+		}
+		if input.Scope == "project" {
+			executor, err := a.helpChatAgentQueryExecutor(req)
+			if err != nil {
+				return control.Invocation{}, "", model.LLMUsage{}, err
+			}
+			if executor == nil {
+				return control.Invocation{}, "", model.LLMUsage{}, fmt.Errorf("project inventory is unavailable")
+			}
+			raw, _ := json.Marshal(map[string]any{"project_path": input.ProjectPath})
+			if _, err := executor.Execute(ctx, agentquery.QueryProjectDetail, raw); err != nil {
+				return control.Invocation{}, "", model.LLMUsage{}, err
+			}
+		}
+		preview, err := controlConfirmationContent(invocation)
+		return invocation, proposalContentWithScopeNote(scopeNote, preview), model.LLMUsage{}, err
+	}
 	action, err := bossActionFromControlInvocation(invocation)
 	if err != nil {
 		return control.Invocation{}, "", model.LLMUsage{}, wrapControlProposalError(err)

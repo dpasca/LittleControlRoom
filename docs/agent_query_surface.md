@@ -45,6 +45,8 @@ the query the agent intends to run.
 | `work.goal_run_list` | `portfolio` | Durable goal-run summaries. |
 | `work.goal_run_get` | `portfolio` | One durable goal run with a bounded newest-first trace. |
 | `demo_recording.latest` | `project` | The active demo recording, or latest finalized package, with conditional package-path disclosure. |
+| `integrations.list` | `project` (user inventory requires `portfolio`) | Bounded native skill/plugin/MCP inventory with source, supported actions, revision, and activation warnings. |
+| `integrations.catalog` | `portfolio` | Curated skill sources or available native Codex marketplace plugins. |
 
 The internal CLI defaults query access to `project` scope. LCR's managed
 embedded-session launchers explicitly grant `portfolio` scope so an agent can
@@ -92,10 +94,15 @@ that content is relevant. Metadata-only session listings are marked
 
 ## Freshness and bounds
 
-Every result declares `freshness: persisted_snapshot` and includes an `as_of`
-timestamp. Results describe persisted state read by the query—normally the
+Every result declares its freshness and includes an `as_of` timestamp. Most
+declare `persisted_snapshot` and describe persisted state read by the query—normally the
 SQLite snapshot—and do not claim to mirror transient in-memory TUI state or a
 provider process between persisted updates.
+
+Integration queries instead declare `configuration_on_disk` or `catalog_fetch`.
+They do not assert running-session availability. Project visibility is checked
+before reading integration sources; credentials and native MCP arguments are
+omitted. See [Agent integrations](agent_integrations.md) for scope and limits.
 
 The demo-recording query reads LCR's private discovery reference and the
 package manifest at call time. An incomplete package is reported as active or

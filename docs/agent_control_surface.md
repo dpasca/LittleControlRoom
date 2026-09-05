@@ -74,6 +74,13 @@ tools after the turn begins.
 
 ## Architecture
 
+The `integrations` domain exposes `integrations.manage` through the same
+confirmation path, with explicit provider/scope and an inspected configuration
+revision. It covers skill installation/visibility/removal, supported native
+plugins, MCP configuration, and separate connection checks. Help Chat and all
+embedded providers can propose these actions. See
+[Agent integrations](agent_integrations.md) for compatibility and activation.
+
 ```text
 generated runtime skill                 embedded LCAgent
           |                                    |

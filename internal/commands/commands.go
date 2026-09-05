@@ -175,7 +175,8 @@ var specs = []Spec{
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
 	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
-	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
+	{Name: "skills", Usage: "/skills", Summary: "Manage agent skills, MCP connections, and plugins"},
+	{Name: "integrations", Usage: "/integrations", Summary: "Manage agent skills, MCP connections, and plugins"},
 	{Name: "setup", Usage: "/setup", Summary: "Open the friendly AI setup concierge"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "category", Usage: "/category create|remove|move|clear [name]", Summary: "Create categories or move the selected item between category tabs"},
@@ -522,7 +523,7 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /settings")
 		}
 		return Invocation{Kind: KindSettings, Canonical: "/settings"}, nil
-	case "skills":
+	case "skills", "integrations":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /skills")
 		}

@@ -80,7 +80,8 @@ var specs = []Spec{
 	{Name: "permissions", Usage: "/permissions [off|low|medium]", Summary: "Show or change LCAgent permission level for this session"},
 	{Name: "chat", Usage: "/chat", Summary: "Open Chat over the main dashboard"},
 	{Name: "help", Usage: "/help", Summary: "Alias for /chat", Hidden: true},
-	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
+	{Name: "skills", Usage: "/skills", Summary: "Manage agent skills, MCP connections, and native plugins"},
+	{Name: "integrations", Usage: "/integrations", Summary: "Manage agent skills, MCP connections, and native plugins"},
 	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
@@ -202,11 +203,11 @@ func Suggestions(input string) []Suggestion {
 			Display: "/chat",
 			Summary: "Open Chat over the main dashboard",
 		}}
-	case "skills":
+	case "skills", "integrations":
 		return []Suggestion{{
 			Insert:  "/skills",
 			Display: "/skills",
-			Summary: "Open the local Codex skills inventory",
+			Summary: "Manage agent skills, MCP connections, and native plugins",
 		}}
 	case "settings":
 		return []Suggestion{{
@@ -465,7 +466,7 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindChat,
 			Canonical: "/chat",
 		}, nil
-	case "skills":
+	case "skills", "integrations":
 		if strings.TrimSpace(rawArgs) != "" {
 			return Invocation{}, fmt.Errorf("usage: /skills")
 		}

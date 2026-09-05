@@ -103,7 +103,7 @@ For current project, portfolio, assessment, delegated-task, or goal-run state:
 2. Select one query and call ` + "`describe_lcr_query`" + ` to load only its strict input schema, output envelope, scope, sensitivity, and freshness contract.
 3. Call ` + "`run_lcr_query`" + ` with arguments matching that schema. Follow ` + "`next_cursor`" + ` only when more records are needed.
 
-Query results are bounded persisted snapshots, not guaranteed mirrors of transient TUI memory. Private-category projects and tasks are hidden except when they belong to this session's originating project. Do not infer that Help Chat transcripts, raw event payloads, or arbitrary cross-project files are available through this catalog.
+Most query results are bounded persisted snapshots, not guaranteed mirrors of transient TUI memory. Integrations queries inspect native configuration or fetch catalogs; saved configuration is not proof of running-session availability. For skills, plugins, or MCP setup, discover the integrations query and control domains, inspect the chosen provider and scope, then propose changes using the inspected revision. Never submit literal credentials; use environment-variable references and native authentication. Private-category projects and tasks are hidden except when they belong to this session's originating project. Do not infer that Help Chat transcripts, raw event payloads, or arbitrary cross-project files are available through this catalog.
 
 ## Communicating with another engineer session
 

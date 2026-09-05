@@ -183,7 +183,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Process inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
 	}
 	if m.skillsDialog != nil {
-		return m.renderModalFooter(width, "Codex skills: ↑↓ select, c copy path, r refresh, Esc close", supplementSegments...)
+		return m.renderModalFooter(width, "Integrations: Tab kind, p agent, s scope, a add, Space toggle, t check, d remove, Esc close", supplementSegments...)
 	}
 	if m.commandMode {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)

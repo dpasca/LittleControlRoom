@@ -10,6 +10,7 @@ import (
 type CapabilityName string
 
 const (
+	CapabilityIntegrationsManage                 CapabilityName = "integrations.manage"
 	CapabilityEngineerSendPrompt                 CapabilityName = "engineer.send_prompt"
 	CapabilityAgentTaskCreate                    CapabilityName = "agent_task.create"
 	CapabilityAgentTaskContinue                  CapabilityName = "agent_task.continue"
@@ -27,6 +28,7 @@ const (
 
 func CapabilityNameValues() []CapabilityName {
 	return []CapabilityName{
+		CapabilityIntegrationsManage,
 		CapabilityEngineerSendPrompt,
 		CapabilityAgentTaskCreate,
 		CapabilityAgentTaskContinue,
@@ -50,16 +52,18 @@ func CapabilityNameStrings(includeEmpty bool) []string {
 type CapabilityDomain string
 
 const (
-	CapabilityDomainEngineer CapabilityDomain = "engineer"
-	CapabilityDomainTask     CapabilityDomain = "agent_task"
-	CapabilityDomainProject  CapabilityDomain = "project"
-	CapabilityDomainTodo     CapabilityDomain = "todo"
-	CapabilityDomainSettings CapabilityDomain = "settings"
-	CapabilityDomainGit      CapabilityDomain = "git"
+	CapabilityDomainIntegrations CapabilityDomain = "integrations"
+	CapabilityDomainEngineer     CapabilityDomain = "engineer"
+	CapabilityDomainTask         CapabilityDomain = "agent_task"
+	CapabilityDomainProject      CapabilityDomain = "project"
+	CapabilityDomainTodo         CapabilityDomain = "todo"
+	CapabilityDomainSettings     CapabilityDomain = "settings"
+	CapabilityDomainGit          CapabilityDomain = "git"
 )
 
 func CapabilityDomainValues() []CapabilityDomain {
 	return []CapabilityDomain{
+		CapabilityDomainIntegrations,
 		CapabilityDomainEngineer,
 		CapabilityDomainTask,
 		CapabilityDomainProject,
@@ -75,6 +79,8 @@ func CapabilityDomainStrings(includeEmpty bool) []string {
 
 func NormalizeCapabilityDomain(value string) CapabilityDomain {
 	switch CapabilityDomain(strings.ToLower(strings.TrimSpace(value))) {
+	case CapabilityDomainIntegrations:
+		return CapabilityDomainIntegrations
 	case CapabilityDomainEngineer:
 		return CapabilityDomainEngineer
 	case CapabilityDomainTask:
@@ -325,6 +331,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 	inv.RequestID = strings.TrimSpace(inv.RequestID)
 	inv.Capability = CapabilityName(strings.TrimSpace(string(inv.Capability)))
 	switch inv.Capability {
+	case CapabilityIntegrationsManage:
+		return validateIntegrationsManageInvocation(inv)
 	case CapabilityEngineerSendPrompt:
 		return validateEngineerSendPromptInvocation(inv)
 	case CapabilityAgentTaskCreate:

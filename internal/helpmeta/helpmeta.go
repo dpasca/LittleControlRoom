@@ -117,6 +117,23 @@ func ControlCapabilityTopics() []Topic {
 func CuratedTopics() []Topic {
 	return cloneTopics([]Topic{
 		{
+			ID:   TopicID(SurfaceMainTUI, TopicKindWorkflow, "agent-integrations"),
+			Kind: TopicKindWorkflow, Surface: SurfaceMainTUI,
+			Title:   "Manage agent skills, MCP connections, and plugins",
+			Summary: "Ask Help Chat or any embedded engineer to inspect and propose integration changes for an explicit agent and user/project scope, or use /skills (alias /integrations). All changes and MCP probes require confirmation. Saved configuration is not proof of running-session tool availability.",
+			Usage:   []string{"/skills", "/integrations", "/reconnect"},
+			ManualSteps: []string{
+				"Open /skills; Tab changes kind, p changes agent, and s changes scope.",
+				"Use a to add/install, Space to toggle, d to remove, or t to check an MCP. Enter reviews/confirms; Esc cancels. v shows the last result and recovery paths.",
+				"Alternatively ask Chat or an engineer to discover integrations.list / integrations.catalog and propose integrations.manage with the inspected revision.",
+				"Use environment-variable names for credentials. Native authentication and project trust remain separate steps. Reconnect affected engineers with /reconnect when idle.",
+				"Codex and Claude support native plugin installers; OpenCode plugins are inspected only. LCAgent supports skills but not arbitrary configurable MCP servers.",
+			},
+			CanDoVia:   []control.CapabilityName{control.CapabilityIntegrationsManage},
+			Related:    []string{CommandTopicID(SurfaceMainTUI, "skills"), CapabilityTopicID(control.CapabilityIntegrationsManage)},
+			SourceRefs: []string{"docs/agent_integrations.md", "tui.skills_dialog", "integrations.Manager"},
+		},
+		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindKeybinding, "chat"),
 			Kind:    TopicKindKeybinding,
 			Surface: SurfaceMainTUI,

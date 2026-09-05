@@ -41,6 +41,15 @@ func populateOpenCodeConfigOverlay(overlayConfigRoot, sourceConfigRoot string, s
 	if err := installEmbeddedSkillOverrides(overlayConfigRoot, sourceConfigRoot, shadowPlaywright, shadowRuntime); err != nil {
 		return err
 	}
+	// Consumers such as LCR's integration inventory must not mistake this
+	// per-launch shadow for the operator's native configuration directory.
+	sourceRoot, err := filepath.Abs(sourceConfigRoot)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(overlayConfigRoot, ".lcr-source-root"), []byte(sourceRoot), 0o600); err != nil {
+		return fmt.Errorf("record opencode overlay source: %w", err)
+	}
 	return nil
 }
 
@@ -62,7 +71,7 @@ func mirrorOpenCodeConfigEntries(overlayConfigRoot, sourceConfigRoot string) err
 	}
 	for _, entry := range entries {
 		name := strings.TrimSpace(entry.Name())
-		if name == "" || name == "skills" {
+		if name == "" || name == "skills" || name == ".lcr-source-root" {
 			continue
 		}
 		sourcePath := filepath.Join(sourceConfigRoot, name)

@@ -199,6 +199,8 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 	}
 
 	switch normalized.Capability {
+	case control.CapabilityIntegrationsManage:
+		return m.executeIntegrationsControl(normalized)
 	case control.CapabilityEngineerSendPrompt:
 		var input control.EngineerSendPromptInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {

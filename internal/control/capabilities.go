@@ -401,6 +401,8 @@ func Capabilities() []Capability {
 
 func CapabilityByName(name CapabilityName) (Capability, bool) {
 	switch CapabilityName(strings.TrimSpace(string(name))) {
+	case CapabilityIntegrationsManage:
+		return IntegrationsManageCapability(), true
 	case CapabilityEngineerSendPrompt:
 		return capabilityWithCatalogMetadata(EngineerSendPromptCapability()), true
 	case CapabilityAgentTaskCreate:
