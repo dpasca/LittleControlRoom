@@ -975,6 +975,69 @@ func TestRenderCodexDenseBlockPreviewShowsFiveOutputLines(t *testing.T) {
 	}
 }
 
+func TestRenderCodexDenseBlockContainsOversizedLines(t *testing.T) {
+	for _, mode := range []codexDenseBlockMode{codexDenseBlockSummary, codexDenseBlockPreview} {
+		for _, width := range []int{40, 90, 220} {
+			for _, suffix := range []string{"", "\n[command completed, exit 0]", "\n[command completed, exit 1]"} {
+				t.Run(fmt.Sprintf("mode=%d/width=%d/status=%q", mode, width, suffix), func(t *testing.T) {
+					body := "$ node -e " + strings.Repeat("aB9/", 50000) + "TAIL_SENTINEL" + suffix
+					rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), width, mode))
+					if lines := strings.Count(rendered, "\n") + 1; lines > 3 {
+						t.Fatalf("oversized command occupied %d rows, want at most 3", lines)
+					}
+					if !strings.Contains(rendered, "...") || !strings.Contains(rendered, "Alt+L") || strings.Contains(rendered, "TAIL_SENTINEL") {
+						t.Fatalf("expected a shortened command with expansion hint: %.500s", rendered)
+					}
+					if strings.Contains(suffix, "exit 1") && !strings.Contains(rendered, "exit 1") {
+						t.Fatalf("failed exit must remain visible: %s", rendered)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRenderCodexDenseBlockBoundsPreviewOutputWidth(t *testing.T) {
+	for _, payload := range []string{strings.Repeat("abcd", 50000), strings.Repeat("日本語", 50000)} {
+		body := "$ demo\n" + payload + "\n[command completed, exit 1]"
+		rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockPreview))
+		if lines := strings.Count(rendered, "\n") + 1; lines > 4 {
+			t.Fatalf("preview occupied %d rows, want at most 4", lines)
+		}
+		for _, line := range strings.Split(rendered, "\n") {
+			if width := ansi.StringWidth(line); width > 80 {
+				t.Fatalf("preview row width = %d, want <= 80", width)
+			}
+		}
+		if !strings.Contains(rendered, "...") || !strings.Contains(rendered, "Alt+L") || !strings.Contains(rendered, "exit 1") {
+			t.Fatalf("expected shortened output, expansion hint, and failed exit: %.500s", rendered)
+		}
+	}
+}
+
+func TestRenderCodexTranscriptContainsOversizedCommandAfterResume(t *testing.T) {
+	command := "$ node -e " + strings.Repeat("aB9/", 50000) + "\n[command completed, exit 0]"
+	entries := []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptAgent, Text: "Earlier explanation"},
+		{Kind: codexapp.TranscriptCommand, Text: command},
+		{Kind: codexapp.TranscriptAgent, Text: "Latest answer"},
+	}
+	for _, fullHistory := range []bool{false, true} {
+		rendered, _ := (Model{}).renderCodexTranscriptEntriesWithLinksOptions(codexapp.Snapshot{Entries: entries}, 90, codexTranscriptRenderOptions{fullHistory: fullHistory})
+		if strings.Count(rendered, "\n") > 15 {
+			t.Fatal("oversized command flooded the transcript")
+		}
+		for _, want := range []string{"Earlier explanation", "Latest answer"} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("command payload displaced %q from history", want)
+			}
+		}
+	}
+	if entries[1].Text != command {
+		t.Fatal("rendering changed the original command")
+	}
+}
+
 func TestRenderCodexDenseBlockKeepsFailedExitInCollapsedMode(t *testing.T) {
 	body := "$ make test\nerror: tests failed\n[command completed, exit 1]"
 	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 80, codexDenseBlockSummary))

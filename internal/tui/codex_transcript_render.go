@@ -909,7 +909,13 @@ func codexTranscriptLiveEntryApproxByteCount(entry codexapp.TranscriptEntry, blo
 		lines := strings.Split(strings.TrimSpace(entry.Text), "\n")
 		visible, hidden := visibleCodexDenseBlockLines(lines, blockMode)
 		if hidden > 0 || len(visible) > 0 {
-			return len(strings.Join(visible, "\n")) + 96
+			// Rendering bounds each visible line before wrapping. Raw command
+			// arguments (for example image payloads) must not evict nearby replies.
+			bytes := 96
+			for _, line := range visible {
+				bytes += min(len(line), codexDenseBlockMaxLineWidth*4) + 1
+			}
+			return bytes
 		}
 		return 96
 	case codexapp.TranscriptTool:

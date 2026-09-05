@@ -15,6 +15,9 @@ import (
 const (
 	codexMarkdownLinkLabelScanLimit  = 512
 	codexMarkdownLinkTargetScanLimit = 8192
+	// Collapsed blocks show at most one screen row per source line. Keep a
+	// ceiling even on very wide terminals; full mode retains the original text.
+	codexDenseBlockMaxLineWidth = 512
 )
 
 func renderCodexMessageBlock(label, body string, accent, bodyColor lipgloss.Color, width int) string {
@@ -271,11 +274,23 @@ func renderCodexDenseBlock(label, body string, accent lipgloss.Color, width int,
 	if len(lines) == 0 && hidden == 0 {
 		return ""
 	}
+	contentWidth := min(codexDenseBlockMaxLineWidth, max(10, width-2))
+	shortened := false
+	for i, line := range lines {
+		lines[i] = truncateCodexInlineText(line, contentWidth)
+		shortened = shortened || lines[i] != line
+	}
 	title := label
 	if hidden > 0 {
 		title = codexDenseBlockHiddenTitle(label, hidden, blockMode)
+	} else if shortened {
+		if blockMode == codexDenseBlockPreview {
+			title += " (Alt+L expands)"
+		} else {
+			title += " (Alt+L previews)"
+		}
 	}
-	if hidden > 0 && len(lines) > 0 && isCodexDenseSummaryLine(lines[0]) {
+	if (hidden > 0 || shortened) && len(lines) > 0 && isCodexDenseSummaryLine(lines[0]) {
 		return renderCodexDenseBlockWithInlineSummary(title, lines, accent, width)
 	}
 	return renderCodexMonospaceBlock(title, strings.Join(lines, "\n"), accent, width)
