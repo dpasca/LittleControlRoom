@@ -1801,7 +1801,21 @@ func (s *Service) expandDiscoveredWorktreePaths(ctx context.Context, discovered 
 
 	listedRoots := map[string]struct{}{}
 	for _, seed := range seeds {
-		rootPath, _ := s.readProjectWorktreeInfoWithResolver(ctx, seed, worktreeInfoReader, resolver)
+		rootPath := ""
+		if worktreeInfoReader != nil {
+			if info, err := worktreeInfoReader(ctx, seed); err == nil {
+				// Submodule checkouts and their merge worktrees belong to the
+				// parent repository; listing them must not register projects.
+				if info.IsSubmodule {
+					delete(outSet, seed)
+					continue
+				}
+				rootPath = resolver.preferred(filepath.Clean(strings.TrimSpace(info.RootPath)))
+				if info.Kind == scanner.GitWorktreeKindMain {
+					rootPath = resolver.preferred(seed)
+				}
+			}
+		}
 		if rootPath == "" {
 			if summary, ok := oldMap[seed]; ok && summary.WorktreeKind == model.WorktreeKindLinked {
 				rootPath = resolver.preferred(filepath.Clean(strings.TrimSpace(summary.WorktreeRootPath)))

@@ -174,6 +174,15 @@ metadata and the admin `gitdir` back-pointer are excluded, and LCR's read-only
 Git commands disable optional index refreshes so polling does not renew the age.
 Missing required or unreadable metadata leaves the age unknown.
 
+Git worktree expansion does not register submodule checkouts or their retained
+merge worktrees as independent projects. Submodules are identified from Git's
+superproject output and common metadata directory, including submodules of linked
+parent worktrees. Previously auto-added, sessionless submodule rows are hidden on
+the next scan without deleting their files. Manual registration, recorded or
+currently detected sessions, pins, TODO history/origin, and run commands preserve
+independently tracked submodule projects. Ordinary repositories named `Assets`
+are unaffected.
+
 `/clean` accepts these sessionless worktrees only when present, unpinned, merged
 into the recorded parent, conflict-free, clean, and older than 24 hours. Git age
 is refreshed before removal, and the host still excludes active engineers,

@@ -50,6 +50,7 @@ type GitWorktreeInfo struct {
 	TopLevelPath string
 	Kind         GitWorktreeKind
 	LastActivity time.Time
+	IsSubmodule  bool
 }
 
 type GitWorktree struct {
@@ -275,7 +276,7 @@ func ReadGitDirty(ctx context.Context, path string) (bool, error) {
 }
 
 func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, error) {
-	lines, err := readGitLines(ctx, path, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir")
+	lines, err := readGitLines(ctx, path, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir", "--show-superproject-working-tree")
 	if err != nil {
 		if fallback, fallbackErr := readGitWorktreeInfoFromGitFile(path); fallbackErr == nil {
 			return fallback, nil
@@ -311,7 +312,27 @@ func ReadGitWorktreeInfo(ctx context.Context, path string) (GitWorktreeInfo, err
 		TopLevelPath: topLevel,
 		Kind:         kind,
 		LastActivity: lastActivity,
+		IsSubmodule:  len(lines) > 3 || isSubmoduleGitDir(commonDir),
 	}, nil
+}
+
+// A submodule's linked worktrees (including retained merge checkouts) may have
+// no superproject working tree. Their common Git directory still identifies
+// the owning repository, even after its checkout has disappeared.
+func isSubmoduleGitDir(commonDir string) bool {
+	for parent := filepath.Dir(commonDir); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+		if filepath.Base(parent) != ".git" {
+			continue
+		}
+		rel, err := filepath.Rel(parent, commonDir)
+		if err != nil {
+			return false
+		}
+		parts := strings.Split(rel, string(filepath.Separator))
+		return (len(parts) >= 2 && parts[0] == "modules") ||
+			(len(parts) >= 4 && parts[0] == "worktrees" && parts[2] == "modules")
+	}
+	return false
 }
 
 // readGitWorktreeActivity uses checkout-local metadata so commits, switches,

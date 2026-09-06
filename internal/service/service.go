@@ -1388,6 +1388,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		if err := s.store.SetProjectScope(ctx, path, inScopeNow); err != nil {
 			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("set project scope: %w", err))
 		}
+		s.forgetProjectState(path)
 		old.InScope = inScopeNow
 		oldMap[path] = old
 	}
@@ -1668,7 +1669,8 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		presentOnDisk := projectPathExists(path)
 		isGitRepo := presentOnDisk && projectIsGitRepo(path)
 		worktreeInfo, haveWorktreeInfo := currentWorktreeInfo[path]
-		if presentOnDisk && shouldForgetDerivedGitSubdirProject(old, projectKind, path, worktreeInfo, haveWorktreeInfo) {
+		if presentOnDisk && (shouldForgetDerivedGitSubdirProject(old, projectKind, path, worktreeInfo, haveWorktreeInfo) ||
+			shouldForgetAutomaticSubmoduleProject(old, activity, worktreeInfo, haveWorktreeInfo)) {
 			worktreeRootPath := filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
 			worktreeKind := modelWorktreeKindFromGit(worktreeInfo.Kind)
 			archived := archivedWithWorktreeRoot(old.Archived, worktreeRootPath, worktreeKind, oldMap)
@@ -3050,6 +3052,18 @@ func shouldForgetDerivedGitSubdirProject(old model.ProjectSummary, projectKind m
 	path = filepath.Clean(strings.TrimSpace(path))
 	topLevelPath := filepath.Clean(strings.TrimSpace(info.TopLevelPath))
 	return path != "" && path != "." && topLevelPath != "" && topLevelPath != "." && topLevelPath != path
+}
+
+func shouldForgetAutomaticSubmoduleProject(old model.ProjectSummary, activity *model.DetectorProjectActivity, info scanner.GitWorktreeInfo, haveInfo bool) bool {
+	if !haveInfo || !info.IsSubmodule || old.ManuallyAdded || old.Pinned ||
+		model.NormalizeProjectKind(old.Kind) != model.ProjectKindProject {
+		return false
+	}
+	if old.HasRecordedSession() || !old.LastSessionSeenAt.IsZero() || old.OpenTODOCount > 0 || old.TotalTODOCount > 0 ||
+		old.WorktreeOriginTodoID > 0 || strings.TrimSpace(old.RunCommand) != "" {
+		return false
+	}
+	return activity == nil || len(activity.Sessions) == 0
 }
 
 func normalizeActivity(activity *model.DetectorProjectActivity, projectPath string) *model.DetectorProjectActivity {
