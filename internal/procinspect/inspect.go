@@ -3,6 +3,8 @@ package procinspect
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -344,6 +346,9 @@ func projectInstanceFromProcess(process Process, projectPath string, ppids map[i
 	if projectPath == "" || projectPath == "." || process.PID <= 0 || len(process.Ports) == 0 {
 		return ProjectInstance{}, false
 	}
+	if isLCRBrowserHelper(process.Command) {
+		return ProjectInstance{}, false
+	}
 	managed := processIsManaged(process, managedPIDs, managedPGIDs)
 	if managed {
 		return ProjectInstance{}, false
@@ -354,6 +359,29 @@ func projectInstanceFromProcess(process Process, projectPath string, ppids map[i
 		ManagedRuntime:    managed,
 		OwnedByCurrentApp: processDescendsFrom(process.PID, ownPID, ppids),
 	}, true
+}
+
+// LCR's Playwright wrapper listens for browser audio control. That internal
+// bridge is not a project server, even though it inherits the project's CWD.
+// Keep it in process/CPU inspection and port-conflict checks; only exclude it
+// from runtime discovery. Do not exclude arbitrary descendants of LCR, since
+// embedded engineers also launch real project servers.
+func isLCRBrowserHelper(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) < 2 || fields[1] != "playwright-mcp" {
+		return false
+	}
+	name := strings.TrimSuffix(filepath.Base(fields[0]), ".exe")
+	if name == "lcroom" {
+		return true
+	}
+	// go run executables are pinned as lcroom-<SHA-256> in embedded-helpers.
+	digest, ok := strings.CutPrefix(name, "lcroom-")
+	if !ok || len(digest) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }
 
 func sortProjectInstances(instances []ProjectInstance) {

@@ -143,6 +143,65 @@ func TestProjectInstanceFromProcessSkipsManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestProjectInstanceFromProcessExcludesLCRBrowserHelpers(t *testing.T) {
+	const pinned = "/Users/davide/.little-control-room/embedded-helpers/lcroom-ee13b238e3cf1644b052b6ab927e40d289c86b388d6d97ed8cac0220e08d490e"
+	tests := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{"pinned browser helper", pinned + " playwright-mcp --provider codex --launch-mode background", false},
+		{"installed browser helper", "/usr/local/bin/lcroom playwright-mcp --provider claude", false},
+		{"go run browser helper", "/tmp/go-build123/b001/exe/lcroom playwright-mcp", false},
+		{"exe browser helper", "/tools/lcroom.exe playwright-mcp", false},
+		{"LCR server", "/usr/local/bin/lcroom serve --listen 127.0.0.1:7777", true},
+		{"pinned LCR server", pinned + " serve --listen 127.0.0.1:7777", true},
+		{"LCR dashboard", pinned + " tui", true},
+		{"project server", "node server.js", true},
+		{"helper name in argument", "node server.js " + pinned + " playwright-mcp", true},
+		{"unrelated executable", "other playwright-mcp", true},
+		{"unrelated LCR prefix", "lcroom-dev playwright-mcp", true},
+		{"invalid digest", "lcroom-" + strings.Repeat("z", 64) + " playwright-mcp", true},
+		{"no subcommand", pinned, true},
+		{"empty command", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Exclusion must also work for helpers left over from another LCR
+			// instance, without relying on ancestry to the current app.
+			for _, ownerPID := range []int{700, 999} {
+				process := Process{
+					PID: 83451, PPID: 700, PGID: 700,
+					CWD: "/projects/cockpit", Command: tt.command, Ports: []int{59281},
+				}
+				_, ok := projectInstanceFromProcess(process, process.CWD, map[int]int{83451: 700}, ownerPID, nil, nil)
+				if ok != tt.want {
+					t.Fatalf("projectInstanceFromProcess(ownerPID=%d) ok = %v, want %v", ownerPID, ok, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestBrowserHelperStillReportsProcessProblems(t *testing.T) {
+	process := Process{
+		PID: 83451, PPID: 1, PGID: 83451, CPU: 98.5,
+		CWD: "/projects/cockpit", Command: "lcroom playwright-mcp", Ports: []int{59281},
+	}
+	ppids := map[int]int{83451: 1}
+	finding := classifyProcess(process, process.CWD, ppids, 999, nil, nil, 50, 1)
+	if len(finding.Reasons) != 3 {
+		t.Fatalf("reasons = %v, want orphan, high CPU, and listening port warnings", finding.Reasons)
+	}
+	reports := map[string]*ProjectReport{process.CWD: {ProjectPath: process.CWD}}
+	appendExpectedPortFindings(reports, map[int]Process{process.PID: process}, []string{process.CWD}, ppids, 999, ScanOptions{
+		ExpectedPorts: []ExpectedPort{{ProjectPath: process.CWD, Port: 59281}},
+	})
+	if findings := reports[process.CWD].Findings; len(findings) != 1 || !findings[0].PortConflict {
+		t.Fatalf("findings = %+v, want browser helper port conflict", findings)
+	}
+}
+
 func TestAppendExpectedPortFindingsFlagsExternalOwner(t *testing.T) {
 	target := "/Users/davide/dev/repos/FraactalMech"
 	owner := "/Users/davide/dev/repos/OtherApp"

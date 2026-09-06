@@ -147,6 +147,14 @@ Recommended stable identifiers for Little Control Room:
 
 ## 5. Practical detection strategy
 
+Project runtime discovery excludes LCR executables running the `playwright-mcp`
+subcommand, including pinned `embedded-helpers/lcroom-<SHA-256>` binaries. Their
+browser audio bridge listens on a loopback TCP port while inheriting the embedded
+session's project CWD; that listener is internal infrastructure, not a project
+runtime. Actual `lcroom serve`/`tui` listeners and project servers launched by
+embedded engineers remain discoverable. Helper processes remain eligible for
+CPU/orphan diagnostics and expected-port conflict checks.
+
 Primary (filesystem-first):
 
 1. Parse `~/.codex/sessions/**/*.jsonl` for `(session_id, cwd, started_at)`.
