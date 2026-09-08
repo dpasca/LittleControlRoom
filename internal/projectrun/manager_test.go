@@ -560,3 +560,41 @@ func TestExpectedPortsIgnoresUnrelatedNumbers(t *testing.T) {
 		t.Fatalf("ports = %v, want none for unrelated command numbers", ports)
 	}
 }
+
+func TestStartCapturesOutputOfImmediatelyExitingCommand(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	if _, err := manager.Start(StartRequest{
+		ProjectPath: dir,
+		Command:     "echo alpha; echo beta >&2; echo gamma; exit 3",
+	}); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		snapshot, err := manager.Snapshot(dir)
+		if err != nil {
+			t.Fatalf("Snapshot() error = %v", err)
+		}
+		if !snapshot.Running {
+			// The exit is only published after the captured output is drained,
+			// so a snapshot that reports the exit must carry every line.
+			if !snapshot.ExitCodeKnown || snapshot.ExitCode != 3 {
+				t.Fatalf("exit code = %d (known=%t), want 3", snapshot.ExitCode, snapshot.ExitCodeKnown)
+			}
+			for _, want := range []string{"alpha", "beta", "gamma"} {
+				if !slicesContainString(snapshot.RecentOutput, want) {
+					t.Fatalf("recent output = %v, want %q", snapshot.RecentOutput, want)
+				}
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for runtime to exit: %+v", snapshot)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}

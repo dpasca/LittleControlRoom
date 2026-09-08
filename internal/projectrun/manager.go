@@ -23,6 +23,7 @@ const (
 	maxRecentOutput     = 40
 	maxAnnouncedURLs    = 8
 	closeAllWaitTimeout = 2 * time.Second
+	outputDrainTimeout  = time.Second
 )
 
 var (
@@ -286,20 +287,30 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	cmd.Dir = cwd
 	configureManagedCommand(cmd)
 
-	stdout, err := cmd.StdoutPipe()
+	// Own both pipes instead of using cmd.StdoutPipe/cmd.StderrPipe: those are
+	// closed by cmd.Wait as soon as the process exits, which races the capture
+	// goroutines and can drop the output of a short-lived runtime entirely.
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, stderrWriter, err := os.Pipe()
 	if err != nil {
+		closeAll(stdout, stdoutWriter)
 		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 	if err := cmd.Start(); err != nil {
+		closeAll(stdout, stdoutWriter, stderr, stderrWriter)
 		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
+	// The child holds its own duplicates; the parent copies must go so the
+	// readers see EOF once the process and its children are gone.
+	closeAll(stdoutWriter, stderrWriter)
 
 	startedAt := time.Now()
 	pid := 0
@@ -336,9 +347,16 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	runtime.recentOutput = nil
 	m.mu.Unlock()
 
-	go m.captureOutput(runtimeKey, stdout)
-	go m.captureOutput(runtimeKey, stderr)
-	go m.waitForExit(runtimeKey, cmd)
+	var captured sync.WaitGroup
+	captured.Add(2)
+	for _, stream := range []*os.File{stdout, stderr} {
+		go func(stream *os.File) {
+			defer captured.Done()
+			defer func() { _ = stream.Close() }()
+			m.captureOutput(runtimeKey, stream)
+		}(stream)
+	}
+	go m.waitForExit(runtimeKey, cmd, &captured)
 	m.refreshPorts()
 	return m.SnapshotProcess(projectPath, runtimeID)
 }
@@ -775,6 +793,31 @@ func (m *Manager) refreshPorts() {
 	}
 }
 
+func closeAll(files ...*os.File) {
+	for _, file := range files {
+		if file != nil {
+			_ = file.Close()
+		}
+	}
+}
+
+func waitWithTimeout(group *sync.WaitGroup, timeout time.Duration) {
+	if group == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		group.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+}
+
 func (m *Manager) captureOutput(runtimeKey string, stream io.Reader) {
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 0, 1024), 1024*1024)
@@ -813,8 +856,13 @@ func (m *Manager) appendOutput(runtimeKey, line string) {
 	}
 }
 
-func (m *Manager) waitForExit(runtimeKey string, cmd *exec.Cmd) {
+func (m *Manager) waitForExit(runtimeKey string, cmd *exec.Cmd, captured *sync.WaitGroup) {
 	err := cmd.Wait()
+	// Publish the exit only once the captured output is in, so a snapshot that
+	// reports the process as exited also carries its final lines. A child that
+	// outlives the shell and holds the pipe open must not stall that forever,
+	// and the bound stays under closeAllWaitTimeout so CloseAll still converges.
+	waitWithTimeout(captured, outputDrainTimeout)
 
 	exitCode, exitCodeKnown := exitCodeFromError(err)
 	lastError := ""
