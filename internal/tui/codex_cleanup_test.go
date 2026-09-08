@@ -23,6 +23,38 @@ func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
 	}
 }
 
+func TestCodexCleanupNumberedNavigationAndViewHints(t *testing.T) {
+	dialog := &codexCleanupDialogState{Chosen: map[string]bool{"keep-selection": true}}
+	m := Model{codexCleanup: dialog}
+	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	m = updated.(Model)
+	if cmd != nil || dialog.Loading || !dialog.Chosen["keep-selection"] {
+		t.Fatal("choosing the current category must preserve selection without rescanning")
+	}
+	header := ansi.Strip(strings.Join(renderCodexCleanupNavigation(dialog, 108), "\n"))
+	if !strings.Contains(header, "[ 1 Orphaned worktrees ]") || !strings.Contains(header, "Tab: show other storage (read-only)") {
+		t.Fatalf("missing active category or explicit view hint: %s", header)
+	}
+	updated, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if cmd != nil || !dialog.ShowRetained || !dialog.Chosen["keep-selection"] {
+		t.Fatal("view toggle must preserve selection without rescanning")
+	}
+	header = ansi.Strip(strings.Join(renderCodexCleanupNavigation(dialog, 108), "\n"))
+	if !strings.Contains(header, "[ Other storage ]") || !strings.Contains(header, "Tab: return to cleanup candidates") {
+		t.Fatalf("missing retained view navigation: %s", header)
+	}
+	updated, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	m = updated.(Model)
+	if cmd == nil || !dialog.Loading || dialog.ShowRetained || dialog.Category != service.CodexCleanupStale || len(dialog.Chosen) != 0 {
+		t.Fatal("changing category must open fresh candidates and clear selection")
+	}
+	_, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if cmd != nil || dialog.Category != service.CodexCleanupStale {
+		t.Fatal("loading must ignore repeated navigation")
+	}
+}
+
 func TestCodexCleanupStaleCategoryUsesGroupedCountsAndConfirmation(t *testing.T) {
 	m := Model{codexCleanup: &codexCleanupDialogState{Chosen: map[string]bool{"old-selection": true}}}
 	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
@@ -146,7 +178,7 @@ func TestCodexCleanupRequiresSelectionAndSeparatePermanentConfirmation(t *testin
 	}
 	got := updated.(Model)
 	rendered := ansi.Strip(got.renderCodexCleanupOverlay("", 120, 38))
-	for _, want := range []string{"Clean Codex session storage", "feature/old-cleanup", "parent master", "worktree missing 20d", "2 children", "recoverable", "LCR removed", "thread-r"} {
+	for _, want := range []string{"Clean Codex session storage", "feature/old-cleanup", "parent master", "worktree missing 20d", "2 children", "recoverable", "LCR removed"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("cleanup preview missing %q:\n%s", want, rendered)
 		}

@@ -17,15 +17,13 @@ func renderCodexCleanupRetained(dialog *codexCleanupDialogState, width, bodyH in
 	if dialog.Audit.Storage.Partial {
 		summary += " · partial inventory"
 	}
-	lines := []string{
-		commandPaletteTitleStyle.Render("Codex storage · retained"),
-		detailField("Outside category", dialog.Category.Label()),
-		detailField("Storage", summary),
-	}
+	lines := renderCodexCleanupNavigation(dialog, width)
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(codexCleanupAccent(dialog)).Render("READ-ONLY · Nothing in this view can be selected for deletion"))
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
-		"Session files are grouped by their indexed project / working directory. Other Codex files and unknown ownership are listed separately. Sizes are logical bytes.")...)
+		"Storage outside "+dialog.Category.Label()+" cleanup: protected sessions, other projects, and non-session files. Sizes are logical bytes.")...)
+	lines = append(lines, detailField("Storage", summary), detailMutedStyle.Render("↑/↓ browse projects and files"))
 	lines = append(lines, "", commandPaletteHintStyle.Render(fmt.Sprintf("%10s  %7s  %s", "SIZE", "FILES", "PROJECT / WORKING DIRECTORY")))
-	start, end := cleanupGroupWindow(dialog.RetainedIndex, len(groups), bodyH+9)
+	start, end := cleanupGroupWindow(dialog.RetainedIndex, len(groups), bodyH+3)
 	if start > 0 {
 		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("↑ %d more groups", start)))
 	}
@@ -35,7 +33,7 @@ func renderCodexCleanupRetained(dialog *codexCleanupDialogState, width, bodyH in
 		if index == dialog.RetainedIndex {
 			style = commandPaletteSelectStyle
 		}
-		size := style.Bold(true).Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(group.Bytes)))
+		size := style.Bold(true).Foreground(codexCleanupAccent(dialog)).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(group.Bytes)))
 		lines = append(lines, size+style.Render(fmt.Sprintf("  %7d  %s", group.Files, truncateText(group.Name, max(8, width-21)))))
 	}
 	if end < len(groups) {
@@ -55,8 +53,7 @@ func renderCodexCleanupRetained(dialog *codexCleanupDialogState, width, bodyH in
 		lines = append(lines, detailMutedStyle.Render("No retained files found in this inventory."))
 	}
 	lines = append(lines, "",
-		renderDialogAction("V / Tab", "eligible cleanup", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-			renderDialogAction("R", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
+		renderDialogAction("R", "rescan", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle))
 	return clampDialogContent(strings.Join(lines, "\n"), max(12, bodyH-4), 6, detailMutedStyle.Render("… details clipped to fit terminal …"))
 }

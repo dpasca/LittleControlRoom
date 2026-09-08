@@ -321,7 +321,15 @@ remain visible even when no worktrees qualify. This inventory does not follow
 symlinks and labels incomplete reads as partial; logical sizes can differ from
 allocated disk usage. Inventorying other files does not make them deletion candidates.
 
-`V` or Tab switches to a read-only retained-storage view, largest first. It
+The header keeps category and view controls together: `1` selects green
+**Orphaned worktrees**, `2` selects amber **Stale sessions**, and Tab switches
+between **Cleanup candidates** and blue **Other storage**. The active choices
+also have brackets, so they remain identifiable without color. Other storage is
+explicitly read-only, and the Tab hint names the destination view. `C` and `V`
+remain compatibility shortcuts. Selecting the current category does not rescan
+or clear selection; changing category runs a fresh audit and clears selection.
+
+**Other storage** shows retained storage, largest first. It
 attributes inventoried session files through the thread index's exact rollout path
 and `cwd`, groups them by working directory, and shows the retained repository root
 when LCR has a deleted-worktree record. It excludes eligible rollout paths and counts
@@ -358,7 +366,7 @@ evidence. Indexed parent chains are cross-checked against rollout lineage;
 uncertainty blocks the related candidate tree rather than forcing unrelated
 root rollouts to be opened.
 
-`C` switches to **Stale sessions**, runs a fresh read-only audit, and clears
+`2` selects **Stale sessions**, runs a fresh read-only audit, and clears
 selection. This category covers existing local folders, including primary
 checkouts that never used linked worktrees. It does not require a worktree
 deletion record. Every tree member must have at least seven days of inactivity
@@ -380,7 +388,7 @@ rollout sizes/modification times again, and the TUI refreshes its managed loaded
 thread IDs. This rejects activity, pins, or loads that changed during the audit.
 
 Eligible roots are grouped by deleted worktree. The preview reports thread and
-worktree age, retained branch/parent metadata, Codex Git branch and commit,
+worktree age and retained branch/parent metadata,
 spawned-descendant counts, the eligibility reason, and the logical byte size of
 the rollout files that can be recovered. The preview revision includes the
 selected tree identities plus rollout paths, sizes, and modification times.
