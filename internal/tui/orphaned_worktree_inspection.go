@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -308,7 +309,7 @@ func (m Model) resolveInspectedOrphanedWorktreeCmd(state orphanedWorktreeInspect
 			err = m.svc.RemoveWorktree(ctx, state.ProjectPath, forceGitRemoval)
 			status = "Registered worktree removed; branch preserved"
 		case service.OrphanedWorktreeResolutionClearResidue:
-			err = m.svc.RemoveWorktree(ctx, state.ProjectPath, false)
+			err = m.svc.CleanupRetainedWorktree(ctx, state.ProjectPath)
 		default:
 			err = fmt.Errorf("the inspection did not provide an automatic resolution")
 		}
@@ -451,6 +452,21 @@ func orphanedWorktreeInspectionCopy(state *orphanedWorktreeInspectionState) (str
 func orphanedWorktreeInspectionDetailLines(m Model, state *orphanedWorktreeInspectionState, width int) []string {
 	inspection := state.Inspection
 	lines := []string{"", detailSectionStyle.Render("Inspection result")}
+	lines = append(lines, detailField("Retained", fmt.Sprintf("%d bytes (logical size)", inspection.RetainedBytes)))
+	if inspection.SizeError != "" {
+		lines = append(lines, "Size incomplete: "+inspection.SizeError)
+	}
+	for _, child := range inspection.NestedWorktrees {
+		path := child.Path
+		if rel, err := filepath.Rel(inspection.ProjectPath, path); err == nil {
+			path = rel
+		}
+		commit := child.Commit
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, path+" @ "+commit+" "+child.Branch)...)
+	}
 	if reason := strings.TrimSpace(inspection.Reason); reason != "" {
 		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, reason)...)
 	}

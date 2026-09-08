@@ -24,18 +24,21 @@ const (
 )
 
 type OrphanedWorktreeInspection struct {
-	ProjectPath  string
-	RootPath     string
-	BranchName   string
-	TargetBranch string
-	MergeStatus  model.WorktreeMergeStatus
-	Dirty        bool
-	StatusError  string
-	CleanupKind  ResidualWorktreeCleanupKind
-	Resolution   OrphanedWorktreeResolution
-	Reason       string
-	AgentTask    model.AgentTask
-	InspectedAt  time.Time
+	RetainedBytes   int64
+	SizeError       string
+	NestedWorktrees []ownedRemovalChild
+	ProjectPath     string
+	RootPath        string
+	BranchName      string
+	TargetBranch    string
+	MergeStatus     model.WorktreeMergeStatus
+	Dirty           bool
+	StatusError     string
+	CleanupKind     ResidualWorktreeCleanupKind
+	Resolution      OrphanedWorktreeResolution
+	Reason          string
+	AgentTask       model.AgentTask
+	InspectedAt     time.Time
 }
 
 // InspectOrphanedWorktree determines why a forgotten checkout still exists and
@@ -67,6 +70,10 @@ func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath strin
 		MergeStatus:  summary.WorktreeMergeStatus,
 		Dirty:        summary.RepoDirty,
 		InspectedAt:  time.Now(),
+	}
+	inspection.RetainedBytes, err = retainedDirectoryBytes(ctx, projectPath)
+	if err != nil {
+		inspection.SizeError = err.Error()
 	}
 	if summary.WorktreeKind != model.WorktreeKindLinked || rootPath == "" {
 		inspection.Reason = "The saved project record no longer identifies this path as a linked worktree."
@@ -118,9 +125,13 @@ func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath strin
 			return OrphanedWorktreeInspection{}, fmt.Errorf("inspect remaining worktree files: %w", inspectErr)
 		}
 		inspection.CleanupKind = residual.Kind
+		inspection.NestedWorktrees = residual.Plan.Children
 		if residual.Safe {
 			inspection.Resolution = OrphanedWorktreeResolutionClearResidue
 			inspection.Reason = "Git no longer has a live checkout at this path, and the remaining files passed the strict residue verification."
+			if residual.Kind == ResidualWorktreeCleanupOwned {
+				inspection.Reason = fmt.Sprintf("Retained folder: %s; %d owned clean nested worktrees. Clear residue permanently deletes verified tracked files and output ignored by the root repository's current rules, including build/artifact files. Untracked source, modified files and unrelated repositories block cleanup. Child commits are recorded before deletion; branches and shared repositories are preserved.", retainedSizeLabel(inspection.RetainedBytes), len(residual.Plan.Children))
+			}
 			return inspection, nil
 		}
 		inspection.Reason = strings.TrimSpace(residual.Reason)

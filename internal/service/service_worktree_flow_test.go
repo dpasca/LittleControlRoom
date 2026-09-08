@@ -1068,8 +1068,8 @@ func TestRemoveWorktreeFailsWhenUnverifiedFilesReappearAtRemovedPath(t *testing.
 	if detailErr != nil {
 		t.Fatalf("GetProjectDetail() after failed verification error = %v", detailErr)
 	}
-	if detail.Summary.Forgotten {
-		t.Fatalf("filesystem verification failure was recorded as successful: %#v", detail.Summary)
+	if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk {
+		t.Fatalf("filesystem verification failure must remain visible as orphaned residue: %#v", detail.Summary)
 	}
 }
 
@@ -1218,8 +1218,8 @@ func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *t
 	if err != nil {
 		t.Fatalf("GetProjectDetail() after prunable refresh error = %v", err)
 	}
-	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
-		t.Fatalf("refreshed prunable occupied checkout state = %#v, want forgotten and missing", detail.Summary)
+	if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk {
+		t.Fatalf("refreshed prunable occupied checkout state = %#v, want visible residue", detail.Summary)
 	}
 	if _, err := svc.ScanOnce(ctx); err != nil {
 		t.Fatalf("ScanOnce() with prunable occupied checkout error = %v", err)
@@ -1228,12 +1228,12 @@ func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *t
 	if err != nil {
 		t.Fatalf("GetProjectDetail() after prunable scan error = %v", err)
 	}
-	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
-		t.Fatalf("prunable occupied checkout state = %#v, want forgotten and missing", detail.Summary)
+	if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk {
+		t.Fatalf("prunable occupied checkout state = %#v, want visible residue", detail.Summary)
 	}
 
-	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
-		t.Fatalf("RemoveWorktree() for prunable checkout error = %v", err)
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err == nil || !strings.Contains(err.Error(), "removal incomplete") {
+		t.Fatalf("RemoveWorktree() for occupied prunable checkout must report incomplete: %v", err)
 	}
 	if !projectIsGitRepo(nestedRepositoryPath) {
 		t.Fatalf("nested repository was removed with stale outer checkout: %s", nestedRepositoryPath)
@@ -1255,8 +1255,8 @@ func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *t
 	if err != nil {
 		t.Fatalf("GetProjectDetail() after removal error = %v", err)
 	}
-	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk {
-		t.Fatalf("removed outer checkout state = %#v, want forgotten and missing", detail.Summary)
+	if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk {
+		t.Fatalf("removed outer checkout state = %#v, want visible retained residue", detail.Summary)
 	}
 
 	if _, err := svc.ScanOnce(ctx); err != nil {
@@ -1266,10 +1266,10 @@ func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *t
 	if err != nil {
 		t.Fatalf("GetProjectDetail() after rescan error = %v", err)
 	}
-	if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk ||
+	if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk ||
 		detail.Summary.WorktreeKind != model.WorktreeKindLinked ||
 		!samePath(detail.Summary.WorktreeRootPath, projectPath) {
-		t.Fatalf("rescanned outer checkout state = %#v, want retained missing linked-worktree history", detail.Summary)
+		t.Fatalf("rescanned outer checkout state = %#v, want visible retained linked-worktree history", detail.Summary)
 	}
 	visible, err := st.ListProjects(ctx, false)
 	if err != nil {

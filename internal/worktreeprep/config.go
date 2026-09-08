@@ -430,6 +430,9 @@ func createSubmoduleWorktreeAtCommit(ctx context.Context, rootPath, worktreePath
 	return PreparedSubmodule{Path: submodulePath, Mode: "worktree", Commit: commit}, nil
 }
 
+// PruneSubmoduleWorktrees reconciles stale administrative records only. It does
+// not remove still-present nested checkouts. Callers deleting a parent must
+// remove its owned child worktrees explicitly and verify their exact paths.
 func PruneSubmoduleWorktrees(ctx context.Context, rootPath string) error {
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
 	if rootPath == "" || rootPath == "." {

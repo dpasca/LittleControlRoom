@@ -25,6 +25,7 @@ const (
 	ResidualWorktreeCleanupUnknown       ResidualWorktreeCleanupKind = ""
 	ResidualWorktreeCleanupDSStoreOnly   ResidualWorktreeCleanupKind = "ds_store_only"
 	ResidualWorktreeCleanupPartialGitDir ResidualWorktreeCleanupKind = "partial_git_removal"
+	ResidualWorktreeCleanupOwned         ResidualWorktreeCleanupKind = "owned_retained_folder"
 )
 
 const (
@@ -41,6 +42,7 @@ type residualWorktreeEntry struct {
 }
 
 type residualWorktreeInspection struct {
+	Plan                worktreeRemovalPlan
 	Kind                ResidualWorktreeCleanupKind
 	Safe                bool
 	Reason              string
@@ -105,6 +107,20 @@ func (s *Service) inspectResidualWorktreeDirectory(
 		return residualWorktreeInspection{}, err
 	}
 	if !ok {
+		_, pointerErr := os.Lstat(filepath.Join(projectPath, ".git"))
+		if os.IsNotExist(pointerErr) && summary.WorktreeKind == model.WorktreeKindLinked && samePath(summary.WorktreeRootPath, rootPath) {
+			commit := expectedCommit
+			if commit == "" {
+				commit = s.retainedRemovalCommit(ctx, projectPath, rootPath, summary)
+			}
+			if commit != "" {
+				plan, planErr := inspectRemovalPlan(ctx, rootPath, projectPath, commit, true)
+				if planErr != nil {
+					return residualWorktreeInspection{Reason: planErr.Error()}, nil
+				}
+				return residualWorktreeInspection{Kind: ResidualWorktreeCleanupOwned, Safe: true, Commit: commit, Entries: plan.Entries, Plan: plan}, nil
+			}
+		}
 		return residualWorktreeInspection{
 			Reason: "the folder does not contain a stale worktree .git pointer for the expected repository",
 		}, nil
@@ -138,6 +154,14 @@ func (s *Service) inspectResidualWorktreeDirectory(
 		firstUnsafe = residualWorktreeInspection{
 			Kind:   ResidualWorktreeCleanupPartialGitDir,
 			Reason: "the remaining checkout could not be verified against its preserved branch",
+		}
+	}
+	if summary.WorktreeKind == model.WorktreeKindLinked && samePath(summary.WorktreeRootPath, rootPath) {
+		for _, commit := range commits {
+			plan, err := inspectRemovalPlan(ctx, rootPath, projectPath, commit, true)
+			if err == nil {
+				return residualWorktreeInspection{Kind: ResidualWorktreeCleanupOwned, Safe: true, Commit: commit, Entries: plan.Entries, Plan: plan}, nil
+			}
 		}
 	}
 	return firstUnsafe, nil
@@ -476,14 +500,38 @@ func removeInspectedResidualWorktreeDirectory(ctx context.Context, inspection re
 	if !inspection.Safe {
 		return fmt.Errorf("residual worktree cleanup is not safe: %s", strings.TrimSpace(inspection.Reason))
 	}
+	if err := checkRemovalProcesses(ctx, projectPath); err != nil {
+		return err
+	}
 	if inspection.Kind == ResidualWorktreeCleanupDSStoreOnly {
 		return removeDSStoreOnlyDirectory(projectPath)
 	}
-	if inspection.Kind != ResidualWorktreeCleanupPartialGitDir {
+	if inspection.Kind != ResidualWorktreeCleanupPartialGitDir && inspection.Kind != ResidualWorktreeCleanupOwned {
 		return fmt.Errorf("residual worktree cleanup kind is unavailable")
 	}
 
 	entries := append([]residualWorktreeEntry(nil), inspection.Entries...)
+	parentRoot, err := os.OpenRoot(filepath.Dir(projectPath))
+	if err != nil {
+		return err
+	}
+	defer parentRoot.Close()
+	checkoutRoot, err := parentRoot.OpenRoot(filepath.Base(projectPath))
+	if err != nil {
+		return err
+	}
+	defer checkoutRoot.Close()
+	ancestors := make(map[string]os.FileInfo, len(entries))
+	for _, entry := range entries {
+		if entry.Info.IsDir() {
+			ancestors[entry.Path] = entry.Info
+		}
+	}
+	if inspection.Kind == ResidualWorktreeCleanupOwned {
+		if err := validateRemovalPlanDirectory(inspection.Plan); err != nil {
+			return err
+		}
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		depthI := residualPathDepth(entries[i].Path)
 		depthJ := residualPathDepth(entries[j].Path)
@@ -499,7 +547,24 @@ func removeInspectedResidualWorktreeDirectory(ctx context.Context, inspection re
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		currentInfo, err := os.Lstat(entry.Path)
+		// Validate ancestors too: lstat of the leaf alone would follow a
+		// substituted directory symlink into a different repository.
+		for parent := filepath.Dir(entry.Path); removalPathWithin(parent, projectPath) || samePath(parent, projectPath); parent = filepath.Dir(parent) {
+			if expected, ok := ancestors[parent]; ok {
+				info, err := os.Lstat(parent)
+				if err != nil || !sameResidualFileSnapshot(expected, info) {
+					return fmt.Errorf("residual worktree ancestor changed before deletion: %s", parent)
+				}
+			}
+			if samePath(parent, projectPath) {
+				break
+			}
+		}
+		rel, err := filepath.Rel(projectPath, entry.Path)
+		if err != nil {
+			return err
+		}
+		currentInfo, err := checkoutRoot.Lstat(rel)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -509,7 +574,18 @@ func removeInspectedResidualWorktreeDirectory(ctx context.Context, inspection re
 		if !sameResidualFileSnapshot(entry.Info, currentInfo) {
 			return fmt.Errorf("residual worktree entry changed before deletion: %s", entry.Path)
 		}
-		if err := os.Remove(entry.Path); err != nil {
+		if rel == "." {
+			currentInfo, err = parentRoot.Lstat(filepath.Base(projectPath))
+			if err != nil || !sameResidualFileSnapshot(entry.Info, currentInfo) {
+				return fmt.Errorf("residual worktree root changed before deletion: %s", projectPath)
+			}
+			err = parentRoot.Remove(filepath.Base(projectPath))
+		} else {
+			// Pin the checkout directory and confine traversal even if another
+			// process substitutes a symlink between validation and removal.
+			err = checkoutRoot.Remove(rel)
+		}
+		if err != nil {
 			return fmt.Errorf("remove verified residual worktree entry %s: %w", entry.Path, err)
 		}
 	}

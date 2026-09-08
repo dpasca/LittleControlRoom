@@ -2009,7 +2009,7 @@ func TestDispatchCommandWorktreeRemoveOnRootOpensResidualCleanupConfirm(t *testi
 	}
 }
 
-func TestRemoveOnPartialOrphanedWorktreeOpensVerifiedCleanup(t *testing.T) {
+func TestRemoveOnPartialOrphanedWorktreeInspectsBeforeCleanup(t *testing.T) {
 	rootPath := "/tmp/repo"
 	orphanPath := "/tmp/repo--partial-removal"
 	m := Model{
@@ -2043,28 +2043,24 @@ func TestRemoveOnPartialOrphanedWorktreeOpensVerifiedCleanup(t *testing.T) {
 	if !ok || row.Kind != projectListRowOrphaned || row.OrphanedCleanupKind != service.ResidualWorktreeCleanupPartialGitDir {
 		t.Fatalf("selected partial orphan row = %#v, %v", row, ok)
 	}
-	if footer := ansi.Strip(m.renderFooter(160)); !strings.Contains(footer, "x cleanup") {
+	if footer := ansi.Strip(m.renderFooter(160)); !strings.Contains(footer, "x inspect") {
 		t.Fatalf("partial orphaned worktree footer missing cleanup action: %q", footer)
 	}
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("/remove should open partial-residue confirmation without scheduling work")
+	if cmd == nil {
+		t.Fatalf("/remove must schedule read-only inspection of nonempty residue")
 	}
-	confirm := got.worktreeRemoveConfirm
-	if confirm == nil || confirm.ResidualCleanupKind != service.ResidualWorktreeCleanupPartialGitDir {
-		t.Fatalf("partial residual cleanup confirmation = %#v", confirm)
+	inspection := got.orphanedWorktreeInspection
+	if inspection == nil || !inspection.Busy || inspection.ProjectPath != orphanPath {
+		t.Fatalf("partial residual inspection = %#v", inspection)
 	}
-	rendered := ansi.Strip(got.renderWorktreeRemoveConfirmOverlay("body", 100, 28))
+	rendered := ansi.Strip(got.renderOrphanedWorktreeInspectionContent(80))
 	for _, want := range []string{
-		"Clear orphaned worktree residue",
-		"stale .git pointer belongs to this",
-		"repository and every remaining project file",
-		"Nested .DS_Store files",
-		"untracked, changed, unreadable, symlinked",
-		"or special entry blocks cleanup",
-		"[Clear]",
+		"Inspecting orphaned worktree",
+		"inspection is read-only",
+		orphanPath,
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("partial residual cleanup confirmation missing %q in %q", want, rendered)
