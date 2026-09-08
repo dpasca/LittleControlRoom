@@ -1835,12 +1835,8 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		if isGitRepo && forgotten && scope.Allows(path) && !staleLinkedWorktree {
 			forgotten = false
 		}
-		if missingLinkedCheckoutAtOccupiedPath {
-			// PresentOnDisk describes the checkout, not an unrelated directory
-			// that merely occupies its former path. Descendant projects are
-			// discovered and persisted independently.
-			presentOnDisk = false
-		}
+		// Retain physical presence even when only the outer checkout is gone.
+		// The orphaned-worktree row is the cleanup affordance for these bytes.
 		if forgotten && !presentOnDisk {
 			if inferredMissingLinkedWorktree {
 				if err := s.store.SetProjectWorktreeInfo(ctx, path, worktreeRootPath, worktreeKind); err != nil {
@@ -3482,7 +3478,7 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		if meta.staleLinkedWorktree {
 			// The checkout is gone even if a descendant repository keeps the
 			// former path present as a plain directory.
-			meta.presentOnDisk = false
+			meta.presentOnDisk = projectPathExists(projectPath)
 			clearUnavailableRepoStatus()
 			return meta
 		}

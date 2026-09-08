@@ -81,6 +81,30 @@ func TestUnknownOrphanedWorktreeHotkeyOpensPersistentInspectionDialog(t *testing
 	}
 }
 
+func TestRetainedCleanupShowsBytesAndBlocksRepeatActivation(t *testing.T) {
+	state := &orphanedWorktreeInspectionState{
+		ProjectPath: "/tmp/repo--residue", RootPath: "/tmp/repo", HaveInspection: true,
+		Inspection: service.OrphanedWorktreeInspection{
+			Resolution:    service.OrphanedWorktreeResolutionClearResidue,
+			CleanupKind:   service.ResidualWorktreeCleanupOwned,
+			RetainedBytes: 3 << 30,
+			Reason:        "Clear residue permanently deletes ignored build/artifact output.",
+		},
+	}
+	m := Model{orphanedWorktreeInspection: state}
+	rendered := ansi.Strip(m.renderOrphanedWorktreeInspectionContent(90))
+	for _, want := range []string{"3221225472 bytes", "logical size", "permanently deletes", "Clear"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %q in %s", want, rendered)
+		}
+	}
+	state.Busy = true
+	updated, cmd := m.updateOrphanedWorktreeInspectionMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || !updated.(Model).orphanedWorktreeInspection.Busy {
+		t.Fatal("repeat activation scheduled a second cleanup")
+	}
+}
+
 func TestRetainedTaskInspectionOffersDeleteNowAndKeepsDialogOnFailure(t *testing.T) {
 	now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.Local)
 	expiresAt := now.Add(72 * time.Hour)

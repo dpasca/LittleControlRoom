@@ -2645,7 +2645,7 @@ func TestScanOnceDoesNotRediscoverPrunableCheckoutFromSessionActivity(t *testing
 		t.Fatalf("GetProjectDetail() error = %v", err)
 	}
 	if err == nil {
-		if !detail.Summary.Forgotten || detail.Summary.PresentOnDisk || detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		if !detail.Summary.Forgotten || !detail.Summary.PresentOnDisk || detail.Summary.WorktreeKind != model.WorktreeKindLinked {
 			t.Fatalf("prunable checkout was rediscovered as a live project: %#v", detail.Summary)
 		}
 	}

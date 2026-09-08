@@ -378,6 +378,12 @@ submodules = [
 	if !strings.Contains(gitOutputTest(t, filepath.Join(mainPath, "Assets"), "worktree", "list", "--porcelain"), filepath.Clean(worktreePath)) {
 		t.Fatal("asset submodule worktree list does not include prepared worktree")
 	}
+	if err := PruneSubmoduleWorktrees(ctx, mainPath); err != nil {
+		t.Fatalf("prune while child is still present: %v", err)
+	}
+	if !strings.Contains(gitOutputTest(t, filepath.Join(mainPath, "Assets"), "worktree", "list", "--porcelain"), filepath.Clean(worktreePath)) {
+		t.Fatal("prune must preserve a still-present nested worktree registration")
+	}
 
 	runGit(t, mainPath, "worktree", "remove", "--force", worktreePath)
 	if err := PruneSubmoduleWorktrees(ctx, mainPath); err != nil {

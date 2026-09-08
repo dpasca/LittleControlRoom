@@ -1240,6 +1240,16 @@ func summarizeConflictedPaths(paths []string, limit int) []string {
 }
 
 func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force bool) error {
+	return s.removeWorktree(ctx, projectPath, force, false)
+}
+
+// CleanupRetainedWorktree is the explicit, reviewed disk-cleanup action. It
+// allows verified ignored output, but never dirty children or untracked source.
+func (s *Service) CleanupRetainedWorktree(ctx context.Context, projectPath string) error {
+	return s.removeWorktree(ctx, projectPath, false, true)
+}
+
+func (s *Service) removeWorktree(ctx context.Context, projectPath string, force, cleanupRetained bool) (resultErr error) {
 	if s == nil || s.store == nil {
 		return fmt.Errorf("service unavailable")
 	}
@@ -1250,8 +1260,8 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	defer unlockMutation()
 
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
-	if projectPath == "" {
-		return fmt.Errorf("project path is required")
+	if !filepath.IsAbs(projectPath) || projectPath == string(filepath.Separator) {
+		return fmt.Errorf("an absolute linked worktree path is required")
 	}
 	rootPath, kind, presentOnDisk, err := s.removeWorktreeTarget(ctx, projectPath)
 	if err != nil {
@@ -1268,9 +1278,56 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		return err
 	}
 	defer unlockGitWrite()
+	removalStarted := false
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		registration, err := linkedWorktreeRegistrationWithReader(failureCtx, rootPath, kind, projectPath, s.gitWorktreeListReader)
+		orphaned := err == nil && (registration == linkedWorktreeRegistrationAbsent || registration == linkedWorktreeRegistrationPrunable)
+		if orphaned || removalStarted {
+			if _, err := os.Lstat(projectPath); !os.IsNotExist(err) {
+				resultErr = s.recordRetainedRemoval(failureCtx, projectPath, resultErr, orphaned)
+			}
+		}
+	}()
 	registration, registrationErr := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
 	if registrationErr != nil {
 		registration = linkedWorktreeRegistrationUnknown
+	}
+	// Capture provenance before pruning or removing any administrative record.
+	summary := s.residualWorktreeSummary(ctx, projectPath)
+	expectedCommit := ""
+	if registration == linkedWorktreeRegistrationLive {
+		expectedCommit, err = gitCommitHash(ctx, projectPath, "HEAD")
+		if err != nil {
+			return err
+		}
+		branch, err := removalGitOutput(ctx, projectPath, "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return err
+		}
+		if branch == "HEAD" {
+			branch = ""
+		}
+		summary.RepoBranch = branch
+	} else {
+		expectedCommit = s.retainedRemovalCommit(ctx, projectPath, rootPath, summary)
+		if registration == linkedWorktreeRegistrationPrunable {
+			if worktrees, err := scanner.ListGitWorktrees(ctx, rootPath); err == nil {
+				for _, worktree := range worktrees {
+					if samePath(worktree.Path, projectPath) && worktree.Head != "" {
+						expectedCommit = worktree.Head
+						summary.RepoBranch = worktree.Branch
+					}
+				}
+			}
+		}
+	}
+	if err := s.saveRemovalReceipt(ctx, worktreeRemovalPlan{RootPath: rootPath, Path: projectPath, Commit: expectedCommit, Branch: summary.RepoBranch}); err != nil {
+		return fmt.Errorf("preserve worktree removal provenance: %w", err)
 	}
 	missingCheckoutReconciled := false
 	if registration == linkedWorktreeRegistrationPrunable {
@@ -1278,6 +1335,14 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		// gone. Pruning removes only Git's stale administrative record; the
 		// directory may now be an ancestor of an independently live nested
 		// worktree, so leave its contents untouched.
+		if err := checkPrunableWorktreeStores(ctx, rootPath); err != nil {
+			return err
+		}
+		if presentOnDisk {
+			if err := checkRemovalProcesses(ctx, projectPath); err != nil {
+				return err
+			}
+		}
 		if err := gitWorktreePrune(ctx, rootPath); err != nil {
 			return fmt.Errorf("prune missing worktree registration for %s: %w", projectPath, err)
 		}
@@ -1288,19 +1353,38 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		if afterPrune != linkedWorktreeRegistrationAbsent {
 			return fmt.Errorf("Git still registers the missing worktree %s after pruning", projectPath)
 		}
-		presentOnDisk = false
+		_, pathErr := os.Lstat(projectPath)
+		presentOnDisk = !os.IsNotExist(pathErr)
 		missingCheckoutReconciled = true
 	}
 	staleLinkedWorktree := registration == linkedWorktreeRegistrationAbsent || registration == linkedWorktreeRegistrationPrunable
+	var removalPlan *worktreeRemovalPlan
 	residualDirectoryRemoved := false
 	if presentOnDisk && staleLinkedWorktree {
 		summary := s.residualWorktreeSummary(ctx, projectPath)
-		inspection, inspectErr := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, "")
+		inspection, inspectErr := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, expectedCommit)
 		if inspectErr != nil {
 			return fmt.Errorf("inspect orphaned worktree directory before cleanup: %w", inspectErr)
 		}
 		if !inspection.Safe {
 			return fmt.Errorf("Git no longer tracks this worktree, but Little Control Room could not verify the remaining folder for safe cleanup: %s; Little Control Room left the folder untouched: %s", inspection.Reason, projectPath)
+		}
+		if inspection.Kind == ResidualWorktreeCleanupOwned {
+			inspection.Plan.Branch = summary.RepoBranch
+			removalPlan = &inspection.Plan
+			if !cleanupRetained {
+				return fmt.Errorf("owned nested worktrees or ignored output remain; use the explicit retained-folder cleanup after reviewing its size and contents")
+			}
+			if err := checkRemovalProcesses(ctx, projectPath); err != nil {
+				return err
+			}
+			if err := s.saveRemovalReceipt(ctx, inspection.Plan); err != nil {
+				return err
+			}
+			removalStarted = true
+			if err := removeOwnedChildren(ctx, inspection.Plan); err != nil {
+				return err
+			}
 		}
 		if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
 			return fmt.Errorf("remove verified worktree residue: %w", err)
@@ -1319,11 +1403,43 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		}
 		allowSubmoduleForceFallback = true
 	}
-	expectedCommit := ""
 	if presentOnDisk && !residualDirectoryRemoved && !missingCheckoutReconciled {
-		expectedCommit, _ = gitCommitHash(ctx, projectPath, "HEAD")
+		if err := checkRemovalProcesses(ctx, projectPath); err != nil {
+			return err
+		}
+		if _, err := worktreeprep.RepairRootSubmoduleWorktrees(ctx, rootPath); err != nil {
+			return err
+		}
+		plan, err := inspectRemovalPlan(ctx, rootPath, projectPath, expectedCommit, false)
+		if err != nil {
+			return err
+		}
+		removalPlan = &plan
+		plan.Branch = summary.RepoBranch
+		if err := checkRemovalProcesses(ctx, projectPath); err != nil {
+			return err
+		}
+		if err := s.saveRemovalReceipt(ctx, plan); err != nil {
+			return err
+		}
+		removalStarted = true
+		if err := removeOwnedChildren(ctx, plan); err != nil {
+			return err
+		}
+		if err := validateRemovalPlanDirectory(plan); err != nil {
+			return err
+		}
+		// Git interprets absent gitlink directories as deleted files. Empty
+		// placeholders represent uninitialized submodules and let the normal
+		// clean-checkout removal retain Git's concurrent-change protection.
+		for _, child := range plan.Children {
+			if err := os.Mkdir(child.Path, 0o755); err != nil {
+				return fmt.Errorf("restore empty submodule placeholder: %w", err)
+			}
+		}
 	}
 	if !residualDirectoryRemoved && !missingCheckoutReconciled {
+		removalStarted = true
 		removeErr := gitWorktreeRemove(ctx, rootPath, projectPath, force)
 		if removeErr != nil && allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(removeErr) {
 			removeErr = gitWorktreeRemove(ctx, rootPath, projectPath, true)
@@ -1341,6 +1457,15 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	}
 	if err := s.verifyWorktreeRemoval(ctx, rootPath, kind, projectPath, expectedCommit, missingCheckoutReconciled); err != nil {
 		return err
+	}
+	if removalPlan != nil {
+		tree, err := readResidualGitTree(ctx, rootPath, removalPlan.Commit)
+		if err != nil {
+			return err
+		}
+		if err := verifyRemovalChildRegistrations(ctx, *removalPlan, tree, true); err != nil {
+			return err
+		}
 	}
 	unlockProjectState := s.lockProjectStateMutation(projectPath)
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
@@ -1383,22 +1508,23 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 
 // verifyWorktreeRemoval makes successful removal mean that Git has forgotten
 // the exact checkout and no unverified checkout files remain at its path. A
-// prunable checkout may leave an ancestor directory that contains an
-// independently live nested repository; in that case the missing outer .git
-// entry and absent Git registration are the relevant postconditions.
+// retained ancestor or recreated output is a partial result, never success.
 func (s *Service) verifyWorktreeRemoval(
 	ctx context.Context,
 	rootPath string,
 	kind model.WorktreeKind,
 	projectPath string,
 	expectedCommit string,
-	allowOccupiedAncestor bool,
+	_ bool,
 ) error {
 	registration, err := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
 	if err != nil {
 		return fmt.Errorf("verify Git worktree removal for %s: %w", projectPath, err)
 	}
 	if registration == linkedWorktreeRegistrationPrunable {
+		if err := checkPrunableWorktreeStores(ctx, rootPath); err != nil {
+			return err
+		}
 		if err := gitWorktreePrune(ctx, rootPath); err != nil {
 			return fmt.Errorf("prune residual Git worktree registration for %s: %w", projectPath, err)
 		}
@@ -1415,16 +1541,11 @@ func (s *Service) verifyWorktreeRemoval(
 		return fmt.Errorf("could not verify that Git stopped registering worktree %s after removal", projectPath)
 	}
 
-	if !projectPathExists(projectPath) {
+	if _, err := os.Lstat(projectPath); os.IsNotExist(err) {
 		return nil
+	} else if err != nil {
+		return fmt.Errorf("verify removed worktree path: %w", err)
 	}
-	if allowOccupiedAncestor {
-		if projectIsGitRepo(projectPath) {
-			return fmt.Errorf("worktree checkout %s still exists after its Git registration was removed", projectPath)
-		}
-		return nil
-	}
-
 	summary := s.residualWorktreeSummary(ctx, projectPath)
 	inspection, err := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, expectedCommit)
 	if err != nil {
@@ -1436,6 +1557,9 @@ func (s *Service) verifyWorktreeRemoval(
 			inspection.Reason,
 			projectPath,
 		)
+	}
+	if inspection.Kind == ResidualWorktreeCleanupOwned {
+		return fmt.Errorf("retained worktree files require explicit cleanup: %s", projectPath)
 	}
 	if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
 		return fmt.Errorf("remove verified worktree residue after Git removal: %w", err)
@@ -1469,6 +1593,9 @@ func (s *Service) finishSafeWorktreeRemovalAfterGitError(ctx context.Context, ro
 			removeErr,
 			fmt.Errorf("Git no longer registers %s, but its remaining path could not be verified for safe cleanup: %s; Little Control Room left it untouched", projectPath, inspection.Reason),
 		)
+	}
+	if inspection.Kind == ResidualWorktreeCleanupOwned {
+		return removeErr
 	}
 	if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
 		return errors.Join(removeErr, fmt.Errorf("clear verified residue created during worktree removal: %w", err))
@@ -1507,7 +1634,7 @@ func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPa
 		if inspectErr != nil {
 			return result, fmt.Errorf("inspect orphaned worktree directory %s: %w", path, inspectErr)
 		}
-		if !inspection.Safe {
+		if !inspection.Safe || inspection.Kind == ResidualWorktreeCleanupOwned {
 			result.KeptPaths = append(result.KeptPaths, path)
 			continue
 		}

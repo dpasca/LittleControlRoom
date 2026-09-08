@@ -1656,10 +1656,10 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if row.Kind == projectListRowWorktree && m.canRemoveWorktree(project) {
 		actions = append(actions, footerHideAction("x", "remove"))
 	}
-	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind != service.ResidualWorktreeCleanupUnknown {
+	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind == service.ResidualWorktreeCleanupDSStoreOnly {
 		actions = append(actions, footerHideAction("x", "cleanup"))
 	}
-	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind == service.ResidualWorktreeCleanupUnknown {
+	if row.Kind == projectListRowOrphaned && row.OrphanedCleanupKind != service.ResidualWorktreeCleanupDSStoreOnly {
 		actions = append(actions, footerPrimaryAction("x", "inspect"))
 	}
 	if projectIsWorktreeRoot(project) && m.orphanedWorktreeCount(projectWorktreeRootPath(project)) > 0 {
@@ -2363,7 +2363,7 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 			m.status = "A worktree cleanup is already in progress for this repository"
 			return nil
 		}
-		if row.OrphanedCleanupKind == service.ResidualWorktreeCleanupUnknown {
+		if row.OrphanedCleanupKind != service.ResidualWorktreeCleanupDSStoreOnly {
 			return m.openOrphanedWorktreeInspection(project, row.RootPath)
 		}
 		state := &worktreeRemoveConfirmState{
