@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
+	"lcroom/internal/control"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/todocapture"
@@ -263,10 +264,11 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	if msg.restartWarmup {
 		m.settleRestartWarmup(msg.projectPath, !msg.snapshot.BusyExternal)
 	}
+	catalogCmd := m.refreshEngineerCatalogCmd(msg.projectPath, msg.provider)
 	if focusInput {
-		return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot), m.codexInput.Focus())
+		return m, tea.Batch(catalogCmd, seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot), m.codexInput.Focus())
 	}
-	return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
+	return m, tea.Batch(catalogCmd, seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
 }
 
 func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
@@ -372,6 +374,9 @@ func (m Model) applyCodexModelListMsg(msg codexModelListMsg) (tea.Model, tea.Cmd
 		}
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, result)
 		if msg.err != nil {
+			if m.codexModelPicker.ControlInvocation != nil {
+				return m.cancelControlModelPicker(msg.err)
+			}
 			m.codexModelPicker = nil
 			m.reportError("Embedded model picker failed", msg.err, "")
 			return m, nil
@@ -1028,6 +1033,7 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 }
 
 type embeddedLaunchOptions struct {
+	modelSelection           control.EngineerModelSelection
 	forceNew                 bool
 	prompt                   string
 	reveal                   bool
@@ -1141,6 +1147,14 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 
 	req := m.embeddedLaunchRequest(p, provider, options)
+	req.PendingModel = options.modelSelection.Model
+	req.PendingReasoning = options.modelSelection.ReasoningEffort
+	if provider == codexapp.ProviderLCAgent && options.modelSelection.Model != "" {
+		req.LCAgentRoutePreset = ""
+		if options.modelSelection.ModelProvider != "" {
+			req.LCAgentProvider = options.modelSelection.ModelProvider
+		}
+	}
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
 		return m, nil

@@ -27,6 +27,36 @@ valid proposal is a terminal LCAgent outcome handed directly to Chat's existing
 host confirmation dialog. The native adapter validates the same typed
 invocation and never executes it.
 
+## Engineer model selection
+
+The three engineer controls (`engineer.send_prompt`,
+`todo.create_worktree_and_start_engineer`, and
+`project.create_and_start_engineer`) accept optional `model`,
+`reasoning_effort`, and LCAgent `model_provider` fields. Discover exact IDs
+through the read-only `engineer.models` query for an explicit provider.
+The query returns supported effort IDs, model defaults, source, and observation
+time. Catalogs are saved when the host opens a provider session or loads its
+model picker. They distinguish provider listings from Claude's built-in aliases
+and LCAgent's combined curated/provider routes. A listing is evidence, not a
+guarantee of current account access; an empty catalog means discovery has not
+completed. Pagination uses `limit` and `offset`.
+
+Explicit choices are validated asynchronously before repository/TODO mutations.
+They override saved model preferences for this operation only. Omitted choices
+preserve existing defaults. A model-changing follow-up waits for the active turn
+to finish instead of steering a turn running on the previous model. The durable
+mailbox preserves the choice across restarts.
+
+Use `select_model: true` with an explicit provider to ask the operator to choose
+a model and effort. After control confirmation, the host opens the picker
+**before** creating the TODO/worktree or sending the prompt. Cancellation or
+loading failure terminates the operation. `select_model` and an explicit
+`model` are mutually exclusive.
+
+`reveal: true` only shows the engineer session. It does **not** request a model
+picker. Confirmation displays either the explicit model/effort, current defaults,
+or the pending picker choice.
+
 ## Agent workflow
 
 For a request such as creating a project, the embedded agent:

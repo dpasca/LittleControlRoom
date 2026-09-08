@@ -198,6 +198,27 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 		return controlInvocationOutcome{model: m, err: err}
 	}
 
+	if selection, provider, ok := controlEngineerSelection(normalized); ok {
+		if selection.SelectModel {
+			if m.codexModelPicker != nil {
+				return controlInvocationOutcome{model: m, err: errors.New("another model picker is already open")}
+			}
+			if m.helpChatMode {
+				m.closeHelpChatMode("Choose an engineer model before launch")
+			}
+			m.openCodexModelPickerLoadingForProvider(codexModelPickerTargetControl, provider)
+			m.codexModelPicker.ControlInvocation = &normalized
+			return controlInvocationOutcome{model: m, cmd: m.openPrelaunchCodexModelPickerCmd(provider, codexModelPickerTargetControl), deferBossResult: true}
+		}
+		if selection.Model != "" {
+			return controlInvocationOutcome{model: m, cmd: m.validateControlEngineerModelCmd(normalized, provider, selection), deferBossResult: true}
+		}
+	}
+	return m.executeValidatedControlInvocation(normalized)
+}
+
+func (m Model) executeValidatedControlInvocation(normalized control.Invocation) controlInvocationOutcome {
+
 	switch normalized.Capability {
 	case control.CapabilityIntegrationsManage:
 		return m.executeIntegrationsControl(normalized)
@@ -1940,16 +1961,17 @@ func inputWithCreatedProjectDefaults(input control.ProjectCreateAndStartEngineer
 
 func todoCreateWorktreeInputFromProjectCreate(input control.ProjectCreateAndStartEngineerInput) control.TodoCreateWorktreeAndStartEngineerInput {
 	return control.TodoCreateWorktreeAndStartEngineerInput{
-		RequestID:    input.RequestID,
-		ProjectPath:  input.ProjectPath,
-		ProjectName:  input.ProjectName,
-		TodoText:     input.TodoText,
-		Prompt:       input.Prompt,
-		Provider:     input.Provider,
-		Reveal:       input.Reveal,
-		TodoID:       input.TodoID,
-		TodoLabel:    input.TodoLabel,
-		WorktreePath: input.WorktreePath,
+		EngineerModelSelection: input.EngineerModelSelection,
+		RequestID:              input.RequestID,
+		ProjectPath:            input.ProjectPath,
+		ProjectName:            input.ProjectName,
+		TodoText:               input.TodoText,
+		Prompt:                 input.Prompt,
+		Provider:               input.Provider,
+		Reveal:                 input.Reveal,
+		TodoID:                 input.TodoID,
+		TodoLabel:              input.TodoLabel,
+		WorktreePath:           input.WorktreePath,
 	}
 }
 
@@ -2091,9 +2113,10 @@ func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (t
 	}
 	prompt := m.engineerPromptWithRuntimeContext(msg.project, msg.input.Prompt, msg.todo)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(worktreeProject, msg.provider, embeddedLaunchOptions{
-		forceNew: true,
-		prompt:   prompt,
-		reveal:   msg.input.Reveal,
+		modelSelection: msg.input.EngineerModelSelection,
+		forceNew:       true,
+		prompt:         prompt,
+		reveal:         msg.input.Reveal,
 	})
 	m = normalizeUpdateModel(updated)
 	if cmd == nil {

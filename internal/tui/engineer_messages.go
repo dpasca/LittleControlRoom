@@ -74,17 +74,18 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 		targetSessionID = m.selectedProjectSessionID(project, provider)
 	}
 	message := control.EngineerMessage{
-		OperationID:     strings.TrimSpace(inv.RequestID),
-		ProjectPath:     strings.TrimSpace(project.Path),
-		Provider:        controlProviderFromCodexProvider(provider),
-		SessionMode:     input.SessionMode.Normalized(),
-		TargetSessionID: targetSessionID,
-		Prompt:          strings.TrimSpace(prompt),
-		Reveal:          input.Reveal,
-		TodoID:          input.TodoID,
-		TodoLabel:       input.TodoLabel,
-		TodoText:        input.TodoText,
-		State:           control.EngineerMessageQueued,
+		EngineerModelSelection: input.EngineerModelSelection,
+		OperationID:            strings.TrimSpace(inv.RequestID),
+		ProjectPath:            strings.TrimSpace(project.Path),
+		Provider:               controlProviderFromCodexProvider(provider),
+		SessionMode:            input.SessionMode.Normalized(),
+		TargetSessionID:        targetSessionID,
+		Prompt:                 strings.TrimSpace(prompt),
+		Reveal:                 input.Reveal,
+		TodoID:                 input.TodoID,
+		TodoLabel:              input.TodoLabel,
+		TodoText:               input.TodoText,
+		State:                  control.EngineerMessageQueued,
 	}
 	return func() tea.Msg {
 		if svc == nil || svc.Store() == nil {
@@ -227,7 +228,7 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 		}
 	}
 	if embeddedSessionBlocksProviderSwitch(snapshot) {
-		if provider == codexapp.ProviderCodex && controlPromptCanSteerActiveEmbeddedSession(snapshot) {
+		if message.Model == "" && provider == codexapp.ProviderCodex && controlPromptCanSteerActiveEmbeddedSession(snapshot) {
 			return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 		}
 		return engineerMessageDisposition{project: project, wait: true, bindSessionID: targetSessionID}
@@ -317,6 +318,7 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 	}
 	provider := codexProviderFromControlProvider(message.Provider)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+		modelSelection:  message.EngineerModelSelection,
 		forceNew:        message.SessionMode == control.SessionModeNew,
 		prompt:          engineerMessageDeliveryPrompt(message),
 		reveal:          message.Reveal,

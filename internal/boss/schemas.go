@@ -304,6 +304,17 @@ func bossActionSchema() map[string]any {
 				"type":        "boolean",
 				"description": "For git.prepare_commit proposals, true when the user asked to commit and push. This only prepares the normal commit-and-push preview; the operator still confirms in the TUI.",
 			},
+			"engineer_model_selection": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"model":            map[string]any{"type": "string"},
+					"model_provider":   map[string]any{"type": "string"},
+					"reasoning_effort": map[string]any{"type": "string"},
+					"select_model":     map[string]any{"type": "boolean"},
+				},
+				"required":    []string{"model", "model_provider", "reasoning_effort", "select_model"},
+				"description": "Engineer launch controls only: exact IDs from engineer.models, or select_model=true to ask the operator before launch; use empty strings and false for defaults.",
+			},
 			"engineer_provider": map[string]any{
 				"type":        "string",
 				"enum":        control.ProviderStrings(true),
@@ -459,6 +470,7 @@ func bossActionSchema() map[string]any {
 			"settings_changes",
 			"commit_message",
 			"push_after_commit",
+			"engineer_model_selection",
 			"engineer_provider",
 			"session_mode",
 			"prompt",

@@ -153,16 +153,17 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 	switch capability {
 	case control.CapabilityEngineerSendPrompt:
 		payload = control.EngineerSendPromptInput{
-			RequestID:   strings.TrimSpace(action.RequestID),
-			ProjectPath: strings.TrimSpace(action.ProjectPath),
-			ProjectName: strings.TrimSpace(action.ProjectName),
-			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
-			SessionMode: control.SessionMode(strings.TrimSpace(action.SessionMode)),
-			Prompt:      bossLosslessControlPrompt(action),
-			TodoID:      action.TodoID,
-			TodoLabel:   strings.TrimSpace(action.TodoLabel),
-			TodoText:    strings.TrimSpace(action.TodoText),
-			Reveal:      action.Reveal,
+			EngineerModelSelection: action.EngineerModelSelection,
+			RequestID:              strings.TrimSpace(action.RequestID),
+			ProjectPath:            strings.TrimSpace(action.ProjectPath),
+			ProjectName:            strings.TrimSpace(action.ProjectName),
+			Provider:               control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			SessionMode:            control.SessionMode(strings.TrimSpace(action.SessionMode)),
+			Prompt:                 bossLosslessControlPrompt(action),
+			TodoID:                 action.TodoID,
+			TodoLabel:              strings.TrimSpace(action.TodoLabel),
+			TodoText:               strings.TrimSpace(action.TodoText),
+			Reveal:                 action.Reveal,
 		}
 	case control.CapabilityAgentTaskCreate:
 		payload = control.AgentTaskCreateInput{
@@ -195,13 +196,14 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 		}
 	case control.CapabilityProjectCreateAndStartEngineer:
 		payload = control.ProjectCreateAndStartEngineerInput{
-			RequestID:   strings.TrimSpace(action.RequestID),
-			ParentPath:  strings.TrimSpace(action.ProjectParentPath),
-			ProjectName: strings.TrimSpace(action.ProjectName),
-			TodoText:    strings.TrimSpace(action.TodoText),
-			Prompt:      bossLosslessControlPrompt(action),
-			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
-			Reveal:      action.Reveal,
+			EngineerModelSelection: action.EngineerModelSelection,
+			RequestID:              strings.TrimSpace(action.RequestID),
+			ParentPath:             strings.TrimSpace(action.ProjectParentPath),
+			ProjectName:            strings.TrimSpace(action.ProjectName),
+			TodoText:               strings.TrimSpace(action.TodoText),
+			Prompt:                 bossLosslessControlPrompt(action),
+			Provider:               control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			Reveal:                 action.Reveal,
 		}
 	case control.CapabilityProjectSetCategory:
 		payload = control.ProjectSetCategoryInput{
@@ -242,13 +244,14 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			todoText = strings.TrimSpace(action.Prompt)
 		}
 		payload = control.TodoCreateWorktreeAndStartEngineerInput{
-			RequestID:   strings.TrimSpace(action.RequestID),
-			ProjectPath: strings.TrimSpace(action.ProjectPath),
-			ProjectName: strings.TrimSpace(action.ProjectName),
-			TodoText:    todoText,
-			Prompt:      prompt,
-			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
-			Reveal:      action.Reveal,
+			EngineerModelSelection: action.EngineerModelSelection,
+			RequestID:              strings.TrimSpace(action.RequestID),
+			ProjectPath:            strings.TrimSpace(action.ProjectPath),
+			ProjectName:            strings.TrimSpace(action.ProjectName),
+			TodoText:               todoText,
+			Prompt:                 prompt,
+			Provider:               control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			Reveal:                 action.Reveal,
 		}
 	case control.CapabilityTodoComplete:
 		payload = control.TodoCompleteInput{
