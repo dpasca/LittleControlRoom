@@ -526,13 +526,13 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 	}
 	if dialog.CancelRequested {
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "The active delete request is being canceled. LCR will still verify what was already removed, and no queued project group will start afterward.")...)
-		lines = append(lines, "", renderDialogAction("B", "hide to background", navigateActionKeyStyle, navigateActionTextStyle))
+		lines = append(lines, "", renderDialogAction("b", "hide to background", navigateActionKeyStyle, navigateActionTextStyle))
 		return strings.Join(lines, "\n")
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "Deletion is permanent. It is running off the UI path while LCR waits for app-server and verifies that thread rows and rollout files are gone.")...)
 	lines = append(lines,
 		"",
-		renderDialogAction("B", "hide to background", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
+		renderDialogAction("b", "hide to background", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Esc", "abort remaining", cancelActionKeyStyle, cancelActionTextStyle),
 	)
 	return strings.Join(lines, "\n")
