@@ -145,7 +145,10 @@ type codexResumeChoicesMsg struct {
 }
 
 func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model, tea.Cmd) {
-	if errors.Is(msg.err, errClaudeAPIKeyLaunchCanceled) {
+	if dialog := m.busySessionReplacement; dialog != nil && dialog.Submitting && dialog.request.projectPath == msg.projectPath && dialog.request.openRequestID == msg.openRequestID {
+		m.busySessionReplacement = nil
+	}
+	if errors.Is(msg.err, errClaudeAPIKeyLaunchCanceled) || errors.Is(msg.err, errBusySessionReplacementCanceled) {
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, nil, "canceled")
 		m.err = nil
 		m.finishCodexPendingOpenRequest(msg.projectPath, msg.openRequestID, codexapp.Snapshot{}, false, false)
@@ -155,6 +158,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			m.settleRestartWarmup(msg.projectPath, false)
 		}
 		m.status = "Claude Code launch canceled"
+		if errors.Is(msg.err, errBusySessionReplacementCanceled) {
+			m.status = "New session canceled; current session kept"
+		}
 		return m, m.restoreTodoDialogs()
 	}
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
