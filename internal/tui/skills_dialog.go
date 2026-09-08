@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/control"
 	"lcroom/internal/integrations"
+	"lcroom/internal/uistyle"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -447,12 +448,21 @@ func (m Model) renderSkillsDialogContent(width int) string {
 		return ""
 	}
 	lines := []string{commandPaletteTitleStyle.Render("Agent Integrations"), commandPaletteHintStyle.Render(skillsFitLine(fmt.Sprintf("%s  |  %s scope  |  %s", d.Target.Provider, d.Target.Scope, d.Kind), width))}
+	tabs := []string{}
+	for _, tab := range []struct{ kind, label string }{{"skill", "Skills"}, {"mcp", "MCP"}, {"plugin", "Plugins"}} {
+		style := detailMutedStyle
+		if tab.kind == d.Kind {
+			style = detailLabelStyle.Underline(true)
+		}
+		tabs = append(tabs, style.Render(tab.label))
+	}
+	lines = append(lines, skillsFitLine(strings.Join(tabs, "   "), width))
 	if d.Target.ProjectPath != "" {
 		lines = append(lines, skillsFitLine(d.Target.ProjectPath, width))
 	}
 	if d.Pending != nil || d.ShowingResult || d.DetailText != "" {
 		content := d.Preview
-		footer := "↑↓ scroll  |  Enter confirms  |  Esc cancels"
+		footer := strings.Join(skillsActionRows(width, skillsAction("↑↓", "scroll", uistyle.DialogActionNavigate), skillsAction("Enter", "confirm", uistyle.DialogActionPrimary), skillsAction("Esc", "cancel", uistyle.DialogActionCancel)), "\n")
 		if d.ShowingResult && d.LastResult != nil {
 			content = d.Notice + "\n\n" + d.LastResult.Activation
 			for _, path := range d.LastResult.ChangedPaths {
@@ -464,11 +474,11 @@ func (m Model) renderSkillsDialogContent(width int) string {
 			if check := d.LastResult.Check; check != nil {
 				content += "\nTools: " + strings.Join(check.Tools, ", ")
 			}
-			footer = "↑↓ scroll  |  Enter / Esc returns"
+			footer = strings.Join(skillsActionRows(width, skillsAction("↑↓", "scroll", uistyle.DialogActionNavigate), skillsAction("Enter / Esc", "return", uistyle.DialogActionCancel)), "\n")
 		}
 		if d.DetailText != "" {
 			content = d.DetailText
-			footer = "↑↓ scroll  |  Enter / Esc returns"
+			footer = strings.Join(skillsActionRows(width, skillsAction("↑↓", "scroll", uistyle.DialogActionNavigate), skillsAction("Enter / Esc", "return", uistyle.DialogActionCancel)), "\n")
 		}
 		parts := strings.Split(lipgloss.NewStyle().Width(width).Render(content), "\n")
 		height := max(3, m.height-12)
@@ -476,7 +486,7 @@ func (m Model) renderSkillsDialogContent(width int) string {
 		end := min(len(parts), start+height)
 		lines = append(lines, "")
 		lines = append(lines, parts[start:end]...)
-		lines = append(lines, "", commandPaletteHintStyle.Render(skillsFitLine(footer, width)))
+		lines = append(lines, "", footer)
 		return strings.Join(lines, "\n")
 	}
 	if d.Editor != nil {
@@ -493,7 +503,7 @@ func (m Model) renderSkillsDialogContent(width int) string {
 		if e.Err != "" {
 			lines = append(lines, detailDangerStyle.Render(skillsFitLine(e.Err, width)))
 		}
-		lines = append(lines, "", commandPaletteHintStyle.Render(skillsFitLine("Tab selects field  |  Enter reviews  |  Esc cancels", width)))
+		lines = append(lines, "", strings.Join(skillsActionRows(width, skillsAction("Tab", "field", uistyle.DialogActionNavigate), skillsAction("Enter", "review", uistyle.DialogActionPrimary), skillsAction("Esc", "cancel", uistyle.DialogActionCancel)), "\n"))
 		return strings.Join(lines, "\n")
 	}
 	if d.Busy {
@@ -512,17 +522,15 @@ func (m Model) renderSkillsDialogContent(width int) string {
 		if len(rows) == 0 {
 			lines = append(lines, detailMutedStyle.Render("No entries found at this scope."))
 		}
+
+		lines = append(lines, skillsTableRow(width, []string{"Name", "State", "Scope", "Source"}, false, true))
+		lines = append(lines, detailMutedStyle.Render(strings.Repeat("─", width)))
 		for i := d.Offset; i < min(len(rows), d.Offset+m.skillsDialogListHeight()); i++ {
 			entry := rows[i]
-			prefix := "  "
-			if i == d.Selected {
-				prefix = "> "
-			}
-			line := skillsFitLine(fmt.Sprintf("%s%-30s  %-12s  %s / %s", prefix, entry.Name, entry.State, entry.Scope, entry.Source), width)
-			if i == d.Selected {
-				line = detailValueStyle.Render(line)
-			}
-			lines = append(lines, line)
+			lines = append(lines, skillsTableRow(width, []string{entry.Name, entry.State, entry.Scope, entry.Source}, i == d.Selected, false))
+		}
+		if len(rows) > 0 {
+			lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("%d–%d of %d", d.Offset+1, min(len(rows), d.Offset+m.skillsDialogListHeight()), len(rows))))
 		}
 		if entry, ok := m.selectedIntegration(); ok {
 			lines = append(lines, "", skillsDialogField("Name", entry.Name, width))
@@ -543,9 +551,23 @@ func (m Model) renderSkillsDialogContent(width int) string {
 	if d.Notice != "" {
 		lines = append(lines, "", skillsFitLine(d.Notice, width))
 	}
-	for _, hint := range []string{"", "Disk configuration; reconnect idle sessions after changes.", "Tab kind | p agent | s scope | a add | Space toggle", "Enter details | t test | d remove | v result | c copy | r refresh"} {
-		lines = append(lines, commandPaletteHintStyle.Render(skillsFitLine(hint, width)))
-	}
+
+	lines = append(lines, "", commandPaletteHintStyle.Render(skillsFitLine("Disk configuration; reconnect idle sessions after changes.", width)))
+	lines = append(lines, skillsActionRows(width,
+		skillsAction("↑↓", "select", uistyle.DialogActionNavigate),
+		skillsAction("Tab", "kind", uistyle.DialogActionNavigate),
+		skillsAction("p", "agent", uistyle.DialogActionNavigate),
+		skillsAction("s", "scope", uistyle.DialogActionNavigate),
+		skillsAction("a", "add", uistyle.DialogActionPrimary),
+		skillsAction("Space", "toggle", uistyle.DialogActionSecondary),
+		skillsAction("Enter", "details", uistyle.DialogActionNavigate),
+		skillsAction("t", "test", uistyle.DialogActionSecondary),
+		skillsAction("d", "remove", uistyle.DialogActionCancel),
+		skillsAction("v", "result", uistyle.DialogActionNavigate),
+		skillsAction("c", "copy", uistyle.DialogActionNavigate),
+		skillsAction("r", "refresh", uistyle.DialogActionNavigate),
+		skillsAction("Esc", "close", uistyle.DialogActionCancel),
+	)...)
 	return strings.Join(lines, "\n")
 }
 
@@ -553,13 +575,13 @@ func skillsDialogField(label, value string, width int) string {
 	if value == "" {
 		value = "-"
 	}
-	return skillsFitLine(label+": "+value, width)
+	return detailLabelStyle.Render(label+": ") + skillsFitLine(value, max(0, width-lipgloss.Width(label)-2))
 }
 func (m Model) skillsDialogListHeight() int {
 	if m.height <= 0 {
 		return 8
 	}
-	return min(10, max(2, m.height-22))
+	return min(10, max(2, m.height-27))
 }
 func skillsFitLine(text string, width int) string {
 	if width <= 0 {
@@ -568,3 +590,65 @@ func skillsFitLine(text string, width int) string {
 	return ansi.Truncate(text, width, "...")
 }
 func skillsSpinnerDots(frame int) string { return strings.Repeat(".", frame%4) }
+
+// skillsTableRow uses terminal cell widths so long and wide-character names
+// cannot push status or provenance out of their columns.
+func skillsTableRow(width int, values []string, selected, header bool) string {
+	widths := []int{max(1, width-37), 10, 9, 7}
+	if width < 48 {
+		widths = []int{max(1, width-15), 10}
+	}
+	cells := make([]string, len(widths))
+	for i, w := range widths {
+		style := detailValueStyle
+		if i > 1 {
+			style = detailMutedStyle
+		}
+		if i == 1 {
+			switch values[i] {
+			case "invalid":
+				style = detailDangerStyle
+			case "disabled", "cached":
+				style = detailWarningStyle
+			case "configured", "discovered", "bundled":
+				style = detailLabelStyle
+			}
+		}
+		if header {
+			style = detailLabelStyle
+		}
+		if selected {
+			style = style.Background(lipgloss.Color("238")).Bold(true)
+		}
+		cells[i] = style.Width(w).Render(skillsFitLine(values[i], w))
+	}
+	marker := "  "
+	if selected {
+		marker = detailLabelStyle.Render("› ")
+	}
+	separator := detailMutedStyle.Render(" │ ")
+	return skillsFitLine(marker+strings.Join(cells, separator), width)
+}
+
+func skillsAction(key, label string, tone uistyle.DialogActionTone) string {
+	return uistyle.RenderDialogActionTone(key, label, tone, dialogPanelFillStyle)
+}
+
+func skillsActionRows(width int, actions ...string) []string {
+	lines := []string{}
+	line := ""
+	for _, action := range actions {
+		if line != "" && lipgloss.Width(line)+2+lipgloss.Width(action) > width {
+			lines = append(lines, line)
+			line = ""
+		}
+		if line != "" {
+			line += "  "
+		}
+		line += skillsFitLine(action, width)
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}

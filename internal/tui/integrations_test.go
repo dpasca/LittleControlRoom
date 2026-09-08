@@ -83,3 +83,27 @@ func TestIntegrationDialogRendersBoundedRowsAndRecovery(t *testing.T) {
 		t.Fatalf("recovery path not inspectable: %s", view)
 	}
 }
+
+func TestIntegrationDialogTableKeepsColumnsAndShortcutsVisible(t *testing.T) {
+	m := integrationDialogModel()
+	m.skillsDialog.Target.ProjectPath = "/project"
+	for i := 0; i < 20; i++ {
+		m.skillsDialog.Inventory.Entries = append(m.skillsDialog.Inventory.Entries, integrations.Entry{
+			Name: strings.Repeat("長い名前", 20), Kind: "mcp", State: "configured",
+			Scope: "project", Source: "native", Description: "A description",
+		})
+	}
+	m.skillsDialog.Selected = 1
+	for _, width := range []int{64, 80, 100, 140} {
+		m.width = width
+		view := m.renderSkillsDialog(width, m.height)
+		if lipgloss.Width(view) > width || lipgloss.Height(view) > m.height {
+			t.Fatalf("dialog exceeds %dx%d: %dx%d", width, m.height, lipgloss.Width(view), lipgloss.Height(view))
+		}
+		for _, label := range []string{"Name", "State", "Scope", "Source", "configured", "Tab", "Space", "Esc", "refresh", "Plugins"} {
+			if !strings.Contains(view, label) {
+				t.Fatalf("width %d omitted %q", width, label)
+			}
+		}
+	}
+}
