@@ -80,6 +80,7 @@ type codexCleanupDeleteMsg struct {
 
 func (m Model) openCodexCleanup() (tea.Model, tea.Cmd) {
 	if dialog := m.codexCleanup; dialog != nil {
+		m.filterCodexCleanupForPrivacy()
 		dialog.Backgrounded = false
 		switch {
 		case dialog.Deleting && dialog.CancelRequested:
@@ -240,21 +241,22 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 	}
 	dialog.Audit = msg.audit
 	dialog.Audit.Groups = append([]service.CodexCleanupWorktreeGroup(nil), msg.audit.Groups...)
+	m.filterCodexCleanupForPrivacy()
 	sortCodexCleanupGroups(dialog)
 	dialog.Chosen = make(map[string]bool)
 	dialog.Selected = 0
 	dialog.RetainedIndex = 0
 	dialog.ErrorMessage = ""
 	m.err = nil
-	if len(msg.audit.Groups) == 0 {
+	if len(dialog.Audit.Groups) == 0 {
 		m.status = fmt.Sprintf("Codex cleanup audit complete: no eligible sessions (%d excluded by safeguards)", msg.audit.Excluded.Total())
 		return m, nil
 	}
 	m.status = fmt.Sprintf(
 		"Codex cleanup audit: %d project group%s, %d root thread%s, %s recoverable",
-		len(msg.audit.Groups), pluralSuffix(len(msg.audit.Groups)),
-		msg.audit.EligibleRootThreads, pluralSuffix(msg.audit.EligibleRootThreads),
-		formatCodexCleanupBytes(msg.audit.RecoverableBytes),
+		len(dialog.Audit.Groups), pluralSuffix(len(dialog.Audit.Groups)),
+		dialog.Audit.EligibleRootThreads, pluralSuffix(dialog.Audit.EligibleRootThreads),
+		formatCodexCleanupBytes(dialog.Audit.RecoverableBytes),
 	)
 	return m, nil
 }
@@ -300,12 +302,16 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 		dialog.Deleting = false
 		dialog.Finished = true
 		dialog.ErrorMessage = msg.err.Error()
-		m.reportError("Codex cleanup stopped", msg.err, msg.group.WorktreePath)
+		if m.codexCleanupGroupPrivate(msg.group) {
+			m.status = "Codex cleanup stopped for a private project"
+		} else {
+			m.reportError("Codex cleanup stopped", msg.err, msg.group.WorktreePath)
+		}
 		return m, nil
 	}
 	if dialog.QueueIndex < len(dialog.Queue) {
 		next := dialog.Queue[dialog.QueueIndex]
-		m.status = fmt.Sprintf("Codex cleanup %d/%d verified; deleting %s...", dialog.QueueIndex, len(dialog.Queue), filepath.Base(next.WorktreePath))
+		m.status = fmt.Sprintf("Codex cleanup %d/%d verified; deleting %s...", dialog.QueueIndex, len(dialog.Queue), m.codexCleanupGroupLabel(next))
 		if dialog.Backgrounded {
 			m.status += " (background; /codex-gc to view or abort)"
 		}
@@ -482,7 +488,7 @@ func renderCodexCleanupOverlay(body string, bodyW, bodyH int, dialog *codexClean
 }
 
 func (m Model) renderCodexCleanupOverlay(body string, bodyW, bodyH int) string {
-	return renderCodexCleanupOverlay(body, bodyW, bodyH, m.codexCleanup, m.spinnerFrame, m.currentTime())
+	return renderCodexCleanupOverlay(body, bodyW, bodyH, m.codexCleanupPrivacyView(), m.spinnerFrame, m.currentTime())
 }
 
 func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, spinnerFrame int, now time.Time) string {

@@ -836,6 +836,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			selectedPath = p.Path
 		}
 		m.rebuildProjectList(selectedPath)
+		m.filterCodexCleanupForPrivacy()
 		return m, m.savePrivacyModeCmd(m.privacyMode)
 	case commands.KindQuit:
 		return m.beginGracefulQuit()
