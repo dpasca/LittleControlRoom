@@ -97,15 +97,6 @@ func startThreadAdminClient(ctx context.Context, codexHome string) (*threadAdmin
 	if err != nil {
 		return nil, fmt.Errorf("open Codex app-server stdin: %w", err)
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("open Codex app-server stdout: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, fmt.Errorf("open Codex app-server stderr: %w", err)
-	}
-
 	client := &threadAdminClient{
 		cmd:      cmd,
 		stdin:    stdin,
@@ -113,13 +104,19 @@ func startThreadAdminClient(ctx context.Context, codexHome string) (*threadAdmin
 		exited:   make(chan error, 1),
 		done:     make(chan struct{}),
 	}
-	if err := cmd.Start(); err != nil {
+	stdout, stderr, err := startWithOwnedOutputPipes(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("start Codex app-server: %w", err)
 	}
-	go client.readMessages(stdout)
-	go client.readStderr(stderr)
+	var captured sync.WaitGroup
+	captureProcessOutput(&captured, stdout, func(stream *os.File) { client.readMessages(stream) })
+	captureProcessOutput(&captured, stderr, func(stream *os.File) { client.readStderr(stream) })
 	go func() {
-		client.exited <- cmd.Wait()
+		err := cmd.Wait()
+		// Report the exit only once stderr is drained, so withStderr can still
+		// explain why the app-server died instead of returning a bare error.
+		waitForOutputDrain(&captured, appServerOutputDrainTimeout)
+		client.exited <- err
 	}()
 
 	if _, err := client.call(ctx, "initialize", map[string]any{

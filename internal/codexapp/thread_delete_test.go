@@ -16,6 +16,7 @@ import (
 
 const threadDeleteHelperEnv = "LCROOM_THREAD_DELETE_HELPER"
 const threadDeleteBlockEnv = "LCROOM_THREAD_DELETE_BLOCK"
+const threadDeleteFailEnv = "LCROOM_THREAD_DELETE_FAIL"
 
 func TestDeleteThreadsUsesAppServerThreadDelete(t *testing.T) {
 	codexHome := t.TempDir()
@@ -104,6 +105,10 @@ func TestThreadDeleteHelperProcess(t *testing.T) {
 	if os.Getenv(threadDeleteHelperEnv) != "1" {
 		return
 	}
+	if detail := os.Getenv(threadDeleteFailEnv); detail != "" {
+		fmt.Fprintln(os.Stderr, detail)
+		os.Exit(1)
+	}
 	logPath := os.Getenv("LCROOM_THREAD_DELETE_LOG")
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
@@ -135,5 +140,29 @@ func TestThreadDeleteHelperProcess(t *testing.T) {
 			"id":     json.RawMessage(request.ID),
 			"result": map[string]interface{}{},
 		})
+	}
+}
+
+func TestDeleteThreadsReportsStderrFromImmediateAppServerExit(t *testing.T) {
+	const detail = "codex: no authentication configured"
+	original := newThreadAdminCommand
+	newThreadAdminCommand = func() *exec.Cmd {
+		cmd := exec.Command(os.Args[0], "-test.run=TestThreadDeleteHelperProcess")
+		cmd.Env = append(os.Environ(), threadDeleteHelperEnv+"=1", threadDeleteFailEnv+"="+detail)
+		return cmd
+	}
+	t.Cleanup(func() { newThreadAdminCommand = original })
+
+	// The app-server exits before answering initialize, so its stderr is the
+	// only explanation available; cmd.Wait must not close the pipe first.
+	deleted, err := DeleteThreads(context.Background(), t.TempDir(), []string{"thread-a"})
+	if err == nil {
+		t.Fatalf("DeleteThreads() error = nil, want failure; deleted=%#v", deleted)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("deleted ids = %#v, want none", deleted)
+	}
+	if !strings.Contains(err.Error(), detail) {
+		t.Fatalf("error = %v, want it to carry app-server stderr %q", err, detail)
 	}
 }

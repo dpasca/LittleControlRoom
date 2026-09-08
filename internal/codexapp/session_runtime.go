@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"lcroom/internal/browserctl"
@@ -52,25 +54,19 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	if err != nil {
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
 
 	s.cmd = cmd
 	s.stdin = stdin
 
-	if err := cmd.Start(); err != nil {
+	stdout, stderr, err := startWithOwnedOutputPipes(cmd)
+	if err != nil {
 		return err
 	}
 
-	go s.readStdout(stdout)
-	go s.readStderr(stderr)
-	go s.waitForExit()
+	var captured sync.WaitGroup
+	captureProcessOutput(&captured, stdout, func(stream *os.File) { s.readStdout(stream) })
+	captureProcessOutput(&captured, stderr, func(stream *os.File) { s.readStderr(stream) })
+	go s.waitForExit(&captured)
 
 	// Resuming a thread initializes its configured MCP services before the
 	// app-server answers. That startup path is materially slower than an
@@ -643,12 +639,16 @@ func (s *appServerSession) appendCodexStderrLine(recordIndex int, line string) i
 	return recordIndex
 }
 
-func (s *appServerSession) waitForExit() {
+func (s *appServerSession) waitForExit(captured *sync.WaitGroup) {
 	if s.cmd == nil {
 		s.closeExitCh()
 		return
 	}
 	err := s.cmd.Wait()
+	// Publish the exit only once the captured output is in. An app-server that
+	// dies during startup writes its reason to stderr as it goes, and that
+	// diagnosis has to reach the transcript before the exit notice does.
+	waitForOutputDrain(captured, appServerOutputDrainTimeout)
 	s.closeExitCh()
 	s.mu.Lock()
 	if !s.closed {
