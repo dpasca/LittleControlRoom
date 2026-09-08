@@ -186,6 +186,16 @@ type DeleteCodexCleanupWorktreeRequest struct {
 	LoadedThreadIDs []string
 	// Called off the UI path immediately before deletion, after the repeat audit.
 	CurrentLoadedThreadIDs func() []string
+	// Progress runs on the background caller; callbacks must return promptly.
+	Progress func(CodexCleanupProgress)
+}
+
+type CodexCleanupProgress struct {
+	Phase                  string
+	CompletedRoots         int
+	TotalRoots             int
+	ActiveRoots            int
+	VerifiedReclaimedBytes int64
 }
 
 type DeleteCodexCleanupWorktreeResult struct {
@@ -958,6 +968,13 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	if len(requestedIDs) == 0 {
 		return result, fmt.Errorf("explicit Codex thread selection is required")
 	}
+	progress := CodexCleanupProgress{Phase: "Waiting for repository operations", TotalRoots: len(requestedIDs)}
+	publish := func() {
+		if request.Progress != nil {
+			request.Progress(progress)
+		}
+	}
+	publish()
 
 	// Background cleanup may overlap ordinary TUI use. Serialize against
 	// creating or restoring another worktree in this repository family so the
@@ -969,6 +986,8 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	}
 	defer unlockWorktree()
 
+	progress.Phase = "Rechecking cleanup safety"
+	publish()
 	audit, err := s.AuditCodexSessionStorage(ctx, CodexCleanupAuditOptions{LoadedThreadIDs: request.LoadedThreadIDs, Category: request.Category, InactiveDays: request.InactiveDays})
 	if err != nil {
 		return result, fmt.Errorf("repeat Codex cleanup safety audit: %w", err)
@@ -1012,9 +1031,34 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 
 	deleter := s.codexThreadDeleter
 	if deleter == nil {
-		deleter = codexapp.DeleteThreads
+		deleter = codexapp.DeleteThreadsWithProgress
 	}
-	deletedIDs, deleteErr := deleter(ctx, s.Config().CodexHome, currentIDs)
+	progress.Phase = "Starting Codex cleanup workers"
+	publish()
+	threadsByID := make(map[string]CodexCleanupThread, len(group.Threads))
+	for _, thread := range group.Threads {
+		threadsByID[thread.ID] = thread
+	}
+	deletedIDs, deleteErr := deleter(ctx, s.Config().CodexHome, currentIDs, func(update codexapp.ThreadDeleteProgress) {
+		progress.Phase = "Deleting sessions"
+		if !update.Completed {
+			progress.ActiveRoots++
+			publish()
+			return
+		}
+		progress.ActiveRoots = max(0, progress.ActiveRoots-1)
+		progress.CompletedRoots++
+		progress.Phase = "Verifying deleted session"
+		publish()
+		thread := threadsByID[update.ThreadID]
+		// Check just this tree, avoiding a full-home inventory per response.
+		verifyCtx, cancel := context.WithTimeout(ctx, codexCleanupVerificationTimeout)
+		partial, _ := verifyCodexCleanupGroup(verifyCtx, s.Config().CodexHome, CodexCleanupWorktreeGroup{Threads: []CodexCleanupThread{thread}, RecoverableBytes: thread.RecoverableBytes})
+		cancel()
+		progress.VerifiedReclaimedBytes += partial.VerifiedReclaimedBytes
+		progress.Phase = "Deleting sessions"
+		publish()
+	})
 	result.DeletedThreadIDs = append([]string(nil), deletedIDs...)
 	result.ExpectedBytes = group.RecoverableBytes
 
@@ -1024,16 +1068,29 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	// short bound so callers can report exactly what was already removed.
 	verificationCtx, cancelVerification := context.WithTimeout(context.WithoutCancel(ctx), codexCleanupVerificationTimeout)
 	defer cancelVerification()
-	remaining, listErr := codexstate.ListThreadsIncludingUnknownCWD(verificationCtx, s.Config().CodexHome)
-	remainingSet := make(map[string]struct{}, len(remaining))
-	for _, thread := range remaining {
-		remainingSet[strings.TrimSpace(thread.ID)] = struct{}{}
+	progress.Phase = "Verifying final storage"
+	progress.ActiveRoots = 0
+	publish()
+	verifiedResult, verificationErr := verifyCodexCleanupGroup(verificationCtx, s.Config().CodexHome, group)
+	verifiedResult.WorktreePath = result.WorktreePath
+	verifiedResult.DeletedThreadIDs = result.DeletedThreadIDs
+	progress.VerifiedReclaimedBytes = verifiedResult.VerifiedReclaimedBytes
+	publish()
+	return verifiedResult, errors.Join(deleteErr, verificationErr)
+}
+
+func verifyCodexCleanupGroup(ctx context.Context, home string, group CodexCleanupWorktreeGroup) (DeleteCodexCleanupWorktreeResult, error) {
+	result := DeleteCodexCleanupWorktreeResult{RequestedRootThreads: len(group.Threads), ExpectedBytes: group.RecoverableBytes}
+	var ids []string
+	for _, thread := range group.Threads {
+		ids = append(ids, thread.MemberIDs...)
 	}
+	remainingSet, listErr := codexstate.ExistingThreadIDs(ctx, home, ids)
 	verified := listErr == nil
 	for _, thread := range group.Threads {
 		treeVerified := listErr == nil
 		for _, memberID := range thread.MemberIDs {
-			if _, stillPresent := remainingSet[memberID]; stillPresent {
+			if remainingSet[memberID] {
 				treeVerified = false
 			}
 		}
@@ -1067,7 +1124,7 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	} else if !result.Verified {
 		verificationErr = fmt.Errorf("reclaimed storage could not be fully verified after the Codex app-server deletion request")
 	}
-	return result, errors.Join(deleteErr, verificationErr)
+	return result, verificationErr
 }
 
 func sortedUniqueStrings(values []string) []string {

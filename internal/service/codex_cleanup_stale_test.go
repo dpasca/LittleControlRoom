@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"lcroom/internal/codexapp"
 )
 
 func TestCodexCleanupStaleInactivityThresholds(t *testing.T) {
@@ -80,7 +82,7 @@ func TestCodexCleanupStaleDeleteBindsInactivityPolicy(t *testing.T) {
 			g := audit.Groups[0]
 			request := DeleteCodexCleanupWorktreeRequest{Category: g.Category, InactiveDays: days, WorktreePath: g.WorktreePath, RootProjectPath: g.RootProjectPath, RootThreadIDs: []string{"old"}, Revision: g.Revision}
 			called := false
-			f.service.codexThreadDeleter = func(ctx context.Context, home string, ids []string) ([]string, error) {
+			f.service.codexThreadDeleter = func(ctx context.Context, home string, ids []string, _ func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 				called = true
 				if _, err := f.codexDB.Exec("DELETE FROM threads WHERE id='old'"); err != nil {
 					return nil, err
@@ -189,7 +191,7 @@ func TestCodexCleanupStaleDeleteRevalidatesCategoryAndActivity(t *testing.T) {
 				t.Fatal(err)
 			}
 			called := false
-			f.service.codexThreadDeleter = func(ctx context.Context, home string, ids []string) ([]string, error) {
+			f.service.codexThreadDeleter = func(ctx context.Context, home string, ids []string, _ func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 				called = true
 				if len(ids) != 1 || ids[0] != "old" {
 					t.Fatalf("unexpected deletion: %v", ids)

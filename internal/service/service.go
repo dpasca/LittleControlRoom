@@ -117,7 +117,7 @@ type Service struct {
 	commitTodoNotifyCh  chan struct{}
 	commitTodoStartOnce sync.Once
 
-	codexThreadDeleter      func(context.Context, string, []string) ([]string, error)
+	codexThreadDeleter      func(context.Context, string, []string, func(codexapp.ThreadDeleteProgress)) ([]string, error)
 	codexCleanupAuditMu     sync.RWMutex
 	codexCleanupAuditLatest CodexCleanupAuditSnapshot
 	codexCleanupAuditEvery  time.Duration
@@ -199,7 +199,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitRepoInitializer:     runGitInit,
 		gitRepoCloner:          runGitClone,
 		scheduledScanTimeout:   defaultScheduledScanTimeout,
-		codexThreadDeleter:     codexapp.DeleteThreads,
+		codexThreadDeleter:     codexapp.DeleteThreadsWithProgress,
 		codexCleanupAuditEvery: defaultCodexCleanupAuditInterval,
 	}
 	svc.cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(svc.cfg.EngineerTodoCaptureMode)

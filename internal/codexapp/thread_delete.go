@@ -29,6 +29,21 @@ var newThreadAdminCommand = func() *exec.Cmd {
 // supported app-server thread/delete API. The returned ids completed before an
 // error, which lets callers verify and report partial progress accurately.
 func DeleteThreads(ctx context.Context, codexHome string, threadIDs []string) ([]string, error) {
+	return deleteThreads(ctx, codexHome, threadIDs, 1, nil)
+}
+
+type ThreadDeleteProgress struct {
+	ThreadID  string
+	Completed bool
+}
+
+// DeleteThreadsWithProgress uses a bounded pool of persistent clients for
+// independent root trees. Callbacks are serialized on the calling goroutine.
+func DeleteThreadsWithProgress(ctx context.Context, codexHome string, threadIDs []string, progress func(ThreadDeleteProgress)) ([]string, error) {
+	return deleteThreads(ctx, codexHome, threadIDs, 4, progress)
+}
+
+func deleteThreads(ctx context.Context, codexHome string, threadIDs []string, concurrency int, progress func(ThreadDeleteProgress)) ([]string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -37,20 +52,78 @@ func DeleteThreads(ctx context.Context, codexHome string, threadIDs []string) ([
 		return nil, nil
 	}
 
-	client, err := startThreadAdminClient(ctx, codexHome)
-	if err != nil {
-		return nil, err
-	}
-	defer client.close()
-
-	deleted := make([]string, 0, len(threadIDs))
-	for _, threadID := range threadIDs {
-		if _, err := client.call(ctx, "thread/delete", map[string]any{"threadId": threadID}); err != nil {
-			return deleted, fmt.Errorf("delete Codex thread %s: %w", shortID(threadID), err)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan string)
+	go func() {
+		defer close(jobs)
+		for _, id := range threadIDs {
+			select {
+			case jobs <- id:
+			case <-ctx.Done():
+				return
+			}
 		}
-		deleted = append(deleted, threadID)
+	}()
+	type event struct {
+		progress ThreadDeleteProgress
+		err      error
 	}
-	return deleted, nil
+	events := make(chan event, concurrency*2)
+	var workers sync.WaitGroup
+	for range min(concurrency, len(threadIDs)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			client, err := startThreadAdminClient(ctx, codexHome)
+			if err != nil {
+				cancel()
+				events <- event{err: err}
+				return
+			}
+			defer client.close()
+			for id := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				events <- event{progress: ThreadDeleteProgress{ThreadID: id}}
+				if _, err := client.call(ctx, "thread/delete", map[string]any{"threadId": id}); err != nil {
+					cancel()
+					events <- event{err: fmt.Errorf("delete Codex thread %s: %w", shortID(id), err)}
+					return
+				}
+				events <- event{progress: ThreadDeleteProgress{ThreadID: id, Completed: true}}
+			}
+		}()
+	}
+	go func() { workers.Wait(); close(events) }()
+	completed := make(map[string]bool, len(threadIDs))
+	var deleteErr error
+	for event := range events {
+		if event.err != nil {
+			// Prefer the initiating error over cancellation of sibling workers.
+			if deleteErr == nil || errors.Is(deleteErr, context.Canceled) {
+				deleteErr = event.err
+			}
+			continue
+		}
+		if event.progress.Completed {
+			completed[event.progress.ThreadID] = true
+		}
+		if progress != nil {
+			progress(event.progress)
+		}
+	}
+	deleted := make([]string, 0, len(completed))
+	for _, id := range threadIDs {
+		if completed[id] {
+			deleted = append(deleted, id)
+		}
+	}
+	if deleteErr == nil {
+		deleteErr = ctx.Err()
+	}
+	return deleted, deleteErr
 }
 
 type threadAdminClient struct {
@@ -140,6 +213,9 @@ func startThreadAdminClient(ctx context.Context, codexHome string) (*threadAdmin
 }
 
 func (c *threadAdminClient) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if c == nil {
 		return nil, fmt.Errorf("Codex app-server cleanup client is unavailable")
 	}

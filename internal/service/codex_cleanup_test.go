@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -298,7 +299,7 @@ func TestDeleteCodexCleanupWorktreeUsesAppServerBoundaryAndVerifiesFiles(t *test
 	}
 	group := audit.Groups[0]
 	var calledWith []string
-	fixture.service.codexThreadDeleter = func(_ context.Context, codexHome string, threadIDs []string) ([]string, error) {
+	fixture.service.codexThreadDeleter = func(_ context.Context, codexHome string, threadIDs []string, _ func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 		calledWith = append([]string(nil), threadIDs...)
 		if codexHome != fixture.codexHome {
 			t.Fatalf("deleter Codex home = %q, want %q", codexHome, fixture.codexHome)
@@ -334,6 +335,49 @@ func TestDeleteCodexCleanupWorktreeUsesAppServerBoundaryAndVerifiesFiles(t *test
 	}
 }
 
+func TestCodexCleanupProgressVerifiesEachRootBeforeGroupFinishes(t *testing.T) {
+	f := newCodexCleanupFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	path := f.addDeletedWorktree(t, "progress", now.Add(-20*24*time.Hour), false)
+	files := make(map[string]string)
+	for _, id := range []string{"first", "second"} {
+		files[id] = f.addThread(t, cleanupThreadFixture{ID: id, CWD: path, LastActivity: now.Add(-90 * 24 * time.Hour)})
+	}
+	audit, err := f.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{})
+	if err != nil || len(audit.Groups) != 1 {
+		t.Fatalf("audit: %#v %v", audit, err)
+	}
+	g := audit.Groups[0]
+	var updates []CodexCleanupProgress
+	f.service.codexThreadDeleter = func(ctx context.Context, home string, ids []string, progress func(codexapp.ThreadDeleteProgress)) ([]string, error) {
+		for i, id := range ids {
+			progress(codexapp.ThreadDeleteProgress{ThreadID: id})
+			if _, err := f.codexDB.Exec("DELETE FROM threads WHERE id = ?", id); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(files[id]); err != nil {
+				t.Fatal(err)
+			}
+			progress(codexapp.ThreadDeleteProgress{ThreadID: id, Completed: true})
+			latest := updates[len(updates)-1]
+			if latest.CompletedRoots != i+1 || latest.VerifiedReclaimedBytes <= 0 || (i == 0 && latest.VerifiedReclaimedBytes >= g.RecoverableBytes) {
+				t.Fatalf("progress before next root: %#v", latest)
+			}
+		}
+		return ids, nil
+	}
+	result, err := f.service.DeleteCodexCleanupWorktree(context.Background(), DeleteCodexCleanupWorktreeRequest{
+		WorktreePath: g.WorktreePath, RootProjectPath: g.RootProjectPath, RootThreadIDs: []string{"first", "second"}, Revision: g.Revision,
+		Progress: func(p CodexCleanupProgress) { updates = append(updates, p) },
+	})
+	if err != nil || !result.Verified || result.VerifiedReclaimedBytes != g.RecoverableBytes {
+		t.Fatalf("result=%#v error=%v", result, err)
+	}
+	if updates[len(updates)-1].VerifiedReclaimedBytes != result.VerifiedReclaimedBytes {
+		t.Fatal("final verification double counted progress")
+	}
+}
+
 func TestDeleteCodexCleanupWorktreeRejectsChangedPreview(t *testing.T) {
 	fixture := newCodexCleanupFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -348,7 +392,7 @@ func TestDeleteCodexCleanupWorktreeRejectsChangedPreview(t *testing.T) {
 		t.Fatalf("pin Codex thread: %v", err)
 	}
 	called := false
-	fixture.service.codexThreadDeleter = func(context.Context, string, []string) ([]string, error) {
+	fixture.service.codexThreadDeleter = func(context.Context, string, []string, func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 		called = true
 		return nil, nil
 	}
@@ -380,7 +424,7 @@ func TestDeleteCodexCleanupWorktreeWaitsForRepositoryWorktreeOperations(t *testi
 	unlock := fixture.service.worktreeCreateLocks.Lock(group.RootProjectPath)
 	defer unlock()
 	deleteCalled := false
-	fixture.service.codexThreadDeleter = func(context.Context, string, []string) ([]string, error) {
+	fixture.service.codexThreadDeleter = func(context.Context, string, []string, func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 		deleteCalled = true
 		return nil, nil
 	}
@@ -411,7 +455,7 @@ func TestDeleteCodexCleanupWorktreeVerifiesDeletionAfterLostResponse(t *testing.
 		t.Fatalf("initial audit = %#v, %v", audit, err)
 	}
 	group := audit.Groups[0]
-	fixture.service.codexThreadDeleter = func(context.Context, string, []string) ([]string, error) {
+	fixture.service.codexThreadDeleter = func(context.Context, string, []string, func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 		if _, err := fixture.codexDB.Exec(`DELETE FROM threads WHERE id = 'thread-root'`); err != nil {
 			t.Fatalf("delete fake Codex row: %v", err)
 		}
@@ -446,7 +490,7 @@ func TestDeleteCodexCleanupWorktreeVerifiesCompletedDeletionAfterCancellation(t 
 	}
 	group := audit.Groups[0]
 	ctx, cancel := context.WithCancel(context.Background())
-	fixture.service.codexThreadDeleter = func(deleteCtx context.Context, _ string, _ []string) ([]string, error) {
+	fixture.service.codexThreadDeleter = func(deleteCtx context.Context, _ string, _ []string, _ func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 		if _, err := fixture.codexDB.Exec(`DELETE FROM threads WHERE id = 'thread-root'`); err != nil {
 			t.Fatalf("delete fake Codex row: %v", err)
 		}
@@ -474,7 +518,7 @@ func TestDeleteCodexCleanupWorktreeVerifiesCompletedDeletionAfterCancellation(t 
 func TestStartCodexCleanupAuditorIsReadOnly(t *testing.T) {
 	fixture := newCodexCleanupFixture(t)
 	deleteCalled := make(chan struct{}, 1)
-	fixture.service.codexThreadDeleter = func(context.Context, string, []string) ([]string, error) {
+	fixture.service.codexThreadDeleter = func(context.Context, string, []string, func(codexapp.ThreadDeleteProgress)) ([]string, error) {
 		deleteCalled <- struct{}{}
 		return nil, nil
 	}

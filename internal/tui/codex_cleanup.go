@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"lcroom/internal/codexapp"
@@ -56,6 +57,22 @@ type codexCleanupDialogState struct {
 	Cancel          context.CancelFunc
 	CancelRequested bool
 	ErrorMessage    string
+	Progress        *atomic.Pointer[codexCleanupProgressSnapshot]
+	GroupStartedAt  time.Time
+}
+
+type codexCleanupProgressSnapshot struct {
+	service.CodexCleanupProgress
+	UpdatedAt time.Time
+}
+
+func (d *codexCleanupDialogState) progressSnapshot() codexCleanupProgressSnapshot {
+	if d.Progress != nil {
+		if p := d.Progress.Load(); p != nil {
+			return *p
+		}
+	}
+	return codexCleanupProgressSnapshot{}
 }
 
 type codexCleanupDeleteResult struct {
@@ -117,7 +134,9 @@ func (m Model) renderFooterCodexCleanupSegment() string {
 	case dialog.Deleting && dialog.CancelRequested:
 		return renderFooterAlert("Codex GC stopping · /codex-gc")
 	case dialog.Deleting:
-		return renderFooterStatus(fmt.Sprintf("Codex GC %d/%d · /codex-gc", dialog.QueueIndex+1, len(dialog.Queue)))
+		p := dialog.progressSnapshot()
+		reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
+		return renderFooterStatus(fmt.Sprintf("Codex GC %d/%d · %d/%d roots · %s · /codex-gc", dialog.QueueIndex+1, len(dialog.Queue), p.CompletedRoots, p.TotalRoots, formatCodexCleanupBytes(reclaimed+p.VerifiedReclaimedBytes)))
 	case dialog.Finished && dialog.Aborted:
 		return renderFooterAlert("Codex GC stopped · /codex-gc report")
 	case dialog.Finished:
@@ -173,9 +192,13 @@ func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeG
 		rootThreadIDs = append(rootThreadIDs, thread.ID)
 	}
 	ctx, cancel := m.actionContext(codexCleanupDeleteTimeout)
+	progress := &atomic.Pointer[codexCleanupProgressSnapshot]{}
 	if m.codexCleanup != nil {
 		m.codexCleanup.Cancel = cancel
+		m.codexCleanup.Progress = progress
+		m.codexCleanup.GroupStartedAt = m.currentTime()
 	}
+	progress.Store(&codexCleanupProgressSnapshot{CodexCleanupProgress: service.CodexCleanupProgress{Phase: "Preparing cleanup", TotalRoots: len(rootThreadIDs)}, UpdatedAt: m.currentTime()})
 	return func() tea.Msg {
 		defer cancel()
 		if svc == nil {
@@ -183,6 +206,9 @@ func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeG
 		}
 		loadedThreadIDs := append(append([]string(nil), cachedLoadedThreadIDs...), codexapp.LoadedThreadIDs(manager)...)
 		result, err := svc.DeleteCodexCleanupWorktree(ctx, service.DeleteCodexCleanupWorktreeRequest{
+			Progress: func(p service.CodexCleanupProgress) {
+				progress.Store(&codexCleanupProgressSnapshot{CodexCleanupProgress: p, UpdatedAt: time.Now()})
+			},
 			CurrentLoadedThreadIDs: func() []string { return codexapp.LoadedThreadIDs(manager) },
 			Category:               group.Category,
 			InactiveDays:           group.InactiveDays,
@@ -496,7 +522,7 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 		return renderCodexCleanupResults(dialog, width, bodyH)
 	}
 	if dialog.Deleting {
-		return renderCodexCleanupProgress(dialog, width, spinnerFrame)
+		return renderCodexCleanupProgress(dialog, width, spinnerFrame, now)
 	}
 	return buildCodexCleanupView(dialog, width, bodyH, spinnerFrame, now).text()
 }
@@ -504,12 +530,14 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 func renderCodexCleanupConfirmation(dialog *codexCleanupDialogState, width int) string {
 	return buildCodexCleanupReview(dialog, width, 40).text()
 }
-func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerFrame int) string {
+func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerFrame int, now time.Time) string {
 	current := service.CodexCleanupWorktreeGroup{}
 	if dialog.QueueIndex < len(dialog.Queue) {
 		current = dialog.Queue[dialog.QueueIndex]
 	}
 	reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
+	p := dialog.progressSnapshot()
+	reclaimed += p.VerifiedReclaimedBytes
 	title := "Deleting Codex session storage"
 	progress := spinnerFrames[spinnerFrame%len(spinnerFrames)] + fmt.Sprintf(" Project group %d of %d", dialog.QueueIndex+1, len(dialog.Queue))
 	if dialog.CancelRequested {
@@ -520,10 +548,20 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 		commandPaletteTitleStyle.Render(title),
 		"",
 		commandPaletteHintStyle.Render(progress),
-		detailField("Current", firstNonEmptyString(current.WorktreePath, "verifying final result")),
+		detailField("Current", cleanupCellText(firstNonEmptyString(current.WorktreePath, "verifying final result"), max(1, width-10))),
+		detailField("Stage", firstNonEmptyString(p.Phase, "Preparing cleanup")),
+		detailField("Root sessions", fmt.Sprintf("%d/%d completed · %d in flight", p.CompletedRoots, p.TotalRoots, p.ActiveRoots)),
 		detailField("Verified reclaimed", formatCodexCleanupBytes(reclaimed)),
-		"",
 	}
+	if !dialog.GroupStartedAt.IsZero() {
+		elapsed := time.Duration(max(0, int(now.Sub(dialog.GroupStartedAt)/time.Second))) * time.Second
+		waiting := time.Duration(max(0, int(now.Sub(p.UpdatedAt)/time.Second))) * time.Second
+		lines = append(lines, detailField("Time", fmt.Sprintf("%s elapsed · %s since last update", elapsed, waiting)))
+		if waiting >= 15*time.Second {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Still waiting for Codex or storage verification; Esc stops remaining work.")...)
+		}
+	}
+	lines = append(lines, "")
 	if dialog.CancelRequested {
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "The active delete request is being canceled. LCR will still verify what was already removed, and no queued project group will start afterward.")...)
 		lines = append(lines, "", renderDialogAction("b", "hide to background", navigateActionKeyStyle, navigateActionTextStyle))

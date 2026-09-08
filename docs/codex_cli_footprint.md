@@ -403,19 +403,28 @@ Space, the select-all control (or `A` while the table is focused), and opening
 and keep counts and defaults to **Back**. The user must explicitly focus and
 activate **Delete N sessions permanently**, or click that button. LCR repeats the
 complete audit and compares the preview revision before each group. It then
-calls Codex app-server `thread/delete` for each selected root; the Codex API
+calls Codex app-server `thread/delete` for each selected root through at most
+four persistent cleanup clients. Independent root trees can make progress
+concurrently; each client handles one request at a time. The Codex API
 performs the root-and-descendant cascade. Direct SQLite or rollout-file
 deletion is not used.
 
-After every app-server response, LCR verifies that every selected root and
-descendant row is absent from `state_5.sqlite` and that each previewed rollout
-file is absent. Progress and partial failures remain visible. Reclaimed space is
-reported as verified logical rollout bytes only after those absence checks; it
+After each successful root response, LCR checks that tree’s selected index keys
+and previewed rollout files, then publishes reclaimed bytes within the current
+group. Index verification uses bounded read-only primary-key queries rather
+than loading the full thread inventory. A final pass checks the entire selected
+group, including requests whose responses were lost. Missing or unreadable
+indexes fail verification. Progress shows the current stage, completed and
+in-flight root counts, verified reclaimed bytes, elapsed time, and time since
+the last update. The background footer includes root counts and reclaimed bytes.
+Snapshots are atomically published by the worker and rendering performs no I/O.
+Reclaimed space is reported as verified logical rollout bytes only after those absence checks; it
 does not claim filesystem block-level savings on sparse, compressed, or
 copy-on-write storage. The deletion job runs off the TUI update path: `B` hides
 it while `/codex-gc` reopens its progress or report. Esc cancels the active
-app-server client and prevents later queued groups from starting. A cancellation
-cannot restore a thread already deleted, so LCR gives the in-flight group a
+app-server clients and prevents queued roots and later groups from starting.
+An error in any worker also cancels the remaining workers and queue.
+A cancellation cannot restore a thread already deleted, so LCR gives the in-flight group a
 separate bounded post-cancel verification pass and reports only bytes it can
 still prove were reclaimed. Each destructive group also shares the repository
 family's worktree-operation lock, preventing an in-process create or restore

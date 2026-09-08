@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,6 +47,44 @@ func ListThreads(ctx context.Context, codexHome string) ([]Thread, error) {
 // be omitted from a cascading thread/delete safety check.
 func ListThreadsIncludingUnknownCWD(ctx context.Context, codexHome string) ([]Thread, error) {
 	return listThreads(ctx, codexHome, false)
+}
+
+// ExistingThreadIDs checks only the selected index keys, without loading the
+// complete session inventory. A missing/unreadable index fails verification.
+func ExistingThreadIDs(ctx context.Context, codexHome string, ids []string) (map[string]bool, error) {
+	u := url.URL{Scheme: "file", Path: filepath.Join(ResolveHomeRoot(codexHome), "state_5.sqlite"), RawQuery: "mode=ro"}
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	found := make(map[string]bool)
+	for start := 0; start < len(ids); start += 100 {
+		batch := ids[start:min(start+100, len(ids))]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := db.QueryContext(ctx, "SELECT id FROM threads WHERE id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			found[id] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return found, nil
 }
 
 func listThreads(ctx context.Context, codexHome string, requireCWD bool) ([]Thread, error) {

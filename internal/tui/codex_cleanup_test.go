@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,29 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
+
+func TestCodexCleanupLiveProgressIncludesCurrentGroupAndWaitTime(t *testing.T) {
+	now := time.Now()
+	progress := &atomic.Pointer[codexCleanupProgressSnapshot]{}
+	progress.Store(&codexCleanupProgressSnapshot{CodexCleanupProgress: service.CodexCleanupProgress{
+		Phase: "Deleting sessions", CompletedRoots: 57, TotalRoots: 100, ActiveRoots: 4, VerifiedReclaimedBytes: 100 * 1024 * 1024,
+	}, UpdatedAt: now.Add(-20 * time.Second)})
+	d := &codexCleanupDialogState{
+		Deleting: true, Backgrounded: true, GroupStartedAt: now.Add(-10 * time.Minute), Progress: progress,
+		Queue:   []service.CodexCleanupWorktreeGroup{codexCleanupTestGroup(now)},
+		Results: []codexCleanupDeleteResult{{Result: service.DeleteCodexCleanupWorktreeResult{VerifiedReclaimedBytes: 10 * 1024 * 1024}}},
+	}
+	text := ansi.Strip(renderCodexCleanupContent(d, 104, 35, 0, now))
+	for _, want := range []string{"57/100 completed", "4 in flight", "110.0 MiB", "10m0s elapsed", "20s since last update", "Still waiting"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q:\n%s", want, text)
+		}
+	}
+	footer := ansi.Strip((Model{codexCleanup: d}).renderFooterCodexCleanupSegment())
+	if !strings.Contains(footer, "57/100 roots") || !strings.Contains(footer, "110.0 MiB") {
+		t.Fatalf("footer=%q", footer)
+	}
+}
 
 func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
 	updated, cmd := (Model{}).dispatchCommand(commands.Invocation{Kind: commands.KindCodexGC})
