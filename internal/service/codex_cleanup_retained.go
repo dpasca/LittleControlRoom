@@ -57,6 +57,9 @@ func buildCodexCleanupRetained(audit CodexCleanupAudit, threads []codexstate.Thr
 				group.ProjectPath = record.RootPath
 				group.Reason = "Not eligible under worktree/tree safeguards"
 			}
+			if audit.Category == CodexCleanupStale {
+				group.Reason = "Outside the selected inactivity policy or protected by session safeguards"
+			}
 			if cwd == "" {
 				group.Name = "Unattributed session files"
 				group.Reason = "No unique indexed working directory; ownership unknown"

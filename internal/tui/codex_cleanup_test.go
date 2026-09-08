@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
@@ -21,43 +22,195 @@ func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
 	if cmd == nil || got.codexCleanup == nil || !got.codexCleanup.Loading {
 		t.Fatalf("/codex-gc state = %#v, cmd=%v", got.codexCleanup, cmd)
 	}
+	got.codexCleanup.AuditCancel()
 }
 
-func TestCodexCleanupNumberedNavigationAndViewHints(t *testing.T) {
-	dialog := &codexCleanupDialogState{Chosen: map[string]bool{"keep-selection": true}}
-	m := Model{codexCleanup: dialog}
-	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	m = updated.(Model)
-	if cmd != nil || dialog.Loading || !dialog.Chosen["keep-selection"] {
-		t.Fatal("choosing the current category must preserve selection without rescanning")
+func TestCodexCleanupAuditIgnoresClosedAndSupersededScans(t *testing.T) {
+	old := &codexCleanupDialogState{Loading: true, AuditGeneration: 1}
+	current := &codexCleanupDialogState{Loading: true, AuditGeneration: 2}
+	m := Model{codexCleanup: current}
+	for _, msg := range []codexCleanupAuditMsg{{owner: old, generation: 1}, {owner: current, generation: 1}} {
+		m.applyCodexCleanupAudit(msg)
+		if !current.Loading {
+			t.Fatal("stale completion must not replace the current preview")
+		}
 	}
-	header := ansi.Strip(strings.Join(renderCodexCleanupNavigation(dialog, 108), "\n"))
-	if !strings.Contains(header, "[ 1 Orphaned worktrees ]") || !strings.Contains(header, "Tab: show other storage (read-only)") {
-		t.Fatalf("missing active category or explicit view hint: %s", header)
+	canceled := false
+	current.AuditCancel = func() { canceled = true }
+	updated, _ := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
+	if !canceled || updated.(Model).codexCleanup != nil {
+		t.Fatal("closing scan must cancel its worker")
 	}
-	updated, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyTab})
-	m = updated.(Model)
-	if cmd != nil || !dialog.ShowRetained || !dialog.Chosen["keep-selection"] {
-		t.Fatal("view toggle must preserve selection without rescanning")
+}
+
+func TestCodexCleanupLayoutsKeepActionsAndColumnsVisible(t *testing.T) {
+	for _, size := range []struct{ width, height int }{{68, 22}, {88, 30}, {108, 40}} {
+		for _, screen := range []string{"orphaned", "stale", "category", "age", "sort", "storage", "review"} {
+			t.Run(fmt.Sprintf("%dx%d/%s", size.width, size.height, screen), func(t *testing.T) {
+				d := &codexCleanupDialogState{Category: service.CodexCleanupStale, InactiveDays: 30, Chosen: map[string]bool{}}
+				for i := 0; i < 40; i++ {
+					g := codexCleanupTestGroup(time.Now())
+					g.WorktreeName = strings.Repeat("日本語-project-", 10)
+					g.WorktreePath = fmt.Sprintf("/tmp/%d", i)
+					g.TotalThreadCount = 240
+					g.RootThreadCount = 228
+					g.DescendantCount = 2
+					g.RecoverableBytes = 2 << 30
+					d.Audit.Groups = append(d.Audit.Groups, g)
+					d.Chosen[g.WorktreePath] = true
+					d.Audit.Retained = append(d.Audit.Retained, service.CodexCleanupRetainedGroup{Name: g.WorktreeName, Path: g.WorktreePath, Reason: "Protected sessions", Bytes: 2 << 30})
+				}
+				switch screen {
+				case "orphaned":
+					d.Category = service.CodexCleanupOrphaned
+				case "category":
+					d.Dropdown = true
+					d.Focus = cleanupFocusCategory
+				case "age":
+					d.Dropdown = true
+					d.Focus = cleanupFocusAge
+				case "sort":
+					d.Dropdown = true
+					d.Focus = cleanupFocusSort
+				case "storage":
+					d.ShowRetained = true
+				case "review":
+					d.Confirming = true
+				}
+				view := buildCodexCleanupView(d, size.width, size.height, 0, time.Now())
+				panel := renderDialogPanel(size.width+2, size.width, view.text())
+				if lipgloss.Height(panel) > size.height || lipgloss.Width(panel) > size.width+4 {
+					t.Fatalf("overflow %dx%d:\n%s", lipgloss.Width(panel), lipgloss.Height(panel), ansi.Strip(panel))
+				}
+				for _, hit := range view.hits {
+					if hit.y < 0 || hit.y >= len(view.lines) || hit.x < 0 || hit.x+hit.width > size.width {
+						t.Fatalf("invalid hit target: %#v", hit)
+					}
+				}
+				want := "Review cleanup →"
+				if screen == "review" {
+					want = "Delete 9200 sessions permanently"
+				}
+				if screen == "storage" {
+					want = "Back to cleanup"
+				}
+				if !strings.Contains(ansi.Strip(view.text()), want) {
+					t.Fatalf("missing %s", want)
+				}
+			})
+		}
 	}
-	header = ansi.Strip(strings.Join(renderCodexCleanupNavigation(dialog, 108), "\n"))
-	if !strings.Contains(header, "[ Other storage ]") || !strings.Contains(header, "Tab: return to cleanup candidates") {
-		t.Fatalf("missing retained view navigation: %s", header)
+}
+
+func TestCodexCleanupMouseUsesVisibleControls(t *testing.T) {
+	g := codexCleanupTestGroup(time.Now())
+	d := &codexCleanupDialogState{Chosen: map[string]bool{}, Audit: service.CodexCleanupAudit{Groups: []service.CodexCleanupWorktreeGroup{g}}}
+	m := Model{width: 120, height: 40, codexCleanup: d}
+	click := func(focus codexCleanupFocus, row int) tea.Cmd {
+		t.Helper()
+		layout := m.bodyLayout()
+		panelW := 112
+		view := buildCodexCleanupView(d, 108, layout.height, 0, time.Now())
+		panel := renderDialogPanel(panelW-2, 108, view.text())
+		for _, hit := range view.hits {
+			if hit.focus == focus && hit.row == row {
+				updated, cmd := m.Update(tea.MouseMsg{X: (120-panelW)/2 + 2 + hit.x + 1, Y: 1 + (layout.height-lipgloss.Height(panel))/2 + 1 + hit.y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+				m = updated.(Model)
+				return cmd
+			}
+		}
+		t.Fatalf("missing control %d/%d", focus, row)
+		return nil
 	}
-	updated, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
-	m = updated.(Model)
-	if cmd == nil || !dialog.Loading || dialog.ShowRetained || dialog.Category != service.CodexCleanupStale || len(dialog.Chosen) != 0 {
-		t.Fatal("changing category must open fresh candidates and clear selection")
+	if click(cleanupFocusTable, 0) != nil || !d.Chosen[g.WorktreePath] {
+		t.Fatal("mouse row must select, not delete")
 	}
-	_, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if cmd != nil || dialog.Category != service.CodexCleanupStale {
-		t.Fatal("loading must ignore repeated navigation")
+	click(cleanupFocusStorage, -1)
+	if !d.ShowRetained {
+		t.Fatal("storage action did not open breakdown")
+	}
+	click(cleanupFocusCancel, -1)
+	if d.ShowRetained || !d.Chosen[g.WorktreePath] {
+		t.Fatal("Back must preserve selection")
+	}
+	click(cleanupFocusCategory, -1)
+	if !d.Dropdown {
+		t.Fatal("mouse must open dropdown")
+	}
+	click(cleanupFocusCategory, 0)
+	if d.Dropdown || d.Loading {
+		t.Fatal("choosing same option must close without rescanning")
+	}
+	if click(cleanupFocusReview, -1) != nil || !d.Confirming || d.ReviewDelete {
+		t.Fatal("review must default to Back")
+	}
+	click(cleanupFocusCancel, -1)
+	if d.Confirming || d.Deleting {
+		t.Fatal("Back must leave review without deleting")
+	}
+}
+
+func TestCodexCleanupFocusIsVisibleWithoutColor(t *testing.T) {
+	previous := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+	text := codexCleanupControl("Stale sessions ▾", true, true, false)
+	if !strings.Contains(text, "48;5;75") || !strings.Contains(ansi.Strip(text), "›[ Stale sessions ▾ ]") {
+		t.Fatalf("focus must have both color and a visible cursor: %q", text)
+	}
+}
+
+func TestCodexCleanupDropdownAndFocusNavigation(t *testing.T) {
+	d := &codexCleanupDialogState{Focus: cleanupFocusCategory, Chosen: map[string]bool{"keep": true}}
+	m := Model{codexCleanup: d}
+	for _, key := range []string{"1", "2", "c", "v"} {
+		_, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		if cmd != nil || d.Loading || d.ShowRetained {
+			t.Fatal("old ambiguous shortcuts must not change views")
+		}
+	}
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if !d.Dropdown {
+		t.Fatal("Enter should open cleanup dropdown")
+	}
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
+	if d.Dropdown || m.codexCleanup == nil {
+		t.Fatal("Esc should dismiss only the dropdown")
+	}
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil || d.Loading || !d.Chosen["keep"] {
+		t.Fatal("same policy must preserve selection")
+	}
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || !d.Loading || d.Category != service.CodexCleanupStale || len(d.Chosen) != 0 {
+		t.Fatal("new policy must rescan and clear selection")
+	}
+	if d.AuditCancel != nil {
+		d.AuditCancel()
+	}
+	d.Loading = false
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyTab})
+	if d.Focus != cleanupFocusAge || d.ShowRetained {
+		t.Fatal("Tab must move focus to age, not switch views")
+	}
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyDown})
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || !d.Loading || d.InactiveDays != 30 {
+		t.Fatal("age dropdown must change the audit policy")
+	}
+	if d.AuditCancel != nil {
+		d.AuditCancel()
 	}
 }
 
 func TestCodexCleanupStaleCategoryUsesGroupedCountsAndConfirmation(t *testing.T) {
-	m := Model{codexCleanup: &codexCleanupDialogState{Chosen: map[string]bool{"old-selection": true}}}
-	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m := Model{codexCleanup: &codexCleanupDialogState{Focus: cleanupFocusCategory, Dropdown: true, OptionIndex: 1, Chosen: map[string]bool{"old-selection": true}}}
+	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	if cmd == nil || !m.codexCleanup.Loading || m.codexCleanup.Category != service.CodexCleanupStale || len(m.codexCleanup.Chosen) != 0 {
 		t.Fatal("category switch must clear selection and run a fresh audit")
@@ -77,20 +230,22 @@ func TestCodexCleanupStaleCategoryUsesGroupedCountsAndConfirmation(t *testing.T)
 		}
 	}
 	m.codexCleanup.Chosen[group.WorktreePath] = true
+	m.codexCleanup.Focus = cleanupFocusReview
 	updated, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	if cmd != nil || !m.codexCleanup.Confirming || m.codexCleanup.Deleting {
 		t.Fatal("stale cleanup must require separate permanent confirmation")
 	}
 	view = ansi.Strip(renderCodexCleanupConfirmation(m.codexCleanup, 108))
-	if !strings.Contains(view, "Remove 210 of 240 sessions; keep 30") {
+	if !strings.Contains(view, "Remove 210 sessions · keep 30") || !strings.Contains(view, "Delete 210 sessions permanently") {
 		t.Fatalf("confirmation lacks per-project counts: %s", view)
 	}
 }
 
 func TestCodexCleanupRetainedViewCannotDelete(t *testing.T) {
 	dialog := &codexCleanupDialogState{
-		Chosen: map[string]bool{"/eligible": true},
+		ShowRetained: true,
+		Chosen:       map[string]bool{"/eligible": true},
 		Audit: service.CodexCleanupAudit{
 			Groups: []service.CodexCleanupWorktreeGroup{{WorktreePath: "/eligible"}},
 			Retained: []service.CodexCleanupRetainedGroup{
@@ -100,7 +255,7 @@ func TestCodexCleanupRetainedViewCannotDelete(t *testing.T) {
 		},
 	}
 	m := Model{codexCleanup: dialog}
-	for _, key := range []string{"v", " ", "a", "enter", "d"} {
+	for _, key := range []string{"v", " ", "a", "enter", "d", "1", "2"} {
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 		if key == "enter" {
 			msg = tea.KeyMsg{Type: tea.KeyEnter}
@@ -112,12 +267,12 @@ func TestCodexCleanupRetainedViewCannotDelete(t *testing.T) {
 		}
 	}
 	view := ansi.Strip(renderCodexCleanupContent(dialog, 100, 38, 0, time.Now()))
-	for _, want := range []string{"retained", "read-only", "kept-project", "2.0 GiB", "2.0 MiB", "No LCR deleted-worktree record"} {
+	for _, want := range []string{"Retained", "read-only", "kept-project", "2.0 GiB", "2.0 MiB", "No LCR deleted-worktree record"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
 		}
 	}
-	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyTab})
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
 	if dialog.ShowRetained || !dialog.Chosen["/eligible"] {
 		t.Fatal("switching back must preserve selections")
 	}
@@ -139,14 +294,17 @@ func TestCodexCleanupSortingPreservesFocusAndSelection(t *testing.T) {
 	}
 	dialog.Chosen["/b"] = true
 	for _, first := range []string{"/c", "/a", "/b"} {
-		updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+		dialog.Focus = cleanupFocusSort
+		dialog.Dropdown = true
+		dialog.OptionIndex = (dialog.SortMode + 1) % 3
+		updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
 		m = updated.(Model)
 		if cmd != nil || dialog.Audit.Groups[0].WorktreePath != first || dialog.Audit.Groups[dialog.Selected].WorktreePath != "/b" || !dialog.Chosen["/b"] {
 			t.Fatalf("sort lost ordering, focus or selection: %#v", dialog)
 		}
 	}
 	view := ansi.Strip(renderCodexCleanupContent(dialog, 100, 45, 0, now))
-	for _, column := range []string{"SIZE", "AGE", "ROOTS", "CHILD", "WORKTREE", "largest first"} {
+	for _, column := range []string{"FREE UP", "REMOVE", "KEEP", "PROJECT / FOLDER", "largest first"} {
 		if !strings.Contains(view, column) {
 			t.Fatalf("missing %s in %s", column, view)
 		}
@@ -178,7 +336,7 @@ func TestCodexCleanupRequiresSelectionAndSeparatePermanentConfirmation(t *testin
 	}
 	got := updated.(Model)
 	rendered := ansi.Strip(got.renderCodexCleanupOverlay("", 120, 38))
-	for _, want := range []string{"Clean Codex session storage", "feature/old-cleanup", "parent master", "worktree missing 20d", "2 children", "recoverable", "LCR removed"} {
+	for _, want := range []string{"Clean up Codex storage", "Orphaned worktrees", "demo--old-cleanup", "REMOVE", "KEEP", "FREE UP", "LCR-deleted"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("cleanup preview missing %q:\n%s", want, rendered)
 		}
@@ -200,15 +358,22 @@ func TestCodexCleanupRequiresSelectionAndSeparatePermanentConfirmation(t *testin
 		t.Fatal("Enter should open a warning without deleting")
 	}
 	confirmation := ansi.Strip(got.renderCodexCleanupOverlay("", 120, 38))
-	for _, want := range []string{"WARNING: THIS CANNOT BE UNDONE", "PERMANENTLY DELETE", "2 spawned", "Codex app-server"} {
+	for _, want := range []string{"this cannot be undone", "Delete 3 sessions permanently", "spawned sessions", "Codex app-server"} {
 		if !strings.Contains(confirmation, want) {
 			t.Fatalf("permanent warning missing %q:\n%s", want, confirmation)
 		}
 	}
-	updated, cmd = got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	updated, cmd = got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil || got.codexCleanup.Deleting || got.codexCleanup.Confirming {
+		t.Fatal("review must default to Back")
+	}
+	got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd = got.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if cmd == nil || !got.codexCleanup.Deleting || got.codexCleanup.QueueIndex != 0 {
-		t.Fatalf("D confirmation did not start one guarded deletion: %#v cmd=%v", got.codexCleanup, cmd)
+		t.Fatalf("explicit delete button did not start one guarded deletion: %#v cmd=%v", got.codexCleanup, cmd)
 	}
 	if got.codexCleanup.Cancel == nil {
 		t.Fatal("D confirmation did not retain a cancellation handle for the background deletion")
@@ -281,7 +446,7 @@ func TestCodexCleanupCanRunInBackgroundReopenAndAbort(t *testing.T) {
 		t.Fatalf("abort cleanup state = canceled:%v dialog:%#v cmd=%v", canceled, got.codexCleanup, cmd)
 	}
 	progress := ansi.Strip(got.renderCodexCleanupOverlay("", 110, 32))
-	if !strings.Contains(progress, "Aborting Codex session cleanup") || !strings.Contains(progress, "no queued worktree will start") {
+	if !strings.Contains(progress, "Aborting Codex session cleanup") || !strings.Contains(progress, "no queued project group will start") {
 		t.Fatalf("abort progress does not explain stop semantics:\n%s", progress)
 	}
 }
@@ -323,7 +488,7 @@ func TestCodexCleanupAbortStopsQueueAndKeepsVerifiedReport(t *testing.T) {
 		t.Fatalf("aborted cleanup status/log = %q / %#v", got.status, got.errorLogEntries)
 	}
 	report := ansi.Strip(renderCodexCleanupContent(got.codexCleanup, 100, 32, 0, now))
-	for _, want := range []string{"Cleanup aborted", "1 queued worktree group did not start", "2.0 KiB", "2 descendants"} {
+	for _, want := range []string{"Cleanup aborted", "1 queued project group did not start", "2.0 KiB", "2 descendants"} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("aborted cleanup report missing %q:\n%s", want, report)
 		}

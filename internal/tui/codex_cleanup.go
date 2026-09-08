@@ -31,6 +31,13 @@ func formatCodexCleanupBytes(size int64) string {
 
 type codexCleanupDialogState struct {
 	Category        service.CodexCleanupCategory
+	InactiveDays    int
+	Focus           codexCleanupFocus
+	Dropdown        bool
+	OptionIndex     int
+	ReviewDelete    bool
+	AuditGeneration int
+	AuditCancel     context.CancelFunc
 	Audit           service.CodexCleanupAudit
 	Selected        int
 	ShowRetained    bool
@@ -59,8 +66,10 @@ type codexCleanupDeleteResult struct {
 }
 
 type codexCleanupAuditMsg struct {
-	audit service.CodexCleanupAudit
-	err   error
+	owner      *codexCleanupDialogState
+	generation int
+	audit      service.CodexCleanupAudit
+	err        error
 }
 
 type codexCleanupDeleteMsg struct {
@@ -85,8 +94,10 @@ func (m Model) openCodexCleanup() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.codexCleanup = &codexCleanupDialogState{
-		Chosen:  make(map[string]bool),
-		Loading: true,
+		InactiveDays: 7,
+		Focus:        cleanupFocusCategory,
+		Chosen:       make(map[string]bool),
+		Loading:      true,
 	}
 	m.status = "Auditing Codex session storage..."
 	return m, m.loadCodexCleanupAuditCmd()
@@ -117,25 +128,38 @@ func (m Model) renderFooterCodexCleanupSegment() string {
 
 func (m Model) loadCodexCleanupAuditCmd() tea.Cmd {
 	svc := m.svc
+	dialog := m.codexCleanup
+	days := 7
+	generation := 0
 	category := service.CodexCleanupOrphaned
-	if m.codexCleanup != nil {
-		category = m.codexCleanup.Category
+	ctx, cancel := m.actionContext(codexCleanupAuditTimeout)
+	if dialog != nil {
+		category = dialog.Category
+		if category == service.CodexCleanupStale {
+			days = max(7, dialog.InactiveDays)
+		}
+		if dialog.AuditCancel != nil {
+			dialog.AuditCancel()
+		}
+		dialog.AuditCancel = cancel
+		dialog.AuditGeneration++
+		generation = dialog.AuditGeneration
 	}
 	manager := m.codexManager
 	cachedLoadedThreadIDs := m.cachedLoadedCodexThreadIDs()
 	return func() tea.Msg {
-		if svc == nil {
-			return codexCleanupAuditMsg{err: fmt.Errorf("service unavailable")}
-		}
-		ctx, cancel := m.actionContext(codexCleanupAuditTimeout)
 		defer cancel()
+		if svc == nil {
+			return codexCleanupAuditMsg{owner: dialog, generation: generation, err: fmt.Errorf("service unavailable")}
+		}
 		loadedThreadIDs := append(cachedLoadedThreadIDs, codexapp.LoadedThreadIDs(manager)...)
 		audit, err := svc.AuditCodexSessionStorage(ctx, service.CodexCleanupAuditOptions{
 			Category:        category,
+			InactiveDays:    days,
 			LoadedThreadIDs: loadedThreadIDs,
 		})
 		err = timeoutActionError(err, codexCleanupAuditTimeout, "auditing Codex session storage")
-		return codexCleanupAuditMsg{audit: audit, err: err}
+		return codexCleanupAuditMsg{owner: dialog, generation: generation, audit: audit, err: err}
 	}
 }
 
@@ -160,6 +184,7 @@ func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeG
 		result, err := svc.DeleteCodexCleanupWorktree(ctx, service.DeleteCodexCleanupWorktreeRequest{
 			CurrentLoadedThreadIDs: func() []string { return codexapp.LoadedThreadIDs(manager) },
 			Category:               group.Category,
+			InactiveDays:           group.InactiveDays,
 			WorktreePath:           group.WorktreePath,
 			RootProjectPath:        group.RootProjectPath,
 			RootThreadIDs:          rootThreadIDs,
@@ -202,9 +227,14 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 	if dialog == nil || !dialog.Loading {
 		return m, nil
 	}
+	if msg.owner != nil && (msg.owner != dialog || msg.generation != dialog.AuditGeneration) {
+		return m, nil
+	}
 	dialog.Loading = false
+	dialog.AuditCancel = nil
 	if msg.err != nil {
 		dialog.ErrorMessage = msg.err.Error()
+		dialog.Focus = cleanupFocusRefresh
 		m.reportError("Codex cleanup audit failed", msg.err, "")
 		return m, nil
 	}
@@ -221,7 +251,7 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 		return m, nil
 	}
 	m.status = fmt.Sprintf(
-		"Codex cleanup audit: %d worktree%s, %d root thread%s, %s recoverable",
+		"Codex cleanup audit: %d project group%s, %d root thread%s, %s recoverable",
 		len(msg.audit.Groups), pluralSuffix(len(msg.audit.Groups)),
 		msg.audit.EligibleRootThreads, pluralSuffix(msg.audit.EligibleRootThreads),
 		formatCodexCleanupBytes(msg.audit.RecoverableBytes),
@@ -286,7 +316,7 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 	dialog.Finished = true
 	reclaimed, allVerified := codexCleanupVerifiedTotal(dialog.Results)
 	if allVerified {
-		m.status = fmt.Sprintf("Codex cleanup complete: %d worktree%s, %s reclaimed and verified", len(dialog.Results), pluralSuffix(len(dialog.Results)), formatCodexCleanupBytes(reclaimed))
+		m.status = fmt.Sprintf("Codex cleanup complete: %d project group%s, %s reclaimed and verified", len(dialog.Results), pluralSuffix(len(dialog.Results)), formatCodexCleanupBytes(reclaimed))
 	} else {
 		m.status = fmt.Sprintf("Codex cleanup finished: %s verified reclaimed; review verification details", formatCodexCleanupBytes(reclaimed))
 	}
@@ -319,6 +349,9 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if dialog.Loading {
 		if msg.String() == "esc" {
+			if dialog.AuditCancel != nil {
+				dialog.AuditCancel()
+			}
 			m.codexCleanup = nil
 			m.status = "Codex cleanup audit closed; no sessions were deleted"
 		}
@@ -333,14 +366,18 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if dialog.Confirming {
 		switch msg.String() {
+		case "tab", "shift+tab", "left", "right":
+			dialog.ReviewDelete = !dialog.ReviewDelete
 		case "esc":
 			dialog.Confirming = false
-			m.status = "Permanent deletion canceled; selection is unchanged"
-		case "d", "D":
+		case "enter", " ":
+			if !dialog.ReviewDelete {
+				dialog.Confirming = false
+				return m, nil
+			}
 			dialog.Queue = selectedCodexCleanupGroups(dialog)
 			if len(dialog.Queue) == 0 {
 				dialog.Confirming = false
-				m.status = "Select at least one worktree before deleting"
 				return m, nil
 			}
 			dialog.Confirming = false
@@ -351,120 +388,12 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			dialog.QueueIndex = 0
 			dialog.Results = nil
 			dialog.ErrorMessage = ""
-			first := dialog.Queue[0]
-			m.status = fmt.Sprintf("Codex cleanup 0/%d; deleting %s...", len(dialog.Queue), filepath.Base(first.WorktreePath))
-			return m, m.startCodexCleanupGroupDelete(first)
+			return m, m.startCodexCleanupGroupDelete(dialog.Queue[0])
 		}
 		return m, nil
 	}
-
-	if msg.String() == "v" || msg.String() == "V" || msg.String() == "tab" {
-		dialog.ShowRetained = !dialog.ShowRetained
-		return m, nil
-	}
-	if msg.String() == "c" || msg.String() == "C" || msg.String() == "1" || msg.String() == "2" {
-		category := service.CodexCleanupOrphaned
-		if msg.String() == "2" || ((msg.String() == "c" || msg.String() == "C") && dialog.Category == service.CodexCleanupOrphaned) {
-			category = service.CodexCleanupStale
-		}
-		if category == dialog.Category {
-			return m, nil
-		}
-		dialog.Category = category
-		dialog.ShowRetained = false
-		dialog.Loading = true
-		dialog.ErrorMessage = ""
-		dialog.Chosen = make(map[string]bool)
-		m.status = "Auditing " + dialog.Category.Label() + "..."
-		return m, m.loadCodexCleanupAuditCmd()
-	}
-	if dialog.ShowRetained && msg.String() != "esc" && msg.String() != "r" {
-		last := max(0, len(dialog.Audit.Retained)-1)
-		switch msg.String() {
-		case "up", "k":
-			dialog.RetainedIndex = max(0, dialog.RetainedIndex-1)
-		case "down", "j":
-			dialog.RetainedIndex = min(last, dialog.RetainedIndex+1)
-		case "pgup", "ctrl+u":
-			dialog.RetainedIndex = max(0, dialog.RetainedIndex-5)
-		case "pgdown", "ctrl+d":
-			dialog.RetainedIndex = min(last, dialog.RetainedIndex+5)
-		case "home", "g":
-			dialog.RetainedIndex = 0
-		case "end", "G":
-			dialog.RetainedIndex = last
-		}
-		return m, nil
-	}
-	groups := dialog.Audit.Groups
-	switch msg.String() {
-	case "esc":
-		m.codexCleanup = nil
-		m.status = "Codex cleanup closed; no sessions were deleted"
-	case "r":
-		dialog.Loading = true
-		dialog.ErrorMessage = ""
-		dialog.Chosen = make(map[string]bool)
-		m.status = "Refreshing Codex session storage audit..."
-		return m, m.loadCodexCleanupAuditCmd()
-	case "s", "S":
-		dialog.SortMode = (dialog.SortMode + 1) % 3
-		sortCodexCleanupGroups(dialog)
-	case "up", "k":
-		if len(groups) > 0 {
-			dialog.Selected = max(0, dialog.Selected-1)
-		}
-	case "down", "j":
-		if len(groups) > 0 {
-			dialog.Selected = min(len(groups)-1, dialog.Selected+1)
-		}
-	case "pgup", "ctrl+u":
-		if len(groups) > 0 {
-			dialog.Selected = max(0, dialog.Selected-5)
-		}
-	case "pgdown", "ctrl+d":
-		if len(groups) > 0 {
-			dialog.Selected = min(len(groups)-1, dialog.Selected+5)
-		}
-	case "home", "g":
-		dialog.Selected = 0
-	case "end", "G":
-		if len(groups) > 0 {
-			dialog.Selected = len(groups) - 1
-		}
-	case " ":
-		if len(groups) > 0 {
-			if dialog.Chosen == nil {
-				dialog.Chosen = make(map[string]bool)
-			}
-			index := max(0, min(dialog.Selected, len(groups)-1))
-			path := groups[index].WorktreePath
-			dialog.Chosen[path] = !dialog.Chosen[path]
-		}
-	case "a", "A":
-		if len(groups) > 0 {
-			if allCodexCleanupGroupsSelected(dialog) {
-				dialog.Chosen = make(map[string]bool)
-				m.status = "Cleared all Codex cleanup selections"
-			} else {
-				dialog.Chosen = make(map[string]bool, len(groups))
-				for _, group := range groups {
-					dialog.Chosen[group.WorktreePath] = true
-				}
-				m.status = fmt.Sprintf("Selected all %d Codex cleanup worktrees", len(groups))
-			}
-		}
-	case "enter":
-		if len(selectedCodexCleanupGroups(dialog)) == 0 {
-			m.status = "Select one or more worktrees with Space; nothing was deleted"
-			return m, nil
-		}
-		dialog.Confirming = true
-		m.status = "Review the permanent-deletion warning; press D only if the selection is correct"
-	}
-	return m, nil
+	return m.updateCodexCleanupForm(msg)
 }
-
 func allCodexCleanupGroupsSelected(dialog *codexCleanupDialogState) bool {
 	if dialog == nil || len(dialog.Audit.Groups) == 0 {
 		return false
@@ -543,10 +472,10 @@ func renderCodexCleanupOverlay(body string, bodyW, bodyH int, dialog *codexClean
 	if dialog == nil {
 		return body
 	}
-	panelW := min(max(72, bodyW-12), 112)
-	panelInnerW := max(36, panelW-4)
+	panelW := min(bodyW, min(max(64, bodyW-8), 112))
+	panelInnerW := max(1, panelW-4)
 	content := renderCodexCleanupContent(dialog, panelInnerW, bodyH, spinnerFrame, now)
-	panel := renderDialogPanel(panelW, panelInnerW, content)
+	panel := renderDialogPanel(panelW-2, panelInnerW, content)
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
@@ -557,185 +486,18 @@ func (m Model) renderCodexCleanupOverlay(body string, bodyW, bodyH int) string {
 }
 
 func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, spinnerFrame int, now time.Time) string {
-	lines := renderCodexCleanupNavigation(dialog, width)
-	stale := dialog.Category == service.CodexCleanupStale
-	if dialog.Loading {
-		lines = append(lines,
-			commandPaletteHintStyle.Render("Read-only audit: checking session trees and project storage."),
-			"",
-			commandPaletteHintStyle.Render(spinnerFrames[spinnerFrame%len(spinnerFrames)]+" Checking pins, activity, lineage, descendants, paths, and rollout sizes..."),
-			"",
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-		)
-		return strings.Join(lines, "\n")
-	}
 	if dialog.Finished {
 		return renderCodexCleanupResults(dialog, width, bodyH)
 	}
 	if dialog.Deleting {
 		return renderCodexCleanupProgress(dialog, width, spinnerFrame)
 	}
-	if dialog.Confirming {
-		return renderCodexCleanupConfirmation(dialog, width)
-	}
-	if dialog.ShowRetained && dialog.ErrorMessage == "" {
-		return renderCodexCleanupRetained(dialog, width, bodyH)
-	}
-
-	if stale {
-		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
-			"Old conversations in existing projects · inactive 7+ days. The newest session in each folder is kept.")...)
-	} else {
-		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
-			"Conversations from LCR-deleted worktrees · inactive and missing for 7+ days. Safest cleanup category.")...)
-	}
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
-		"Pinned, LCR-loaded, recent, and uncertain trees are protected. Project files are never removed.")...)
-	lines = append(lines, "")
-	if dialog.ErrorMessage != "" {
-		lines = append(lines, detailDangerStyle.Render("Audit failed"))
-		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, dialog.ErrorMessage)...)
-		lines = append(lines, "", renderDialogAction("R", "retry", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle))
-		return strings.Join(lines, "\n")
-	}
-
-	audit := dialog.Audit
-	if audit.Storage.TotalBytes > 0 || audit.Storage.Partial {
-		label := "Storage (logical)"
-		if audit.Storage.Partial {
-			label += " · partial"
-		}
-		lines = append(lines, detailField(label, fmt.Sprintf("%s total · %s sessions · %s other files",
-			formatCodexCleanupBytes(audit.Storage.TotalBytes), formatCodexCleanupBytes(audit.Storage.SessionBytes),
-			formatCodexCleanupBytes(audit.Storage.TotalBytes-audit.Storage.SessionBytes))))
-	}
-	if len(audit.Groups) == 0 {
-		lines = append(lines,
-			"",
-			detailMutedStyle.Render("No Codex session trees are safely eligible for deletion."),
-			cleanupExclusionSummary(audit.Excluded),
-			"",
-			renderDialogAction("R", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-		)
-		return strings.Join(lines, "\n")
-	}
-
-	selected := selectedCodexCleanupGroups(dialog)
-	selectedBytes, selectedRoots, selectedDescendants := codexCleanupGroupTotals(selected)
-	groupNoun := "worktree"
-	if stale {
-		groupNoun = "project folder"
-	}
-	lines = append(lines,
-		lipgloss.NewStyle().Bold(true).Foreground(codexCleanupAccent(dialog)).Render(fmt.Sprintf("%s recoverable · %d sessions across %d %s%s", formatCodexCleanupBytes(audit.RecoverableBytes), audit.EligibleRootThreads+audit.EligibleDescendants, len(audit.Groups), groupNoun, pluralSuffix(len(audit.Groups)))),
-		detailMutedStyle.Render("↑/↓ browse   S sort: "+codexCleanupSortLabel(dialog.SortMode)),
-		"",
-	)
-
-	start, end := cleanupGroupWindow(dialog.Selected, len(audit.Groups), bodyH)
-	nameWidth := max(8, width-36)
-	rootLabel, childLabel, pathLabel := "ROOTS", "CHILD", "WORKTREE"
-	if stale {
-		rootLabel, childLabel, pathLabel = "REMOVE", "KEEP", "PROJECT / FOLDER"
-	}
-	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("    %10s  %6s  %5s  %5s  %-*s", "SIZE", "AGE", rootLabel, childLabel, nameWidth, pathLabel)))
-	if start > 0 {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more worktrees", start)))
-	}
-	for index := start; index < end; index++ {
-		group := audit.Groups[index]
-		mark := "[ ]"
-		if dialog.Chosen[group.WorktreePath] {
-			mark = "[x]"
-		}
-		style := commandPaletteRowStyle
-		if index == dialog.Selected {
-			style = commandPaletteSelectStyle
-		}
-		size := style.Bold(true).Foreground(codexCleanupAccent(dialog)).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(group.RecoverableBytes)))
-		firstCount, secondCount := group.RootThreadCount, group.DescendantCount
-		if stale {
-			firstCount = group.RootThreadCount + group.DescendantCount
-			secondCount = max(0, group.TotalThreadCount-firstCount)
-		}
-		row := style.Render(mark+" ") + size + style.Render(fmt.Sprintf("  %6s  %5d  %5d  %s",
-			truncateText(formatCleanupAge(now, group.LastActivity), 6), firstCount, secondCount,
-			truncateText(firstNonEmptyString(group.WorktreeName, filepath.Base(group.WorktreePath)), nameWidth)))
-		lines = append(lines, row)
-	}
-	if end < len(audit.Groups) {
-		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more worktrees", len(audit.Groups)-end)))
-	}
-
-	group := audit.Groups[max(0, min(dialog.Selected, len(audit.Groups)-1))]
-	lines = append(lines, "", detailField("Path", group.WorktreePath))
-	if stale {
-		remove := group.RootThreadCount + group.DescendantCount
-		lines = append(lines, detailField("Sessions", fmt.Sprintf("Remove %d of %d · keep %d (counts include spawned sessions)", remove, group.TotalThreadCount, max(0, group.TotalThreadCount-remove))))
-	} else {
-		lines = append(lines, detailField("Age", fmt.Sprintf("last Codex activity %s · worktree missing %s", formatCleanupAge(now, group.LastActivity), formatCleanupAge(now, group.MissingSince))))
-		lines = append(lines, detailField("Sessions", fmt.Sprintf("%d root%s + %d %s", group.RootThreadCount, pluralSuffix(group.RootThreadCount), group.DescendantCount, cleanupChildLabel(group.DescendantCount))))
-	}
-	gitLine := firstNonEmptyString(group.Branch, "branch unknown")
-	if group.ParentBranch != "" {
-		gitLine += " · parent " + group.ParentBranch
-	}
-	lines = append(lines, detailField("Git", gitLine), detailField("Reason", group.Reason))
-	selectionSummary := "Nothing selected · Space selects a row, A selects all"
-	if len(selected) > 0 {
-		selectionSummary = fmt.Sprintf("Selected: %d %s%s · %d sessions · %s", len(selected), groupNoun, pluralSuffix(len(selected)), selectedRoots+selectedDescendants, formatCodexCleanupBytes(selectedBytes))
-	}
-	lines = append(lines,
-		"",
-		lipgloss.NewStyle().Bold(true).Foreground(codexCleanupAccent(dialog)).Render(selectionSummary),
-		renderDialogAction("Space", "select", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-			renderDialogAction("A", codexCleanupSelectAllLabel(dialog), navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-			renderDialogAction("Enter", "review deletion", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("R", "rescan", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-	)
-	return clampDialogContent(strings.Join(lines, "\n"), max(12, bodyH-4), 5, detailMutedStyle.Render("… details clipped to fit terminal …"))
+	return buildCodexCleanupView(dialog, width, bodyH, spinnerFrame, now).text()
 }
 
 func renderCodexCleanupConfirmation(dialog *codexCleanupDialogState, width int) string {
-	groups := selectedCodexCleanupGroups(dialog)
-	bytes, roots, descendants := codexCleanupGroupTotals(groups)
-	lines := []string{
-		commandPaletteTitleStyle.Render("Permanent Codex deletion"),
-		detailField("Category", dialog.Category.Label()),
-		"",
-		detailDangerStyle.Render("WARNING: THIS CANNOT BE UNDONE"),
-	}
-	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width,
-		fmt.Sprintf("Codex app-server will permanently delete %d selected folder group%s: %d root thread%s and %d spawned descendant%s. Conversation rollouts will not be recoverable from LCR.",
-			len(groups), pluralSuffix(len(groups)), roots, pluralSuffix(roots), descendants, pluralSuffix(descendants)))...)
-	lines = append(lines,
-		"",
-		detailField("Recoverable disk size", formatCodexCleanupBytes(bytes)),
-		detailMutedStyle.Render("LCR will repeat the full safety audit before each worktree. Any changed preview is rejected."),
-		detailMutedStyle.Render("After starting, B hides progress and Esc aborts unfinished work. Completed deletions cannot be undone."),
-		"",
-	)
-	shownGroups := min(len(groups), 6)
-	for index := 0; index < shownGroups; index++ {
-		group := groups[index]
-		lines = append(lines, detailDangerStyle.Render("- "+group.WorktreePath))
-		if group.Category == service.CodexCleanupStale {
-			remove := group.RootThreadCount + group.DescendantCount
-			lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("  Remove %d of %d sessions; keep %d", remove, group.TotalThreadCount, max(0, group.TotalThreadCount-remove))))
-		}
-	}
-	if shownGroups < len(groups) {
-		lines = append(lines, detailDangerStyle.Render(fmt.Sprintf("- +%d more selected worktrees", len(groups)-shownGroups)))
-	}
-	lines = append(lines,
-		"",
-		renderDialogAction("D", "PERMANENTLY DELETE", commitActionKeyStyle, commitActionTextStyle)+"   "+
-			renderDialogAction("Esc", "go back", cancelActionKeyStyle, cancelActionTextStyle),
-	)
-	return strings.Join(lines, "\n")
+	return buildCodexCleanupReview(dialog, width, 40).text()
 }
-
 func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerFrame int) string {
 	current := service.CodexCleanupWorktreeGroup{}
 	if dialog.QueueIndex < len(dialog.Queue) {
@@ -743,7 +505,7 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 	}
 	reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
 	title := "Deleting Codex session storage"
-	progress := spinnerFrames[spinnerFrame%len(spinnerFrames)] + fmt.Sprintf(" Worktree %d of %d", dialog.QueueIndex+1, len(dialog.Queue))
+	progress := spinnerFrames[spinnerFrame%len(spinnerFrames)] + fmt.Sprintf(" Project group %d of %d", dialog.QueueIndex+1, len(dialog.Queue))
 	if dialog.CancelRequested {
 		title = "Aborting Codex session cleanup"
 		progress = spinnerFrames[spinnerFrame%len(spinnerFrames)] + " Stopping the active app-server request"
@@ -757,7 +519,7 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 		"",
 	}
 	if dialog.CancelRequested {
-		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "The active delete request is being canceled. LCR will still verify what was already removed, and no queued worktree will start afterward.")...)
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "The active delete request is being canceled. LCR will still verify what was already removed, and no queued project group will start afterward.")...)
 		lines = append(lines, "", renderDialogAction("B", "hide to background", navigateActionKeyStyle, navigateActionTextStyle))
 		return strings.Join(lines, "\n")
 	}
@@ -777,7 +539,7 @@ func renderCodexCleanupResults(dialog *codexCleanupDialogState, width, bodyH int
 	if dialog.Aborted {
 		lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("Cleanup aborted. Verified reclaimed before stop: %s", formatCodexCleanupBytes(reclaimed))))
 		remaining := max(0, len(dialog.Queue)-dialog.QueueIndex)
-		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("%d queued worktree group%s did not start. Run /codex-gc again to audit anything that remains.", remaining, pluralSuffix(remaining))))
+		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("%d queued project group%s did not start. Run /codex-gc again to audit anything that remains.", remaining, pluralSuffix(remaining))))
 	} else if len(dialog.Results) == 0 {
 		lines = append(lines, detailWarningStyle.Render("No sessions were deleted."))
 	} else if allVerified && dialog.ErrorMessage == "" {
@@ -819,9 +581,9 @@ func codexCleanupResultStatus(name, detail string, width int) string {
 	suffix := " · " + detail
 	suffixWidth := lipgloss.Width(suffix)
 	if suffixWidth >= width {
-		return truncateText(detail, width)
+		return cleanupCellText(detail, width)
 	}
-	return truncateText(name, width-suffixWidth) + suffix
+	return cleanupCellText(name, width-suffixWidth) + suffix
 }
 
 func codexCleanupVerifiedTotal(results []codexCleanupDeleteResult) (int64, bool) {

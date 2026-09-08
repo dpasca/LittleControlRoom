@@ -247,9 +247,9 @@ func (m Model) renderFooter(width int) string {
 		case m.codexCleanup.Finished:
 			return m.renderModalFooter(width, "Codex cleanup report: Enter/Esc close", supplementSegments...)
 		case m.codexCleanup.Confirming:
-			return m.renderModalFooter(width, "Codex cleanup warning: D permanently delete, Esc back", supplementSegments...)
+			return m.renderModalFooter(width, "Review cleanup: Tab choose button, Enter activate, Esc back", supplementSegments...)
 		default:
-			return m.renderModalFooter(width, "Codex cleanup: ↑↓ inspect, Space toggle, A all/none, Enter review, R refresh, Esc cancel", supplementSegments...)
+			return m.renderModalFooter(width, "Codex cleanup: Tab focus, arrows navigate, Space select, Enter activate, Esc back", supplementSegments...)
 		}
 	}
 	if m.worktreeMergeRecoveryDialog != nil {

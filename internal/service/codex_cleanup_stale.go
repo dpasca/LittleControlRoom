@@ -26,7 +26,10 @@ func revalidateStaleCleanupFiles(ctx context.Context, home string, group CodexCl
 	if count != group.TotalThreadCount {
 		return fmt.Errorf("project session count changed during audit; refresh before deleting")
 	}
-	cutoff := time.Now().Add(-CodexCleanupRecentWindow)
+	if group.InactiveDays != 7 && group.InactiveDays != 14 && group.InactiveDays != 30 && group.InactiveDays != 90 {
+		return fmt.Errorf("invalid stale session inactivity threshold")
+	}
+	cutoff := time.Now().Add(-time.Duration(group.InactiveDays) * 24 * time.Hour)
 	for _, tree := range group.Threads {
 		for _, file := range tree.RolloutFiles {
 			thread, exists := byID[file.ThreadID]

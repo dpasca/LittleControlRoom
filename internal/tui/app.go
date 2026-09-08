@@ -1695,6 +1695,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMsg:
+		if m.codexCleanupVisible() {
+			return m.updateCodexCleanupMouse(msg)
+		}
 		if m.helpChatMode {
 			return m.updateHelpChatModeMouse(msg)
 		}

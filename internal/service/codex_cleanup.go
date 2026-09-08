@@ -43,6 +43,7 @@ func (c CodexCleanupCategory) Label() string {
 
 type CodexCleanupAuditOptions struct {
 	Category        CodexCleanupCategory
+	InactiveDays    int // Zero uses the safe seven-day default.
 	Now             time.Time
 	LoadedThreadIDs []string
 }
@@ -62,6 +63,7 @@ func (e CodexCleanupExclusions) Total() int {
 
 type CodexCleanupAudit struct {
 	Category            CodexCleanupCategory
+	InactiveDays        int
 	AuditedAt           time.Time
 	RecentCutoff        time.Time
 	WorktreeGraceCutoff time.Time
@@ -135,6 +137,7 @@ type CodexCleanupAuditSnapshot struct {
 
 type CodexCleanupWorktreeGroup struct {
 	Category         CodexCleanupCategory
+	InactiveDays     int
 	TotalThreadCount int
 	WorktreePath     string
 	WorktreeName     string
@@ -175,6 +178,7 @@ type CodexCleanupRolloutFile struct {
 
 type DeleteCodexCleanupWorktreeRequest struct {
 	Category        CodexCleanupCategory
+	InactiveDays    int
 	WorktreePath    string
 	RootProjectPath string
 	RootThreadIDs   []string
@@ -208,6 +212,14 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 	if options.Category != CodexCleanupOrphaned && options.Category != CodexCleanupStale {
 		return audit, fmt.Errorf("unknown Codex cleanup category")
 	}
+	days := options.InactiveDays
+	if days == 0 {
+		days = 7
+	}
+	if (days != 7 && days != 14 && days != 30 && days != 90) || (options.Category == CodexCleanupOrphaned && days != 7) {
+		return audit, fmt.Errorf("invalid inactivity threshold: choose 7, 14, 30 or 90 days for stale sessions; orphaned cleanup requires 7 days")
+	}
+	recentWindow := time.Duration(days) * 24 * time.Hour
 	if s == nil || s.store == nil {
 		return CodexCleanupAudit{}, fmt.Errorf("service unavailable")
 	}
@@ -220,8 +232,9 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 	}
 	audit = CodexCleanupAudit{
 		Category:            options.Category,
+		InactiveDays:        days,
 		AuditedAt:           now,
-		RecentCutoff:        now.Add(-CodexCleanupRecentWindow),
+		RecentCutoff:        now.Add(-recentWindow),
 		WorktreeGraceCutoff: now.Add(-CodexCleanupDeletedWorktreeGrace),
 	}
 
@@ -485,7 +498,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		}
 
 		members := membersByRoot[threadID]
-		candidate, exclusion := buildCleanupThreadCandidate(now, cwd, thread, members, loaded, codexHome, !stale)
+		candidate, exclusion := buildCleanupThreadCandidate(now, cwd, thread, members, loaded, codexHome, !stale, recentWindow)
 		switch exclusion {
 		case "pinned":
 			audit.Excluded.Pinned++
@@ -508,6 +521,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		if group == nil {
 			group = &CodexCleanupWorktreeGroup{
 				Category:         options.Category,
+				InactiveDays:     days,
 				TotalThreadCount: threadCounts[cwd],
 				WorktreePath:     cwd,
 				WorktreeName:     firstNonEmptyTrimmed(record.Name, filepath.Base(cwd)),
@@ -519,7 +533,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			}
 			if stale {
 				group.RootProjectPath = cwd
-				group.Reason = "Inactive for at least 7 days; newest root session and protected trees are kept"
+				group.Reason = fmt.Sprintf("Inactive for at least %d days; newest root session and protected trees are kept", days)
 				group.MissingSince = time.Time{}
 			}
 			groupsByPath[cwd] = group
@@ -626,7 +640,7 @@ func cloneCodexCleanupAudit(audit CodexCleanupAudit) CodexCleanupAudit {
 	return cloned
 }
 
-func buildCleanupThreadCandidate(now time.Time, cwd string, root codexstate.Thread, members []*codexCleanupThreadNode, loaded map[string]struct{}, codexHome string, requireMissing bool) (CodexCleanupThread, string) {
+func buildCleanupThreadCandidate(now time.Time, cwd string, root codexstate.Thread, members []*codexCleanupThreadNode, loaded map[string]struct{}, codexHome string, requireMissing bool, recentWindow time.Duration) (CodexCleanupThread, string) {
 	if len(members) == 0 {
 		return CodexCleanupThread{}, "uncertain"
 	}
@@ -659,10 +673,10 @@ func buildCleanupThreadCandidate(now time.Time, cwd string, root codexstate.Thre
 		if _, ok := loaded[memberID]; ok {
 			return CodexCleanupThread{}, "loaded"
 		}
-		if member.thread.LastActivity.IsZero() || member.thread.LastActivity.After(now) || now.Sub(member.thread.LastActivity) < CodexCleanupRecentWindow {
+		if member.thread.LastActivity.IsZero() || member.thread.LastActivity.After(now) || now.Sub(member.thread.LastActivity) < recentWindow {
 			return CodexCleanupThread{}, "recent"
 		}
-		if member.file.ModTime.IsZero() || member.file.ModTime.After(now) || now.Sub(member.file.ModTime) < CodexCleanupRecentWindow {
+		if member.file.ModTime.IsZero() || member.file.ModTime.After(now) || now.Sub(member.file.ModTime) < recentWindow {
 			return CodexCleanupThread{}, "recent"
 		}
 		if candidate.LastActivity.IsZero() || member.thread.LastActivity.After(candidate.LastActivity) {
@@ -907,8 +921,10 @@ func cleanupGroupRevision(group CodexCleanupWorktreeGroup) string {
 	}
 	writeRevisionPart(group.WorktreePath)
 	writeRevisionPart(string(group.Category))
+	// Both cleanup views show REMOVE / KEEP counts in the final review.
+	writeRevisionPart(fmt.Sprintf("%d", group.TotalThreadCount))
 	if group.Category == CodexCleanupStale {
-		writeRevisionPart(fmt.Sprintf("%d", group.TotalThreadCount))
+		writeRevisionPart(fmt.Sprintf("%d", group.InactiveDays))
 	}
 	writeRevisionPart(group.RootProjectPath)
 	writeRevisionPart(group.MissingSince.UTC().Format(time.RFC3339Nano))
@@ -953,7 +969,7 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	}
 	defer unlockWorktree()
 
-	audit, err := s.AuditCodexSessionStorage(ctx, CodexCleanupAuditOptions{LoadedThreadIDs: request.LoadedThreadIDs, Category: request.Category})
+	audit, err := s.AuditCodexSessionStorage(ctx, CodexCleanupAuditOptions{LoadedThreadIDs: request.LoadedThreadIDs, Category: request.Category, InactiveDays: request.InactiveDays})
 	if err != nil {
 		return result, fmt.Errorf("repeat Codex cleanup safety audit: %w", err)
 	}

@@ -312,24 +312,28 @@ server starts and then once per day; it only refreshes an in-memory report and
 never deletes a thread. Opening `/codex-gc` runs another fresh audit unless it
 is reopening an active background deletion or its unread completion report.
 
-The review lists aligned size, age, root-count, descendant-count, and worktree
-columns, with largest groups first by default. `S` cycles through largest first,
-oldest first, and name while preserving focus and selection. A background
+The cleanup form lists aligned project, remove-count, keep-count, and free-space
+columns, with largest groups first by default. The Sort dropdown offers largest
+first, oldest first, and name while preserving the highlighted row and selection. A background
 filesystem inventory reports logical bytes for the whole Codex home, sessions
 (including archived sessions), and other files. Session bytes outside eligibility
 remain visible even when no worktrees qualify. This inventory does not follow
 symlinks and labels incomplete reads as partial; logical sizes can differ from
 allocated disk usage. Inventorying other files does not make them deletion candidates.
 
-The header keeps category and view controls together: `1` selects green
-**Orphaned worktrees**, `2` selects amber **Stale sessions**, and Tab switches
-between **Cleanup candidates** and blue **Other storage**. The active choices
-also have brackets, so they remain identifiable without color. Other storage is
-explicitly read-only, and the Tab hint names the destination view. `C` and `V`
-remain compatibility shortcuts. Selecting the current category does not rescan
-or clear selection; changing category runs a fresh audit and clears selection.
+The **Clean up** dropdown chooses **Orphaned worktrees** or **Stale sessions**.
+Stale cleanup adds an **Inactive for** dropdown: 7 (default), 14, 30, or 90 days.
+Tab/Shift-Tab move keyboard focus, arrows navigate, Space selects rows, and Enter
+activates the focused control. Focus has a blue accent and a visible cursor, so
+it remains identifiable without color. Mouse clicks operate the same controls.
+The previous numbered category and view-toggle shortcuts are removed. Selecting
+the current option preserves selection; changing category or age runs a fresh
+audit and clears selection. Closing a scan cancels it; superseded results cannot
+replace a newer preview.
 
-**Other storage** shows retained storage, largest first. It
+The separate **Storage breakdown** action shows whole-home totals, the amount
+eligible under the current policy, and storage outside that policy, largest first.
+It is read-only; Back/Esc returns to cleanup without losing selections. It
 attributes inventoried session files through the thread index's exact rollout path
 and `cwd`, groups them by working directory, and shows the retained repository root
 when LCR has a deleted-worktree record. It excludes eligible rollout paths and counts
@@ -366,10 +370,10 @@ evidence. Indexed parent chains are cross-checked against rollout lineage;
 uncertainty blocks the related candidate tree rather than forcing unrelated
 root rollouts to be opened.
 
-`2` selects **Stale sessions**, runs a fresh read-only audit, and clears
+Choosing **Stale sessions** runs a fresh read-only audit and clears
 selection. This category covers existing local folders, including primary
 checkouts that never used linked worktrees. It does not require a worktree
-deletion record. Every tree member must have at least seven days of inactivity
+deletion record. Every tree member must meet the selected inactivity threshold
 in both the thread index and rollout modification time, known unpinned state,
 no LCR-loaded thread, and verified lineage and rollout paths. The newest root
 session in each folder is always retained, even when old. Missing folders stay
@@ -381,21 +385,23 @@ Stale rows show one folder each, with recoverable size and **REMOVE / KEEP**
 counts including spawned sessions. Details and the permanent-deletion warning
 show how many of the folder's indexed sessions will be removed; no hundreds-row
 session list is required. Category identity and the total session count are
-included in the preview revision and revalidated before deletion. `V` / Tab
-still shows files retained outside the currently selected category.
+included in the preview revision, along with the inactivity threshold, and
+revalidated before deletion. The selected threshold is applied again during
+the repeat audit and the final index check, not just to the displayed estimate.
 Immediately before a stale deletion, LCR checks the current session index and
 rollout sizes/modification times again, and the TUI refreshes its managed loaded
 thread IDs. This rejects activity, pins, or loads that changed during the audit.
 
-Eligible roots are grouped by deleted worktree. The preview reports thread and
-worktree age and retained branch/parent metadata,
-spawned-descendant counts, the eligibility reason, and the logical byte size of
-the rollout files that can be recovered. The preview revision includes the
+Eligible roots are grouped by working directory. The preview reports remove/keep
+counts including descendants, last activity, the exact highlighted folder path,
+and logical rollout bytes that can be recovered. The preview revision includes the
 selected tree identities plus rollout paths, sizes, and modification times.
 
 Deletion is reachable only after selecting one or more worktree groups with
-Space, or explicitly toggling all groups with `A`, opening a separate
-permanent-deletion warning with Enter, and pressing `D`. LCR repeats the
+Space, the select-all control (or `A` while the table is focused), and opening
+**Review cleanup**. The separate permanent-deletion review reports exact remove
+and keep counts and defaults to **Back**. The user must explicitly focus and
+activate **Delete N sessions permanently**, or click that button. LCR repeats the
 complete audit and compares the preview revision before each group. It then
 calls Codex app-server `thread/delete` for each selected root; the Codex API
 performs the root-and-descendant cascade. Direct SQLite or rollout-file

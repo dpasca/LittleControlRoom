@@ -2,10 +2,106 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 )
+
+func TestCodexCleanupStaleInactivityThresholds(t *testing.T) {
+	f := newCodexCleanupFixture(t)
+	now := time.Now().Truncate(time.Second)
+	for _, days := range []int{8, 15, 31, 91} {
+		f.addThread(t, cleanupThreadFixture{ID: fmt.Sprintf("old-%d", days), CWD: f.rootPath, LastActivity: now.Add(-time.Duration(days) * 24 * time.Hour)})
+	}
+	f.addThread(t, cleanupThreadFixture{ID: "newest", CWD: f.rootPath, LastActivity: now})
+	for _, tc := range []struct{ days, count int }{{0, 4}, {7, 4}, {14, 3}, {30, 2}, {90, 1}} {
+		audit, err := f.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Category: CodexCleanupStale, InactiveDays: tc.days, Now: now})
+		if err != nil || len(audit.Groups) != 1 {
+			t.Fatalf("%d days: %#v, %v", tc.days, audit.Groups, err)
+		}
+		g := audit.Groups[0]
+		days := max(7, tc.days)
+		if g.RootThreadCount != tc.count || g.InactiveDays != days || !audit.RecentCutoff.Equal(now.Add(-time.Duration(days)*24*time.Hour)) {
+			t.Fatalf("wrong %d-day policy: %#v", tc.days, g)
+		}
+	}
+	for _, days := range []int{-1, 1, 6, 8, 1000} {
+		if _, err := f.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Category: CodexCleanupStale, InactiveDays: days}); err == nil {
+			t.Fatalf("accepted invalid days %d", days)
+		}
+	}
+	if _, err := f.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{InactiveDays: 30}); err == nil {
+		t.Fatal("orphaned policy must retain fixed seven-day rules")
+	}
+}
+
+func TestCodexCleanupRevisionIncludesDisplayedKeepCount(t *testing.T) {
+	for _, category := range []CodexCleanupCategory{CodexCleanupOrphaned, CodexCleanupStale} {
+		group := CodexCleanupWorktreeGroup{Category: category, InactiveDays: 7, RootThreadCount: 1, TotalThreadCount: 3}
+		revision := cleanupGroupRevision(group)
+		group.TotalThreadCount++
+		if revision == cleanupGroupRevision(group) {
+			t.Fatalf("%s preview must reject changed keep counts", category.Label())
+		}
+	}
+}
+
+func TestCodexCleanupStaleThresholdChecksIndexAndRolloutBoundary(t *testing.T) {
+	f := newCodexCleanupFixture(t)
+	now := time.Now().Truncate(time.Second)
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	f.addThread(t, cleanupThreadFixture{ID: "boundary", CWD: f.rootPath, LastActivity: cutoff})
+	file := f.addThread(t, cleanupThreadFixture{ID: "file-recent", CWD: f.rootPath, LastActivity: cutoff})
+	if err := os.Chtimes(file, cutoff.Add(time.Second), cutoff.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	file = f.addThread(t, cleanupThreadFixture{ID: "index-recent", CWD: f.rootPath, LastActivity: cutoff.Add(time.Second)})
+	if err := os.Chtimes(file, cutoff, cutoff); err != nil {
+		t.Fatal(err)
+	}
+	f.addThread(t, cleanupThreadFixture{ID: "newest", CWD: f.rootPath, LastActivity: now})
+	audit, err := f.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Category: CodexCleanupStale, InactiveDays: 30, Now: now})
+	if err != nil || len(audit.Groups) != 1 || len(audit.Groups[0].Threads) != 1 || audit.Groups[0].Threads[0].ID != "boundary" {
+		t.Fatalf("threshold boundary: %#v %v", audit.Groups, err)
+	}
+}
+
+func TestCodexCleanupStaleDeleteBindsInactivityPolicy(t *testing.T) {
+	for _, days := range []int{7, 14, 30, 90} {
+		t.Run(fmt.Sprint(days), func(t *testing.T) {
+			f := newCodexCleanupFixture(t)
+			path := f.addThread(t, cleanupThreadFixture{ID: "old", CWD: f.rootPath, LastActivity: time.Now().Add(-100 * 24 * time.Hour)})
+			f.addThread(t, cleanupThreadFixture{ID: "newest", CWD: f.rootPath, LastActivity: time.Now()})
+			audit, err := f.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Category: CodexCleanupStale, InactiveDays: days})
+			if err != nil || len(audit.Groups) != 1 {
+				t.Fatalf("preview: %#v %v", audit.Groups, err)
+			}
+			g := audit.Groups[0]
+			request := DeleteCodexCleanupWorktreeRequest{Category: g.Category, InactiveDays: days, WorktreePath: g.WorktreePath, RootProjectPath: g.RootProjectPath, RootThreadIDs: []string{"old"}, Revision: g.Revision}
+			called := false
+			f.service.codexThreadDeleter = func(ctx context.Context, home string, ids []string) ([]string, error) {
+				called = true
+				if _, err := f.codexDB.Exec("DELETE FROM threads WHERE id='old'"); err != nil {
+					return nil, err
+				}
+				return ids, os.Remove(path)
+			}
+			request.InactiveDays = 7
+			if days == 7 {
+				request.InactiveDays = 30
+			}
+			if _, err := f.service.DeleteCodexCleanupWorktree(context.Background(), request); err == nil || called {
+				t.Fatal("changed threshold must reject even when eligible IDs are unchanged")
+			}
+			request.InactiveDays = days
+			result, err := f.service.DeleteCodexCleanupWorktree(context.Background(), request)
+			if err != nil || !called || !result.Verified {
+				t.Fatalf("threshold lost in delete revalidation: %#v %v", result, err)
+			}
+		})
+	}
+}
 
 func TestCodexCleanupStaleGroupsExistingProjectAndProtectsTrees(t *testing.T) {
 	f := newCodexCleanupFixture(t)

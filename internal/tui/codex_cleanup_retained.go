@@ -2,58 +2,59 @@ package tui
 
 import (
 	"fmt"
-	"strings"
+
+	"lcroom/internal/service"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-func renderCodexCleanupRetained(dialog *codexCleanupDialogState, width, bodyH int) string {
-	groups := dialog.Audit.Retained
-	var total int64
-	for _, group := range groups {
-		total += group.Bytes
+func buildCodexCleanupStorage(d *codexCleanupDialogState, width, bodyH int) codexCleanupView {
+	v := codexCleanupView{}
+	storage := d.Audit.Storage
+	groups := d.Audit.Retained
+	var retained int64
+	for _, g := range groups {
+		retained += g.Bytes
 	}
-	summary := fmt.Sprintf("%s retained · %d groups · largest first · read-only", formatCodexCleanupBytes(total), len(groups))
-	if dialog.Audit.Storage.Partial {
-		summary += " · partial inventory"
+	v.add(commandPaletteTitleStyle.Render("Storage breakdown"), "",
+		cleanupStrong(formatCodexCleanupBytes(storage.TotalBytes)+" used in Codex storage"),
+		detailMutedStyle.Render(fmt.Sprintf("%s sessions · %s other files · logical sizes", formatCodexCleanupBytes(storage.SessionBytes), formatCodexCleanupBytes(storage.TotalBytes-storage.SessionBytes))), "")
+	v.add(cleanupStrong(fmt.Sprintf("%s eligible for this cleanup · %s outside it", formatCodexCleanupBytes(d.Audit.RecoverableBytes), formatCodexCleanupBytes(retained))))
+	policy := d.Category.Label()
+	if d.Category == service.CodexCleanupStale {
+		policy += fmt.Sprintf(" · %d+ days", d.days())
 	}
-	lines := renderCodexCleanupNavigation(dialog, width)
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(codexCleanupAccent(dialog)).Render("READ-ONLY · Nothing in this view can be selected for deletion"))
-	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
-		"Storage outside "+dialog.Category.Label()+" cleanup: protected sessions, other projects, and non-session files. Sizes are logical bytes.")...)
-	lines = append(lines, detailField("Storage", summary), detailMutedStyle.Render("↑/↓ browse projects and files"))
-	lines = append(lines, "", commandPaletteHintStyle.Render(fmt.Sprintf("%10s  %7s  %s", "SIZE", "FILES", "PROJECT / WORKING DIRECTORY")))
-	start, end := cleanupGroupWindow(dialog.RetainedIndex, len(groups), bodyH+3)
-	if start > 0 {
-		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("↑ %d more groups", start)))
+	v.add(detailMutedStyle.Render("Current policy: " + policy))
+	v.add(renderWrappedDialogTextLines(detailMutedStyle, width, "Outside this cleanup: protected or ineligible sessions, other projects, and non-session files. This view is read-only; nothing here is selected for deletion.")...)
+	if storage.Partial {
+		v.add(detailWarningStyle.Render("Partial inventory · some files could not be measured."))
 	}
-	for index := start; index < end; index++ {
-		group := groups[index]
+	v.add("")
+	nameW := max(8, width-23)
+	v.add(detailMutedStyle.Render(fmt.Sprintf("  %-*s  %7s  %10s", nameW, "PROJECT / STORAGE", "FILES", "SIZE")))
+	start, end := cleanupVisibleRange(d.RetainedIndex, len(groups), max(1, bodyH-4-len(v.lines)-8))
+	for i := start; i < end; i++ {
+		g := groups[i]
 		style := commandPaletteRowStyle
-		if index == dialog.RetainedIndex {
-			style = commandPaletteSelectStyle
+		mark := "  "
+		if i == d.RetainedIndex && d.Focus == cleanupFocusTable {
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("24"))
+			mark = "› "
 		}
-		size := style.Bold(true).Foreground(codexCleanupAccent(dialog)).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(group.Bytes)))
-		lines = append(lines, size+style.Render(fmt.Sprintf("  %7d  %s", group.Files, truncateText(group.Name, max(8, width-21)))))
-	}
-	if end < len(groups) {
-		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("↓ %d more groups", len(groups)-end)))
+		v.hits = append(v.hits, codexCleanupHit{x: 0, y: len(v.lines), width: width, focus: cleanupFocusTable, row: i})
+		v.add(style.Render(mark+padRight(cleanupCellText(g.Name, nameW), nameW)+fmt.Sprintf("  %7d  ", g.Files)) + style.Bold(true).Foreground(codexCleanupAccent(d)).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(g.Bytes))))
 	}
 	if len(groups) > 0 {
-		group := groups[max(0, min(dialog.RetainedIndex, len(groups)-1))]
-		lines = append(lines, "")
-		for _, field := range []struct{ label, value string }{
-			{"Path", firstNonEmptyString(group.Path, "Unknown")},
-			{"Project", firstNonEmptyString(group.ProjectPath, "Not attributed to a project")},
-			{"Retained", group.Reason},
-		} {
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, field.label+": "+field.value)...)
+		g := groups[min(d.RetainedIndex, len(groups)-1)]
+		v.add(detailMutedStyle.Render(fmt.Sprintf("Groups %d–%d of %d · largest first", start+1, end, len(groups))), "")
+		for _, text := range []string{g.Path, "Project: " + firstNonEmptyString(g.ProjectPath, "Not attributed to a project"), "Retained: " + g.Reason} {
+			v.add(detailMutedStyle.Render(cleanupCellText(text, width)))
 		}
 	} else {
-		lines = append(lines, detailMutedStyle.Render("No retained files found in this inventory."))
+		v.add(detailMutedStyle.Render("No retained files in this inventory."))
 	}
-	lines = append(lines, "",
-		renderDialogAction("R", "rescan", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle))
-	return clampDialogContent(strings.Join(lines, "\n"), max(12, bodyH-4), 6, detailMutedStyle.Render("… details clipped to fit terminal …"))
+	v.add("")
+	v.control("Back to cleanup", cleanupFocusCancel, d, true)
+	v.add(detailMutedStyle.Render("↑↓ browse · Tab focus · Enter activate · Esc back"))
+	return v
 }
