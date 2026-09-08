@@ -3723,6 +3723,9 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	if created.Task.ID == "" || created.Task.WorkspacePath == "" {
 		t.Fatalf("created task = %#v, want persisted task workspace", created.Task)
 	}
+	if created.Task.OriginProjectPath != rootPath || created.Task.OriginWorktreePath != childPath {
+		t.Fatalf("recovery task lost project affiliation: %#v", created.Task)
+	}
 	if created.CategoryErr != nil {
 		t.Fatalf("assign recovery task category: %v", created.CategoryErr)
 	}
@@ -3746,6 +3749,9 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 		t.Fatalf("created task resources = %#v, want linked worktree and unchanged root", created.Task.Resources)
 	}
 
+	got.todoDialog = &todoDialogState{ProjectPath: rootPath, ProjectName: "repo"}
+	got.openTodoEditor(0, "unsaved TODO during merge recovery", nil)
+	originalEditor := got.todoEditor
 	updated, launchCmd := got.Update(created)
 	got = updated.(Model)
 	if launchCmd == nil {
@@ -3803,6 +3809,11 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 	}
 	hidden, _ := got.hideCodexSession()
 	got = hidden.(Model)
+	if got.todoEditor != originalEditor || got.todoEditor.Input.Value() != "unsaved TODO during merge recovery" || got.todoDialog == nil {
+		t.Fatal("Ask Engineer handoff lost the unsaved TODO dialog")
+	}
+	got.closeTodoEditor("")
+	got.closeTodoDialog("")
 	if selected, ok := got.selectedProject(); !ok || selected.Path != created.Task.WorkspacePath {
 		t.Fatalf("selected project after hiding engineer = %#v, want recovery task row", selected)
 	}

@@ -154,7 +154,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			m.settleRestartWarmup(msg.projectPath, false)
 		}
 		m.status = "Claude Code launch canceled"
-		return m, nil
+		return m, m.restoreTodoDialogs()
 	}
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 	m.err = nil

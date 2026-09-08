@@ -159,6 +159,7 @@ func CuratedTopics() []Topic {
 				"Select a project in the main list.",
 				"Press t, or open the slash-command palette and run /todo.",
 				"In the TODO dialog, use a to add, e to edit, space to mark done, c to start work, and Esc to close.",
+				"In the TODO editor, Ctrl+S saves, Ctrl+Z undoes, and Ctrl+Y (or Alt+Z) redoes. Esc keeps a draft for this app session; a/e resumes it. Drafts do not survive an app restart.",
 			},
 			CanDoVia: []control.CapabilityName{control.CapabilityTodoAdd, control.CapabilityTodoComplete},
 			Related: []string{

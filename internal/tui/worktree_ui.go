@@ -760,10 +760,12 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
 		task, err := m.svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-			Title:        worktreeMergeRecoveryTaskTitle(confirm, blocker),
-			Kind:         model.AgentTaskKindAgent,
-			Capabilities: []string{"worktree.merge.recover", "git.submodule.publish"},
-			Resources:    resources,
+			Title:              worktreeMergeRecoveryTaskTitle(confirm, blocker),
+			Kind:               model.AgentTaskKindAgent,
+			Capabilities:       []string{"worktree.merge.recover", "git.submodule.publish"},
+			Resources:          resources,
+			OriginProjectPath:  rootPath,
+			OriginWorktreePath: worktreePath,
 		})
 		if err == nil {
 			if source, ok := m.projectSummaryByPath(worktreePath); ok && strings.TrimSpace(source.CategoryName) != "" {
@@ -842,7 +844,7 @@ func (m Model) worktreeMergeRecoveryTaskForProjectPath(projectPath string) (mode
 	var newest model.AgentTask
 	found := false
 	for _, task := range m.openAgentTasks {
-		if !agentTaskIsOpen(task) || !agentTaskHasCapability(task, "worktree.merge.recover") {
+		if !agentTaskIsVisible(task) || !agentTaskHasCapability(task, "worktree.merge.recover") {
 			continue
 		}
 		linked := false
@@ -1292,6 +1294,20 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 		anchor := cleanAgentTaskPath(task.OriginWorktreePath)
 		if _, ok := basePaths[anchor]; !ok {
 			anchor = cleanAgentTaskPath(task.OriginProjectPath)
+		}
+		// Older merge-recovery tasks stored affiliation only as ordered project resources.
+		if _, ok := basePaths[anchor]; !ok && agentTaskHasCapability(task, "worktree.merge.recover") {
+			for _, resource := range task.Resources {
+				if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceProject {
+					continue
+				}
+				if path := cleanAgentTaskPath(resource.ProjectPath); path != "" {
+					if _, exists := basePaths[path]; exists {
+						anchor = path
+						break
+					}
+				}
+			}
 		}
 		if _, ok := basePaths[anchor]; !ok || anchor == "" {
 			standaloneTasks = append(standaloneTasks, project)

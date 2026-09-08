@@ -107,6 +107,9 @@ type Model struct {
 
 	todoDialog                  *todoDialogState
 	todoEditor                  *todoEditorState
+	todoEditorDrafts            map[todoEditorKey]*todoEditorState
+	todoReturnDialog            *todoDialogState
+	todoReturnEditor            *todoEditorState
 	todoDeleteConfirm           *todoDeleteConfirmState
 	scratchTaskAction           *scratchTaskActionConfirmState
 	agentTaskAction             *agentTaskActionConfirmState
@@ -1993,7 +1996,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.archivedProjects = m.preserveRefreshingAssessmentDisplays(msg.archivedProjects)
 		m.projectCategories = append([]model.ProjectCategory(nil), msg.categories...)
 		m.ensureSelectedCategoryTab()
-		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
+		if msg.agentTaskErr == nil {
+			m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
+		}
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.orphanedCleanupKindByPath = msg.orphanedCleanupKindByPath
 		m.repositoryIntegrityByRoot = msg.repositoryIntegrityByRoot
@@ -2632,11 +2637,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.todoDialog.Busy = false
 		}
 		if m.todoPendingSave != nil && filepath.Clean(strings.TrimSpace(m.todoPendingSave.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
+			delete(m.todoEditorDrafts, todoEditorKey{m.todoPendingSave.ProjectPath, m.todoPendingSave.TodoID})
 			m.todoPendingSave = nil
-		}
-		if m.todoEditor != nil {
-			m.todoEditor.Submitting = false
-			m.todoEditor = nil
 		}
 		m.todoDeleteConfirm = nil
 		m.err = nil

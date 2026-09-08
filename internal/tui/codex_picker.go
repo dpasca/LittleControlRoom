@@ -716,6 +716,7 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 		m.persistVisibleCodexDraft()
 		m.codexHiddenProject = current
 	}
+	m.suspendTodoDialogs()
 	m.codexVisibleProject = projectPath
 	m.codexHiddenProject = projectPath
 	if m.browserAttention != nil && m.browserAttention.ProjectPath == projectPath {

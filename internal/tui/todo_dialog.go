@@ -49,6 +49,8 @@ type todoEditorState struct {
 	Attachments   []model.TodoAttachment
 	Submitting    bool
 	ClipboardBusy bool
+	Undo          []todoEditSnapshot
+	Redo          []todoEditSnapshot
 }
 
 type todoClipboardPasteMsg struct {
@@ -395,6 +397,7 @@ func (m Model) repositoryTodoProject(project model.ProjectSummary) model.Project
 }
 
 func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {
+	m.retainTodoEditor()
 	m.todoDialog = &todoDialogState{
 		ProjectPath: project.Path,
 		ProjectName: projectTitle(project.Path, project.Name),
@@ -528,6 +531,11 @@ func (m *Model) openTodoEditor(todoID int64, value string, attachments []model.T
 	if m.todoDialog == nil {
 		return nil
 	}
+	if draft := m.todoEditorDrafts[todoEditorKey{m.todoDialog.ProjectPath, todoID}]; draft != nil {
+		m.todoEditor = draft
+		m.status = "Resumed TODO draft"
+		return draft.Input.Focus()
+	}
 	m.todoEditor = &todoEditorState{
 		ProjectPath: m.todoDialog.ProjectPath,
 		ProjectName: m.todoDialog.ProjectName,
@@ -588,6 +596,7 @@ func (m *Model) startTodoEditorSave(text string) tea.Cmd {
 	if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(dialog.ProjectPath)) {
 		m.todoDialog.Busy = true
 	}
+	m.retainTodoEditor()
 	m.closeTodoEditor("")
 	if dialog.TodoID > 0 {
 		m.status = "Saving TODO..."
@@ -603,6 +612,11 @@ func (m *Model) reopenPendingTodoEditor() tea.Cmd {
 		return nil
 	}
 	m.todoPendingSave = nil
+	if draft := m.todoEditorDrafts[todoEditorKey{pending.ProjectPath, pending.TodoID}]; draft != nil {
+		m.todoEditor = draft
+		draft.Submitting = false
+		return draft.Input.Focus()
+	}
 	m.todoEditor = &todoEditorState{
 		ProjectPath: pending.ProjectPath,
 		ProjectName: pending.ProjectName,
@@ -1122,11 +1136,26 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if dialog.Submitting {
 		return m, nil
 	}
+	before := dialog.editSnapshot()
+	defer func() { dialog.recordEdit(before) }()
 	switch msg.String() {
 	case "esc":
-		m.closeTodoEditor("TODO edit canceled")
+		m.retainTodoEditor()
+		m.closeTodoEditor("TODO draft kept for this app session; a/e resumes editing")
+		return m, nil
+	case "ctrl+z":
+		dialog.undoEdit(false)
+		before = dialog.editSnapshot()
+		return m, nil
+	case "ctrl+y", "alt+z":
+		dialog.undoEdit(true)
+		before = dialog.editSnapshot()
 		return m, nil
 	case "ctrl+s":
+		if dialog.ClipboardBusy {
+			m.status = "Wait for clipboard paste before saving"
+			return m, nil
+		}
 		text := normalizeTodoText(dialog.Input.Value())
 		if strings.TrimSpace(text) == "" {
 			m.status = "TODO text is required"
@@ -1179,8 +1208,13 @@ func readTodoClipboardCmd(dataDir, projectPath string, todoID int64) tea.Cmd {
 func (m Model) applyTodoClipboardPasteMsg(msg todoClipboardPasteMsg) (tea.Model, tea.Cmd) {
 	dialog := m.todoEditor
 	if dialog == nil || dialog.ProjectPath != msg.projectPath || dialog.TodoID != msg.todoID {
+		dialog = m.todoEditorDrafts[todoEditorKey{msg.projectPath, msg.todoID}]
+	}
+	if dialog == nil || !dialog.ClipboardBusy {
 		return m, nil
 	}
+	before := dialog.editSnapshot()
+	defer func() { dialog.recordEdit(before) }()
 	dialog.ClipboardBusy = false
 	if msg.err != nil {
 		m.reportError("Clipboard paste failed", msg.err, dialog.ProjectPath)
@@ -2088,6 +2122,12 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 		title = renderLineWithRightSegment(title, detailLabelStyle.Render(fmt.Sprintf("#%d", selected.ID)), panelInnerW)
 	}
 	summary := detailMutedStyle.Render(fmt.Sprintf("%d open, %d total", displayOpenCount, displayTotalCount))
+	for key := range m.todoEditorDrafts {
+		if key.ProjectPath == dialog.ProjectPath {
+			summary += detailWarningStyle.Render(" · draft kept (a/e resumes)")
+			break
+		}
+	}
 	lines := []string{title, summary, ""}
 	if len(items) == 0 {
 		if projectSummary.TotalTODOCount > 0 && m.todoDialogDetailPending(dialog.ProjectPath) {
@@ -2361,8 +2401,9 @@ func todoEditorLegendLine() string {
 			renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
 		),
 		renderHelpPanelActionRow(
+			renderDialogAction("ctrl+z/y", "undo/redo", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("Esc", "keep draft", cancelActionKeyStyle, cancelActionTextStyle),
 		),
 	}, "\n")
 }

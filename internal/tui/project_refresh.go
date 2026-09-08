@@ -33,6 +33,7 @@ type projectsMsg struct {
 	archivedProjects          []model.ProjectSummary
 	categories                []model.ProjectCategory
 	openAgentTasks            []model.AgentTask
+	agentTaskErr              error
 	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
 	orphanedCleanupKindByPath map[string]service.ResidualWorktreeCleanupKind
 	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
@@ -694,6 +695,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			archivedProjects:          archivedProjects,
 			categories:                categories,
 			openAgentTasks:            openAgentTasks,
+			agentTaskErr:              agentTaskErr,
 			orphanedWorktreesByRoot:   buildOrphanedWorktreeMap(orphanedWorktrees),
 			orphanedCleanupKindByPath: orphanedCleanupKindByPath,
 			repositoryIntegrityByRoot: integrityStates,

@@ -328,6 +328,7 @@ func (m *Model) beginCodexPendingOpenWithOptions(projectPath string, provider co
 	}
 	m.codexOpenRevealByRequest[requestID] = revealOnOpen
 	if showWhilePending {
+		m.suspendTodoDialogs()
 		m.loadCodexDraft(projectPath)
 		_ = m.codexInput.Focus()
 	}
@@ -2428,7 +2429,7 @@ func (m Model) hidePendingCodexOpen(projectPath string) (tea.Model, tea.Cmd) {
 	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = "Embedded " + label + " session hidden."
-	return m, m.focusProjectPath(projectPath)
+	return m, batchCmds(m.focusProjectPath(projectPath), m.restoreTodoDialogs())
 }
 
 func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
@@ -2462,6 +2463,7 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 		m.focusProjectPath(projectPath),
 		m.markProjectSessionSeen(projectPath),
 		refreshCmd,
+		m.restoreTodoDialogs(),
 	)
 }
 
