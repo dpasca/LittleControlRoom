@@ -1038,6 +1038,20 @@ func TestVisibleCodexSlashHandoffSavesBriefAndStartsFreshSession(t *testing.T) {
 	}
 
 	msg := cmd()
+	confirmation, ok := msg.(busySessionReplacementRequestedMsg)
+	if !ok {
+		t.Fatalf("busy handoff cmd returned %T, want confirmation", msg)
+	}
+	if source.snapshot.Closed || len(requests) != 1 {
+		t.Fatal("busy handoff replaced source before confirmation")
+	}
+	updated, _ = got.Update(confirmation)
+	got = updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	msg = cmd()
 	opened, ok := msg.(codexSessionOpenedMsg)
 	if !ok {
 		t.Fatalf("handoff cmd returned %T, want codexSessionOpenedMsg", msg)

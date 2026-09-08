@@ -104,6 +104,9 @@ func (m Model) renderFooter(width int) string {
 	modelHealthSegment := m.renderFooterModelHealthSegment()
 	codexCleanupSegment := m.renderFooterCodexCleanupSegment()
 	supplementSegments := footerSupplementSegments(codexCleanupSegment, filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, modelHealthSegment, assessmentSegment, usageSegment)
+	if m.busySessionReplacement != nil {
+		return m.renderModalFooter(width, "New session: Tab or arrows choose, Enter confirm, Esc keep current", supplementSegments...)
+	}
 	if m.quitConfirm != nil {
 		return m.renderModalFooter(width, "Quit: Tab or arrows choose, Enter confirm, Esc stay", supplementSegments...)
 	}

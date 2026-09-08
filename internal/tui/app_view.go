@@ -78,6 +78,9 @@ func (m Model) View() string {
 		if m.codexModelPickerVisible() {
 			body = m.renderCodexModelPickerOverlay(body, layout.width, layout.height)
 		}
+		if m.busySessionReplacement != nil {
+			body = m.renderBusySessionReplacementOverlay(body, layout.width, layout.height)
+		}
 		if m.quitConfirm != nil {
 			body = m.renderQuitConfirmOverlay(body, layout.width, layout.height)
 		}
@@ -104,6 +107,9 @@ func (m Model) View() string {
 		}
 		if m.externalControlReviewActive() {
 			return m.renderExternalControlConfirmationOverlay(body, width, height)
+		}
+		if m.busySessionReplacement != nil {
+			return m.renderBusySessionReplacementOverlay(body, width, height)
 		}
 		if m.quitConfirm != nil {
 			return m.renderQuitConfirmOverlay(body, width, height)
@@ -389,6 +395,9 @@ func (m Model) View() string {
 	}
 	if m.actionNoticeDialog != nil {
 		body = m.renderActionNoticeDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.busySessionReplacement != nil {
+		body = m.renderBusySessionReplacementOverlay(body, layout.width, layout.height)
 	}
 	if m.quitConfirm != nil {
 		body = m.renderQuitConfirmOverlay(body, layout.width, layout.height)

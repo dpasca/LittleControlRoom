@@ -718,6 +718,10 @@ type LaunchRequest struct {
 	// interrupted turn, so the replacement helper merges this history back in.
 	ReconnectTranscript []TranscriptEntry
 
+	// ConfirmedReplacementSessionID authorizes interrupting only this exact
+	// busy session during a forced-new launch, after operator confirmation.
+	ConfirmedReplacementSessionID string
+
 	ForceNew                 bool
 	Prompt                   string
 	InitialInput             Submission
@@ -1089,6 +1093,17 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		delete(m.sessionProviders, projectPath)
 		existing = nil
 		ok = false
+	}
+	if req.ForceNew && ok {
+		confirmedID := strings.TrimSpace(req.ConfirmedReplacementSessionID)
+		if confirmedID != "" && confirmedID != strings.TrimSpace(existingState.ThreadID) {
+			m.mu.Unlock()
+			return nil, false, fmt.Errorf("%w: the session changed before replacement", ErrSessionChanged)
+		}
+		if existingState.Busy && !existingState.BusyExternal && confirmedID == "" {
+			m.mu.Unlock()
+			return nil, false, &BusySessionReplacementError{SessionID: existingState.ThreadID}
+		}
 	}
 	if ok && req.RequireResumeID {
 		expectedThreadID := strings.TrimSpace(req.ResumeID)

@@ -78,6 +78,11 @@ func mapDeferredClaudeLaunchCommand(cmd tea.Cmd, mapResult func(tea.Msg) tea.Msg
 	}
 	return func() tea.Msg {
 		msg := cmd()
+		if request, ok := msg.(busySessionReplacementRequestedMsg); ok {
+			request.launchCmd = mapDeferredClaudeLaunchCommand(request.launchCmd, mapResult)
+			request.cancelCmd = mapDeferredClaudeLaunchCommand(request.cancelCmd, mapResult)
+			return request
+		}
 		request, ok := msg.(claudeAPIKeyWarningRequestedMsg)
 		if !ok {
 			return mapResult(msg)

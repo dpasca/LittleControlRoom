@@ -1603,7 +1603,8 @@ func (m *Model) openCodexSessionCmdPreparedWithModelPreference(
 	if resumeID != "" {
 		threadIDsToAvoid[resumeID] = struct{}{}
 	}
-	launchCmd := func() tea.Msg {
+	var launchCmd tea.Cmd
+	launchCmd = func() tea.Msg {
 		startedAt := time.Now()
 		label := provider.Label()
 		if prepare != nil {
@@ -1656,6 +1657,22 @@ func (m *Model) openCodexSessionCmdPreparedWithModelPreference(
 		for attempt := 1; attempt <= attemptLimit; attempt++ {
 			session, reused, err = manager.Open(req)
 			if err != nil {
+				var busyErr *codexapp.BusySessionReplacementError
+				if errors.As(err, &busyErr) && strings.TrimSpace(busyErr.SessionID) != "" {
+					return busySessionReplacementRequestedMsg{
+						projectPath:   req.ProjectPath,
+						openRequestID: openRequestID,
+						launchCmd: func() tea.Msg {
+							req.ConfirmedReplacementSessionID = busyErr.SessionID
+							return launchCmd()
+						},
+						cancelCmd: func() tea.Msg {
+							return codexSessionOpenedMsg{projectPath: req.ProjectPath, provider: provider,
+								openRequestID: openRequestID, perfOpID: perfOpID, restartWarmup: restartWarmup,
+								err: errBusySessionReplacementCanceled}
+						},
+					}
+				}
 				if shouldRetryFreshEmbeddedOpenError(req, err) && attempt < attemptLimit {
 					if reusedID := extractForceNewReusedThread(err); reusedID != "" {
 						threadIDsToAvoid[reusedID] = struct{}{}

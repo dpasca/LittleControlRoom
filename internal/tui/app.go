@@ -68,6 +68,7 @@ type Model struct {
 	demoRecordingBusy       bool
 	actionNoticeDialog      *actionNoticeDialogState
 	quitConfirm             *quitConfirmState
+	busySessionReplacement  *busySessionReplacementState
 	gracefulQuitInFlight    bool
 	relaunchAfterUpdate     bool
 	installedUpdate         string
@@ -1568,6 +1569,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateQuitConfirmMode(key)
 	}
 	if _, ok := msg.(tea.MouseMsg); ok && m.quitConfirm != nil {
+		return m, nil
+	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.busySessionReplacement != nil {
+		return m.updateBusySessionReplacement(key)
+	}
+	if _, ok := msg.(tea.MouseMsg); ok && m.busySessionReplacement != nil {
 		return m, nil
 	}
 	if msg, ok := msg.(bossTrackedTodoLoadedMsg); ok {
@@ -3102,6 +3109,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, batchCmds(cmds...)
 	case controlEngineerModelValidatedMsg:
 		return m.applyControlEngineerModelValidated(msg)
+	case busySessionReplacementRequestedMsg:
+		if m.busySessionReplacement != nil {
+			return m, msg.cancelCmd
+		}
+		m.busySessionReplacement = &busySessionReplacementState{request: msg}
+		return m, nil
 	case codexSessionOpenedMsg:
 		return m.applyCodexSessionOpenedMsg(msg)
 	case codexActionMsg:
