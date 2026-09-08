@@ -23,6 +23,41 @@ func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
 	}
 }
 
+func TestCodexCleanupRetainedViewCannotDelete(t *testing.T) {
+	dialog := &codexCleanupDialogState{
+		Chosen: map[string]bool{"/eligible": true},
+		Audit: service.CodexCleanupAudit{
+			Groups: []service.CodexCleanupWorktreeGroup{{WorktreePath: "/eligible"}},
+			Retained: []service.CodexCleanupRetainedGroup{
+				{Name: "kept-project", Path: "/kept-project", Bytes: 2 << 30, Files: 20, Reason: "No LCR deleted-worktree record"},
+				{Name: "cache", Bytes: 2 << 20},
+			},
+		},
+	}
+	m := Model{codexCleanup: dialog}
+	for _, key := range []string{"v", " ", "a", "enter", "d"} {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+		if key == "enter" {
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		}
+		updated, cmd := m.updateCodexCleanupMode(msg)
+		m = updated.(Model)
+		if cmd != nil || dialog.Confirming || dialog.Deleting || !dialog.Chosen["/eligible"] {
+			t.Fatalf("retained view changed deletion state on %q", key)
+		}
+	}
+	view := ansi.Strip(renderCodexCleanupContent(dialog, 100, 38, 0, time.Now()))
+	for _, want := range []string{"retained", "read-only", "kept-project", "2.0 GiB", "2.0 MiB", "No LCR deleted-worktree record"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in %s", want, view)
+		}
+	}
+	m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyTab})
+	if dialog.ShowRetained || !dialog.Chosen["/eligible"] {
+		t.Fatal("switching back must preserve selections")
+	}
+}
+
 func TestCodexCleanupSortingPreservesFocusAndSelection(t *testing.T) {
 	now := time.Now()
 	groups := []service.CodexCleanupWorktreeGroup{

@@ -321,6 +321,14 @@ remain visible even when no worktrees qualify. This inventory does not follow
 symlinks and labels incomplete reads as partial; logical sizes can differ from
 allocated disk usage. Inventorying other files does not make them deletion candidates.
 
+`V` or Tab switches to a read-only retained-storage view, largest first. It
+attributes inventoried session files through the thread index's exact rollout path
+and `cwd`, groups them by working directory, and shows the retained repository root
+when LCR has a deleted-worktree record. It excludes eligible rollout paths and counts
+each remaining file once. Files without unique indexed ownership appear as
+unattributed; non-session files are grouped by their top-level Codex-home entry.
+This view does not infer ownership from filenames or make retained files selectable.
+
 A root thread is eligible only when all of the following can be established:
 
 1. Its saved absolute `cwd` is absent, and an exact retained LCR project row

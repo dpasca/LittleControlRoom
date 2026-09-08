@@ -31,6 +31,8 @@ func formatCodexCleanupBytes(size int64) string {
 type codexCleanupDialogState struct {
 	Audit           service.CodexCleanupAudit
 	Selected        int
+	ShowRetained    bool
+	RetainedIndex   int
 	SortMode        int
 	Chosen          map[string]bool
 	Loading         bool
@@ -202,6 +204,7 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 	sortCodexCleanupGroups(dialog)
 	dialog.Chosen = make(map[string]bool)
 	dialog.Selected = 0
+	dialog.RetainedIndex = 0
 	dialog.ErrorMessage = ""
 	m.err = nil
 	if len(msg.audit.Groups) == 0 {
@@ -346,6 +349,28 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if msg.String() == "v" || msg.String() == "V" || msg.String() == "tab" {
+		dialog.ShowRetained = !dialog.ShowRetained
+		return m, nil
+	}
+	if dialog.ShowRetained && msg.String() != "esc" && msg.String() != "r" {
+		last := max(0, len(dialog.Audit.Retained)-1)
+		switch msg.String() {
+		case "up", "k":
+			dialog.RetainedIndex = max(0, dialog.RetainedIndex-1)
+		case "down", "j":
+			dialog.RetainedIndex = min(last, dialog.RetainedIndex+1)
+		case "pgup", "ctrl+u":
+			dialog.RetainedIndex = max(0, dialog.RetainedIndex-5)
+		case "pgdown", "ctrl+d":
+			dialog.RetainedIndex = min(last, dialog.RetainedIndex+5)
+		case "home", "g":
+			dialog.RetainedIndex = 0
+		case "end", "G":
+			dialog.RetainedIndex = last
+		}
+		return m, nil
+	}
 	groups := dialog.Audit.Groups
 	switch msg.String() {
 	case "esc":
@@ -527,6 +552,9 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 	if dialog.Confirming {
 		return renderCodexCleanupConfirmation(dialog, width)
 	}
+	if dialog.ShowRetained && dialog.ErrorMessage == "" {
+		return renderCodexCleanupRetained(dialog, width, bodyH)
+	}
 
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
 		fmt.Sprintf("Only unpinned, unloaded Codex trees inactive for at least %d days and tied to LCR worktrees missing for at least %d days are selectable. External-volume and uncertain trees are excluded.",
@@ -553,6 +581,7 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 				formatCodexCleanupBytes(audit.Storage.SessionBytes-audit.RecoverableBytes)))...)
 	}
 	lines = append(lines, detailField("Audit", fmt.Sprintf("%d threads scanned · %d missing cwd · %d safeguards excluded", audit.ScannedThreads, audit.MissingCWDThreads, audit.Excluded.Total())))
+	lines = append(lines, renderDialogAction("V / Tab", "view retained storage", navigateActionKeyStyle, navigateActionTextStyle))
 	if len(audit.Groups) == 0 {
 		lines = append(lines,
 			"",

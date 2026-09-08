@@ -57,6 +57,16 @@ type CodexCleanupAudit struct {
 	Groups              []CodexCleanupWorktreeGroup
 	Excluded            CodexCleanupExclusions
 	Storage             CodexCleanupStorage
+	Retained            []CodexCleanupRetainedGroup
+}
+
+type CodexCleanupRetainedGroup struct {
+	Name        string
+	Path        string
+	ProjectPath string
+	Reason      string
+	Bytes       int64
+	Files       int
 }
 
 // Logical file sizes, matching the recoverable rollout estimate. Symlinks are
@@ -65,10 +75,11 @@ type CodexCleanupStorage struct {
 	TotalBytes   int64
 	SessionBytes int64
 	Partial      bool
+	files        map[string]int64
 }
 
 func inspectCodexCleanupStorage(ctx context.Context, home string) CodexCleanupStorage {
-	var storage CodexCleanupStorage
+	storage := CodexCleanupStorage{files: make(map[string]int64)}
 	err := filepath.WalkDir(home, func(path string, entry fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -86,6 +97,7 @@ func inspectCodexCleanupStorage(ctx context.Context, home string) CodexCleanupSt
 			return nil
 		}
 		storage.TotalBytes += info.Size()
+		storage.files[filepath.Clean(path)] = info.Size()
 		rel, err := filepath.Rel(home, path)
 		if err == nil {
 			top := strings.SplitN(rel, string(filepath.Separator), 2)[0]
@@ -171,7 +183,7 @@ type codexCleanupThreadNode struct {
 	safetyErr  error
 }
 
-func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCleanupAuditOptions) (CodexCleanupAudit, error) {
+func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCleanupAuditOptions) (audit CodexCleanupAudit, auditErr error) {
 	if s == nil || s.store == nil {
 		return CodexCleanupAudit{}, fmt.Errorf("service unavailable")
 	}
@@ -182,7 +194,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 	if now.IsZero() {
 		now = time.Now()
 	}
-	audit := CodexCleanupAudit{
+	audit = CodexCleanupAudit{
 		AuditedAt:           now,
 		RecentCutoff:        now.Add(-CodexCleanupRecentWindow),
 		WorktreeGraceCutoff: now.Add(-CodexCleanupDeletedWorktreeGrace),
@@ -208,6 +220,12 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		return audit, fmt.Errorf("load Codex thread index: %w", err)
 	}
 	audit.ScannedThreads = len(threads)
+	defer func() {
+		if auditErr == nil {
+			audit.Retained = buildCodexCleanupRetained(audit, threads, recordsByPath, codexHome)
+		}
+		audit.Storage.files = nil
+	}()
 	loaded := stringSet(options.LoadedThreadIDs)
 
 	candidateThreads := make([]codexstate.Thread, 0)

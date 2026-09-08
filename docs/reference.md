@@ -607,7 +607,7 @@ work here and target the project shown in the pane.
 - `/compact [instructions]`: Compact conversation history when supported. Embedded Claude Code forwards optional focus instructions to Claude's native compaction flow and reports whether a compaction boundary actually occurred.
 - `/review`: Ask embedded Codex to review uncommitted changes.
 - `/clean`: Leave the embedded pane visible behind the global stale-worktree cleanup dialog.
-- `/codex-gc`: Leave the embedded pane visible behind the global Codex session-storage cleanup dialog.
+- `/codex-gc`: Leave the embedded pane visible behind the global Codex session-storage cleanup dialog. `V` or Tab switches between eligible cleanup and a read-only, largest-first retained-storage view with project/working-directory ownership, file counts, unknown ownership, and other Codex files.
 - `/record [start [path]|stop|status]`: Control the same global demo recorder without leaving the embedded session.
 - `/permissions [low|medium]`: LCAgent only. Explain or change the current session's next-turn autonomy.
 - `/chat`: Hide the embedded pane and open Chat over the main dashboard.
