@@ -809,14 +809,14 @@ func (s *openCodeSession) start(parent context.Context, req LaunchRequest) error
 		xdgConfigHome = overlay
 	}
 
-	baseURL, cmd, err := startOpenCodeServer(req, xdgConfigHome)
+	baseURL, cmd, exited, err := startOpenCodeServer(req, xdgConfigHome)
 	if err != nil {
 		return err
 	}
 	s.baseURL = baseURL
 	s.cmd = cmd
 
-	go s.waitForExit()
+	go s.waitForExit(exited)
 	if err := s.initializeSession(parent, req); err != nil {
 		return err
 	}
@@ -1714,12 +1714,12 @@ func (s *openCodeSession) handleEventData(raw string) {
 	}
 }
 
-func (s *openCodeSession) waitForExit() {
+func (s *openCodeSession) waitForExit(exited <-chan error) {
 	if s.cmd == nil {
 		s.closeExitCh()
 		return
 	}
-	err := s.cmd.Wait()
+	err := <-exited
 	s.closeExitCh()
 
 	s.mu.Lock()
@@ -2125,29 +2125,42 @@ func buildOpenCodeServerCommandWithPolicy(projectPath string, preset codexcli.Pr
 	return cmd, nil
 }
 
-func startOpenCodeServer(req LaunchRequest, xdgConfigHome string) (string, *exec.Cmd, error) {
+func startOpenCodeServer(req LaunchRequest, xdgConfigHome string) (string, *exec.Cmd, <-chan error, error) {
 	cmd, err := buildOpenCodeServerCommandForLaunch(req, xdgConfigHome)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	cmd.Env = browserctl.AppendEnv(cmd.Env, string(ProviderOpenCode), req.PlaywrightPolicy)
+	baseURL, exited, err := startOpenCodeServerCommand(cmd, openCodeRPCTimeout)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return baseURL, cmd, exited, nil
+}
 
-	stdout, err := cmd.StdoutPipe()
+// startOpenCodeServerCommand accepts a command and timeout so startup can be
+// tested without installing OpenCode. exited has the sole cmd.Wait result.
+func startOpenCodeServerCommand(cmd *exec.Cmd, timeout time.Duration) (string, <-chan error, error) {
+	stdout, stderr, err := startWithOwnedOutputPipes(cmd)
 	if err != nil {
 		return "", nil, err
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return "", nil, err
-	}
 
+	var stderrMu sync.Mutex
+	var stderrTail bytes.Buffer
+	withStderr := func(err error) error {
+		stderrMu.Lock()
+		detail := strings.TrimSpace(stderrTail.String())
+		stderrMu.Unlock()
+		if detail == "" {
+			return err
+		}
+		return fmt.Errorf("%w (%s)", err, detail)
+	}
 	ready := make(chan string, 1)
 	streamErr := make(chan error, 2)
 	var once sync.Once
-	handle := func(r io.Reader) {
+	handle := func(r *os.File) {
 		scanner := bufio.NewScanner(r)
 		const maxTokenSize = 1024 * 1024
 		buf := make([]byte, 0, 64*1024)
@@ -2157,24 +2170,62 @@ func startOpenCodeServer(req LaunchRequest, xdgConfigHome string) (string, *exec
 			if strings.HasPrefix(line, openCodeListeningPrefix) {
 				url := strings.TrimSpace(strings.TrimPrefix(line, openCodeListeningPrefix))
 				once.Do(func() { ready <- url })
+				continue
 			}
+			if line == "" {
+				continue
+			}
+			// Keep non-readiness output from both streams, using the same
+			// mutex-guarded diagnostic buffer pattern as threadAdminClient.
+			stderrMu.Lock()
+			if stderrTail.Len() > 0 {
+				stderrTail.WriteByte('\n')
+			}
+			if len(line) > threadAdminStderrLimit {
+				line = line[len(line)-threadAdminStderrLimit:]
+			}
+			if excess := stderrTail.Len() + len(line) - threadAdminStderrLimit; excess > 0 {
+				stderrTail.Next(excess)
+			}
+			stderrTail.WriteString(line)
+			stderrMu.Unlock()
 		}
 		if err := scanner.Err(); err != nil {
 			streamErr <- err
 		}
 	}
-	go handle(stdout)
-	go handle(stderr)
-
+	var captured sync.WaitGroup
+	captureProcessOutput(&captured, stdout, handle)
+	captureProcessOutput(&captured, stderr, handle)
+	exited := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		// Wait cannot close our pipes. Drain the final diagnosis before
+		// publishing exit, but do not wait forever on inherited child pipes.
+		waitForOutputDrain(&captured, appServerOutputDrainTimeout)
+		closeFiles(stdout, stderr)
+		captured.Wait()
+		exited <- err
+	}()
+	fail := func(err error) (string, <-chan error, error) {
+		_ = cmd.Process.Kill()
+		<-exited
+		return "", nil, withStderr(err)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case baseURL := <-ready:
-		return strings.TrimRight(baseURL, "/"), cmd, nil
+		return strings.TrimRight(baseURL, "/"), exited, nil
 	case err := <-streamErr:
-		_ = cmd.Process.Kill()
-		return "", nil, err
-	case <-time.After(openCodeRPCTimeout):
-		_ = cmd.Process.Kill()
-		return "", nil, fmt.Errorf("timed out waiting for opencode server to start")
+		return fail(err)
+	case err := <-exited:
+		if err == nil {
+			err = io.EOF
+		}
+		return "", nil, withStderr(fmt.Errorf("opencode server exited before startup: %w", err))
+	case <-timer.C:
+		return fail(fmt.Errorf("timed out waiting for opencode server to start"))
 	}
 }
 
