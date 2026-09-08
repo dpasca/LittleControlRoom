@@ -20,6 +20,30 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestCodexCleanupStorageInventory(t *testing.T) {
+	home := t.TempDir()
+	for _, dir := range []string{"sessions", "archived_sessions", "cache"} {
+		if err := os.Mkdir(filepath.Join(home, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, dir, "data"), []byte("12345"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(home, "sessions"), filepath.Join(home, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	storage := inspectCodexCleanupStorage(context.Background(), home)
+	if storage.TotalBytes != 15 || storage.SessionBytes != 10 || storage.Partial {
+		t.Fatalf("inventory = %#v", storage)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !inspectCodexCleanupStorage(ctx, home).Partial {
+		t.Fatal("canceled inventory must be partial")
+	}
+}
+
 func TestAuditCodexSessionStorageGroupsEligibleThreadTrees(t *testing.T) {
 	t.Parallel()
 

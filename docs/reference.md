@@ -579,7 +579,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 ### Diagnostics and maintenance
 
 - `/clean`: Review and batch-remove merged, clean linked worktrees that have safely been stale for more than 24 hours.
-- `/codex-gc`: Run a fresh, read-only Codex session-storage audit and review worktree-grouped candidates before any permanent deletion is allowed.
+- `/codex-gc`: Run a fresh, read-only Codex session-storage audit and review worktree-grouped candidates before any permanent deletion is allowed. The column view emphasizes MiB/GiB sizes and defaults to largest first; `S` cycles size, age, and name sorting. A storage summary shows total logical bytes, session storage, other files, and session bytes outside cleanup eligibility.
 - `/ai`: Internal AI stats dialog, including observed output speed in tokens per second and Ollama context metadata when exposed.
 - `/perf`: Internal responsiveness and wait tracker.
 - `/errors`: Recent error log.

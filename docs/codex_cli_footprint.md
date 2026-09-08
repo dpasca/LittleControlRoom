@@ -312,6 +312,15 @@ server starts and then once per day; it only refreshes an in-memory report and
 never deletes a thread. Opening `/codex-gc` runs another fresh audit unless it
 is reopening an active background deletion or its unread completion report.
 
+The review lists aligned size, age, root-count, descendant-count, and worktree
+columns, with largest groups first by default. `S` cycles through largest first,
+oldest first, and name while preserving focus and selection. A background
+filesystem inventory reports logical bytes for the whole Codex home, sessions
+(including archived sessions), and other files. Session bytes outside eligibility
+remain visible even when no worktrees qualify. This inventory does not follow
+symlinks and labels incomplete reads as partial; logical sizes can differ from
+allocated disk usage. Inventorying other files does not make them deletion candidates.
+
 A root thread is eligible only when all of the following can be established:
 
 1. Its saved absolute `cwd` is absent, and an exact retained LCR project row

@@ -23,6 +23,36 @@ func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
 	}
 }
 
+func TestCodexCleanupSortingPreservesFocusAndSelection(t *testing.T) {
+	now := time.Now()
+	groups := []service.CodexCleanupWorktreeGroup{
+		{WorktreePath: "/a", WorktreeName: "a", RecoverableBytes: 10, LastActivity: now.Add(-time.Hour)},
+		{WorktreePath: "/b", WorktreeName: "b", RecoverableBytes: 100, LastActivity: now},
+		{WorktreePath: "/c", WorktreeName: "c", RecoverableBytes: 50, LastActivity: now.Add(-2 * time.Hour)},
+	}
+	m := Model{codexCleanup: &codexCleanupDialogState{Loading: true}}
+	updated, _ := m.applyCodexCleanupAudit(codexCleanupAuditMsg{audit: service.CodexCleanupAudit{Groups: groups}})
+	m = updated.(Model)
+	dialog := m.codexCleanup
+	if dialog.Audit.Groups[0].WorktreePath != "/b" || dialog.Selected != 0 || groups[0].WorktreePath != "/a" {
+		t.Fatal("audit must default to largest first without mutating the service snapshot")
+	}
+	dialog.Chosen["/b"] = true
+	for _, first := range []string{"/c", "/a", "/b"} {
+		updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+		m = updated.(Model)
+		if cmd != nil || dialog.Audit.Groups[0].WorktreePath != first || dialog.Audit.Groups[dialog.Selected].WorktreePath != "/b" || !dialog.Chosen["/b"] {
+			t.Fatalf("sort lost ordering, focus or selection: %#v", dialog)
+		}
+	}
+	view := ansi.Strip(renderCodexCleanupContent(dialog, 100, 45, 0, now))
+	for _, column := range []string{"SIZE", "AGE", "ROOTS", "CHILD", "WORKTREE", "largest first"} {
+		if !strings.Contains(view, column) {
+			t.Fatalf("missing %s in %s", column, view)
+		}
+	}
+}
+
 func TestCodexCleanupRequiresSelectionAndSeparatePermanentConfirmation(t *testing.T) {
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	group := codexCleanupTestGroup(now)

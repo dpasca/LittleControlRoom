@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -55,6 +56,47 @@ type CodexCleanupAudit struct {
 	RecoverableBytes    int64
 	Groups              []CodexCleanupWorktreeGroup
 	Excluded            CodexCleanupExclusions
+	Storage             CodexCleanupStorage
+}
+
+// Logical file sizes, matching the recoverable rollout estimate. Symlinks are
+// not followed; concurrent changes or unreadable entries make this a partial snapshot.
+type CodexCleanupStorage struct {
+	TotalBytes   int64
+	SessionBytes int64
+	Partial      bool
+}
+
+func inspectCodexCleanupStorage(ctx context.Context, home string) CodexCleanupStorage {
+	var storage CodexCleanupStorage
+	err := filepath.WalkDir(home, func(path string, entry fs.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			storage.Partial = true
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			storage.Partial = true
+			return nil
+		}
+		storage.TotalBytes += info.Size()
+		rel, err := filepath.Rel(home, path)
+		if err == nil {
+			top := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+			if top == "sessions" || top == "archived_sessions" {
+				storage.SessionBytes += info.Size()
+			}
+		}
+		return nil
+	})
+	storage.Partial = storage.Partial || err != nil
+	return storage
 }
 
 type CodexCleanupAuditSnapshot struct {
@@ -156,11 +198,11 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			recordsByPath[path] = record
 		}
 	}
-	if len(recordsByPath) == 0 {
-		return audit, nil
-	}
-
 	codexHome := codexstate.ResolveHomeRoot(s.Config().CodexHome)
+	audit.Storage = inspectCodexCleanupStorage(ctx, codexHome)
+	if err := ctx.Err(); err != nil {
+		return audit, err
+	}
 	threads, err := codexstate.ListThreadsIncludingUnknownCWD(ctx, codexHome)
 	if err != nil {
 		return audit, fmt.Errorf("load Codex thread index: %w", err)

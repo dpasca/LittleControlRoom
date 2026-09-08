@@ -18,9 +18,20 @@ import (
 
 const codexCleanupDeleteTimeout = 30 * time.Minute
 
+func formatCodexCleanupBytes(size int64) string {
+	if size < 0 {
+		size = 0
+	}
+	if size >= 1024*1024*1024 {
+		return fmt.Sprintf("%.1f GiB", float64(size)/(1024*1024*1024))
+	}
+	return formatUpdateBytes(size)
+}
+
 type codexCleanupDialogState struct {
 	Audit           service.CodexCleanupAudit
 	Selected        int
+	SortMode        int
 	Chosen          map[string]bool
 	Loading         bool
 	Confirming      bool
@@ -187,6 +198,8 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 		return m, nil
 	}
 	dialog.Audit = msg.audit
+	dialog.Audit.Groups = append([]service.CodexCleanupWorktreeGroup(nil), msg.audit.Groups...)
+	sortCodexCleanupGroups(dialog)
 	dialog.Chosen = make(map[string]bool)
 	dialog.Selected = 0
 	dialog.ErrorMessage = ""
@@ -199,7 +212,7 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 		"Codex cleanup audit: %d worktree%s, %d root thread%s, %s recoverable",
 		len(msg.audit.Groups), pluralSuffix(len(msg.audit.Groups)),
 		msg.audit.EligibleRootThreads, pluralSuffix(msg.audit.EligibleRootThreads),
-		formatUpdateBytes(msg.audit.RecoverableBytes),
+		formatCodexCleanupBytes(msg.audit.RecoverableBytes),
 	)
 	return m, nil
 }
@@ -235,7 +248,7 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 		reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
 		verified := codexCleanupVerifiedGroupCount(dialog.Results)
 		remaining := max(0, len(dialog.Queue)-dialog.QueueIndex)
-		m.status = fmt.Sprintf("Codex cleanup aborted: %d group%s fully verified, %d not started, %s reclaimed", verified, pluralSuffix(verified), remaining, formatUpdateBytes(reclaimed))
+		m.status = fmt.Sprintf("Codex cleanup aborted: %d group%s fully verified, %d not started, %s reclaimed", verified, pluralSuffix(verified), remaining, formatCodexCleanupBytes(reclaimed))
 		if dialog.Backgrounded {
 			m.status += "; /codex-gc opens the report"
 		}
@@ -261,9 +274,9 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 	dialog.Finished = true
 	reclaimed, allVerified := codexCleanupVerifiedTotal(dialog.Results)
 	if allVerified {
-		m.status = fmt.Sprintf("Codex cleanup complete: %d worktree%s, %s reclaimed and verified", len(dialog.Results), pluralSuffix(len(dialog.Results)), formatUpdateBytes(reclaimed))
+		m.status = fmt.Sprintf("Codex cleanup complete: %d worktree%s, %s reclaimed and verified", len(dialog.Results), pluralSuffix(len(dialog.Results)), formatCodexCleanupBytes(reclaimed))
 	} else {
-		m.status = fmt.Sprintf("Codex cleanup finished: %s verified reclaimed; review verification details", formatUpdateBytes(reclaimed))
+		m.status = fmt.Sprintf("Codex cleanup finished: %s verified reclaimed; review verification details", formatCodexCleanupBytes(reclaimed))
 	}
 	if dialog.Backgrounded {
 		m.status += "; /codex-gc opens the report"
@@ -344,6 +357,9 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dialog.Chosen = make(map[string]bool)
 		m.status = "Refreshing Codex session storage audit..."
 		return m, m.loadCodexCleanupAuditCmd()
+	case "s", "S":
+		dialog.SortMode = (dialog.SortMode + 1) % 3
+		sortCodexCleanupGroups(dialog)
 	case "up", "k":
 		if len(groups) > 0 {
 			dialog.Selected = max(0, dialog.Selected-1)
@@ -409,6 +425,48 @@ func allCodexCleanupGroupsSelected(dialog *codexCleanupDialogState) bool {
 		}
 	}
 	return true
+}
+
+func codexCleanupSortLabel(mode int) string {
+	switch mode {
+	case 1:
+		return "oldest first"
+	case 2:
+		return "name"
+	default:
+		return "largest first"
+	}
+}
+
+func sortCodexCleanupGroups(dialog *codexCleanupDialogState) {
+	groups := dialog.Audit.Groups
+	focusedPath := ""
+	if dialog.Selected >= 0 && dialog.Selected < len(groups) {
+		focusedPath = groups[dialog.Selected].WorktreePath
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+		switch dialog.SortMode {
+		case 0:
+			if a.RecoverableBytes != b.RecoverableBytes {
+				return a.RecoverableBytes > b.RecoverableBytes
+			}
+		case 1:
+			if !a.LastActivity.Equal(b.LastActivity) {
+				return a.LastActivity.Before(b.LastActivity)
+			}
+		}
+		if a.WorktreeName != b.WorktreeName {
+			return a.WorktreeName < b.WorktreeName
+		}
+		return a.WorktreePath < b.WorktreePath
+	})
+	for index, group := range groups {
+		if group.WorktreePath == focusedPath {
+			dialog.Selected = index
+			break
+		}
+	}
 }
 
 func codexCleanupSelectAllLabel(dialog *codexCleanupDialogState) string {
@@ -482,6 +540,18 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 	}
 
 	audit := dialog.Audit
+	if audit.Storage.TotalBytes > 0 || audit.Storage.Partial {
+		label := "Storage (logical)"
+		if audit.Storage.Partial {
+			label += " · partial"
+		}
+		lines = append(lines, detailField(label, fmt.Sprintf("%s total · %s sessions · %s other files",
+			formatCodexCleanupBytes(audit.Storage.TotalBytes), formatCodexCleanupBytes(audit.Storage.SessionBytes),
+			formatCodexCleanupBytes(audit.Storage.TotalBytes-audit.Storage.SessionBytes))))
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
+			fmt.Sprintf("%s session storage outside GC eligibility; GC only covers eligible LCR-deleted worktrees. Sizes are logical bytes, not allocated disk space.",
+				formatCodexCleanupBytes(audit.Storage.SessionBytes-audit.RecoverableBytes)))...)
+	}
 	lines = append(lines, detailField("Audit", fmt.Sprintf("%d threads scanned · %d missing cwd · %d safeguards excluded", audit.ScannedThreads, audit.MissingCWDThreads, audit.Excluded.Total())))
 	if len(audit.Groups) == 0 {
 		lines = append(lines,
@@ -497,12 +567,14 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 	selected := selectedCodexCleanupGroups(dialog)
 	selectedBytes, selectedRoots, selectedDescendants := codexCleanupGroupTotals(selected)
 	lines = append(lines,
-		detailField("Eligible", fmt.Sprintf("%d worktree%s · %d root%s + %d descendant%s · %s recoverable", len(audit.Groups), pluralSuffix(len(audit.Groups)), audit.EligibleRootThreads, pluralSuffix(audit.EligibleRootThreads), audit.EligibleDescendants, pluralSuffix(audit.EligibleDescendants), formatUpdateBytes(audit.RecoverableBytes))),
-		detailField("Selected", fmt.Sprintf("%d worktree%s · %d root%s + %d descendant%s · %s", len(selected), pluralSuffix(len(selected)), selectedRoots, pluralSuffix(selectedRoots), selectedDescendants, pluralSuffix(selectedDescendants), formatUpdateBytes(selectedBytes))),
+		detailField("Eligible", fmt.Sprintf("%d worktree%s · %d root%s + %d descendant%s · %s recoverable", len(audit.Groups), pluralSuffix(len(audit.Groups)), audit.EligibleRootThreads, pluralSuffix(audit.EligibleRootThreads), audit.EligibleDescendants, pluralSuffix(audit.EligibleDescendants), formatCodexCleanupBytes(audit.RecoverableBytes))),
+		detailField("Selected", fmt.Sprintf("%d worktree%s · %d root%s + %d descendant%s · %s", len(selected), pluralSuffix(len(selected)), selectedRoots, pluralSuffix(selectedRoots), selectedDescendants, pluralSuffix(selectedDescendants), formatCodexCleanupBytes(selectedBytes))),
 		"",
 	)
 
 	start, end := cleanupGroupWindow(dialog.Selected, len(audit.Groups), bodyH)
+	nameWidth := max(8, width-36)
+	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("    %10s  %6s  %5s  %5s  %-*s", "SIZE", "AGE", "ROOTS", "CHILD", nameWidth, "WORKTREE")))
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more worktrees", start)))
 	}
@@ -512,19 +584,15 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 		if dialog.Chosen[group.WorktreePath] {
 			mark = "[x]"
 		}
-		row := fmt.Sprintf("%s %s · %s old · %d root%s + %d %s · %s",
-			mark,
-			firstNonEmptyString(group.WorktreeName, filepath.Base(group.WorktreePath)),
-			formatCleanupAge(now, group.LastActivity),
-			group.RootThreadCount, pluralSuffix(group.RootThreadCount),
-			group.DescendantCount, cleanupChildLabel(group.DescendantCount),
-			formatUpdateBytes(group.RecoverableBytes),
-		)
 		style := commandPaletteRowStyle
 		if index == dialog.Selected {
 			style = commandPaletteSelectStyle
 		}
-		lines = append(lines, style.Render(truncateText(row, width)))
+		size := style.Bold(true).Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(group.RecoverableBytes)))
+		row := style.Render(mark+" ") + size + style.Render(fmt.Sprintf("  %6s  %5d  %5d  %s",
+			truncateText(formatCleanupAge(now, group.LastActivity), 6), group.RootThreadCount, group.DescendantCount,
+			truncateText(firstNonEmptyString(group.WorktreeName, filepath.Base(group.WorktreePath)), nameWidth)))
+		lines = append(lines, row)
 	}
 	if end < len(audit.Groups) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more worktrees", len(audit.Groups)-end)))
@@ -549,7 +617,7 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 		}
 		threadLine := fmt.Sprintf("  %s · %s old · %s · %d %s · %s",
 			shortID(thread.ID), formatCleanupAge(now, thread.LastActivity), git,
-			thread.DescendantCount, cleanupChildLabel(thread.DescendantCount), formatUpdateBytes(thread.RecoverableBytes))
+			thread.DescendantCount, cleanupChildLabel(thread.DescendantCount), formatCodexCleanupBytes(thread.RecoverableBytes))
 		lines = append(lines, detailMutedStyle.Render(truncateText(threadLine, width)))
 	}
 	lines = append(lines,
@@ -558,6 +626,7 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 			renderDialogAction("A", codexCleanupSelectAllLabel(dialog), navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Enter", "review deletion", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("R", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
+			renderDialogAction("S", codexCleanupSortLabel(dialog.SortMode), navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	)
 	return clampDialogContent(strings.Join(lines, "\n"), max(12, bodyH-4), 5, detailMutedStyle.Render("… details clipped to fit terminal …"))
@@ -576,7 +645,7 @@ func renderCodexCleanupConfirmation(dialog *codexCleanupDialogState, width int) 
 			len(groups), pluralSuffix(len(groups)), roots, pluralSuffix(roots), descendants, pluralSuffix(descendants)))...)
 	lines = append(lines,
 		"",
-		detailField("Recoverable disk size", formatUpdateBytes(bytes)),
+		detailField("Recoverable disk size", formatCodexCleanupBytes(bytes)),
 		detailMutedStyle.Render("LCR will repeat the full safety audit before each worktree. Any changed preview is rejected."),
 		detailMutedStyle.Render("After starting, B hides progress and Esc aborts unfinished work. Completed deletions cannot be undone."),
 		"",
@@ -613,7 +682,7 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 		"",
 		commandPaletteHintStyle.Render(progress),
 		detailField("Current", firstNonEmptyString(current.WorktreePath, "verifying final result")),
-		detailField("Verified reclaimed", formatUpdateBytes(reclaimed)),
+		detailField("Verified reclaimed", formatCodexCleanupBytes(reclaimed)),
 		"",
 	}
 	if dialog.CancelRequested {
@@ -635,22 +704,22 @@ func renderCodexCleanupResults(dialog *codexCleanupDialogState, width, bodyH int
 	title := "Codex cleanup report"
 	lines := []string{commandPaletteTitleStyle.Render(title), ""}
 	if dialog.Aborted {
-		lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("Cleanup aborted. Verified reclaimed before stop: %s", formatUpdateBytes(reclaimed))))
+		lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("Cleanup aborted. Verified reclaimed before stop: %s", formatCodexCleanupBytes(reclaimed))))
 		remaining := max(0, len(dialog.Queue)-dialog.QueueIndex)
 		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("%d queued worktree group%s did not start. Run /codex-gc again to audit anything that remains.", remaining, pluralSuffix(remaining))))
 	} else if len(dialog.Results) == 0 {
 		lines = append(lines, detailWarningStyle.Render("No sessions were deleted."))
 	} else if allVerified && dialog.ErrorMessage == "" {
-		lines = append(lines, detailValueStyle.Render(fmt.Sprintf("Verified reclaimed space: %s", formatUpdateBytes(reclaimed))))
+		lines = append(lines, detailValueStyle.Render(fmt.Sprintf("Verified reclaimed space: %s", formatCodexCleanupBytes(reclaimed))))
 	} else {
-		lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("Verified reclaimed space so far: %s", formatUpdateBytes(reclaimed))))
+		lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("Verified reclaimed space so far: %s", formatCodexCleanupBytes(reclaimed))))
 	}
 	lines = append(lines, "")
 	for _, item := range dialog.Results {
 		detail := fmt.Sprintf("%d root%s + %d descendant%s · %s verified",
 			item.Result.DeletedRootThreads, pluralSuffix(item.Result.DeletedRootThreads),
 			item.Result.DeletedDescendants, pluralSuffix(item.Result.DeletedDescendants),
-			formatUpdateBytes(item.Result.VerifiedReclaimedBytes))
+			formatCodexCleanupBytes(item.Result.VerifiedReclaimedBytes))
 		statusWidth := max(1, width-2)
 		status := codexCleanupResultStatus(filepath.Base(item.Group.WorktreePath), detail, statusWidth)
 		if item.Result.Verified {
@@ -744,7 +813,7 @@ func cleanupGroupWindow(selected, total, bodyH int) (int, int) {
 	if total <= 0 {
 		return 0, 0
 	}
-	visible := max(1, min(total, max(2, bodyH-20)))
+	visible := max(1, min(total, max(2, bodyH-28)))
 	selected = max(0, min(selected, total-1))
 	start := max(0, selected-visible/2)
 	if start+visible > total {
