@@ -17,6 +17,7 @@ import (
 )
 
 const codexCleanupDeleteTimeout = 30 * time.Minute
+const codexCleanupAuditTimeout = 2 * time.Minute
 
 func formatCodexCleanupBytes(size int64) string {
 	if size < 0 {
@@ -29,6 +30,7 @@ func formatCodexCleanupBytes(size int64) string {
 }
 
 type codexCleanupDialogState struct {
+	Category        service.CodexCleanupCategory
 	Audit           service.CodexCleanupAudit
 	Selected        int
 	ShowRetained    bool
@@ -115,19 +117,24 @@ func (m Model) renderFooterCodexCleanupSegment() string {
 
 func (m Model) loadCodexCleanupAuditCmd() tea.Cmd {
 	svc := m.svc
+	category := service.CodexCleanupOrphaned
+	if m.codexCleanup != nil {
+		category = m.codexCleanup.Category
+	}
 	manager := m.codexManager
 	cachedLoadedThreadIDs := m.cachedLoadedCodexThreadIDs()
 	return func() tea.Msg {
 		if svc == nil {
 			return codexCleanupAuditMsg{err: fmt.Errorf("service unavailable")}
 		}
-		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		ctx, cancel := m.actionContext(codexCleanupAuditTimeout)
 		defer cancel()
 		loadedThreadIDs := append(cachedLoadedThreadIDs, codexapp.LoadedThreadIDs(manager)...)
 		audit, err := svc.AuditCodexSessionStorage(ctx, service.CodexCleanupAuditOptions{
+			Category:        category,
 			LoadedThreadIDs: loadedThreadIDs,
 		})
-		err = timeoutActionError(err, tuiProjectActionTimeout, "auditing Codex session storage")
+		err = timeoutActionError(err, codexCleanupAuditTimeout, "auditing Codex session storage")
 		return codexCleanupAuditMsg{audit: audit, err: err}
 	}
 }
@@ -151,11 +158,13 @@ func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeG
 		}
 		loadedThreadIDs := append(append([]string(nil), cachedLoadedThreadIDs...), codexapp.LoadedThreadIDs(manager)...)
 		result, err := svc.DeleteCodexCleanupWorktree(ctx, service.DeleteCodexCleanupWorktreeRequest{
-			WorktreePath:    group.WorktreePath,
-			RootProjectPath: group.RootProjectPath,
-			RootThreadIDs:   rootThreadIDs,
-			Revision:        group.Revision,
-			LoadedThreadIDs: loadedThreadIDs,
+			CurrentLoadedThreadIDs: func() []string { return codexapp.LoadedThreadIDs(manager) },
+			Category:               group.Category,
+			WorktreePath:           group.WorktreePath,
+			RootProjectPath:        group.RootProjectPath,
+			RootThreadIDs:          rootThreadIDs,
+			Revision:               group.Revision,
+			LoadedThreadIDs:        loadedThreadIDs,
 		})
 		err = timeoutActionError(err, codexCleanupDeleteTimeout, "permanently deleting Codex sessions")
 		return codexCleanupDeleteMsg{group: group, result: result, err: err}
@@ -353,6 +362,19 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dialog.ShowRetained = !dialog.ShowRetained
 		return m, nil
 	}
+	if msg.String() == "c" || msg.String() == "C" {
+		if dialog.Category == service.CodexCleanupOrphaned {
+			dialog.Category = service.CodexCleanupStale
+		} else {
+			dialog.Category = service.CodexCleanupOrphaned
+		}
+		dialog.ShowRetained = false
+		dialog.Loading = true
+		dialog.ErrorMessage = ""
+		dialog.Chosen = make(map[string]bool)
+		m.status = "Auditing " + dialog.Category.Label() + "..."
+		return m, m.loadCodexCleanupAuditCmd()
+	}
 	if dialog.ShowRetained && msg.String() != "esc" && msg.String() != "r" {
 		last := max(0, len(dialog.Audit.Retained)-1)
 		switch msg.String() {
@@ -533,9 +555,11 @@ func (m Model) renderCodexCleanupOverlay(body string, bodyW, bodyH int) string {
 
 func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, spinnerFrame int, now time.Time) string {
 	lines := []string{commandPaletteTitleStyle.Render("Clean Codex session storage")}
+	stale := dialog.Category == service.CodexCleanupStale
+	lines = append(lines, detailField("Category", dialog.Category.Label()))
 	if dialog.Loading {
 		lines = append(lines,
-			commandPaletteHintStyle.Render("Read-only audit: matching missing Codex working directories to LCR-deleted linked worktrees."),
+			commandPaletteHintStyle.Render("Read-only audit: checking session trees and project storage."),
 			"",
 			commandPaletteHintStyle.Render(spinnerFrames[spinnerFrame%len(spinnerFrames)]+" Checking pins, activity, lineage, descendants, paths, and rollout sizes..."),
 			"",
@@ -556,9 +580,14 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 		return renderCodexCleanupRetained(dialog, width, bodyH)
 	}
 
-	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
-		fmt.Sprintf("Only unpinned, unloaded Codex trees inactive for at least %d days and tied to LCR worktrees missing for at least %d days are selectable. External-volume and uncertain trees are excluded.",
-			int(service.CodexCleanupRecentWindow/(24*time.Hour)), int(service.CodexCleanupDeletedWorktreeGrace/(24*time.Hour))))...)
+	if stale {
+		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
+			"Existing folders: remove session trees inactive for at least 7 days. Keep the newest root session per folder, pinned and LCR-loaded trees, recent activity, and uncertain trees. Project files are untouched.")...)
+	} else {
+		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
+			fmt.Sprintf("Only unpinned, unloaded Codex trees inactive for at least %d days and tied to LCR worktrees missing for at least %d days are selectable. External-volume and uncertain trees are excluded.",
+				int(service.CodexCleanupRecentWindow/(24*time.Hour)), int(service.CodexCleanupDeletedWorktreeGrace/(24*time.Hour))))...)
+	}
 	lines = append(lines, "")
 	if dialog.ErrorMessage != "" {
 		lines = append(lines, detailDangerStyle.Render("Audit failed"))
@@ -577,11 +606,11 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 			formatCodexCleanupBytes(audit.Storage.TotalBytes), formatCodexCleanupBytes(audit.Storage.SessionBytes),
 			formatCodexCleanupBytes(audit.Storage.TotalBytes-audit.Storage.SessionBytes))))
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
-			fmt.Sprintf("%s session storage outside GC eligibility; GC only covers eligible LCR-deleted worktrees. Sizes are logical bytes, not allocated disk space.",
+			fmt.Sprintf("%s session storage outside this category's eligibility. Sizes are logical bytes, not allocated disk space.",
 				formatCodexCleanupBytes(audit.Storage.SessionBytes-audit.RecoverableBytes)))...)
 	}
 	lines = append(lines, detailField("Audit", fmt.Sprintf("%d threads scanned · %d missing cwd · %d safeguards excluded", audit.ScannedThreads, audit.MissingCWDThreads, audit.Excluded.Total())))
-	lines = append(lines, renderDialogAction("V / Tab", "view retained storage", navigateActionKeyStyle, navigateActionTextStyle))
+	lines = append(lines, renderDialogAction("C", "orphaned / stale", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("V / Tab", "view retained storage", navigateActionKeyStyle, navigateActionTextStyle))
 	if len(audit.Groups) == 0 {
 		lines = append(lines,
 			"",
@@ -595,15 +624,23 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 
 	selected := selectedCodexCleanupGroups(dialog)
 	selectedBytes, selectedRoots, selectedDescendants := codexCleanupGroupTotals(selected)
+	groupNoun := "worktree"
+	if stale {
+		groupNoun = "project folder"
+	}
 	lines = append(lines,
-		detailField("Eligible", fmt.Sprintf("%d worktree%s · %d root%s + %d descendant%s · %s recoverable", len(audit.Groups), pluralSuffix(len(audit.Groups)), audit.EligibleRootThreads, pluralSuffix(audit.EligibleRootThreads), audit.EligibleDescendants, pluralSuffix(audit.EligibleDescendants), formatCodexCleanupBytes(audit.RecoverableBytes))),
-		detailField("Selected", fmt.Sprintf("%d worktree%s · %d root%s + %d descendant%s · %s", len(selected), pluralSuffix(len(selected)), selectedRoots, pluralSuffix(selectedRoots), selectedDescendants, pluralSuffix(selectedDescendants), formatCodexCleanupBytes(selectedBytes))),
+		detailField("Eligible", fmt.Sprintf("%d %s%s · %d root%s + %d descendant%s · %s recoverable", len(audit.Groups), groupNoun, pluralSuffix(len(audit.Groups)), audit.EligibleRootThreads, pluralSuffix(audit.EligibleRootThreads), audit.EligibleDescendants, pluralSuffix(audit.EligibleDescendants), formatCodexCleanupBytes(audit.RecoverableBytes))),
+		detailField("Selected", fmt.Sprintf("%d %s%s · %d root%s + %d descendant%s · %s", len(selected), groupNoun, pluralSuffix(len(selected)), selectedRoots, pluralSuffix(selectedRoots), selectedDescendants, pluralSuffix(selectedDescendants), formatCodexCleanupBytes(selectedBytes))),
 		"",
 	)
 
 	start, end := cleanupGroupWindow(dialog.Selected, len(audit.Groups), bodyH)
 	nameWidth := max(8, width-36)
-	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("    %10s  %6s  %5s  %5s  %-*s", "SIZE", "AGE", "ROOTS", "CHILD", nameWidth, "WORKTREE")))
+	rootLabel, childLabel, pathLabel := "ROOTS", "CHILD", "WORKTREE"
+	if stale {
+		rootLabel, childLabel, pathLabel = "REMOVE", "KEEP", "PROJECT / FOLDER"
+	}
+	lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("    %10s  %6s  %5s  %5s  %-*s", "SIZE", "AGE", rootLabel, childLabel, nameWidth, pathLabel)))
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more worktrees", start)))
 	}
@@ -618,8 +655,13 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 			style = commandPaletteSelectStyle
 		}
 		size := style.Bold(true).Foreground(lipgloss.Color("42")).Render(fmt.Sprintf("%10s", formatCodexCleanupBytes(group.RecoverableBytes)))
+		firstCount, secondCount := group.RootThreadCount, group.DescendantCount
+		if stale {
+			firstCount = group.RootThreadCount + group.DescendantCount
+			secondCount = max(0, group.TotalThreadCount-firstCount)
+		}
 		row := style.Render(mark+" ") + size + style.Render(fmt.Sprintf("  %6s  %5d  %5d  %s",
-			truncateText(formatCleanupAge(now, group.LastActivity), 6), group.RootThreadCount, group.DescendantCount,
+			truncateText(formatCleanupAge(now, group.LastActivity), 6), firstCount, secondCount,
 			truncateText(firstNonEmptyString(group.WorktreeName, filepath.Base(group.WorktreePath)), nameWidth)))
 		lines = append(lines, row)
 	}
@@ -629,13 +671,21 @@ func renderCodexCleanupContent(dialog *codexCleanupDialogState, width, bodyH, sp
 
 	group := audit.Groups[max(0, min(dialog.Selected, len(audit.Groups)-1))]
 	lines = append(lines, "", detailField("Path", group.WorktreePath))
-	lines = append(lines, detailField("Age", fmt.Sprintf("last Codex activity %s · worktree missing %s", formatCleanupAge(now, group.LastActivity), formatCleanupAge(now, group.MissingSince))))
+	if stale {
+		remove := group.RootThreadCount + group.DescendantCount
+		lines = append(lines, detailField("Sessions", fmt.Sprintf("Remove %d of %d · keep %d (counts include spawned sessions)", remove, group.TotalThreadCount, max(0, group.TotalThreadCount-remove))))
+	} else {
+		lines = append(lines, detailField("Age", fmt.Sprintf("last Codex activity %s · worktree missing %s", formatCleanupAge(now, group.LastActivity), formatCleanupAge(now, group.MissingSince))))
+	}
 	gitLine := firstNonEmptyString(group.Branch, "branch unknown")
 	if group.ParentBranch != "" {
 		gitLine += " · parent " + group.ParentBranch
 	}
 	lines = append(lines, detailField("Git", gitLine), detailField("Reason", group.Reason))
 	for index, thread := range group.Threads {
+		if stale {
+			break
+		}
 		if index >= 3 {
 			lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("  +%d more root threads", len(group.Threads)-index)))
 			break
@@ -666,11 +716,12 @@ func renderCodexCleanupConfirmation(dialog *codexCleanupDialogState, width int) 
 	bytes, roots, descendants := codexCleanupGroupTotals(groups)
 	lines := []string{
 		commandPaletteTitleStyle.Render("Permanent Codex deletion"),
+		detailField("Category", dialog.Category.Label()),
 		"",
 		detailDangerStyle.Render("WARNING: THIS CANNOT BE UNDONE"),
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width,
-		fmt.Sprintf("Codex app-server will permanently delete %d selected worktree group%s: %d root thread%s and %d spawned descendant%s. Conversation rollouts will not be recoverable from LCR.",
+		fmt.Sprintf("Codex app-server will permanently delete %d selected folder group%s: %d root thread%s and %d spawned descendant%s. Conversation rollouts will not be recoverable from LCR.",
 			len(groups), pluralSuffix(len(groups)), roots, pluralSuffix(roots), descendants, pluralSuffix(descendants)))...)
 	lines = append(lines,
 		"",
@@ -681,7 +732,12 @@ func renderCodexCleanupConfirmation(dialog *codexCleanupDialogState, width int) 
 	)
 	shownGroups := min(len(groups), 6)
 	for index := 0; index < shownGroups; index++ {
-		lines = append(lines, detailDangerStyle.Render("- "+groups[index].WorktreePath))
+		group := groups[index]
+		lines = append(lines, detailDangerStyle.Render("- "+group.WorktreePath))
+		if group.Category == service.CodexCleanupStale {
+			remove := group.RootThreadCount + group.DescendantCount
+			lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("  Remove %d of %d sessions; keep %d", remove, group.TotalThreadCount, max(0, group.TotalThreadCount-remove))))
+		}
 	}
 	if shownGroups < len(groups) {
 		lines = append(lines, detailDangerStyle.Render(fmt.Sprintf("- +%d more selected worktrees", len(groups)-shownGroups)))

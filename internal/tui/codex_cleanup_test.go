@@ -23,6 +23,39 @@ func TestDispatchCodexGCOpensReadOnlyAudit(t *testing.T) {
 	}
 }
 
+func TestCodexCleanupStaleCategoryUsesGroupedCountsAndConfirmation(t *testing.T) {
+	m := Model{codexCleanup: &codexCleanupDialogState{Chosen: map[string]bool{"old-selection": true}}}
+	updated, cmd := m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(Model)
+	if cmd == nil || !m.codexCleanup.Loading || m.codexCleanup.Category != service.CodexCleanupStale || len(m.codexCleanup.Chosen) != 0 {
+		t.Fatal("category switch must clear selection and run a fresh audit")
+	}
+	group := codexCleanupTestGroup(time.Now())
+	group.Category = service.CodexCleanupStale
+	group.WorktreeName = "okmain"
+	group.TotalThreadCount = 240
+	group.RootThreadCount = 210
+	group.DescendantCount = 0
+	updated, _ = m.applyCodexCleanupAudit(codexCleanupAuditMsg{audit: service.CodexCleanupAudit{Category: service.CodexCleanupStale, Groups: []service.CodexCleanupWorktreeGroup{group}}})
+	m = updated.(Model)
+	view := ansi.Strip(renderCodexCleanupContent(m.codexCleanup, 108, 48, 0, time.Now()))
+	for _, want := range []string{"Stale sessions", "REMOVE", "KEEP", "okmain", "Remove 210 of 240", "keep 30"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q in %s", want, view)
+		}
+	}
+	m.codexCleanup.Chosen[group.WorktreePath] = true
+	updated, cmd = m.updateCodexCleanupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if cmd != nil || !m.codexCleanup.Confirming || m.codexCleanup.Deleting {
+		t.Fatal("stale cleanup must require separate permanent confirmation")
+	}
+	view = ansi.Strip(renderCodexCleanupConfirmation(m.codexCleanup, 108))
+	if !strings.Contains(view, "Remove 210 of 240 sessions; keep 30") {
+		t.Fatalf("confirmation lacks per-project counts: %s", view)
+	}
+}
+
 func TestCodexCleanupRetainedViewCannotDelete(t *testing.T) {
 	dialog := &codexCleanupDialogState{
 		Chosen: map[string]bool{"/eligible": true},

@@ -27,7 +27,22 @@ const (
 
 const codexCleanupReason = "LCR removed this linked worktree and its saved working directory is still missing"
 
+type CodexCleanupCategory string
+
+const (
+	CodexCleanupOrphaned CodexCleanupCategory = ""
+	CodexCleanupStale    CodexCleanupCategory = "stale"
+)
+
+func (c CodexCleanupCategory) Label() string {
+	if c == CodexCleanupStale {
+		return "Stale sessions"
+	}
+	return "Orphaned worktrees"
+}
+
 type CodexCleanupAuditOptions struct {
+	Category        CodexCleanupCategory
 	Now             time.Time
 	LoadedThreadIDs []string
 }
@@ -46,6 +61,7 @@ func (e CodexCleanupExclusions) Total() int {
 }
 
 type CodexCleanupAudit struct {
+	Category            CodexCleanupCategory
 	AuditedAt           time.Time
 	RecentCutoff        time.Time
 	WorktreeGraceCutoff time.Time
@@ -118,6 +134,8 @@ type CodexCleanupAuditSnapshot struct {
 }
 
 type CodexCleanupWorktreeGroup struct {
+	Category         CodexCleanupCategory
+	TotalThreadCount int
 	WorktreePath     string
 	WorktreeName     string
 	RootProjectPath  string
@@ -156,11 +174,14 @@ type CodexCleanupRolloutFile struct {
 }
 
 type DeleteCodexCleanupWorktreeRequest struct {
+	Category        CodexCleanupCategory
 	WorktreePath    string
 	RootProjectPath string
 	RootThreadIDs   []string
 	Revision        string
 	LoadedThreadIDs []string
+	// Called off the UI path immediately before deletion, after the repeat audit.
+	CurrentLoadedThreadIDs func() []string
 }
 
 type DeleteCodexCleanupWorktreeResult struct {
@@ -184,6 +205,9 @@ type codexCleanupThreadNode struct {
 }
 
 func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCleanupAuditOptions) (audit CodexCleanupAudit, auditErr error) {
+	if options.Category != CodexCleanupOrphaned && options.Category != CodexCleanupStale {
+		return audit, fmt.Errorf("unknown Codex cleanup category")
+	}
 	if s == nil || s.store == nil {
 		return CodexCleanupAudit{}, fmt.Errorf("service unavailable")
 	}
@@ -195,6 +219,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		now = time.Now()
 	}
 	audit = CodexCleanupAudit{
+		Category:            options.Category,
 		AuditedAt:           now,
 		RecentCutoff:        now.Add(-CodexCleanupRecentWindow),
 		WorktreeGraceCutoff: now.Add(-CodexCleanupDeletedWorktreeGrace),
@@ -227,17 +252,43 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		audit.Storage.files = nil
 	}()
 	loaded := stringSet(options.LoadedThreadIDs)
+	stale := options.Category == CodexCleanupStale
+	threadCounts := make(map[string]int)
+	lineagePaths := make(map[string]bool)
+	for path := range recordsByPath {
+		lineagePaths[path] = true
+	}
 
 	candidateThreads := make([]codexstate.Thread, 0)
 	candidateIDs := make(map[string]bool)
 	threadsByID := make(map[string]codexstate.Thread, len(threads))
 	relevantIDs := make(map[string]bool)
 	descendantEvidenceByID := make(map[string]bool)
+	existingFolders := make(map[string]bool)
 	for _, thread := range threads {
+		if err := ctx.Err(); err != nil {
+			return audit, err
+		}
 		threadID := strings.TrimSpace(thread.ID)
 		threadsByID[threadID] = thread
 		cwd := normalizeCleanupPath(thread.CWD)
-		if _, ok := recordsByPath[cwd]; ok {
+		threadCounts[cwd]++
+		candidatePath := false
+		if stale {
+			exists, checked := existingFolders[cwd]
+			if !checked {
+				if filepath.IsAbs(cwd) {
+					info, err := os.Stat(cwd)
+					exists = err == nil && info.IsDir()
+				}
+				existingFolders[cwd] = exists
+			}
+			candidatePath = exists
+		} else {
+			_, candidatePath = recordsByPath[cwd]
+		}
+		if candidatePath {
+			lineagePaths[cwd] = true
 			candidateThreads = append(candidateThreads, thread)
 			candidateIDs[threadID] = true
 			relevantIDs[threadID] = true
@@ -260,6 +311,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 	}
 	pathInspections := make(map[string]pathInspection)
 	unresolvedDescendantLineage := false
+	rolloutOwners := make(map[string]*codexCleanupThreadNode)
 	for _, thread := range threads {
 		if err := ctx.Err(); err != nil {
 			return audit, err
@@ -303,6 +355,11 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			unknownByCWD[cwd] = true
 		} else {
 			node.file = file
+			if previous := rolloutOwners[file.Path]; previous != nil {
+				unknownByCWD[normalizeCleanupPath(previous.thread.CWD)] = true
+				unknownByCWD[cwd] = true
+			}
+			rolloutOwners[file.Path] = node
 			lineage, lineageErr := codexstate.ReadThreadLineage(file.Path, threadID)
 			if lineageErr != nil || !lineage.Known {
 				node.lineageErr = firstNonNil(lineageErr, fmt.Errorf("thread lineage is unavailable"))
@@ -312,7 +369,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			}
 		}
 		if node.lineageErr != nil && descendantEvidenceByID[threadID] {
-			candidatePath, lineageComplete := indexedCleanupCandidatePath(threadID, threadsByID, recordsByPath, make(map[string]bool))
+			candidatePath, lineageComplete := indexedCleanupCandidatePath(threadID, threadsByID, lineagePaths, make(map[string]bool))
 			if candidatePath != "" {
 				unknownByCWD[candidatePath] = true
 			} else if !lineageComplete {
@@ -328,7 +385,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			node.lineageErr = firstNonNil(node.lineageErr, resolveErr)
 			unknownByCWD[normalizeCleanupPath(node.thread.CWD)] = true
 			if descendantEvidenceByID[threadID] {
-				candidatePath, lineageComplete := indexedCleanupCandidatePath(threadID, threadsByID, recordsByPath, make(map[string]bool))
+				candidatePath, lineageComplete := indexedCleanupCandidatePath(threadID, threadsByID, lineagePaths, make(map[string]bool))
 				if candidatePath != "" {
 					unknownByCWD[candidatePath] = true
 				} else if !lineageComplete {
@@ -339,7 +396,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		}
 		node.rootID = rootID
 		if descendantEvidenceByID[threadID] {
-			candidatePath, _ := indexedCleanupCandidatePath(threadID, threadsByID, recordsByPath, make(map[string]bool))
+			candidatePath, _ := indexedCleanupCandidatePath(threadID, threadsByID, lineagePaths, make(map[string]bool))
 			if candidatePath != "" {
 				root := nodes[rootID]
 				if root == nil || normalizeCleanupPath(root.thread.CWD) != candidatePath {
@@ -358,12 +415,26 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 	}
 
 	groupsByPath := make(map[string]*CodexCleanupWorktreeGroup)
+	newestRoots := make(map[string]codexstate.Thread)
+	for _, node := range nodes {
+		if node.lineageErr == nil && node.lineage.IsRoot && node.rootID == node.thread.ID {
+			cwd := normalizeCleanupPath(node.thread.CWD)
+			previous, exists := newestRoots[cwd]
+			if !exists || node.thread.LastActivity.After(previous.LastActivity) ||
+				(node.thread.LastActivity.Equal(previous.LastActivity) && node.thread.ID > previous.ID) {
+				newestRoots[cwd] = node.thread
+			}
+		}
+	}
 	for _, thread := range candidateThreads {
 		if err := ctx.Err(); err != nil {
 			return audit, err
 		}
 		threadID := strings.TrimSpace(thread.ID)
-		if !missingByID[threadID] {
+		if !stale && !missingByID[threadID] {
+			continue
+		}
+		if stale && (missingByID[threadID] || newestRoots[normalizeCleanupPath(thread.CWD)].ID == threadID) {
 			continue
 		}
 		node := nodes[threadID]
@@ -380,7 +451,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		}
 		cwd := normalizeCleanupPath(thread.CWD)
 		record, ok := recordsByPath[cwd]
-		if !ok {
+		if !ok && !stale {
 			audit.Excluded.NoLCRRecord++
 			continue
 		}
@@ -388,19 +459,19 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 			audit.Excluded.Pinned++
 			continue
 		}
-		if record.Archived || record.HasOpenTodo {
+		if !stale && (record.Archived || record.HasOpenTodo) {
 			audit.Excluded.Uncertain++
 			continue
 		}
-		if pathOnExternalVolume(cwd, codexHome) || pathOnExternalVolume(record.RootPath, codexHome) {
+		if pathOnExternalVolume(cwd, codexHome) || (!stale && pathOnExternalVolume(record.RootPath, codexHome)) {
 			audit.Excluded.ExternalVolume++
 			continue
 		}
-		if !record.MissingSince.IsZero() && record.MissingSince.After(audit.WorktreeGraceCutoff) {
+		if !stale && !record.MissingSince.IsZero() && record.MissingSince.After(audit.WorktreeGraceCutoff) {
 			audit.Excluded.Recent++
 			continue
 		}
-		if !cleanupRootProjectCertain(record.RootPath, cwd) {
+		if !stale && !cleanupRootProjectCertain(record.RootPath, cwd) {
 			audit.Excluded.Uncertain++
 			continue
 		}
@@ -414,7 +485,7 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		}
 
 		members := membersByRoot[threadID]
-		candidate, exclusion := buildCleanupThreadCandidate(now, cwd, thread, members, loaded, codexHome)
+		candidate, exclusion := buildCleanupThreadCandidate(now, cwd, thread, members, loaded, codexHome, !stale)
 		switch exclusion {
 		case "pinned":
 			audit.Excluded.Pinned++
@@ -436,13 +507,20 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		group := groupsByPath[cwd]
 		if group == nil {
 			group = &CodexCleanupWorktreeGroup{
-				WorktreePath:    cwd,
-				WorktreeName:    firstNonEmptyTrimmed(record.Name, filepath.Base(cwd)),
-				RootProjectPath: normalizeCleanupPath(record.RootPath),
-				Branch:          firstNonEmptyTrimmed(record.Branch, record.InitialBranch, thread.GitBranch),
-				ParentBranch:    strings.TrimSpace(record.ParentBranch),
-				MissingSince:    record.MissingSince,
-				Reason:          codexCleanupReason,
+				Category:         options.Category,
+				TotalThreadCount: threadCounts[cwd],
+				WorktreePath:     cwd,
+				WorktreeName:     firstNonEmptyTrimmed(record.Name, filepath.Base(cwd)),
+				RootProjectPath:  normalizeCleanupPath(record.RootPath),
+				Branch:           firstNonEmptyTrimmed(record.Branch, record.InitialBranch, thread.GitBranch),
+				ParentBranch:     strings.TrimSpace(record.ParentBranch),
+				MissingSince:     record.MissingSince,
+				Reason:           codexCleanupReason,
+			}
+			if stale {
+				group.RootProjectPath = cwd
+				group.Reason = "Inactive for at least 7 days; newest root session and protected trees are kept"
+				group.MissingSince = time.Time{}
 			}
 			groupsByPath[cwd] = group
 		}
@@ -534,6 +612,7 @@ func (s *Service) LastCodexCleanupAudit() CodexCleanupAuditSnapshot {
 
 func cloneCodexCleanupAudit(audit CodexCleanupAudit) CodexCleanupAudit {
 	cloned := audit
+	cloned.Retained = append([]CodexCleanupRetainedGroup(nil), audit.Retained...)
 	cloned.Groups = make([]CodexCleanupWorktreeGroup, len(audit.Groups))
 	for groupIndex, group := range audit.Groups {
 		cloned.Groups[groupIndex] = group
@@ -547,7 +626,7 @@ func cloneCodexCleanupAudit(audit CodexCleanupAudit) CodexCleanupAudit {
 	return cloned
 }
 
-func buildCleanupThreadCandidate(now time.Time, cwd string, root codexstate.Thread, members []*codexCleanupThreadNode, loaded map[string]struct{}, codexHome string) (CodexCleanupThread, string) {
+func buildCleanupThreadCandidate(now time.Time, cwd string, root codexstate.Thread, members []*codexCleanupThreadNode, loaded map[string]struct{}, codexHome string, requireMissing bool) (CodexCleanupThread, string) {
 	if len(members) == 0 {
 		return CodexCleanupThread{}, "uncertain"
 	}
@@ -597,8 +676,14 @@ func buildCleanupThreadCandidate(now time.Time, cwd string, root codexstate.Thre
 			return CodexCleanupThread{}, "uncertain"
 		}
 		missing, err := cleanupPathMissing(memberCWD)
-		if err != nil || !missing {
+		if err != nil || missing != requireMissing {
 			return CodexCleanupThread{}, "uncertain"
+		}
+		if !requireMissing {
+			info, err := os.Stat(memberCWD)
+			if err != nil || !info.IsDir() {
+				return CodexCleanupThread{}, "uncertain"
+			}
 		}
 		if pathOnExternalVolume(memberCWD, codexHome) {
 			return CodexCleanupThread{}, "external"
@@ -659,7 +744,7 @@ func resolveCleanupRootID(threadID string, nodes map[string]*codexCleanupThreadN
 	return resolveCleanupRootID(parentID, nodes, candidateIDs, visiting)
 }
 
-func indexedCleanupCandidatePath(threadID string, threads map[string]codexstate.Thread, records map[string]store.DeletedWorktreeRecord, visiting map[string]bool) (string, bool) {
+func indexedCleanupCandidatePath(threadID string, threads map[string]codexstate.Thread, paths map[string]bool, visiting map[string]bool) (string, bool) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" || visiting[threadID] {
 		return "", false
@@ -669,7 +754,7 @@ func indexedCleanupCandidatePath(threadID string, threads map[string]codexstate.
 		return "", false
 	}
 	if cwd := normalizeCleanupPath(thread.CWD); cwd != "" {
-		if _, recorded := records[cwd]; recorded {
+		if paths[cwd] {
 			return cwd, true
 		}
 	}
@@ -679,7 +764,7 @@ func indexedCleanupCandidatePath(threadID string, threads map[string]codexstate.
 	}
 	visiting[threadID] = true
 	defer delete(visiting, threadID)
-	return indexedCleanupCandidatePath(parentID, threads, records, visiting)
+	return indexedCleanupCandidatePath(parentID, threads, paths, visiting)
 }
 
 func inspectCleanupRolloutFile(codexHome, threadID, rolloutPath string) (CodexCleanupRolloutFile, error) {
@@ -821,6 +906,10 @@ func cleanupGroupRevision(group CodexCleanupWorktreeGroup) string {
 		_, _ = hash.Write([]byte{0})
 	}
 	writeRevisionPart(group.WorktreePath)
+	writeRevisionPart(string(group.Category))
+	if group.Category == CodexCleanupStale {
+		writeRevisionPart(fmt.Sprintf("%d", group.TotalThreadCount))
+	}
 	writeRevisionPart(group.RootProjectPath)
 	writeRevisionPart(group.MissingSince.UTC().Format(time.RFC3339Nano))
 	for _, thread := range group.Threads {
@@ -864,7 +953,7 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	}
 	defer unlockWorktree()
 
-	audit, err := s.AuditCodexSessionStorage(ctx, CodexCleanupAuditOptions{LoadedThreadIDs: request.LoadedThreadIDs})
+	audit, err := s.AuditCodexSessionStorage(ctx, CodexCleanupAuditOptions{LoadedThreadIDs: request.LoadedThreadIDs, Category: request.Category})
 	if err != nil {
 		return result, fmt.Errorf("repeat Codex cleanup safety audit: %w", err)
 	}
@@ -888,6 +977,21 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	currentIDs = sortedUniqueStrings(currentIDs)
 	if !equalStringSlices(requestedIDs, currentIDs) || strings.TrimSpace(request.Revision) != group.Revision {
 		return result, fmt.Errorf("cleanup preview changed; review the refreshed audit before deleting")
+	}
+	if request.CurrentLoadedThreadIDs != nil {
+		loaded := stringSet(request.CurrentLoadedThreadIDs())
+		for _, thread := range group.Threads {
+			for _, id := range thread.MemberIDs {
+				if _, exists := loaded[id]; exists {
+					return result, fmt.Errorf("selected session was loaded during the audit; refresh before deleting")
+				}
+			}
+		}
+	}
+	if group.Category == CodexCleanupStale {
+		if err := revalidateStaleCleanupFiles(ctx, s.Config().CodexHome, group); err != nil {
+			return result, err
+		}
 	}
 
 	deleter := s.codexThreadDeleter

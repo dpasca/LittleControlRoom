@@ -19,6 +19,7 @@ func renderCodexCleanupRetained(dialog *codexCleanupDialogState, width, bodyH in
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render("Codex storage · retained"),
+		detailField("Outside category", dialog.Category.Label()),
 		detailField("Storage", summary),
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,

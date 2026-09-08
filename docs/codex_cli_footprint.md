@@ -329,7 +329,7 @@ each remaining file once. Files without unique indexed ownership appear as
 unattributed; non-session files are grouped by their top-level Codex-home entry.
 This view does not infer ownership from filenames or make retained files selectable.
 
-A root thread is eligible only when all of the following can be established:
+The default **Orphaned worktrees** category requires all of the following:
 
 1. Its saved absolute `cwd` is absent, and an exact retained LCR project row
    says that LCR forgot the same linked worktree after it disappeared.
@@ -351,12 +351,33 @@ Codex databases can leave that column at zero even when the rollout contains
 structured user messages; cleanup instead establishes root and descendant
 identity from the rollout's `session_meta` lineage.
 
-The audit queries the complete thread index, but bounds rollout-file I/O to
+The orphaned audit queries the complete thread index, but bounds rollout-file I/O to
 threads whose `cwd` exactly matches a retained deletion record and descendants
 identified by structured `agent_role` or `source.subagent.thread_spawn`
 evidence. Indexed parent chains are cross-checked against rollout lineage;
 uncertainty blocks the related candidate tree rather than forcing unrelated
 root rollouts to be opened.
+
+`C` switches to **Stale sessions**, runs a fresh read-only audit, and clears
+selection. This category covers existing local folders, including primary
+checkouts that never used linked worktrees. It does not require a worktree
+deletion record. Every tree member must have at least seven days of inactivity
+in both the thread index and rollout modification time, known unpinned state,
+no LCR-loaded thread, and verified lineage and rollout paths. The newest root
+session in each folder is always retained, even when old. Missing folders stay
+outside this category. External volumes, ambiguous ownership, and uncertain
+lineage remain excluded. The broader audit reads metadata for existing-folder
+threads and indexed descendants, entirely off the UI path.
+
+Stale rows show one folder each, with recoverable size and **REMOVE / KEEP**
+counts including spawned sessions. Details and the permanent-deletion warning
+show how many of the folder's indexed sessions will be removed; no hundreds-row
+session list is required. Category identity and the total session count are
+included in the preview revision and revalidated before deletion. `V` / Tab
+still shows files retained outside the currently selected category.
+Immediately before a stale deletion, LCR checks the current session index and
+rollout sizes/modification times again, and the TUI refreshes its managed loaded
+thread IDs. This rejects activity, pins, or loads that changed during the audit.
 
 Eligible roots are grouped by deleted worktree. The preview reports thread and
 worktree age, retained branch/parent metadata, Codex Git branch and commit,
