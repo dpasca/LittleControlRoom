@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/control"
 	"lcroom/internal/fuzzyfilter"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,7 @@ const (
 type codexModelPickerTarget string
 
 const (
+	codexModelPickerTargetControl          codexModelPickerTarget = "control"
 	codexModelPickerTargetLeader           codexModelPickerTarget = ""
 	codexModelPickerTargetHandoff          codexModelPickerTarget = "handoff"
 	codexModelPickerTargetNewTask          codexModelPickerTarget = "new_task"
@@ -33,12 +35,13 @@ const (
 )
 
 func (target codexModelPickerTarget) prelaunch() bool {
-	return target == codexModelPickerTargetHandoff ||
+	return target == codexModelPickerTargetControl || target == codexModelPickerTargetHandoff ||
 		target == codexModelPickerTargetNewTask ||
 		target == codexModelPickerTargetWorktreeRecovery
 }
 
 type codexModelPickerState struct {
+	ControlInvocation     *control.Invocation
 	Models                []codexapp.ModelOption
 	FilteredModels        []codexapp.ModelOption
 	RecentModels          []codexapp.ModelOption
@@ -85,6 +88,9 @@ func (m *Model) openCodexModelPickerCmd() tea.Cmd {
 			}
 		}
 		models, err := session.ListModels()
+		if err == nil {
+			m.saveEngineerCatalog(context.Background(), provider, models, engineerCatalogSource(provider))
+		}
 		return codexModelListMsg{
 			projectPath:  projectPath,
 			target:       target,
@@ -131,7 +137,8 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 	}
 	if session, _, ok := m.liveEmbeddedSessionForProvider(provider); ok {
 		models, err := session.ListModels()
-		if len(models) > 0 {
+		if err == nil && len(models) > 0 {
+			m.saveEngineerCatalog(ctx, provider, models, engineerCatalogSource(provider))
 			return models, nil
 		}
 		if err == nil {
@@ -141,6 +148,20 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 			return fallback, nil
 		}
 		return nil, err
+	}
+	if m.svc != nil && m.svc.Store() != nil {
+		catalog, err := m.svc.Store().EngineerModelCatalog(ctx, controlProviderFromCodexProvider(provider))
+		if err == nil && len(catalog.Models) > 0 {
+			models := []codexapp.ModelOption{providerDefaultModelOption(provider)}
+			for _, item := range catalog.Models {
+				option := codexapp.ModelOption{ID: item.Model, Model: item.Model, ModelProvider: item.ModelProvider, DisplayName: item.DisplayName, IsDefault: item.IsDefault, DefaultReasoningEffort: item.DefaultReasoningEffort}
+				for _, effort := range item.ReasoningEfforts {
+					option.SupportedReasoningEfforts = append(option.SupportedReasoningEfforts, codexapp.ReasoningEffortOption{ReasoningEffort: effort})
+				}
+				models = append(models, option)
+			}
+			return models, nil
+		}
 	}
 	return m.fallbackPrelaunchEmbeddedModelOptions(ctx, provider), nil
 }
@@ -400,6 +421,7 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 		Focus:          codexModelPickerFocusFilter,
 	}
 	if existing := m.codexModelPicker; existing != nil {
+		state.ControlInvocation = existing.ControlInvocation
 		state.Target = existing.Target
 		state.Provider = existing.Provider.Normalized()
 	}
@@ -645,6 +667,10 @@ func (m Model) updateCodexModelPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if state == nil {
 		return m, nil
 	}
+	if state.ControlInvocation != nil && (msg.String() == "esc" || (!state.Loading && len(state.Models) == 0)) {
+		return m.cancelControlModelPicker(errControlModelPickerCanceled)
+	}
+
 	if state.Loading {
 		switch msg.String() {
 		case "esc":
@@ -1037,6 +1063,8 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	}
 	if state := m.codexModelPicker; state != nil {
 		switch state.Target {
+		case codexModelPickerTargetControl:
+			return m.applyControlModelPickerSelection(modelOption, effort)
 		case codexModelPickerTargetHandoff:
 			return m.applyCodexHandoffModelPickerSelection(modelOption, effort)
 		case codexModelPickerTargetNewTask:

@@ -151,6 +151,7 @@ func (a ProjectArchiveAction) Normalized() ProjectArchiveAction {
 }
 
 type EngineerSendPromptInput struct {
+	EngineerModelSelection
 	RequestID       string      `json:"request_id,omitempty"`
 	ProjectPath     string      `json:"project_path"`
 	ProjectName     string      `json:"project_name"`
@@ -213,6 +214,7 @@ type ProjectArchiveInput struct {
 }
 
 type ProjectCreateAndStartEngineerInput struct {
+	EngineerModelSelection
 	RequestID    string   `json:"request_id,omitempty"`
 	ParentPath   string   `json:"parent_path"`
 	ProjectName  string   `json:"project_name"`
@@ -252,6 +254,7 @@ type TodoAddInput struct {
 }
 
 type TodoCreateWorktreeAndStartEngineerInput struct {
+	EngineerModelSelection
 	RequestID    string   `json:"request_id,omitempty"`
 	ProjectPath  string   `json:"project_path"`
 	ProjectName  string   `json:"project_name"`
@@ -708,6 +711,9 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 	if input.Prompt == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("prompt is required")
 	}
+	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
+		return EngineerSendPromptInput{}, err
+	}
 	return input, nil
 }
 
@@ -860,6 +866,9 @@ func NormalizeProjectCreateAndStartEngineerInput(input ProjectCreateAndStartEngi
 	if input.TodoID < 0 {
 		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("todo_id cannot be negative")
 	}
+	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
+		return ProjectCreateAndStartEngineerInput{}, err
+	}
 	return input, nil
 }
 
@@ -939,6 +948,9 @@ func NormalizeTodoCreateWorktreeAndStartEngineerInput(input TodoCreateWorktreeAn
 	}
 	if input.TodoID < 0 {
 		return TodoCreateWorktreeAndStartEngineerInput{}, fmt.Errorf("todo_id cannot be negative")
+	}
+	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
+		return TodoCreateWorktreeAndStartEngineerInput{}, err
 	}
 	return input, nil
 }
@@ -1521,6 +1533,10 @@ func engineerSendPromptInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
+			"model":            engineerModelProperty(),
+			"model_provider":   engineerModelProviderProperty(),
+			"reasoning_effort": engineerEffortProperty(),
+			"select_model":     engineerSelectModelProperty(),
 			"request_id": map[string]any{
 				"type":        "string",
 				"description": "Optional stable idempotency key for this request.",
@@ -1690,17 +1706,21 @@ func projectCreateAndStartEngineerInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"request_id":    map[string]any{"type": "string"},
-			"parent_path":   map[string]any{"type": "string", "description": "Absolute existing parent directory containing the target repository path."},
-			"project_name":  map[string]any{"type": "string", "description": "Single-folder name for the new or existing untracked repository."},
-			"project_path":  map[string]any{"type": "string", "description": "Derived target path. Leave empty in proposals; the host fills it from parent_path and project_name."},
-			"todo_text":     map[string]any{"type": "string"},
-			"prompt":        map[string]any{"type": "string"},
-			"provider":      map[string]any{"type": "string", "enum": ProviderStrings(false)},
-			"reveal":        map[string]any{"type": "boolean"},
-			"todo_id":       map[string]any{"type": "integer"},
-			"todo_label":    map[string]any{"type": "string"},
-			"worktree_path": map[string]any{"type": "string"},
+			"model":            engineerModelProperty(),
+			"model_provider":   engineerModelProviderProperty(),
+			"reasoning_effort": engineerEffortProperty(),
+			"select_model":     engineerSelectModelProperty(),
+			"request_id":       map[string]any{"type": "string"},
+			"parent_path":      map[string]any{"type": "string", "description": "Absolute existing parent directory containing the target repository path."},
+			"project_name":     map[string]any{"type": "string", "description": "Single-folder name for the new or existing untracked repository."},
+			"project_path":     map[string]any{"type": "string", "description": "Derived target path. Leave empty in proposals; the host fills it from parent_path and project_name."},
+			"todo_text":        map[string]any{"type": "string"},
+			"prompt":           map[string]any{"type": "string"},
+			"provider":         map[string]any{"type": "string", "enum": ProviderStrings(false)},
+			"reveal":           map[string]any{"type": "boolean"},
+			"todo_id":          map[string]any{"type": "integer"},
+			"todo_label":       map[string]any{"type": "string"},
+			"worktree_path":    map[string]any{"type": "string"},
 		},
 		"required": []string{"parent_path", "project_name", "todo_text", "prompt", "provider", "reveal"},
 	}
@@ -1806,16 +1826,20 @@ func todoCreateWorktreeAndStartEngineerInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"request_id":    map[string]any{"type": "string"},
-			"project_path":  map[string]any{"type": "string"},
-			"project_name":  map[string]any{"type": "string"},
-			"todo_text":     map[string]any{"type": "string"},
-			"prompt":        map[string]any{"type": "string"},
-			"provider":      map[string]any{"type": "string", "enum": ProviderStrings(false)},
-			"reveal":        map[string]any{"type": "boolean"},
-			"todo_id":       map[string]any{"type": "integer"},
-			"todo_label":    map[string]any{"type": "string"},
-			"worktree_path": map[string]any{"type": "string"},
+			"model":            engineerModelProperty(),
+			"model_provider":   engineerModelProviderProperty(),
+			"reasoning_effort": engineerEffortProperty(),
+			"select_model":     engineerSelectModelProperty(),
+			"request_id":       map[string]any{"type": "string"},
+			"project_path":     map[string]any{"type": "string"},
+			"project_name":     map[string]any{"type": "string"},
+			"todo_text":        map[string]any{"type": "string"},
+			"prompt":           map[string]any{"type": "string"},
+			"provider":         map[string]any{"type": "string", "enum": ProviderStrings(false)},
+			"reveal":           map[string]any{"type": "boolean"},
+			"todo_id":          map[string]any{"type": "integer"},
+			"todo_label":       map[string]any{"type": "string"},
+			"worktree_path":    map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "project_name", "todo_text", "prompt", "provider", "reveal"},
 	}

@@ -130,6 +130,9 @@ func (m *Model) clearEmbeddedModelPreference(provider codexapp.Provider) {
 }
 
 func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp.LaunchRequest {
+	if req.PendingModel != "" || req.PendingReasoning != "" {
+		return req
+	}
 	if pref, ok := m.embeddedModelPreference(req.Provider); ok {
 		req.PendingModel = pref.Model
 		req.PendingReasoning = pref.Reasoning

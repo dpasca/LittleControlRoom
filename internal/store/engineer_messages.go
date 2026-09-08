@@ -16,7 +16,7 @@ const engineerMessageSelect = `
 	SELECT id, operation_id, agent_task_id, project_path, provider, session_mode, requested_target_session_id,
 		target_session_id, prompt,
 		reveal, todo_id, todo_label, todo_text, state, attempt_count,
-		last_error, created_at, updated_at, delivered_at
+		last_error, created_at, updated_at, delivered_at, model_selection_json
 	FROM engineer_messages
 `
 
@@ -34,6 +34,12 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	message.TargetSessionID = strings.TrimSpace(message.TargetSessionID)
 	if message.RequestedTargetSessionID == "" {
 		message.RequestedTargetSessionID = message.TargetSessionID
+	}
+	if err := message.EngineerModelSelection.Normalize(message.Provider); err != nil {
+		return control.EngineerMessage{}, err
+	}
+	if message.SelectModel {
+		return control.EngineerMessage{}, errors.New("model picker must complete before queueing")
 	}
 	message.Prompt = strings.TrimSpace(message.Prompt)
 	message.TodoLabel = strings.TrimSpace(message.TodoLabel)
@@ -88,14 +94,14 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 			id, operation_id, agent_task_id, project_path, provider, session_mode, requested_target_session_id,
 			target_session_id, prompt,
 			reveal, todo_id, todo_label, todo_text, state, attempt_count,
-			last_error, created_at, updated_at, delivered_at
+			last_error, created_at, updated_at, delivered_at, model_selection_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, message.ID, message.OperationID, message.AgentTaskID, message.ProjectPath, string(message.Provider),
 		string(message.SessionMode), message.RequestedTargetSessionID, message.TargetSessionID, message.Prompt,
 		boolToInt(message.Reveal), message.TodoID,
 		message.TodoLabel, message.TodoText, string(message.State), message.AttemptCount,
-		message.LastError, message.CreatedAt.Unix(), message.UpdatedAt.Unix(), nil)
+		message.LastError, message.CreatedAt.Unix(), message.UpdatedAt.Unix(), nil, modelSelectionJSON(message.EngineerModelSelection))
 	if err != nil {
 		if message.OperationID != "" {
 			existing, found, lookupErr := s.FindEngineerMessageByOperation(ctx, message.OperationID)
@@ -138,7 +144,8 @@ func (s *Store) linkEngineerMessageToAgentTask(ctx context.Context, message cont
 }
 
 func sameEngineerMessageRequest(existing, proposed control.EngineerMessage) bool {
-	return existing.AgentTaskID == proposed.AgentTaskID &&
+	return existing.EngineerModelSelection == proposed.EngineerModelSelection &&
+		existing.AgentTaskID == proposed.AgentTaskID &&
 		existing.ProjectPath == proposed.ProjectPath &&
 		existing.Provider == proposed.Provider &&
 		existing.SessionMode == proposed.SessionMode &&
@@ -406,6 +413,7 @@ type engineerMessageScanner interface {
 
 func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessage, error) {
 	var (
+		selectionJSON                string
 		message                      control.EngineerMessage
 		provider, sessionMode, state string
 		reveal                       int
@@ -432,7 +440,11 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 		&createdAt,
 		&updatedAt,
 		&deliveredAt,
+		&selectionJSON,
 	); err != nil {
+		return control.EngineerMessage{}, err
+	}
+	if err := json.Unmarshal([]byte(selectionJSON), &message.EngineerModelSelection); err != nil {
 		return control.EngineerMessage{}, err
 	}
 	message.Provider = control.NormalizeProvider(provider)

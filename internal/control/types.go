@@ -459,6 +459,7 @@ func (s EngineerMessageState) Terminal() bool {
 }
 
 type EngineerMessage struct {
+	EngineerModelSelection
 	ID                       string               `json:"id"`
 	OperationID              string               `json:"operation_id,omitempty"`
 	AgentTaskID              string               `json:"agent_task_id,omitempty"`

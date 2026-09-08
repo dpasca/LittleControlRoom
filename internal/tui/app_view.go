@@ -75,6 +75,9 @@ func (m Model) View() string {
 		layout := m.bodyLayout()
 		header := m.renderTopStatusLine(layout.width)
 		body := m.renderDiffView(layout.width, layout.height)
+		if m.codexModelPickerVisible() {
+			body = m.renderCodexModelPickerOverlay(body, layout.width, layout.height)
+		}
 		if m.quitConfirm != nil {
 			body = m.renderQuitConfirmOverlay(body, layout.width, layout.height)
 		}

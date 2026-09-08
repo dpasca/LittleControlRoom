@@ -104,6 +104,7 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 		renderBossControlDetail("Provider", provider, width),
 		renderBossControlDetail("Project", target, width),
 		renderBossControlDetail("Mode", mode, width),
+		renderBossControlDetail("Model / effort", engineerModelSelectionLabel(input.EngineerModelSelection), width),
 		renderBossControlDetail("View", visibility, width),
 	}
 	if input.TargetSessionID != "" {
@@ -276,6 +277,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				renderBossControlDetail("Git", "register existing or initialize new", width),
 				renderBossControlDetail("Workspace", "dedicated worktree", width),
 				renderBossControlDetail("Engineer", provider, width),
+				renderBossControlDetail("Model / effort", engineerModelSelectionLabel(input.EngineerModelSelection), width),
 				"",
 				bossControlSectionStyle.Render(fitLine("TODO", width)),
 				renderBossControlPromptBox(input.TodoText, width),
@@ -310,6 +312,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				renderBossControlDetail("Project", target, width),
 				renderBossControlDetail("Workspace", "dedicated worktree", width),
 				renderBossControlDetail("Engineer", provider, width),
+				renderBossControlDetail("Model / effort", engineerModelSelectionLabel(input.EngineerModelSelection), width),
 				"",
 				bossControlSectionStyle.Render(fitLine("TODO", width)),
 				renderBossControlPromptBox(input.TodoText, width),
@@ -483,3 +486,21 @@ var (
 				Foreground(bossPanelText).
 				Background(lipgloss.Color("#101820"))
 )
+
+func engineerModelSelectionLabel(selection control.EngineerModelSelection) string {
+	if selection.SelectModel {
+		return "Choose before launch (model picker)"
+	}
+	if selection.Model == "" {
+		return "Current defaults"
+	}
+	model := selection.Model
+	if selection.ModelProvider != "" {
+		model = selection.ModelProvider + "/" + model
+	}
+	effort := selection.ReasoningEffort
+	if effort == "" {
+		effort = "default effort"
+	}
+	return model + " / " + effort
+}

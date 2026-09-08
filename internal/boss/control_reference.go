@@ -73,6 +73,7 @@ func bossControlReferenceSpec(domain string) ([]control.CapabilityName, []string
 			}, []string{
 				"Use project.create_and_start_engineer only for a brand-new repository target that is not already loaded. Require an unambiguous absolute existing parent directory and one new folder name.",
 				"For new implementation, change, fix, or investigation work in an existing loaded project, use todo.create_worktree_and_start_engineer. It creates the durable TODO and isolated worktree before launching the engineer.",
+				"For engineer model choices, discover exact IDs and efforts with the engineer.models query. Set select_model=true to open the operator picker before launch; reveal only shows the session.",
 				"Use engineer.send_prompt for an explicit same-task follow-up, active-work steering, or work on an already tracked TODO. With a todo_id, use the TODO owner's project path; the host follows its recorded worktree.",
 				"A clarification about a project Chat just created belongs to the same creation TODO/worktree. Continue that task instead of creating another TODO or sibling worktree.",
 				"Use todo.add only when the user wants backlog work recorded without starting it now. Use todo.complete only with a known TODO and concise direct evidence.",

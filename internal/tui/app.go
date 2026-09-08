@@ -316,6 +316,7 @@ type Model struct {
 	codexInputCopyDialog          *inputcomposer.CopyDialogState
 	codexInputSelection           *codexInputSelectionState
 	codexComposerSelection        textSelection
+	engineerModelCatalogRefresh   map[codexapp.Provider]time.Time
 	codexModelPicker              *codexModelPickerState
 	codexLCAgentProviderSetup     *codexLCAgentProviderSetupState
 	embeddedModelPrefs            map[codexapp.Provider]embeddedModelPreference
@@ -3099,6 +3100,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadIgnoredProjectsCmd())
 		}
 		return m, batchCmds(cmds...)
+	case controlEngineerModelValidatedMsg:
+		return m.applyControlEngineerModelValidated(msg)
 	case codexSessionOpenedMsg:
 		return m.applyCodexSessionOpenedMsg(msg)
 	case codexActionMsg:

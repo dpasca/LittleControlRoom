@@ -40,6 +40,7 @@ func ScopeAllows(available, required Scope) bool {
 type Domain string
 
 const (
+	DomainEngineer      Domain = "engineer"
 	DomainIntegrations  Domain = "integrations"
 	DomainPortfolio     Domain = "portfolio"
 	DomainProject       Domain = "project"
@@ -50,6 +51,8 @@ const (
 
 func NormalizeDomain(value string) Domain {
 	switch Domain(strings.ToLower(strings.TrimSpace(value))) {
+	case DomainEngineer:
+		return DomainEngineer
 	case DomainIntegrations:
 		return DomainIntegrations
 	case DomainPortfolio:
@@ -70,6 +73,7 @@ func NormalizeDomain(value string) Domain {
 type Name string
 
 const (
+	QueryEngineerModels      Name = "engineer.models"
 	QueryIntegrationsList    Name = "integrations.list"
 	QueryIntegrationsCatalog Name = "integrations.catalog"
 	QueryPortfolioOverview   Name = "portfolio.overview"
@@ -120,6 +124,7 @@ type DomainSummary struct {
 
 func DomainSummaries() []DomainSummary {
 	return []DomainSummary{
+		{Domain: DomainEngineer, Description: "Exact engineer model IDs and supported reasoning efforts."},
 		{Domain: DomainIntegrations, Description: "Agent skills, MCP connections, native plugins, and installation sources."},
 		{Domain: DomainPortfolio, Description: "Cross-project inventory, attention, and activity summaries."},
 		{Domain: DomainProject, Description: "Bounded project, TODO, and session state."},
@@ -140,6 +145,7 @@ func DomainStrings() []string {
 
 func Capabilities() []Capability {
 	return []Capability{
+		engineerModelsCapability(),
 		integrationListCapability(),
 		integrationCatalogCapability(),
 		collectionCapability(

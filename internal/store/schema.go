@@ -15,6 +15,7 @@ import (
 
 func (s *Store) initSchema(ctx context.Context) error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS engineer_model_catalogs (provider TEXT PRIMARY KEY, catalog_json TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS projects (
 			path TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -400,6 +401,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+	}
+	if err := s.ensureEngineerModelSelectionColumn(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureEngineerMessagesRequestedTargetColumn(ctx); err != nil {
 		return err
