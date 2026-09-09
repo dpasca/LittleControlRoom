@@ -389,3 +389,28 @@ func staleWorktreeCleanupTestSummary(now time.Time) model.ProjectSummary {
 		LatestSessionSummary:            "Work is complete.",
 	}
 }
+
+func TestRenderStaleWorktreeCleanupResultsWrapsLongDetails(t *testing.T) {
+	longError := "linked TODO was completed, but removing the worktree failed: symlink /tmp/demo--stale/.git: file exists and cannot be replaced safely"
+	dialog := &staleWorktreeCleanupDialogState{Results: []staleWorktreeCleanupResult{
+		{Candidate: staleWorktreeCleanupTestCandidate("/tmp/demo--stale", "feature/stale", time.Now().Add(-48*time.Hour)), Err: fmt.Errorf("%s", longError)},
+		{Candidate: staleWorktreeCleanupTestCandidate("/tmp/demo--recent", "ui/recent", time.Now()), SkippedReason: "the embedded Codex session was used within the last 24 hours"},
+	}}
+
+	rendered := ansi.Strip(renderStaleWorktreeCleanupResults(dialog, 100, 40))
+	if strings.Contains(rendered, "…") {
+		t.Fatalf("expected no truncation in report, got:\n%s", rendered)
+	}
+	joined := strings.Join(strings.Fields(rendered), " ")
+	if !strings.Contains(joined, longError) {
+		t.Fatalf("expected full failure detail in report, got:\n%s", rendered)
+	}
+	if !strings.Contains(joined, "skipped: the embedded Codex session was used within the last 24 hours") {
+		t.Fatalf("expected full skip reason in report, got:\n%s", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if width := ansi.StringWidth(line); width > 100 {
+			t.Fatalf("line exceeds dialog width (%d): %q", width, line)
+		}
+	}
+}

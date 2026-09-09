@@ -643,31 +643,68 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 		detailMutedStyle.Render("Git branches and AI conversation history were preserved."),
 		"",
 	}
-	limit := max(1, bodyH-13)
+	budget := max(2, bodyH-13)
+	used := 0
 	for index, result := range dialog.Results {
-		if index >= limit {
-			lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("+%d more results", len(dialog.Results)-index)))
-			break
-		}
 		name := staleWorktreeCleanupCandidateName(result.Candidate)
+		var style lipgloss.Style
+		var marker, detail string
 		switch {
 		case result.Finalize.WorktreeRemoved:
-			detail := "removed"
+			style = classificationCategoryStyle(model.SessionCategoryCompleted)
+			marker = "✓"
+			detail = "removed"
 			if result.ClosedSession {
 				detail += "; idle session closed"
 			}
 			if result.Finalize.LinkedTodoMarkedDone {
 				detail += "; linked TODO done"
 			}
-			lines = append(lines, classificationCategoryStyle(model.SessionCategoryCompleted).Render("✓ "+truncateText(name+" · "+detail, max(1, width-2))))
 		case result.SkippedReason != "":
-			lines = append(lines, detailWarningStyle.Render("- "+truncateText(name+" · skipped: "+result.SkippedReason, max(1, width-2))))
+			style = detailWarningStyle
+			marker = "-"
+			detail = "skipped: " + result.SkippedReason
 		case result.Err != nil:
-			lines = append(lines, detailDangerStyle.Render("! "+truncateText(name+" · "+result.Err.Error(), max(1, width-2))))
+			style = detailDangerStyle
+			marker = "!"
+			detail = result.Err.Error()
 		default:
-			lines = append(lines, detailDangerStyle.Render("! "+truncateText(name+" · removal did not complete", max(1, width-2))))
+			style = detailDangerStyle
+			marker = "!"
+			detail = "removal did not complete"
 		}
+		block := staleWorktreeCleanupResultBlock(style, width, marker, name, detail)
+		if index > 0 && used+len(block) > budget {
+			lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("+%d more results", len(dialog.Results)-index)))
+			break
+		}
+		lines = append(lines, block...)
+		used += len(block)
 	}
 	lines = append(lines, "", renderDialogAction("Enter/Esc", "close report", cancelActionKeyStyle, cancelActionTextStyle))
 	return clampDialogContent(strings.Join(lines, "\n"), max(10, bodyH-4), 4, detailMutedStyle.Render("… more results hidden …"))
+}
+
+// staleWorktreeCleanupResultBlock renders one report entry, keeping it on a
+// single line when it fits and otherwise wrapping the detail under an indented
+// continuation so long failure messages stay fully readable.
+func staleWorktreeCleanupResultBlock(style lipgloss.Style, width int, marker, name, detail string) []string {
+	textWidth := max(10, width-2)
+	single := marker + " " + name + " · " + detail
+	if lipgloss.Width(single) <= textWidth && !strings.ContainsAny(detail, "\r\n") {
+		return []string{style.Render(single)}
+	}
+	out := []string{style.Render(marker + " " + truncateText(name, textWidth))}
+	detailWidth := max(8, textWidth-2)
+	for _, raw := range strings.Split(strings.ReplaceAll(detail, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		wrapped := lipgloss.NewStyle().Width(detailWidth).Render(trimmed)
+		for _, line := range strings.Split(wrapped, "\n") {
+			out = append(out, style.Render("  "+strings.TrimRight(line, " ")))
+		}
+	}
+	return out
 }
