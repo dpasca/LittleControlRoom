@@ -113,6 +113,30 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			f := newAssetResidueFixture(t)
+			// Dependency links may point within the checkout, outside it, or
+			// nowhere. Neither Git removal nor retained cleanup may follow them.
+			for name, target := range map[string]string{
+				"internal": "capture.bin",
+				"external": f.other,
+				"dangling": "missing-package",
+			} {
+				if err := os.Symlink(target, filepath.Join(f.path, "_artifacts", name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			childRepo := filepath.Join(f.root, f.assets[0])
+			exclude, err := gitPath(ctx, childRepo, "info/exclude")
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, exclude, "node_modules/\n", 0600)
+			modules := filepath.Join(f.path, f.assets[0], "node_modules")
+			if err := os.MkdirAll(modules, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(f.other, filepath.Join(modules, "dependency")); err != nil {
+				t.Fatal(err)
+			}
 			if mode == "absent" || mode == "prunable" {
 				// A sparse file exercises multi-GiB reporting without consuming
 				// multi-GiB disk space or hashing ignored build output.
@@ -173,7 +197,7 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 }
 
 func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
-	for _, kind := range []string{"dirty child", "untracked child", "unrelated repo", "symlink", "untracked parent", "dirty parent", "bare repo"} {
+	for _, kind := range []string{"dirty child", "untracked child", "unrelated repo", "metadata symlink", "untracked parent", "dirty parent", "bare repo"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			f := newAssetResidueFixture(t)
@@ -186,8 +210,8 @@ func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
 				initGitRepo(t, filepath.Join(f.path, "_artifacts", "unrelated"))
 			case "bare repo":
 				runGit(t, f.path, "git", "init", "--bare", filepath.Join(f.path, "_artifacts", "objects.git"))
-			case "symlink":
-				if err := os.Symlink(f.other, filepath.Join(f.path, "_artifacts", "outside")); err != nil {
+			case "metadata symlink":
+				if err := os.Symlink(filepath.Join(f.other, ".git"), filepath.Join(f.path, "_artifacts", ".git")); err != nil {
 					t.Fatal(err)
 				}
 			case "untracked parent":
