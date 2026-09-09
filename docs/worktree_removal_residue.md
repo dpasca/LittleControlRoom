@@ -42,6 +42,11 @@ and later process output remain separate possibilities.
 - Scanning also rediscovers physical residue at previously removed paths without
   reviving it as an ordinary project. A later writer cannot retroactively alter
   a successful removal receipt, but its new files become visible residue.
+- Ordinary symlinks inside a checkout, including pnpm dependency links and
+  links inside owned child worktrees, are leaf entries. Inspection does not
+  follow them, and removal unlinks them without deleting their targets. External
+  and dangling targets are supported. Symlinks at the worktree root or in
+  `.git` metadata still block removal.
 
 ## Reviewed cleanup
 
@@ -51,11 +56,13 @@ logical bytes, child paths/commits, and the deletion policy. Ordinary removal
 and batch cleanup do not implicitly authorize this broader cleanup.
 
 The separate `CleanupRetainedWorktree` action verifies tracked contents against
-preserved commit evidence. It also accepts regular output ignored by the root
+preserved commit evidence, including the target text of tracked symlinks. It
+also accepts regular output and symlinks ignored by the root
 repository's current Git ignore rules, only after this explicit cleanup choice.
-Untracked source, changed tracked files, unrelated repositories, bare repository
-markers, symlinks and special files block it. Missing root module metadata and
-deeper nested repositories require manual review rather than inferred ownership.
+Untracked source or links, changed tracked files or links, unrelated repositories,
+bare repository markers, metadata symlinks and special files block it. Missing
+root module metadata and deeper nested repositories require manual review rather
+than inferred ownership.
 
 Cleanup snapshots entries, rechecks directory and file identity, pins filesystem
 access with `os.Root`, removes only inspected entries, and requires empty
@@ -74,10 +81,13 @@ allocated blocks, which matters for sparse files.
 
 The four-app asset fixture exercises normal, force and merge-finalization
 removal, absent/prunable outer metadata, ignored build output, a sparse 3 GiB
-artifact, dirty/untracked children, unrelated and bare repositories, symlinks,
-untracked/modified parent source, active cwd holders, permission failures,
+artifact, dirty/untracked children, unrelated and bare repositories, dependency
+and metadata symlinks, untracked/modified parent source, active cwd holders, permission failures,
 mid-removal lock changes, ancestor replacement, new/changed output, and a later
 scan after output recreation. Assertions check exact target registrations,
 other live checkouts, preserved branches, durable receipts, physical absence or
 visible retained state, and retry behavior. TUI tests cover inspection routing,
 retained-size copy, and repeat-activation blocking.
+Dedicated symlink fixtures cover pnpm paths, external and dangling targets,
+preserved tracked links, modified or untracked links, stale/missing outer
+pointers, and link replacement between inspection and deletion.

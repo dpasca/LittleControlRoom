@@ -466,6 +466,27 @@ func residualObjectHash(commit string) (func() hash.Hash, error) {
 }
 
 func hashResidualGitBlob(ctx context.Context, path string, expectedInfo os.FileInfo, newHash func() hash.Hash) (string, error) {
+	if expectedInfo.Mode()&os.ModeSymlink != 0 {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		// Git stores a symlink's target text as a blob, not the contents of
+		// the target. Readlink also handles dangling links without traversal.
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		afterInfo, err := os.Lstat(path)
+		if err != nil {
+			return "", err
+		}
+		if !sameResidualFileSnapshot(expectedInfo, afterInfo) {
+			return "", fmt.Errorf("%s changed during residual worktree inspection", path)
+		}
+		h := newHash()
+		_, _ = io.WriteString(h, "blob "+strconv.Itoa(len(target))+"\x00"+target)
+		return hex.EncodeToString(h.Sum(nil)), nil
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err

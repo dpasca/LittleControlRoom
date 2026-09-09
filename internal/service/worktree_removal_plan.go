@@ -105,6 +105,14 @@ func removalGitOutput(ctx context.Context, repo string, args ...string) (string,
 }
 
 func inspectOwnedRemovalChild(ctx context.Context, root, parent, path string, tree map[string]residualGitTreeEntry) (ownedRemovalChild, error) {
+	pointer := filepath.Join(path, ".git")
+	info, err := os.Lstat(pointer)
+	if err != nil {
+		return ownedRemovalChild{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return ownedRemovalChild{}, fmt.Errorf("nested worktree metadata requires review: %s", pointer)
+	}
 	rel, err := filepath.Rel(parent, path)
 	if err != nil {
 		return ownedRemovalChild{}, err
@@ -214,8 +222,12 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symbolic link requires review: %s", current)
+		if info.Mode().Type() != entry.Type() {
+			return fmt.Errorf("worktree entry changed during inspection: %s", current)
+		}
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+		if isSymlink && entry.Name() == ".git" {
+			return fmt.Errorf("symbolic link in Git metadata requires review: %s", current)
 		}
 		if current != path && entry.IsDir() {
 			if _, err := os.Lstat(filepath.Join(current, "HEAD")); err == nil {
@@ -228,8 +240,8 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 				if err != nil {
 					return err
 				}
-				// A second nested repository or symlink inside an asset checkout
-				// needs its own ownership review; Git status alone can hide it.
+				// Nested Git metadata needs its own ownership review; Git
+				// status alone can hide it. WalkDir never follows symlinks.
 				err = filepath.WalkDir(current, func(p string, e os.DirEntry, err error) error {
 					if err != nil {
 						return err
@@ -237,8 +249,8 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 					if err := ctx.Err(); err != nil {
 						return err
 					}
-					if e.Type()&os.ModeSymlink != 0 || (e.Name() == ".git" && p != filepath.Join(current, ".git")) {
-						return fmt.Errorf("nested metadata or symbolic link requires review: %s", p)
+					if e.Name() == ".git" && (e.Type()&os.ModeSymlink != 0 || p != filepath.Join(current, ".git")) {
+						return fmt.Errorf("nested metadata requires review: %s", p)
 					}
 					return nil
 				})
@@ -255,12 +267,16 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 		if info.IsDir() {
 			return nil
 		}
-		if !info.Mode().IsRegular() {
+		if !info.Mode().IsRegular() && !isSymlink {
 			return fmt.Errorf("special file requires review: %s", current)
 		}
-		plan.Bytes += info.Size()
+		// Links are leaf entries. Neither inspection nor deletion follows
+		// their targets, including external directories and dangling links.
+		if info.Mode().IsRegular() {
+			plan.Bytes += info.Size()
+		}
 		rel, _ := filepath.Rel(path, current)
-		if !verifyFiles || rel == ".git" || filepath.Base(rel) == ".DS_Store" {
+		if !verifyFiles || rel == ".git" || (filepath.Base(rel) == ".DS_Store" && !isSymlink) {
 			return nil
 		}
 		tracked, exists := tree[filepath.ToSlash(rel)]
@@ -271,7 +287,9 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 			return nil
 		}
 		mode := "100644"
-		if info.Mode().Perm()&0o111 != 0 {
+		if isSymlink {
+			mode = "120000"
+		} else if info.Mode().Perm()&0o111 != 0 {
 			mode = "100755"
 		}
 		if tracked.Type != "blob" || tracked.Mode != mode {
