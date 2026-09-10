@@ -227,12 +227,12 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, "Restore worktree: ↑↓ choose, Enter restore and resume, Esc cancel", supplementSegments...)
 	}
-	if m.staleWorktreeCleanup != nil {
+	if m.staleWorktreeCleanupVisible() {
 		switch {
 		case m.staleWorktreeCleanup.Loading:
 			return m.renderModalFooter(width, "Stale worktrees: auditing only, Esc close", supplementSegments...)
 		case m.staleWorktreeCleanup.Removing:
-			return m.renderModalFooter(width, "Stale worktrees: revalidation and removal in progress", supplementSegments...)
+			return m.renderModalFooter(width, "Stale worktrees: removal in progress, Esc cancel and close", supplementSegments...)
 		case m.staleWorktreeCleanup.Finished:
 			return m.renderModalFooter(width, "Stale worktree report: Enter/Esc close", supplementSegments...)
 		default:

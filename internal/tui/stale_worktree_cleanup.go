@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -19,17 +21,22 @@ import (
 const staleWorktreeCleanupSuccessStatusPrefix = "Stale worktree cleanup finished successfully:"
 
 type staleWorktreeCleanupDialogState struct {
-	Audit        service.StaleWorktreeCleanupAudit
-	Selected     int
-	Chosen       map[string]bool
-	Loading      bool
-	Removing     bool
-	Finished     bool
-	Queue        []service.StaleWorktreeCleanupCandidate
-	QueueIndex   int
-	Results      []staleWorktreeCleanupResult
-	LiveExcluded int
-	ErrorMessage string
+	Context         context.Context
+	Cancel          context.CancelFunc
+	CancelRequested bool
+	Backgrounded    bool
+	Finalizing      bool
+	Audit           service.StaleWorktreeCleanupAudit
+	Selected        int
+	Chosen          map[string]bool
+	Loading         bool
+	Removing        bool
+	Finished        bool
+	Queue           []service.StaleWorktreeCleanupCandidate
+	QueueIndex      int
+	Results         []staleWorktreeCleanupResult
+	LiveExcluded    int
+	ErrorMessage    string
 }
 
 type staleWorktreeCleanupResult struct {
@@ -41,47 +48,86 @@ type staleWorktreeCleanupResult struct {
 }
 
 type staleWorktreeCleanupAuditMsg struct {
+	ctx   context.Context
 	audit service.StaleWorktreeCleanupAudit
 	err   error
 }
 
 type staleWorktreeCleanupRevalidateMsg struct {
+	ctx       context.Context
 	candidate service.StaleWorktreeCleanupCandidate
 	reason    string
 	err       error
 }
 
 type staleWorktreeCleanupRemoveMsg struct {
+	ctx    context.Context
 	result staleWorktreeCleanupResult
 }
 
 func (m Model) openStaleWorktreeCleanup() (tea.Model, tea.Cmd) {
+	if dialog := m.staleWorktreeCleanup; dialog != nil {
+		dialog.Backgrounded = false
+		m.status = "Stale worktree cleanup reopened"
+		return m, nil
+	}
 	m.staleWorktreeCleanup = &staleWorktreeCleanupDialogState{
 		Chosen:  make(map[string]bool),
 		Loading: true,
 	}
+	m.resetStaleWorktreeCleanupContext()
 	m.status = "Auditing stale worktrees..."
 	return m, m.loadStaleWorktreeCleanupAuditCmd()
 }
 
+func (m Model) staleWorktreeCleanupVisible() bool {
+	return m.staleWorktreeCleanup != nil && !m.staleWorktreeCleanup.Backgrounded
+}
+
+func (m Model) staleWorktreeCleanupFinalizing(projectPath string) bool {
+	dialog := m.staleWorktreeCleanup
+	return dialog != nil && dialog.Finalizing && dialog.QueueIndex < len(dialog.Queue) &&
+		normalizeProjectPath(dialog.Queue[dialog.QueueIndex].ProjectPath) == normalizeProjectPath(projectPath)
+}
+
+func (m Model) resetStaleWorktreeCleanupContext() {
+	dialog := m.staleWorktreeCleanup
+	if dialog.Cancel != nil {
+		dialog.Cancel()
+	}
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	dialog.Context, dialog.Cancel = context.WithCancel(parent)
+}
+
+func (m Model) staleWorktreeCleanupContext() context.Context {
+	if m.staleWorktreeCleanup != nil && m.staleWorktreeCleanup.Context != nil {
+		return m.staleWorktreeCleanup.Context
+	}
+	return context.Background()
+}
+
 func (m Model) loadStaleWorktreeCleanupAuditCmd() tea.Cmd {
+	parent := m.staleWorktreeCleanupContext()
 	svc := m.svc
 	now := m.currentTime()
 	return func() tea.Msg {
 		if svc == nil {
-			return staleWorktreeCleanupAuditMsg{err: fmt.Errorf("service unavailable")}
+			return staleWorktreeCleanupAuditMsg{ctx: parent, err: fmt.Errorf("service unavailable")}
 		}
-		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
 		defer cancel()
 		audit, err := svc.AuditStaleWorktreeCleanup(ctx, now)
 		err = timeoutActionError(err, tuiProjectActionTimeout, "auditing stale worktrees")
-		return staleWorktreeCleanupAuditMsg{audit: audit, err: err}
+		return staleWorktreeCleanupAuditMsg{ctx: parent, audit: audit, err: err}
 	}
 }
 
 func (m Model) applyStaleWorktreeCleanupAudit(msg staleWorktreeCleanupAuditMsg) (tea.Model, tea.Cmd) {
 	dialog := m.staleWorktreeCleanup
-	if dialog == nil || !dialog.Loading {
+	if dialog == nil || msg.ctx != dialog.Context || !dialog.Loading {
 		return m, nil
 	}
 	dialog.Loading = false
@@ -119,35 +165,36 @@ func (m Model) applyStaleWorktreeCleanupAudit(msg staleWorktreeCleanupAuditMsg) 
 }
 
 func (m Model) staleWorktreeCleanupRevalidateCmd(candidate service.StaleWorktreeCleanupCandidate) tea.Cmd {
+	parent := m.staleWorktreeCleanupContext()
 	svc := m.svc
 	now := m.currentTime()
 	return func() tea.Msg {
 		if svc == nil {
-			return staleWorktreeCleanupRevalidateMsg{
+			return staleWorktreeCleanupRevalidateMsg{ctx: parent,
 				candidate: candidate,
 				err:       fmt.Errorf("service unavailable"),
 			}
 		}
 
-		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
 		defer cancel()
 		revalidated, reason, err := svc.RevalidateStaleWorktreeCleanupCandidate(ctx, candidate.ProjectPath, now)
 		if err != nil {
-			return staleWorktreeCleanupRevalidateMsg{
+			return staleWorktreeCleanupRevalidateMsg{ctx: parent,
 				candidate: candidate,
 				err:       timeoutActionError(err, tuiGitActionTimeout, "revalidating the stale worktree"),
 			}
 		}
 		if reason != "" {
-			return staleWorktreeCleanupRevalidateMsg{candidate: candidate, reason: reason}
+			return staleWorktreeCleanupRevalidateMsg{ctx: parent, candidate: candidate, reason: reason}
 		}
-		return staleWorktreeCleanupRevalidateMsg{candidate: revalidated}
+		return staleWorktreeCleanupRevalidateMsg{ctx: parent, candidate: revalidated}
 	}
 }
 
 func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupRevalidateMsg) (tea.Model, tea.Cmd) {
 	dialog := m.staleWorktreeCleanup
-	if dialog == nil || !dialog.Removing || dialog.QueueIndex >= len(dialog.Queue) {
+	if dialog == nil || msg.ctx != dialog.Context || !dialog.Removing || dialog.QueueIndex >= len(dialog.Queue) {
 		return m, nil
 	}
 	expected := dialog.Queue[dialog.QueueIndex]
@@ -155,8 +202,12 @@ func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupReval
 		return m, nil
 	}
 	result := staleWorktreeCleanupResult{Candidate: msg.candidate, Err: msg.err, SkippedReason: msg.reason}
+	if dialog.CancelRequested {
+		result.Err = nil
+		result.SkippedReason = "cleanup canceled before removal"
+	}
 	if result.Err != nil || result.SkippedReason != "" {
-		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: result})
+		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: msg.ctx, result: result})
 	}
 
 	// Re-read the current Model only after the slow Git revalidation returns.
@@ -165,51 +216,71 @@ func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupReval
 	// no longer safe enough to authorize deletion.
 	if reason, _ := m.staleWorktreeCleanupLiveState(msg.candidate.ProjectPath, msg.candidate.RootProjectPath); reason != "" {
 		result.SkippedReason = reason
-		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{result: result})
+		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: msg.ctx, result: result})
 	}
 
+	dialog.Finalizing = true
+	m.setPendingGitSummary(msg.candidate.ProjectPath, "Removing stale worktree...")
+	m.setPendingGitSummary(msg.candidate.RootProjectPath, "Removing stale worktree...")
 	m.status = fmt.Sprintf("Stale worktree cleanup %d/%d; removing %s...", dialog.QueueIndex, len(dialog.Queue), staleWorktreeCleanupCandidateName(msg.candidate))
 	return m, m.staleWorktreeCleanupFinalizeCmd(msg.candidate)
 }
 
 func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCleanupCandidate) tea.Cmd {
+	parent := m.staleWorktreeCleanupContext()
 	svc := m.svc
 	manager := m.codexManager
 	runtimeManager := m.runtimeManager
 	now := m.currentTime()
 	return func() tea.Msg {
 		result := staleWorktreeCleanupResult{Candidate: candidate}
+		if err := parent.Err(); err != nil {
+			result.SkippedReason = "cleanup canceled before removal"
+			return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
+		}
 		if svc == nil {
 			result.Err = fmt.Errorf("service unavailable")
-			return staleWorktreeCleanupRemoveMsg{result: result}
+			return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 		}
 
 		if staleWorktreeManagedRuntimeRunning(runtimeManager, candidate.ProjectPath) {
 			result.SkippedReason = "a managed runtime became active"
-			return staleWorktreeCleanupRemoveMsg{result: result}
+			return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 		}
 		if session, ok := managerSession(manager, candidate.ProjectPath); ok {
 			snapshot := session.Snapshot()
 			if reason := staleWorktreeCleanupSessionBlockReason(snapshot, now); reason != "" {
 				result.SkippedReason = reason
-				return staleWorktreeCleanupRemoveMsg{result: result}
+				return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
+			}
+			if parent.Err() != nil {
+				result.SkippedReason = "cleanup canceled before removal"
+				return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 			}
 			closed, closeErr := closeIdleEmbeddedSessionForWorktree(manager, candidate.ProjectPath, true)
 			result.ClosedSession = closed
 			if closeErr != nil {
 				result.Err = closeErr
-				return staleWorktreeCleanupRemoveMsg{result: result}
+				return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 			}
 		}
 
-		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
 		defer cancel()
 		result.Finalize, result.Err = svc.FinalizeMergedWorktree(ctx, candidate.ProjectPath, service.FinalizeMergedWorktreeOptions{
 			MarkLinkedTodoDone: candidate.LinkedTodoID > 0,
 			RemoveWorktree:     true,
 		})
+		var inUse *service.WorktreeProcessesInUseError
+		if errors.As(result.Err, &inUse) {
+			result.SkippedReason = inUse.Error()
+			if result.Finalize.LinkedTodoMarkedDone || result.Finalize.LinkedTodoAlreadyDone {
+				result.SkippedReason = "linked TODO is done; " + result.SkippedReason
+			}
+			result.Err = nil
+		}
 		result.Err = timeoutActionError(result.Err, tuiGitActionTimeout, "removing the stale worktree")
-		return staleWorktreeCleanupRemoveMsg{result: result}
+		return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 	}
 }
 
@@ -234,13 +305,20 @@ func staleWorktreeManagedRuntimeRunning(manager *projectrun.Manager, projectPath
 
 func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg) (tea.Model, tea.Cmd) {
 	dialog := m.staleWorktreeCleanup
-	if dialog == nil || !dialog.Removing || dialog.QueueIndex >= len(dialog.Queue) {
+	if dialog == nil || msg.ctx != dialog.Context || !dialog.Removing || dialog.QueueIndex >= len(dialog.Queue) {
 		return m, nil
 	}
 	expected := dialog.Queue[dialog.QueueIndex]
 	if normalizeProjectPath(expected.ProjectPath) != normalizeProjectPath(msg.result.Candidate.ProjectPath) {
 		return m, nil
 	}
+	if dialog.Finalizing {
+		m.clearPendingGitSummary(expected.ProjectPath)
+		m.clearPendingGitSummary(expected.RootProjectPath)
+		dialog.Finalizing = false
+	}
+	// Keep partial mutation failures visible; a cancellation before finalization
+	// has a separate skipped result from the revalidation handler.
 	dialog.Results = append(dialog.Results, msg.result)
 	dialog.QueueIndex++
 	if msg.result.ClosedSession {
@@ -260,16 +338,28 @@ func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg
 		m.appendErrorLogEntry("Stale worktree cleanup failed", msg.result.Err, msg.result.Candidate.ProjectPath)
 	}
 
-	if dialog.QueueIndex < len(dialog.Queue) {
+	if !dialog.CancelRequested && dialog.QueueIndex < len(dialog.Queue) {
 		next := dialog.Queue[dialog.QueueIndex]
 		m.status = fmt.Sprintf("Stale worktree cleanup %d/%d; checking %s...", dialog.QueueIndex, len(dialog.Queue), staleWorktreeCleanupCandidateName(next))
 		return m, m.staleWorktreeCleanupRevalidateCmd(next)
 	}
 
+	if dialog.CancelRequested {
+		for _, candidate := range dialog.Queue[dialog.QueueIndex:] {
+			dialog.Results = append(dialog.Results, staleWorktreeCleanupResult{Candidate: candidate, SkippedReason: "cleanup canceled before removal"})
+		}
+		dialog.QueueIndex = len(dialog.Queue)
+	}
+	if dialog.Cancel != nil {
+		dialog.Cancel()
+	}
 	dialog.Removing = false
 	dialog.Finished = true
 	removed, skipped, failed := staleWorktreeCleanupResultCounts(dialog.Results)
 	m.status = staleWorktreeCleanupFinishedStatus(removed, skipped, failed)
+	if dialog.CancelRequested {
+		m.status = fmt.Sprintf("Stale worktree cleanup canceled: %d removed, %d skipped, %d failed; /clean opens the report", removed, skipped, failed)
+	}
 	return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 }
 
@@ -287,12 +377,20 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 	}
 	if dialog.Removing {
 		if msg.String() == "esc" {
-			m.status = "Worktree removal is already in progress; remaining selected items will still be checked"
+			dialog.CancelRequested = true
+			dialog.Backgrounded = true
+			if dialog.Cancel != nil {
+				dialog.Cancel()
+			}
+			m.status = "Stale worktree cleanup stopping; /clean reopens progress and results"
 		}
 		return m, nil
 	}
 	if dialog.Loading {
 		if msg.String() == "esc" {
+			if dialog.Cancel != nil {
+				dialog.Cancel()
+			}
 			m.staleWorktreeCleanup = nil
 			m.status = "Stale worktree audit closed; no worktrees were removed"
 		}
@@ -309,9 +407,13 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 	candidates := dialog.Audit.Candidates
 	switch msg.String() {
 	case "esc":
+		if dialog.Cancel != nil {
+			dialog.Cancel()
+		}
 		m.staleWorktreeCleanup = nil
 		m.status = "Stale worktree cleanup canceled; no worktrees were removed"
 	case "r":
+		m.resetStaleWorktreeCleanupContext()
 		dialog.Loading = true
 		dialog.ErrorMessage = ""
 		dialog.Chosen = make(map[string]bool)
@@ -351,6 +453,7 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			m.status = "Select at least one stale worktree before removing"
 			return m, nil
 		}
+		m.resetStaleWorktreeCleanupContext()
 		dialog.Removing = true
 		dialog.QueueIndex = 0
 		dialog.Results = nil
@@ -505,7 +608,7 @@ func staleWorktreeCleanupResultCounts(results []staleWorktreeCleanupResult) (int
 
 func (m Model) renderStaleWorktreeCleanupOverlay(body string, bodyW, bodyH int) string {
 	dialog := m.staleWorktreeCleanup
-	if dialog == nil {
+	if !m.staleWorktreeCleanupVisible() {
 		return body
 	}
 	panelW := min(max(68, bodyW-12), 108)
@@ -630,7 +733,10 @@ func renderStaleWorktreeCleanupProgress(dialog *staleWorktreeCleanupDialogState,
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
 		"Each checkout is rechecked for merge, cleanliness, assessment, activity, runtime, and engineer state. An idle managed session closes only after those checks pass.")...)
-	lines = append(lines, "", detailMutedStyle.Render("Removal in progress; the dialog stays locked until every selected item has a result."))
+	lines = append(lines, "", renderDialogAction("Esc", "cancel and close", cancelActionKeyStyle, cancelActionTextStyle))
+	if dialog.CancelRequested {
+		lines = append(lines, detailWarningStyle.Render("Stopping cleanup; waiting for the current operation to settle."))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -642,6 +748,9 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 		detailField("Result", fmt.Sprintf("%d removed · %d skipped · %d failed", removed, skipped, failed)),
 		detailMutedStyle.Render("Git branches and AI conversation history were preserved."),
 		"",
+	}
+	if dialog.CancelRequested {
+		lines = append(lines, detailWarningStyle.Render("Cleanup canceled. Completed removals were kept; remaining items were skipped."))
 	}
 	budget := max(2, bodyH-13)
 	used := 0

@@ -474,13 +474,30 @@ func validateRemovalPlanDirectory(plan worktreeRemovalPlan) error {
 	return nil
 }
 
+// WorktreeProcessesInUseError identifies a retryable safety exclusion.
+type WorktreeProcessesInUseError struct {
+	Path      string
+	Processes []string
+}
+
+func (e *WorktreeProcessesInUseError) Error() string {
+	return fmt.Sprintf("processes still use %s: %s. Close these apps/processes, then retry /clean", e.Path, strings.Join(e.Processes, "; "))
+}
+
 // An open cwd can recreate output just as an open writable descriptor can.
 // Do not kill shared services (for example adb); report them for user review.
 func checkRemovalProcesses(ctx context.Context, path string) error {
-	cmd := exec.CommandContext(ctx, "lsof", "-nP", "-Fpn", "+D", path)
+	// Recursive lsof can be expensive for native build trees. Bound every probe
+	// independently of the enclosing Git action and keep cancellation intact.
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, "lsof", "-nP", "-Fpcn", "+D", path)
 	out, err := cmd.Output()
+	if probeCtx.Err() != nil {
+		return fmt.Errorf("cannot finish checking processes using %s; retry cleanup: %w", path, probeCtx.Err())
+	}
 	if len(out) != 0 {
-		return fmt.Errorf("processes still use %s: %s", path, strings.TrimSpace(string(out)))
+		return &WorktreeProcessesInUseError{Path: path, Processes: removalProcessSummaries(string(out))}
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(exit.Stderr) == 0 {
@@ -490,6 +507,44 @@ func checkRemovalProcesses(ctx context.Context, path string) error {
 		return fmt.Errorf("cannot verify processes using %s: %w", path, err)
 	}
 	return nil
+}
+
+// Parse lsof's documented field records, grouping all open files by process so
+// repeated mapped resources do not swamp the cleanup report.
+func removalProcessSummaries(output string) []string {
+	var summaries []string
+	var pid, command string
+	flush := func() {
+		if pid == "" {
+			return
+		}
+		name := command
+		if name == "" {
+			name = "process"
+		}
+		summaries = append(summaries, fmt.Sprintf("%s (PID %s)", name, pid))
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			flush()
+			pid, command = line[1:], ""
+		case 'c':
+			command = line[1:]
+		}
+	}
+	flush()
+	if len(summaries) == 0 {
+		return []string{"unidentified process holding files open"}
+	}
+	const visibleProcesses = 5
+	if len(summaries) > visibleProcesses {
+		summaries = append(summaries[:visibleProcesses], fmt.Sprintf("%d more processes", len(summaries)-visibleProcesses))
+	}
+	return summaries
 }
 
 func (s *Service) recordRetainedRemoval(ctx context.Context, path string, cause error, orphaned bool) error {

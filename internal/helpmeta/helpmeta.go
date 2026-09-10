@@ -270,7 +270,8 @@ func CuratedTopics() []Topic {
 				"Run /clean from the dashboard or an embedded engineer pane. Every currently eligible worktree starts selected.",
 				"Review the branch, parent, idle age, linked TODO, and whether an idle managed engineer session will close; press Space to unselect anything you want to keep.",
 				"Press Enter to start. LCR freshly revalidates each selection and skips anything that became active, dirty, conflicted, unmerged, pinned, recent, waiting, or otherwise unsafe.",
-				"Review the final removed/skipped/failed report. Removed worktrees keep their Git branches and AI conversation history.",
+				"Press Esc to cancel and close immediately. Reopen /clean for progress or the retained report; queued items are skipped and completed removals remain applied.",
+				"Review the final removed/skipped/failed report. Close any apps named in process-use skips before retrying. Removed worktrees keep their Git branches and AI conversation history.",
 			},
 			Related: []string{
 				CommandTopicID(SurfaceMainTUI, "clean"),

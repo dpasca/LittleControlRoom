@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -412,5 +413,110 @@ func TestRenderStaleWorktreeCleanupResultsWrapsLongDetails(t *testing.T) {
 		if width := ansi.StringWidth(line); width > 100 {
 			t.Fatalf("line exceeds dialog width (%d): %q", width, line)
 		}
+	}
+}
+
+func TestStaleWorktreeCleanupEscapeDuringRevalidation(t *testing.T) {
+	first := staleWorktreeCleanupTestCandidate("/tmp/demo--first", "first", time.Now())
+	second := staleWorktreeCleanupTestCandidate("/tmp/demo--second", "second", time.Now())
+	m := Model{staleWorktreeCleanup: &staleWorktreeCleanupDialogState{Removing: true, Queue: []service.StaleWorktreeCleanupCandidate{first, second}}}
+	m.resetStaleWorktreeCleanupContext()
+	ctx := m.staleWorktreeCleanup.Context
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if cmd != nil || m.staleWorktreeCleanupVisible() || ctx.Err() != context.Canceled {
+		t.Fatalf("Escape did not immediately cancel and release modal: %#v", m.staleWorktreeCleanup)
+	}
+	if got := m.renderStaleWorktreeCleanupOverlay("dashboard", 120, 36); got != "dashboard" {
+		t.Fatalf("hidden cleanup still overlays dashboard: %q", got)
+	}
+	updated, _ = m.applyStaleWorktreeCleanupRevalidate(staleWorktreeCleanupRevalidateMsg{ctx: ctx, candidate: first})
+	m = updated.(Model)
+	removed, skipped, failed := staleWorktreeCleanupResultCounts(m.staleWorktreeCleanup.Results)
+	if !m.staleWorktreeCleanup.Finished || removed != 0 || skipped != 2 || failed != 0 {
+		t.Fatalf("late successful validation started removal: %#v", m.staleWorktreeCleanup)
+	}
+	updated, cmd = m.openStaleWorktreeCleanup()
+	m = updated.(Model)
+	if cmd != nil || !m.staleWorktreeCleanupVisible() || !m.staleWorktreeCleanup.Finished {
+		t.Fatal("/clean did not reopen retained report")
+	}
+}
+
+func TestStaleWorktreeCleanupEscapeRetainsInFlightRemovalResult(t *testing.T) {
+	first := staleWorktreeCleanupTestCandidate("/tmp/demo--first", "first", time.Now())
+	second := staleWorktreeCleanupTestCandidate("/tmp/demo--second", "second", time.Now())
+	for _, partialFailure := range []bool{false, true} {
+		t.Run(fmt.Sprint(partialFailure), func(t *testing.T) {
+			m := Model{staleWorktreeCleanup: &staleWorktreeCleanupDialogState{Removing: true, Queue: []service.StaleWorktreeCleanupCandidate{first, second}}}
+			m.resetStaleWorktreeCleanupContext()
+			ctx := m.staleWorktreeCleanup.Context
+			updated, cmd := m.applyStaleWorktreeCleanupRevalidate(staleWorktreeCleanupRevalidateMsg{ctx: ctx, candidate: first})
+			m = updated.(Model)
+			if cmd == nil || !m.staleWorktreeCleanupFinalizing(first.ProjectPath) || m.pendingGitSummary(first.RootProjectPath) == "" {
+				t.Fatal("removal not reserved before command execution")
+			}
+			updated, _ = m.updateStaleWorktreeCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
+			m = updated.(Model)
+			updated, reopenCmd := m.openStaleWorktreeCleanup()
+			m = updated.(Model)
+			if reopenCmd != nil || !m.staleWorktreeCleanup.CancelRequested || !m.staleWorktreeCleanup.Removing {
+				t.Fatal("reopen started a second job while removal was settling")
+			}
+			updated, launchCmd := m.launchEmbeddedForProjectWithOptions(model.ProjectSummary{Path: first.ProjectPath, PresentOnDisk: true}, codexapp.ProviderCodex, embeddedLaunchOptions{})
+			if launchCmd != nil || !strings.Contains(updated.(Model).status, "settling") {
+				t.Fatal("engineer launch allowed into removing checkout")
+			}
+			runtimeResult := m.startProjectRuntimeCmd(first.ProjectPath, "echo unsafe")().(runtimeActionMsg)
+			if runtimeResult.err == nil || !strings.Contains(runtimeResult.err.Error(), "settling") {
+				t.Fatal("runtime launch allowed into removing checkout")
+			}
+			result := staleWorktreeCleanupResult{Candidate: first, Finalize: service.FinalizeMergedWorktreeResult{WorktreeRemoved: !partialFailure, LinkedTodoMarkedDone: true}}
+			if partialFailure {
+				result.Err = fmt.Errorf("partial removal: %w", context.Canceled)
+			}
+			updated, _ = m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: ctx, result: result})
+			m = updated.(Model)
+			if !m.staleWorktreeCleanup.Finished || len(m.staleWorktreeCleanup.Results) != 2 || m.staleWorktreeCleanup.Results[0].Err != result.Err || m.staleWorktreeCleanup.Results[0].Finalize != result.Finalize {
+				t.Fatalf("in-flight result lost: %#v", m.staleWorktreeCleanup)
+			}
+			if m.staleWorktreeCleanup.Results[1].SkippedReason == "" || m.pendingGitSummary(first.ProjectPath) != "" || m.pendingGitSummary(first.RootProjectPath) != "" {
+				t.Fatal("queue not skipped or reservations leaked")
+			}
+		})
+	}
+}
+
+func TestStaleWorktreeCleanupIgnoresClosedAuditReply(t *testing.T) {
+	updated, oldCmd := (Model{}).openStaleWorktreeCleanup()
+	m := updated.(Model)
+	oldCtx := m.staleWorktreeCleanup.Context
+	updated, _ = m.updateStaleWorktreeCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if oldCtx.Err() != context.Canceled {
+		t.Fatal("audit context was not canceled")
+	}
+	updated, newCmd := m.openStaleWorktreeCleanup()
+	m = updated.(Model)
+	updated, _ = m.applyStaleWorktreeCleanupAudit(oldCmd().(staleWorktreeCleanupAuditMsg))
+	m = updated.(Model)
+	if !m.staleWorktreeCleanup.Loading || m.staleWorktreeCleanup.ErrorMessage != "" {
+		t.Fatal("old audit overwrote new dialog")
+	}
+	updated, _ = m.applyStaleWorktreeCleanupAudit(newCmd().(staleWorktreeCleanupAuditMsg))
+	m = updated.(Model)
+	if m.staleWorktreeCleanup.Loading || m.staleWorktreeCleanup.ErrorMessage == "" {
+		t.Fatal("current audit reply was ignored")
+	}
+}
+
+func TestStaleWorktreeCleanupCanceledFinalizeDoesNotStart(t *testing.T) {
+	m := Model{staleWorktreeCleanup: &staleWorktreeCleanupDialogState{}}
+	m.resetStaleWorktreeCleanupContext()
+	cmd := m.staleWorktreeCleanupFinalizeCmd(service.StaleWorktreeCleanupCandidate{ProjectPath: "/tmp/canceled"})
+	m.staleWorktreeCleanup.Cancel()
+	msg := cmd().(staleWorktreeCleanupRemoveMsg)
+	if msg.result.Err != nil || msg.result.SkippedReason != "cleanup canceled before removal" || msg.result.ClosedSession {
+		t.Fatalf("canceled finalization reached dependencies: %#v", msg)
 	}
 }

@@ -400,3 +400,36 @@ func TestPrunableOuterCannotErasePrivateModuleStore(t *testing.T) {
 	}
 	f.assertChildren(t, false)
 }
+
+func TestRemovalProcessSummaries(t *testing.T) {
+	out := "p3418\ncFinder\nftxt\nn/tmp/app/AppIcon.icns\np34786\ncpunderclass\nftxt\nn/tmp/app/punderclass\nftxt\nn/tmp/app/AppIcon.icns\n"
+	got := (&WorktreeProcessesInUseError{Path: "/tmp/app", Processes: removalProcessSummaries(out)}).Error()
+	for _, want := range []string{"Finder (PID 3418)", "punderclass (PID 34786)", "Close these apps/processes, then retry /clean"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "AppIcon") || strings.Contains(got, "\n") || strings.Count(got, "34786") != 1 {
+		t.Fatalf("raw or duplicate file records leaked: %q", got)
+	}
+	many := strings.Repeat("p12\ncworker\n", 8)
+	if got := removalProcessSummaries(many); len(got) != 6 || got[5] != "3 more processes" {
+		t.Fatalf("unbounded process summary: %v", got)
+	}
+}
+
+func TestRemovalProcessProbeCancellation(t *testing.T) {
+	bin := t.TempDir()
+	writeTestFile(t, filepath.Join(bin, "lsof"), "#!/bin/sh\nexec sleep 60\n", 0700)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := checkRemovalProcesses(ctx, t.TempDir())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("probe lost cancellation: %v", err)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatal("stalled probe did not cancel promptly")
+	}
+}

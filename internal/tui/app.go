@@ -1859,7 +1859,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
-		if m.staleWorktreeCleanup != nil {
+		if m.staleWorktreeCleanupVisible() {
 			return m.updateStaleWorktreeCleanupMode(msg)
 		}
 		if m.codexCleanupVisible() {

@@ -1100,6 +1100,10 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 }
 
 func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
+	if m.staleWorktreeCleanupFinalizing(p.Path) {
+		m.status = "Worktree cleanup is still settling; /clean opens progress"
+		return m, nil
+	}
 	provider = provider.Normalized()
 	if !options.restartWarmup {
 		if entry, ok := m.restartWarmupForProject(p.Path); ok {

@@ -162,6 +162,8 @@ Merged, clean worktrees whose latest assessed turn is done become **stale** afte
 24 hours without activity. Worktrees with no recorded session use their own Git
 activity date and can also become stale. They are marked in the project list,
 and `/clean` opens a batch review with every safe candidate selected by default.
+Escape cancels cleanup and closes the dialog immediately; reopen `/clean` to
+review progress or results. Completed removals remain applied.
 
 | TODO list | Embedded session | Diff | Commit preview |
 | --- | --- | --- | --- |

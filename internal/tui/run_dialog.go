@@ -424,6 +424,12 @@ func matchingRunCommandSuggestions(dialog *runCommandDialogState) []projectrun.S
 }
 
 func (m Model) startProjectRuntimeCmd(projectPath, command string) tea.Cmd {
+	if m.staleWorktreeCleanupFinalizing(projectPath) {
+		return func() tea.Msg {
+			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("worktree cleanup is still settling; /clean opens progress")}
+		}
+	}
+
 	return func() tea.Msg {
 		if m.runtimeManager == nil {
 			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("runtime manager unavailable")}
@@ -464,6 +470,12 @@ func (m Model) stopRuntimeProcessCmd(projectPath, processID string) tea.Cmd {
 }
 
 func (m Model) restartProjectRuntimeCmd(projectPath, processID, command, cwd string) tea.Cmd {
+	if m.staleWorktreeCleanupFinalizing(projectPath) {
+		return func() tea.Msg {
+			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("worktree cleanup is still settling; /clean opens progress")}
+		}
+	}
+
 	command = strings.TrimSpace(command)
 	cwd = strings.TrimSpace(cwd)
 	return func() tea.Msg {

@@ -117,7 +117,7 @@ func (m Model) View() string {
 		if m.actionNoticeDialog != nil {
 			return m.renderActionNoticeDialogOverlay(body, width, height)
 		}
-		if m.staleWorktreeCleanup != nil {
+		if m.staleWorktreeCleanupVisible() {
 			return m.renderStaleWorktreeCleanupOverlay(body, width, height)
 		}
 		if m.codexCleanupVisible() {
@@ -357,7 +357,7 @@ func (m Model) View() string {
 	if m.worktreeRestore != nil {
 		body = m.renderWorktreeRestoreOverlay(body, layout.width, layout.height)
 	}
-	if m.staleWorktreeCleanup != nil {
+	if m.staleWorktreeCleanupVisible() {
 		body = m.renderStaleWorktreeCleanupOverlay(body, layout.width, layout.height)
 	}
 	if m.codexCleanupVisible() {
