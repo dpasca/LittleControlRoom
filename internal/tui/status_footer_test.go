@@ -1019,6 +1019,85 @@ func TestDispatchResolveReusesAlreadyRunningBackgroundResolver(t *testing.T) {
 	if !strings.Contains(second.status, "still working") || strings.Contains(second.status, "already running") {
 		t.Fatalf("repeated /resolve status should report useful progress, got %q", second.status)
 	}
+	if second.actionNoticeDialog == nil || second.actionNoticeDialog.ResolverProjectPath != projectPath {
+		t.Fatal("repeated /resolve should open a visible status panel for the running resolver")
+	}
+	second.width, second.height = 100, 35
+	for _, embedded := range []bool{false, true} {
+		if embedded {
+			second.codexVisibleProject = projectPath
+		}
+		view := ansi.Strip(second.View())
+		for _, want := range []string{"Conflict resolver status", "still working", "resolve-thread", "Updates automatically"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("resolver status panel missing %q (embedded=%v):\n%s", want, embedded, view)
+			}
+		}
+	}
+	progress, _ := second.applyMergeConflictResolverUpdateMsg(mergeConflictResolverUpdateMsg{
+		projectPath: projectPath,
+		found:       true,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			ThreadID: "resolve-thread",
+			Started:  true,
+			Busy:     true,
+			Entries: []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Verifying the merged changes",
+			}},
+		},
+	})
+	second = progress.(Model)
+	if view := ansi.Strip(second.View()); !strings.Contains(view, "Verifying the merged") {
+		t.Fatalf("open status panel did not follow resolver progress:\n%s", view)
+	}
+	for _, key := range []tea.KeyType{tea.KeyEsc, tea.KeyEnter} {
+		dismissed, cmd := second.Update(tea.KeyMsg{Type: key})
+		if dismissed.(Model).actionNoticeDialog != nil || cmd != nil {
+			t.Fatal("dismissing resolver status should only close the panel")
+		}
+		if session, ok := manager.ParallelSession(projectPath); !ok || session.Snapshot().Closed {
+			t.Fatal("dismissing status stopped the resolver")
+		}
+	}
+}
+
+func TestResolveStatusPanelTracksLifecycleAndGitlinkOwner(t *testing.T) {
+	project := model.ProjectSummary{Path: "/tmp/resolve-owner", Name: "resolve-owner", PresentOnDisk: true, RepoConflict: true}
+	for _, phase := range []mergeConflictResolverPhase{mergeConflictResolverStarting, mergeConflictResolverRunning, mergeConflictResolverChecking} {
+		m := Model{
+			projects: []model.ProjectSummary{project},
+			mergeConflictResolvers: map[string]mergeConflictResolverState{project.Path: {
+				OwnerProjectPath: project.Path, SessionProjectPath: "/tmp/submodule-merge",
+				Provider: codexapp.ProviderOpenCode, Phase: phase, SessionID: "submodule-resolver",
+			}},
+		}
+		updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+		m = updated.(Model)
+		if cmd != nil || m.actionNoticeDialog == nil || m.mergeConflictResolverProviderDialog != nil {
+			t.Fatalf("phase %v: /resolve should show status without launching", phase)
+		}
+		view := ansi.Strip(m.renderActionNoticeDialogContent(76))
+		for _, want := range []string{"OpenCode", "submodule-resolver", "/tmp/submodule-merge"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("phase %v: status missing %q:\n%s", phase, want, view)
+			}
+		}
+		m.updateMergeConflictResolverSnapshot("/tmp/submodule-merge", codexapp.Snapshot{Provider: codexapp.ProviderOpenCode}, true)
+		if view = ansi.Strip(m.renderActionNoticeDialogContent(76)); !strings.Contains(view, "refreshing Git status") {
+			t.Fatalf("status did not follow completion:\n%s", view)
+		}
+		project.RepoConflict = false
+		m.reconcileMergeConflictResolverProject(project)
+		if view = ansi.Strip(m.renderActionNoticeDialogContent(76)); !strings.Contains(view, "Conflicts resolved") || strings.Contains(view, "Updates automatically") {
+			t.Fatalf("status did not show verified outcome:\n%s", view)
+		}
+		m.clearResolvedMergeConflictResolver(project.Path)
+		if view = ansi.Strip(m.renderActionNoticeDialogContent(76)); !strings.Contains(view, "no longer available") {
+			t.Fatalf("retired status left a stale panel:\n%s", view)
+		}
+	}
 }
 
 func TestBackgroundResolverCompletionAndAttentionAreSurfaced(t *testing.T) {
