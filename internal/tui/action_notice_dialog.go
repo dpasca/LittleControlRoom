@@ -13,6 +13,8 @@ type actionNoticeDialogState struct {
 	Summary  string
 	NextStep string
 	Details  string
+	// ResolverProjectPath binds a status notice to the live UI-owned projection.
+	ResolverProjectPath string
 }
 
 func (m *Model) openActionNoticeDialog(title, subject, summary, nextStep, details string) {
@@ -53,6 +55,9 @@ func (m Model) renderActionNoticeDialogContent(width int) string {
 	dialog := m.actionNoticeDialog
 	if dialog == nil {
 		return ""
+	}
+	if dialog.ResolverProjectPath != "" {
+		return m.renderMergeConflictResolverStatusContent(dialog, width)
 	}
 	title := dialog.Title
 	if title == "" {

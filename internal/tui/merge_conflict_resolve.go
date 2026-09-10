@@ -485,6 +485,11 @@ func (m Model) resolveMergeConflictsForSelection() (tea.Model, tea.Cmd) {
 	if resolver, active := m.mergeConflictResolverForProject(project.Path); active &&
 		(resolver.active() || resolver.Phase == mergeConflictResolverChecking) {
 		m.status = resolver.commandStatus(m.currentTime())
+		m.actionNoticeDialog = &actionNoticeDialogState{
+			Title:               "Conflict resolver status",
+			Subject:             projectNameForPicker(project, project.Path),
+			ResolverProjectPath: normalizeProjectPath(project.Path),
+		}
 		return m, nil
 	}
 	if !project.RepoConflict {
@@ -499,6 +504,31 @@ func (m Model) resolveMergeConflictsForSelection() (tea.Model, tea.Cmd) {
 	m.err = nil
 	m.status = "Choose the conflict resolver agent. Enter launches; Esc cancels."
 	return m, nil
+}
+
+func (m Model) renderMergeConflictResolverStatusContent(dialog *actionNoticeDialogState, width int) string {
+	lines := []string{renderDialogHeader(dialog.Title, dialog.Subject, "", width), ""}
+	state, ok := m.mergeConflictResolverForProject(dialog.ResolverProjectPath)
+	if !ok {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Resolver status is no longer available. Dismiss this panel to see the current project state.")...)
+	} else {
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, state.commandStatus(m.currentTime()))...)
+		lines = append(lines, "", detailField("Agent", state.provider().Label()))
+		if sessionID := strings.TrimSpace(state.SessionID); sessionID != "" {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Session: "+sessionID)...)
+		}
+		if path := normalizeProjectPath(state.SessionProjectPath); path != "" && path != dialog.ResolverProjectPath {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Resolver worktree: "+path)...)
+		}
+		lines = append(lines, "")
+		if state.active() || state.Phase == mergeConflictResolverChecking {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Updates automatically. Dismissing this panel leaves the resolver running in the background.")...)
+		} else if state.inspectableOnProjectOpen() {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Dismiss this panel, then select this project and press Enter to inspect the saved resolver session.")...)
+		}
+	}
+	lines = append(lines, "", renderDialogAction("Enter/Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle))
+	return strings.Join(lines, "\n")
 }
 
 // inspectMergeConflictResolverForProject opens a terminal resolver's exact
