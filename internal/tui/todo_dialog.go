@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"lcroom/internal/codexapp"
@@ -135,6 +136,7 @@ type todoPendingLaunchState struct {
 	TodoText    string
 	Provider    codexapp.Provider
 	StartedAt   time.Time
+	Progress    *atomic.Pointer[service.CreateTodoWorktreeProgress]
 }
 
 const (
@@ -1413,6 +1415,10 @@ func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64,
 		launchCtx = context.Background()
 	}
 	perfOpID := m.beginAILatencyOp("Worktree create", projectPath, provider.Label())
+	progress := &atomic.Pointer[service.CreateTodoWorktreeProgress]{}
+	if pending := m.todoPendingLaunch; pending != nil && pending.ID == launchID {
+		pending.Progress = progress
+	}
 	return func() tea.Msg {
 		startedAt := time.Now()
 		result, err := m.svc.CreateTodoWorktree(launchCtx, service.CreateTodoWorktreeRequest{
@@ -1420,6 +1426,9 @@ func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64,
 			TodoID:         todoID,
 			BranchName:     branchOverride,
 			WorktreeSuffix: suffixOverride,
+			Progress: func(update service.CreateTodoWorktreeProgress) {
+				progress.Store(&update)
+			},
 		})
 		if err != nil {
 			return todoWorktreeLaunchMsg{
@@ -1944,7 +1953,7 @@ func (m Model) todoPendingLaunchProjectSummary() (model.ProjectSummary, bool) {
 		WorktreeOriginTodoID:            pending.TodoID,
 		LatestSessionClassification:     model.ClassificationRunning,
 		LatestSessionClassificationType: model.SessionCategoryInProgress,
-		LatestSessionSummary:            todoPendingLaunchListSummary(*pending, m.currentTime()),
+		LatestSessionSummary:            m.todoPendingLaunchListSummary(*pending, m.currentTime()),
 	}
 	return project, true
 }
@@ -1971,8 +1980,28 @@ func (m Model) todoPendingLaunchForProjectPath(projectPath string) (*todoPending
 	return pending, true
 }
 
-func todoPendingLaunchListSummary(pending todoPendingLaunchState, now time.Time) string {
+func (m Model) todoPendingLaunchWaitReason(pending todoPendingLaunchState) string {
+	if pending.Progress == nil {
+		return ""
+	}
+	progress := pending.Progress.Load()
+	if progress == nil || !progress.WaitingForRepositoryOperations {
+		return ""
+	}
+	if cleanup := m.codexCleanup; cleanup != nil && cleanup.Deleting &&
+		cleanup.QueueIndex >= 0 && cleanup.QueueIndex < len(cleanup.Queue) &&
+		cleanup.progressSnapshot().HoldsRepositoryLock &&
+		normalizeProjectPath(cleanup.Queue[cleanup.QueueIndex].RootProjectPath) == normalizeProjectPath(progress.RootProjectPath) {
+		return "waiting for Codex cleanup"
+	}
+	return "waiting for repository operations"
+}
+
+func (m Model) todoPendingLaunchListSummary(pending todoPendingLaunchState, now time.Time) string {
 	parts := []string{"preparing checkout"}
+	if reason := m.todoPendingLaunchWaitReason(pending); reason != "" {
+		parts[0] = reason
+	}
 	if !pending.StartedAt.IsZero() {
 		if now.IsZero() {
 			now = time.Now()
@@ -1984,8 +2013,14 @@ func todoPendingLaunchListSummary(pending todoPendingLaunchState, now time.Time)
 	return strings.Join(parts, "; ")
 }
 
-func todoPendingLaunchDetailSummary(pending todoPendingLaunchState, now time.Time) string {
+func (m Model) todoPendingLaunchDetailSummary(pending todoPendingLaunchState, now time.Time) string {
 	summary := "Creating the dedicated worktree and preparing submodules if this repo needs them."
+	switch m.todoPendingLaunchWaitReason(pending) {
+	case "waiting for Codex cleanup":
+		summary = "Waiting for Codex cleanup to release this repository. Open /codex-gc to view progress or abort the remaining cleanup. Worktree creation will continue automatically afterward."
+	case "waiting for repository operations":
+		summary = "Waiting for another repository operation to finish before creating the worktree. Creation will continue automatically afterward."
+	}
 	if !pending.StartedAt.IsZero() {
 		if now.IsZero() {
 			now = time.Now()

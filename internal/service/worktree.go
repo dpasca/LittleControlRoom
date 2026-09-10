@@ -25,6 +25,12 @@ type CreateTodoWorktreeRequest struct {
 	BranchName     string
 	WorktreeSuffix string
 	PrepProfile    string
+	Progress       func(CreateTodoWorktreeProgress)
+}
+
+type CreateTodoWorktreeProgress struct {
+	RootProjectPath                string
+	WaitingForRepositoryOperations bool
 }
 
 type CreateTodoWorktreeResult struct {
@@ -115,6 +121,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		worktreeRootPath = projectPath
 	}
 	sourceRunCommand := s.projectRunCommandForWorktreeSource(ctx, projectPath, worktreeRootPath)
+	if req.Progress != nil {
+		req.Progress(CreateTodoWorktreeProgress{RootProjectPath: worktreeRootPath, WaitingForRepositoryOperations: true})
+	}
 	unlock, err := s.worktreeCreateLocks.LockContext(ctx, filepath.Clean(worktreeRootPath))
 	if err != nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("wait for existing worktree creation in %s: %w", worktreeRootPath, err)
@@ -125,6 +134,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, err
 	}
 	defer unlockGitWrite()
+	if req.Progress != nil {
+		req.Progress(CreateTodoWorktreeProgress{RootProjectPath: worktreeRootPath})
+	}
 	if err := s.ensureRootCanCreateTodoWorktree(ctx, worktreeRootPath); err != nil {
 		return CreateTodoWorktreeResult{}, err
 	}

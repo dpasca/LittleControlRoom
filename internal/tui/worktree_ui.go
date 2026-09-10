@@ -1161,7 +1161,9 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 	m.worktreeFamilies = indexWorktreeFamilies(sourceProjects)
 	sorted := append([]model.ProjectSummary(nil), sourceProjects...)
 	if pendingProject, ok := m.todoPendingLaunchProjectSummary(); ok && m.archiveMode != projectArchiveArchived {
-		sorted = append(sorted, pendingProject)
+		if strings.TrimSpace(pendingProject.CategoryID) == m.currentCategoryID() {
+			sorted = append(sorted, pendingProject)
+		}
 	}
 	if m.archiveMode != projectArchiveArchived {
 		sorted = append(sorted, m.agentTaskProjectSummariesForCurrentTab()...)

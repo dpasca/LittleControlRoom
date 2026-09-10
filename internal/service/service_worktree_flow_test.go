@@ -611,12 +611,29 @@ func TestCreateTodoWorktreeWaitsForRootCreationLock(t *testing.T) {
 
 	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 	defer cancel()
+	var progress CreateTodoWorktreeProgress
 	_, err = svc.CreateTodoWorktree(waitCtx, CreateTodoWorktreeRequest{
 		ProjectPath: projectPath,
 		TodoID:      item.ID,
+		Progress:    func(update CreateTodoWorktreeProgress) { progress = update },
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("CreateTodoWorktree() error = %v, want context deadline while waiting for create lock", err)
+	}
+	if !progress.WaitingForRepositoryOperations || progress.RootProjectPath != projectPath {
+		t.Fatalf("progress = %#v, want repository wait for %s", progress, projectPath)
+	}
+	unlock()
+	_, err = svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+		Progress:    func(update CreateTodoWorktreeProgress) { progress = update },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.WaitingForRepositoryOperations {
+		t.Fatal("worktree progress should clear the wait after acquiring repository locks")
 	}
 }
 

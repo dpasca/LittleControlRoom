@@ -192,6 +192,7 @@ type DeleteCodexCleanupWorktreeRequest struct {
 
 type CodexCleanupProgress struct {
 	Phase                  string
+	HoldsRepositoryLock    bool
 	CompletedRoots         int
 	TotalRoots             int
 	ActiveRoots            int
@@ -984,7 +985,12 @@ func (s *Service) DeleteCodexCleanupWorktree(ctx context.Context, request Delete
 	if err != nil {
 		return result, fmt.Errorf("wait for repository worktree operations before Codex cleanup: %w", err)
 	}
-	defer unlockWorktree()
+	progress.HoldsRepositoryLock = true
+	defer func() {
+		unlockWorktree()
+		progress.HoldsRepositoryLock = false
+		publish()
+	}()
 
 	progress.Phase = "Rechecking cleanup safety"
 	publish()

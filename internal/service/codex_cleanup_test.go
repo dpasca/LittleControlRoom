@@ -360,6 +360,9 @@ func TestCodexCleanupProgressVerifiesEachRootBeforeGroupFinishes(t *testing.T) {
 			}
 			progress(codexapp.ThreadDeleteProgress{ThreadID: id, Completed: true})
 			latest := updates[len(updates)-1]
+			if !latest.HoldsRepositoryLock {
+				t.Fatal("cleanup should report its repository lock while deleting")
+			}
 			if latest.CompletedRoots != i+1 || latest.VerifiedReclaimedBytes <= 0 || (i == 0 && latest.VerifiedReclaimedBytes >= g.RecoverableBytes) {
 				t.Fatalf("progress before next root: %#v", latest)
 			}
@@ -375,6 +378,9 @@ func TestCodexCleanupProgressVerifiesEachRootBeforeGroupFinishes(t *testing.T) {
 	}
 	if updates[len(updates)-1].VerifiedReclaimedBytes != result.VerifiedReclaimedBytes {
 		t.Fatal("final verification double counted progress")
+	}
+	if updates[0].HoldsRepositoryLock || updates[len(updates)-1].HoldsRepositoryLock {
+		t.Fatal("cleanup should clear its repository lock before and after deletion")
 	}
 }
 

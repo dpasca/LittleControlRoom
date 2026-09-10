@@ -12,9 +12,6 @@ import (
 
 func (m *Model) openTodoPendingLaunchDialog(pending todoPendingLaunchState, message string, allowAbort bool, selected int) {
 	message = strings.TrimSpace(message)
-	if message == "" {
-		message = todoPendingLaunchDetailSummary(pending, m.currentTime())
-	}
 	if !allowAbort {
 		selected = todoPendingLaunchDialogFocusOK
 	} else if selected != todoPendingLaunchDialogFocusAbort {
@@ -87,7 +84,7 @@ func (m Model) renderTodoPendingLaunchDetailContent(project model.ProjectSummary
 
 func (m Model) renderTodoPendingLaunchDetailForPending(pending todoPendingLaunchState, width int) string {
 	lines := []string{
-		renderWrappedDetailField("Summary", detailWarningStyle, width, todoPendingLaunchDetailSummary(pending, m.currentTime())),
+		renderWrappedDetailField("Summary", detailWarningStyle, width, m.todoPendingLaunchDetailSummary(pending, m.currentTime())),
 		detailField("Repo root", detailValueStyle.Render(m.displayPathWithHomeTilde(pending.ProjectPath))),
 	}
 	if pending.TodoID > 0 {
@@ -136,7 +133,11 @@ func (m Model) renderTodoPendingLaunchDialogContent(width int) string {
 		renderDialogHeader("Preparing Worktree", pending.ProjectName, "", width),
 		"",
 	}
-	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, dialog.Message)...)
+	message := dialog.Message
+	if message == "" || m.todoPendingLaunchWaitReason(*pending) != "" {
+		message = m.todoPendingLaunchDetailSummary(*pending, m.currentTime())
+	}
+	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, message)...)
 	lines = append(lines, "")
 	if pending.TodoID > 0 {
 		lines = append(lines, commitPreviewLine("TODO", "#"+formatInt64(pending.TodoID)))

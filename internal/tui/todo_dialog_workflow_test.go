@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1689,6 +1690,32 @@ func TestProjectListShowsPendingTodoWorktreeLaunch(t *testing.T) {
 		t.Fatalf("footer = %q, should not duplicate pending worktree launch feedback", footer)
 	}
 
+	m.projectCategories = []model.ProjectCategory{{ID: "other", Name: "Other"}}
+	m.archiveMode = projectArchiveCategory
+	m.selectedCategoryID = "other"
+	m.rebuildProjectList(pendingProject.Path)
+	if m.indexByPath(pendingProject.Path) >= 0 {
+		t.Fatal("pending worktree for a Main project should not appear in another category")
+	}
+	m.allProjects[0].CategoryID = "other"
+	m.rebuildProjectList(pendingProject.Path)
+	if m.indexByPath(pendingProject.Path) < 0 {
+		t.Fatal("pending worktree should follow its parent into the selected category")
+	}
+	m.archiveMode = projectArchiveMain
+	m.rebuildProjectList(pendingProject.Path)
+	if m.indexByPath(pendingProject.Path) >= 0 {
+		t.Fatal("pending worktree for a categorized project should not appear in Main")
+	}
+	m.archiveMode = projectArchiveArchived
+	m.rebuildProjectList(pendingProject.Path)
+	if m.indexByPath(pendingProject.Path) >= 0 {
+		t.Fatal("pending worktree should not appear in Archived")
+	}
+	m.allProjects[0].CategoryID = ""
+	m.archiveMode = projectArchiveMain
+	m.rebuildProjectList(pendingProject.Path)
+
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
@@ -1723,6 +1750,48 @@ func TestProjectListShowsPendingTodoWorktreeLaunch(t *testing.T) {
 	rendered = ansi.Strip(m.renderProjectList(180, 8))
 	if strings.Contains(rendered, "TODO #7") {
 		t.Fatalf("project list = %q, should hide canceled pending TODO worktree launch", rendered)
+	}
+}
+
+func TestPendingTodoWorktreeExplainsCleanupWaitAndUpdatesOpenDialog(t *testing.T) {
+	t.Parallel()
+	progress := &atomic.Pointer[service.CreateTodoWorktreeProgress]{}
+	progress.Store(&service.CreateTodoWorktreeProgress{RootProjectPath: "/tmp/demo", WaitingForRepositoryOperations: true})
+	cleanupProgress := &atomic.Pointer[codexCleanupProgressSnapshot]{}
+	cleanupProgress.Store(&codexCleanupProgressSnapshot{CodexCleanupProgress: service.CodexCleanupProgress{HoldsRepositoryLock: true}})
+	m := Model{
+		allProjects: []model.ProjectSummary{{Path: "/tmp/demo", Name: "demo", PresentOnDisk: true}},
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID: 21, ProjectPath: "/tmp/demo", ProjectName: "demo", TodoID: 7,
+			Provider: codexapp.ProviderCodex, Progress: progress,
+		},
+		codexCleanup: &codexCleanupDialogState{
+			Deleting: true, Backgrounded: true, Progress: cleanupProgress,
+			Queue: []service.CodexCleanupWorktreeGroup{{RootProjectPath: "/tmp/demo"}},
+		},
+	}
+	m.rebuildProjectList("")
+	m.openTodoPendingLaunchDialog(*m.todoPendingLaunch, "", true, todoPendingLaunchDialogFocusOK)
+	for _, rendered := range []string{m.renderProjectList(180, 8), m.renderTodoPendingLaunchDialogContent(80)} {
+		if !strings.Contains(ansi.Strip(rendered), "Codex cleanup") {
+			t.Fatalf("missing cleanup blocker: %s", ansi.Strip(rendered))
+		}
+	}
+	if !strings.Contains(m.renderTodoPendingLaunchDialogContent(80), "/codex-gc") {
+		t.Fatal("cleanup wait should explain how to inspect or abort cleanup")
+	}
+	m.codexCleanup.Queue[0].RootProjectPath = "/tmp/other"
+	if got := m.todoPendingLaunchWaitReason(*m.todoPendingLaunch); got != "waiting for repository operations" {
+		t.Fatalf("unrelated cleanup wait = %q", got)
+	}
+	m.codexCleanup.Queue[0].RootProjectPath = "/tmp/demo"
+	cleanupProgress.Store(&codexCleanupProgressSnapshot{})
+	if got := m.todoPendingLaunchWaitReason(*m.todoPendingLaunch); got != "waiting for repository operations" {
+		t.Fatalf("cleanup without the repository lock should not be blamed: %q", got)
+	}
+	progress.Store(&service.CreateTodoWorktreeProgress{RootProjectPath: "/tmp/demo"})
+	if rendered := ansi.Strip(m.renderTodoPendingLaunchDialogContent(80)); strings.Contains(rendered, "Waiting") || !strings.Contains(rendered, "Creating") {
+		t.Fatalf("open dialog did not update after repository wait ended: %s", rendered)
 	}
 }
 

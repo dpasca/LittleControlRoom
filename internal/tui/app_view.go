@@ -1251,7 +1251,10 @@ func (m Model) renderProjectList(width, height int) string {
 			nameLabel = p.Name
 			statusText = "creating"
 			if pendingLaunch != nil {
-				assessmentText = todoPendingLaunchListSummary(*pendingLaunch, now)
+				if m.todoPendingLaunchWaitReason(*pendingLaunch) != "" {
+					statusText = "waiting"
+				}
+				assessmentText = m.todoPendingLaunchListSummary(*pendingLaunch, now)
 			} else {
 				assessmentText = "preparing checkout"
 			}
