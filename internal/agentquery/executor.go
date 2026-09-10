@@ -518,6 +518,7 @@ func (e *Executor) assessmentList(ctx context.Context, raw json.RawMessage) (map
 }
 
 type workListArgs struct {
+	Query             string `json:"query"`
 	IncludeHistorical bool   `json:"include_historical"`
 	Limit             int    `json:"limit"`
 	Cursor            string `json:"cursor"`
@@ -533,7 +534,7 @@ func (e *Executor) agentTaskList(ctx context.Context, raw json.RawMessage) (map[
 	if err := decodeStrict(raw, &args); err != nil {
 		return nil, err
 	}
-	filter := model.AgentTaskFilter{IncludeArchived: args.IncludeHistorical, Limit: maximumPageLimit}
+	filter := model.AgentTaskFilter{Query: strings.TrimSpace(args.Query), IncludeArchived: args.IncludeHistorical, Limit: maximumPageLimit}
 	if !args.IncludeHistorical {
 		filter.Statuses = []model.AgentTaskStatus{model.AgentTaskStatusActive, model.AgentTaskStatusWaiting}
 	}

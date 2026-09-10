@@ -336,6 +336,7 @@ type UpdateAgentTaskInput struct {
 }
 
 type AgentTaskFilter struct {
+	Query           string // Optional literal substring of task identity or saved metadata.
 	Kind            AgentTaskKind
 	Statuses        []AgentTaskStatus
 	IncludeArchived bool

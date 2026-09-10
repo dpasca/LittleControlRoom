@@ -230,9 +230,10 @@ func Capabilities() []Capability {
 			QueryAgentTaskList,
 			DomainWork,
 			ScopePortfolio,
-			"List bounded delegated agent-task state and resource references.",
+			"List or search delegated agent tasks with exact IDs and session/resource references, independently of the TUI selection. Include historical records to find completed tasks.",
 			SensitivityContent,
 			pagedSchema(map[string]any{
+				"query":              stringProperty("Optional case-insensitive literal substring of task ID, title, summary, workspace path, or session ID. Applied before the result limit.", 1),
 				"include_historical": booleanProperty("Include completed and archived tasks. Defaults to false."),
 			}, nil),
 		),

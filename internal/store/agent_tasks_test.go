@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,68 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/model"
 )
+
+func TestAgentTaskSearchFindsHistoricalMetadataBeforeLimit(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "tasks.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := t.Context()
+	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		ID: "agt_side_letter", Title: "Review GamePix Side Letter for Fractal Strike",
+		Status: model.AgentTaskStatusCompleted, Summary: "Review the revised 10% side_letter.",
+		Provider: model.SessionSourceCodex, SessionID: "review-thread", WorkspacePath: "/tasks/agreement-review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE agent_tasks SET last_touched_at = 1 WHERE id = ?`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 101; i++ {
+		if _, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: fmt.Sprintf("agt_new_%d", i), Title: "Unrelated newer task"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, query := range []string{" gamepix ", "agt_side_letter", "10%", "side_letter", "agreement-review", "review-thread"} {
+		t.Run(query, func(t *testing.T) {
+			tasks, err := st.ListAgentTasks(ctx, model.AgentTaskFilter{Query: query, IncludeArchived: true, Limit: 1})
+			if err != nil || len(tasks) != 1 || tasks[0].ID != task.ID {
+				t.Fatalf("historical search %q = %#v, %v", query, tasks, err)
+			}
+		})
+	}
+	for _, query := range []string{"%", "' OR 1=1 --"} {
+		// SQL wildcard syntax and quotes must remain literal user search text.
+		tasks, err := st.ListAgentTasks(ctx, model.AgentTaskFilter{Query: query, IncludeArchived: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if query == "%" && (len(tasks) != 1 || tasks[0].ID != task.ID) {
+			t.Fatalf("percent was treated as a wildcard: %#v", tasks)
+		}
+		if query == "' OR 1=1 --" && len(tasks) != 0 {
+			t.Fatalf("quote query matched records: %#v", tasks)
+		}
+	}
+	tasks, err := st.ListAgentTasks(ctx, model.AgentTaskFilter{Query: "GamePix", Statuses: []model.AgentTaskStatus{model.AgentTaskStatusActive, model.AgentTaskStatusWaiting}})
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("search ignored status filter: %#v, %v", tasks, err)
+	}
+	archived := model.AgentTaskStatusArchived
+	if _, err := st.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, Status: &archived}); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err = st.ListAgentTasks(ctx, model.AgentTaskFilter{Query: "GamePix"})
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("search exposed archived record by default: %#v, %v", tasks, err)
+	}
+	tasks, err = st.ListAgentTasks(ctx, model.AgentTaskFilter{Query: "GamePix", IncludeArchived: true})
+	if err != nil || len(tasks) != 1 || tasks[0].ID != task.ID {
+		t.Fatalf("historical search missed archived record: %#v, %v", tasks, err)
+	}
+}
 
 func TestAgentTaskLifecyclePersistsResources(t *testing.T) {
 	t.Parallel()

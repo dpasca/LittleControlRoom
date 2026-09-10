@@ -89,6 +89,15 @@ func (s *Store) GetAgentTask(ctx context.Context, id string) (model.AgentTask, e
 func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter) ([]model.AgentTask, error) {
 	where := []string{}
 	args := []any{}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		// Literal metadata retrieval chosen by the caller, not intent routing.
+		parts := make([]string, 0, 5)
+		for _, column := range []string{"at.id", "at.title", "at.summary", "at.workspace_path", "at.session_id"} {
+			parts = append(parts, "instr(lower("+column+"), lower(?)) > 0")
+			args = append(args, query)
+		}
+		where = append(where, "("+strings.Join(parts, " OR ")+")")
+	}
 	if kind := model.NormalizeAgentTaskKind(filter.Kind); filter.Kind != "" {
 		where = append(where, "at.kind = ?")
 		args = append(args, string(kind))

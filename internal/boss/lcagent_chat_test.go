@@ -3,6 +3,7 @@ package boss
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/model"
+	"lcroom/internal/store"
 )
 
 type scriptedHelpChatModel struct {
@@ -320,6 +322,89 @@ func TestHelpChatLCAgentPreflightSkipsLegacyRouter(t *testing.T) {
 	}
 	if len(router.reqs) != 0 {
 		t.Fatalf("legacy router requests = %d, want none", len(router.reqs))
+	}
+}
+
+func TestHelpChatResolvesCompletedTaskBeforeContinuingWithoutSelection(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "chat.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	task, err := st.CreateAgentTask(t.Context(), model.CreateAgentTaskInput{
+		ID: "agt_gamepix", Title: "Review GamePix Side Letter for Fractal Strike",
+		Status: model.AgentTaskStatusCompleted, Provider: model.SessionSourceCodex,
+		SessionID: "gamepix-thread", WorkspacePath: "/tasks/gamepix",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := []struct{ name, args string }{
+		{"list_lcr_queries", `{}`},
+		{"list_lcr_queries", `{"domain":"work"}`},
+		{"describe_lcr_query", `{"name":"work.agent_task_list"}`},
+		{"run_lcr_query", `{"query":"work.agent_task_list","arguments":{"query":"GamePix","include_historical":true}}`},
+		{"describe_lcr_query", `{"name":"work.agent_task_get"}`},
+		{"run_lcr_query", `{"query":"work.agent_task_get","arguments":{"task_id":"agt_gamepix"}}`},
+		{"list_control_capabilities", `{}`},
+		{"list_control_capabilities", `{"domain":"agent_task"}`},
+		{"describe_control_capability", `{"name":"agent_task.continue"}`},
+		{"propose_control_operation", `{"capability":"agent_task.continue","arguments":{"task_id":"agt_gamepix","prompt":"Check LinkedIn for the revised GamePix side letter and compare it with the prior agreement.","provider":"codex","session_mode":"resume_or_new","reveal":false}}`},
+	}
+	client := &scriptedHelpChatModel{model: "test-model"}
+	for _, step := range steps {
+		client.completions = append(client.completions, modeladapter.Completion{
+			Model: "test-model",
+			Message: modeladapter.Message{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+				ID: step.name, Type: "function",
+				Function: modeladapter.FunctionCall{Name: step.name, Arguments: json.RawMessage(step.args)},
+			}}},
+		})
+	}
+	assistant := &Assistant{
+		agentModel: client, agentProvider: "openrouter", agentQueryReader: st,
+		query: newQueryExecutor(st), model: "test-model", backend: config.AIBackendOpenRouter,
+	}
+	response, err := assistant.Reply(t.Context(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{
+			{Role: "user", Content: "Please tell the engineer on the previous GamePix task to check LinkedIn for the fixed side letter."},
+			{Role: "assistant", Content: "I can continue Review GamePix Side Letter for Fractal Strike with that request."},
+			{Role: "user", Content: "let's do that"},
+		},
+		Snapshot: StateSnapshot{OpenAgentTasks: []AgentTaskBrief{{ID: "agt_unrelated", Title: "Download videos"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ControlInvocation == nil || response.ControlInvocation.Capability != control.CapabilityAgentTaskContinue {
+		t.Fatalf("expected continuation confirmation, got %#v", response)
+	}
+	var input control.AgentTaskContinueInput
+	if err := json.Unmarshal(response.ControlInvocation.Args, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.TaskID != task.ID || !strings.Contains(input.Prompt, "LinkedIn") {
+		t.Fatalf("handoff lost target or request: %#v", input)
+	}
+	if len(client.requests) != len(steps) {
+		t.Fatalf("model rounds = %d, want %d", len(client.requests), len(steps))
+	}
+	for i, definitions := range client.tools {
+		if !helpChatToolNames(definitions)[steps[i].name] {
+			t.Fatalf("round %d lost tool access before handoff", i+1)
+		}
+	}
+	for _, index := range []int{4, 6} {
+		messages := client.requests[index]
+		evidence := messages[len(messages)-1]
+		if evidence.Role != "tool" || !strings.Contains(evidence.Content, task.ID) || !strings.Contains(evidence.Content, "gamepix-thread") {
+			t.Fatalf("lookup did not return actionable identity: %#v", evidence)
+		}
+	}
+	persisted, err := st.GetAgentTask(t.Context(), task.ID)
+	if err != nil || persisted.Status != model.AgentTaskStatusCompleted {
+		t.Fatalf("proposal must await confirmation without mutating task: %#v, %v", persisted, err)
 	}
 }
 

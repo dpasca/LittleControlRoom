@@ -20,7 +20,9 @@ import (
 )
 
 const (
-	helpChatAgentMaxTurns         = 6
+	// Historical lookup plus progressive query/control discovery can require
+	// more than six rounds before the terminal confirmation proposal.
+	helpChatAgentMaxTurns         = 12
 	helpChatAgentProgressInterval = 2 * time.Second
 )
 
@@ -123,10 +125,13 @@ func helpChatAgentSystemPrompt(req AssistantRequest) string {
 		bossAssistantSystemPromptForRequest(req),
 		"",
 		"You are running inside the lean Help Chat LCAgent profile. Use only the exact tools supplied to this turn; coding, shell, filesystem-write, browser, and generic MCP tools are intentionally unavailable.",
-		"Answer directly without tools for greetings, acknowledgements, ordinary conversation, and questions already established in this same Chat session.",
+		"Answer directly without tools for greetings, pure acknowledgements, ordinary conversation, and questions already established in this same Chat session. Agreement to a previously offered action (such as 'let's do that') requires resolving its target and preparing the control proposal.",
 		"For Little Control Room commands, keybindings, launch flags, recording, or instructions for using a workflow, call lookup_lcr_help before answering. Its generated help corpus is authoritative; do not say a feature is unavailable merely because you do not remember it.",
 		"Distinguish app-usage help from questions about what is happening now. A question about the status, history, health, or meaning of a visible project, worktree, task, session, process, or dashboard item needs state inspection, not lookup_lcr_help.",
 		"For persisted LCR state, use the progressive query catalog: list_lcr_queries without a domain, list it again with one exact domain, describe_lcr_query, then run_lcr_query. Do not invent query names or argument fields.",
+		"The current TUI selection and compact app-state brief are partial context, not the scope of your queries. Resolve a named or previously discussed task yourself even when an unrelated project is selected or the task is absent from the visible dashboard. Never require selecting a row just to obtain a task ID or project path.",
+		"For a past or completed delegated task, discover the work query domain and use work.agent_task_list with include_historical=true and its optional query filter, then work.agent_task_get for the exact candidate ID. Use returned IDs and session/resource references for agent_task.continue. If the task is instead a scratch-task project or project engineer session, resolve it with project queries or search_lcr_context (include_historical=true), inspect its sessions, and use engineer.send_prompt for the same-task follow-up; a transcript title is not a delegated task ID.",
+		"If several candidates remain, ask the user to disambiguate by the returned titles and distinguishing details in Chat. If lookup fails, explain the concrete lookup failure or missing record. Do not invent a Tasks view or navigation steps; any necessary UI instructions must be verified with lookup_lcr_help.",
 		"For live TUI state, processes, Chat recall, linked transcript context, or fresh repository inspection, use the matching Help Chat inspection tool.",
 		"For skills, plugins, and MCP setup, discover the integrations query and control domains. Inspect integrations.list for the chosen provider and user/project scope; use integrations.catalog for available sources, then propose integrations.manage with the inspected revision. Configuration saved on disk is not proof that the running engineer can use it. Never request or submit literal credentials; use environment-variable references and native authentication.",
 		"For an app mutation or engineer handoff, use list_control_capabilities, describe_control_capability, then propose_control_operation. A proposal is terminal and is not execution: the host will show the existing confirmation UI, and you must never claim it already ran.",
