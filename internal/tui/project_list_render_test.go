@@ -2439,3 +2439,66 @@ func TestRenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPatte
 		t.Fatalf("renderProjectList() should always show the privacy-matched linked lane under its visible root, got %q", lines[3])
 	}
 }
+
+func TestAssessmentRefreshFlashesOnlyChangedDisplay(t *testing.T) {
+	for _, fullReload := range []bool{false, true} {
+		for _, change := range []string{"none", "summary", "category"} {
+			t.Run(fmt.Sprintf("full=%v/change=%s", fullReload, change), func(t *testing.T) {
+				now := time.Now()
+				previous := model.ProjectSummary{
+					Path: "/tmp/demo", Name: "demo", PresentOnDisk: true, InScope: true,
+					LatestSessionID: "codex:current", LatestSessionFormat: "modern",
+					LatestSessionClassification:     model.ClassificationCompleted,
+					LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+					LatestSessionSummary:            "Merge the completed work.",
+					LatestTurnStateKnown:            true, LatestTurnCompleted: true,
+				}
+				m := Model{
+					nowFn:       func() time.Time { return now },
+					allProjects: []model.ProjectSummary{previous}, projects: []model.ProjectSummary{previous},
+					sortMode: sortByAttention, visibility: visibilityAllFolders,
+				}
+				refresh := func(summary model.ProjectSummary) {
+					var msg tea.Msg = projectSummaryMsg{path: summary.Path, summary: summary, found: true}
+					if fullReload {
+						msg = projectsMsg{projects: []model.ProjectSummary{summary}}
+					}
+					updated, _ := m.Update(msg)
+					m = updated.(Model)
+				}
+				pending := previous
+				pending.LatestSessionClassification = model.ClassificationRunning
+				refresh(pending)
+				if m.assessmentFlashActive(previous.Path) {
+					t.Fatal("starting a refresh must not flash")
+				}
+				completed := previous
+				completed.LatestSessionClassificationUpdatedAt = now
+				switch change {
+				case "summary":
+					completed.LatestSessionSummary = "Merged the completed work."
+				case "category":
+					completed.LatestSessionClassificationType = model.SessionCategoryCompleted
+				}
+				// The completion receipt alone must not flash stale displayed data.
+				updated, _ := m.Update(busMsg(events.Event{
+					Type: events.ClassificationUpdated, At: now, ProjectPath: previous.Path,
+					Payload: map[string]string{"status": "completed"},
+				}))
+				m = updated.(Model)
+				if m.assessmentFlashActive(previous.Path) {
+					t.Fatal("completion event must wait for refreshed display data")
+				}
+				refresh(completed)
+				if got := m.assessmentFlashActive(previous.Path); got != (change != "none") {
+					t.Fatalf("flash = %v for %s change", got, change)
+				}
+				now = now.Add(assessmentFlashDuration + time.Second)
+				refresh(completed)
+				if m.assessmentFlashActive(previous.Path) {
+					t.Fatal("duplicate reload must not restart the flash")
+				}
+			})
+		}
+	}
+}

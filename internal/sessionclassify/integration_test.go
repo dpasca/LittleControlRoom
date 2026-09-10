@@ -2,6 +2,7 @@ package sessionclassify
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -31,39 +32,70 @@ func TestWorktreeIntegrationTracksTargetPublication(t *testing.T) {
 	git("remote", "add", "origin", remote)
 	git("push", "-u", "origin", "master")
 	base := git("rev-parse", "HEAD")
-	git("branch", "feature")
-	git("commit", "--allow-empty", "-m", "integrated work")
+	git("checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "feature.txt")
+	git("commit", "-m", "feature")
+	feature := git("rev-parse", "HEAD")
+	git("checkout", "master")
+	git("merge", "--ff-only", "feature")
 	// Current branch is deliberately not the merge target, and has no upstream.
 	git("checkout", "feature")
 	snapshot := func() GitStatusSnapshot {
 		return NewGitStatusSnapshot(false, model.RepoSyncNoUpstream, 0, 0).
 			WithWorktree(ctx, repo, model.WorktreeKindLinked, "master", model.WorktreeMergeStatusMerged)
 	}
-	unpushed := snapshot()
-	if got := unpushed.Integration; got.TargetRemoteStatus != model.RepoSyncAhead || got.TargetAheadCount != 1 {
-		t.Fatalf("unpublished target = %+v", got)
+	check := func(want WorktreePublicationStatus) string {
+		t.Helper()
+		got := snapshot()
+		if got.Integration.PublicationStatus != want {
+			t.Fatalf("publication = %+v, want %s", got.Integration, want)
+		}
+		return SnapshotHashForSnapshot(SessionSnapshot{GitStatus: got})
+	}
+	unpushed := check(WorktreePublicationPending)
+	git("push", "origin", "master")
+	pushed := check(WorktreePublicationPublished)
+	if unpushed == pushed {
+		t.Fatal("publishing this work must invalidate its assessment")
+	}
+	git("checkout", "master")
+	git("commit", "--allow-empty", "-m", "unrelated work")
+	git("checkout", "feature")
+	if check(WorktreePublicationPublished) != pushed {
+		t.Fatal("unrelated target commits must not invalidate published work")
 	}
 	git("push", "origin", "master")
-	pushed := snapshot()
-	if got := pushed.Integration; got.TargetRemoteStatus != model.RepoSyncSynced || got.TargetAheadCount != 0 {
-		t.Fatalf("published target = %+v", got)
+	if check(WorktreePublicationPublished) != pushed {
+		t.Fatal("unrelated target pushes must not invalidate published work")
 	}
-	if SnapshotHashForSnapshot(SessionSnapshot{GitStatus: unpushed}) == SnapshotHashForSnapshot(SessionSnapshot{GitStatus: pushed}) {
-		t.Fatal("target push must invalidate the assessment without a source-branch change")
-	}
-	git("update-ref", "refs/heads/master", base)
-	if got := snapshot().Integration; got.TargetRemoteStatus != model.RepoSyncBehind || got.TargetBehindCount != 1 {
-		t.Fatalf("target behind its upstream = %+v", got)
+	git("update-ref", "refs/heads/master", feature)
+	if check(WorktreePublicationPublished) != pushed {
+		t.Fatal("a target behind upstream must not invalidate published work")
 	}
 	git("checkout", "master")
 	git("commit", "--allow-empty", "-m", "different local work")
-	if got := snapshot().Integration; got.TargetRemoteStatus != model.RepoSyncDiverged || got.TargetAheadCount != 1 || got.TargetBehindCount != 1 {
-		t.Fatalf("diverged target = %+v", got)
+	git("checkout", "feature")
+	if check(WorktreePublicationPublished) != pushed {
+		t.Fatal("a diverged target must not invalidate work already upstream")
+	}
+	git("update-ref", "refs/remotes/origin/master", base)
+	if check(WorktreePublicationPending) != unpushed {
+		t.Fatal("removing work from upstream must invalidate publication")
+	}
+	// Publication follows equivalent patches too, matching merge detection.
+	git("checkout", "-b", "rebased", base)
+	git("commit", "--allow-empty", "-m", "new base")
+	git("cherry-pick", "feature")
+	git("update-ref", "refs/remotes/origin/master", "HEAD")
+	git("checkout", "feature")
+	if check(WorktreePublicationPublished) != pushed {
+		t.Fatal("equivalent published patches must resolve publication")
 	}
 	git("branch", "--unset-upstream", "master")
-	if got := snapshot().Integration; got.TargetRemoteStatus != "unknown" {
-		t.Fatalf("missing upstream must not imply publication: %+v", got)
-	}
+	check(WorktreePublicationUnknown)
 }
 
 func TestWorktreeIntegrationUnknownAndMergeHash(t *testing.T) {
@@ -75,7 +107,7 @@ func TestWorktreeIntegrationUnknownAndMergeHash(t *testing.T) {
 	}
 	unmerged := base.WithWorktree(ctx, t.TempDir(), model.WorktreeKindLinked, "master", model.WorktreeMergeStatusNotMerged)
 	merged := base.WithWorktree(ctx, t.TempDir(), model.WorktreeKindLinked, "master", model.WorktreeMergeStatusMerged)
-	if merged.Integration.TargetRemoteStatus != "unknown" {
+	if merged.Integration.PublicationStatus != WorktreePublicationUnknown {
 		t.Fatal("failed Git reads must leave publication unknown")
 	}
 	if SnapshotHashForSnapshot(SessionSnapshot{GitStatus: unmerged}) == SnapshotHashForSnapshot(SessionSnapshot{GitStatus: merged}) {

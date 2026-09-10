@@ -2000,8 +2000,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
-		m.allProjects = m.preserveRefreshingAssessmentDisplays(msg.projects)
-		m.archivedProjects = m.preserveRefreshingAssessmentDisplays(msg.archivedProjects)
+		m.allProjects = m.prepareProjectAssessmentDisplays(msg.projects)
+		m.archivedProjects = m.prepareProjectAssessmentDisplays(msg.archivedProjects)
 		m.projectCategories = append([]model.ProjectCategory(nil), msg.categories...)
 		m.ensureSelectedCategoryTab()
 		if msg.agentTaskErr == nil {
@@ -2188,7 +2188,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.found {
 			m.loading = false
-			m.upsertProjectSummary(m.preserveRefreshingAssessmentDisplay(msg.summary))
+			m.upsertProjectSummary(m.prepareProjectAssessmentDisplay(msg.summary))
 			m.reconcileMergeConflictResolverProject(msg.summary)
 			m.syncWorktreeMergeConfirmFromProjects(msg.path)
 		} else {
@@ -3147,9 +3147,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.loadExternalControlProposalCmd(operationID))
 			return m, batchCmds(cmds...)
 		case events.ClassificationUpdated:
-			if msg.Payload["status"] == "completed" {
-				m.markAssessmentFlash(msg.ProjectPath, msg.At)
-			} else if msg.Payload["status"] == "failed" {
+			if msg.Payload["status"] == "failed" {
 				m.appendBackgroundErrorLogEntry(classificationUpdateStatus(msg.Payload), classificationUpdateError(msg.Payload), msg.ProjectPath)
 			}
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))

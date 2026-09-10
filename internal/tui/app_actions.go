@@ -267,23 +267,31 @@ func (m *Model) applyProjectArchiveStateLocally(targets []model.ProjectSummary, 
 	}
 }
 
-func (m Model) preserveRefreshingAssessmentDisplays(summaries []model.ProjectSummary) []model.ProjectSummary {
+func (m *Model) prepareProjectAssessmentDisplays(summaries []model.ProjectSummary) []model.ProjectSummary {
 	if len(summaries) == 0 {
 		return summaries
 	}
 	out := make([]model.ProjectSummary, len(summaries))
 	for i, summary := range summaries {
-		out[i] = m.preserveRefreshingAssessmentDisplay(summary)
+		out[i] = m.prepareProjectAssessmentDisplay(summary)
 	}
 	return out
 }
 
-func (m Model) preserveRefreshingAssessmentDisplay(summary model.ProjectSummary) model.ProjectSummary {
+func (m *Model) prepareProjectAssessmentDisplay(summary model.ProjectSummary) model.ProjectSummary {
 	previous, ok := m.projectSummaryByPathAllProjects(summary.Path)
 	if !ok {
 		return summary
 	}
-	return preserveRefreshingAssessmentDisplay(summary, previous)
+	summary = preserveRefreshingAssessmentDisplay(summary, previous)
+	if summary.LatestSessionClassification == model.ClassificationCompleted {
+		now, threshold := m.currentTime(), m.assessmentStallThreshold()
+		if projectAssessmentTextAt(summary, now, threshold) != projectAssessmentTextAt(previous, now, threshold) ||
+			projectListStatusAt(summary, now, threshold) != projectListStatusAt(previous, now, threshold) {
+			m.markAssessmentFlash(summary.Path, now)
+		}
+	}
+	return summary
 }
 
 func preserveRefreshingAssessmentDisplay(summary, previous model.ProjectSummary) model.ProjectSummary {

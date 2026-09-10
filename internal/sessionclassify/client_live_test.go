@@ -18,16 +18,15 @@ func TestCodexClassifierPostMergeFollowupsLive(t *testing.T) {
 	client := NewCodexClientWithUsageTracker(nil)
 	for _, tc := range []struct {
 		name, handoff string
-		remote        model.RepoSyncStatus
-		ahead         int
+		publication   WorktreePublicationStatus
 		want          model.SessionCategory
 	}{
-		{"merge_done", "Implementation and tests are complete. Please commit and merge the work into master.", "unknown", 0, model.SessionCategoryCompleted},
-		{"push_done", "Implementation and tests are complete. Please commit, merge into master, and push master.", model.RepoSyncSynced, 0, model.SessionCategoryCompleted},
-		{"push_pending", "Implementation and tests are complete. Please commit, merge into master, and push master.", model.RepoSyncAhead, 1, model.SessionCategoryNeedsFollowUp},
-		{"push_unknown", "Implementation and tests are complete. Please commit, merge into master, and push master.", "unknown", 0, model.SessionCategoryNeedsFollowUp},
-		{"restart_pending", "Fix validated. Commit and merge the changes, then rebuild and restart LCR to activate the fix.", model.RepoSyncSynced, 0, model.SessionCategoryNeedsFollowUp},
-		{"verification_pending", "Changes and automated tests are complete. Merge and push, then launch the game and manually verify the new controls.", model.RepoSyncSynced, 0, model.SessionCategoryNeedsFollowUp},
+		{"merge_done", "Implementation and tests are complete. Please commit and merge the work into master.", WorktreePublicationUnknown, model.SessionCategoryCompleted},
+		{"push_done", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationPublished, model.SessionCategoryCompleted},
+		{"push_pending", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationPending, model.SessionCategoryNeedsFollowUp},
+		{"push_unknown", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationUnknown, model.SessionCategoryNeedsFollowUp},
+		{"restart_pending", "Fix validated. Commit and merge the changes, then rebuild and restart LCR to activate the fix.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
+		{"verification_pending", "Changes and automated tests are complete. Merge and push, then launch the game and manually verify the new controls.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -37,7 +36,7 @@ func TestCodexClassifierPostMergeFollowupsLive(t *testing.T) {
 				LatestTurnStateKnown: true, LatestTurnCompleted: true,
 				GitStatus: GitStatusSnapshot{RemoteStatus: "no_upstream", Integration: &WorktreeIntegrationSnapshot{
 					TargetBranch: "master", MergeStatus: model.WorktreeMergeStatusMerged,
-					TargetRemoteStatus: tc.remote, TargetAheadCount: tc.ahead,
+					PublicationStatus: tc.publication,
 				}},
 				Transcript: []TranscriptItem{
 					{Role: "user", Text: "Implement the requested fix and run the automated tests."},

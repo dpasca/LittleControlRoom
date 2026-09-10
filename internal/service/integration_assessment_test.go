@@ -75,7 +75,7 @@ func TestMergeAndParentPushRequeueUnchangedEngineerAssessment(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	completeNext := func(wantMerge model.WorktreeMergeStatus, wantRemote model.RepoSyncStatus) string {
+	completeNext := func(wantMerge model.WorktreeMergeStatus, wantRemote sessionclassify.WorktreePublicationStatus) string {
 		t.Helper()
 		claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
 		if err != nil {
@@ -86,7 +86,7 @@ func TestMergeAndParentPushRequeueUnchangedEngineerAssessment(t *testing.T) {
 			t.Fatal(err)
 		}
 		gitStatus := sessionclassify.GitStatusForSummary(ctx, detail.Summary)
-		if got := gitStatus.Integration; got == nil || got.MergeStatus != wantMerge || got.TargetRemoteStatus != wantRemote {
+		if got := gitStatus.Integration; got == nil || got.MergeStatus != wantMerge || got.PublicationStatus != wantRemote {
 			t.Fatalf("integration evidence = %+v, want %s / %s", got, wantMerge, wantRemote)
 		}
 		hash, err := sessionclassify.ComputeSnapshotHash(ctx, worktree, detail.Sessions[0], gitStatus)
@@ -107,7 +107,7 @@ func TestMergeAndParentPushRequeueUnchangedEngineerAssessment(t *testing.T) {
 	if _, err := svc.MergeWorktreeBack(ctx, worktree); err != nil {
 		t.Fatal(err)
 	}
-	merged := completeNext(model.WorktreeMergeStatusMerged, model.RepoSyncAhead)
+	merged := completeNext(model.WorktreeMergeStatusMerged, sessionclassify.WorktreePublicationPending)
 	if merged == before {
 		t.Fatal("merge did not invalidate the old follow-up")
 	}
@@ -116,7 +116,7 @@ func TestMergeAndParentPushRequeueUnchangedEngineerAssessment(t *testing.T) {
 	if err := svc.RefreshProjectStatus(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	pushed := completeNext(model.WorktreeMergeStatusMerged, model.RepoSyncSynced)
+	pushed := completeNext(model.WorktreeMergeStatusMerged, sessionclassify.WorktreePublicationPublished)
 	if pushed == merged {
 		t.Fatal("parent push did not invalidate the old follow-up")
 	}
@@ -131,6 +131,25 @@ func TestMergeAndParentPushRequeueUnchangedEngineerAssessment(t *testing.T) {
 	}
 	if _, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("periodic scan must agree with the targeted refresh hash: %v", err)
+	}
+	// Merging and pushing a sibling must leave the old completed assessment alone.
+	sibling := filepath.Join(root, "sibling")
+	runGit(t, repo, "git", "worktree", "add", "-b", "sibling", sibling)
+	runGit(t, sibling, "git", "commit", "--allow-empty", "-m", "unrelated sibling")
+	runGit(t, repo, "git", "merge", "--ff-only", "sibling")
+	for _, push := range []bool{false, true} {
+		if push {
+			runGit(t, repo, "git", "push", "origin", target)
+		}
+		if err := svc.RefreshProjectStatus(ctx, repo); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ScanOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("unrelated sibling merge/push must not queue a model call (pushed=%v): %v", push, err)
+		}
 	}
 	// A later source change must invalidate the merged state on periodic scans,
 	// even with the same completed engineer transcript and clean checkout.

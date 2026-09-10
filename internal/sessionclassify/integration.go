@@ -2,7 +2,7 @@ package sessionclassify
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"os/exec"
 	"strings"
 	"time"
@@ -10,15 +10,21 @@ import (
 	"lcroom/internal/model"
 )
 
+type WorktreePublicationStatus string
+
+const (
+	WorktreePublicationUnknown   WorktreePublicationStatus = "unknown"
+	WorktreePublicationPending   WorktreePublicationStatus = "unpublished"
+	WorktreePublicationPublished WorktreePublicationStatus = "published"
+)
+
 // WorktreeIntegrationSnapshot is current repository evidence, independent of
 // what the engineer knew at the end of its turn. Remote state uses local
 // tracking refs; collecting an assessment never fetches or changes a repository.
 type WorktreeIntegrationSnapshot struct {
-	TargetBranch       string                    `json:"target_branch"`
-	MergeStatus        model.WorktreeMergeStatus `json:"merge_status"`
-	TargetRemoteStatus model.RepoSyncStatus      `json:"target_remote_status"`
-	TargetAheadCount   int                       `json:"target_ahead_count,omitempty"`
-	TargetBehindCount  int                       `json:"target_behind_count,omitempty"`
+	TargetBranch      string                    `json:"target_branch"`
+	MergeStatus       model.WorktreeMergeStatus `json:"merge_status"`
+	PublicationStatus WorktreePublicationStatus `json:"publication_status"`
 }
 
 // WithWorktree enriches a snapshot with integration and target publication.
@@ -29,38 +35,48 @@ func (s GitStatusSnapshot) WithWorktree(ctx context.Context, path string, kind m
 		return s
 	}
 	s.Integration = &WorktreeIntegrationSnapshot{
-		TargetBranch:       target,
-		MergeStatus:        status,
-		TargetRemoteStatus: "unknown",
+		TargetBranch:      target,
+		MergeStatus:       status,
+		PublicationStatus: WorktreePublicationUnknown,
 	}
 	if status != model.WorktreeMergeStatusMerged || strings.TrimSpace(target) == "" {
 		return s
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	// Use the recorded target ref even when the primary checkout is on another
-	// branch. A linked branch's own upstream does not describe merge publication.
-	ref := "refs/heads/" + target
-	out, err := exec.CommandContext(ctx, "git", "-C", path, "rev-list", "--left-right", "--count", "--end-of-options", ref+"..."+target+"@{upstream}").Output()
+	// Check this checkout's work against the target's upstream. The target's
+	// ahead/behind counts include unrelated work and must not invalidate this
+	// assessment whenever another worktree is merged or pushed.
+	upstream := target + "@{upstream}"
+	err := exec.CommandContext(ctx, "git", "-C", path, "merge-base", "--is-ancestor", "HEAD", upstream).Run()
+	if err == nil {
+		s.Integration.PublicationStatus = WorktreePublicationPublished
+		return s
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		return s
+	}
+	// Match the merge detector's support for rebased/cherry-picked work.
+	// A failed read leaves publication unknown, never implicitly published.
+	out, err := exec.CommandContext(ctx, "git", "-C", path, "cherry", upstream, "HEAD").Output()
 	if err != nil {
 		return s
 	}
-	var ahead, behind int
-	if n, err := fmt.Sscanf(string(out), "%d %d", &ahead, &behind); err != nil || n != 2 || ahead < 0 || behind < 0 {
-		return s
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 || (fields[0] != "+" && fields[0] != "-") {
+			return s
+		}
+		if fields[0] == "+" {
+			s.Integration.PublicationStatus = WorktreePublicationPending
+			return s
+		}
 	}
-	s.Integration.TargetAheadCount = ahead
-	s.Integration.TargetBehindCount = behind
-	switch {
-	case ahead > 0 && behind > 0:
-		s.Integration.TargetRemoteStatus = model.RepoSyncDiverged
-	case ahead > 0:
-		s.Integration.TargetRemoteStatus = model.RepoSyncAhead
-	case behind > 0:
-		s.Integration.TargetRemoteStatus = model.RepoSyncBehind
-	default:
-		s.Integration.TargetRemoteStatus = model.RepoSyncSynced
-	}
+	s.Integration.PublicationStatus = WorktreePublicationPublished
 	return s
 }
 
