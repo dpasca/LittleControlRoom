@@ -419,6 +419,12 @@ func (c *Client) CompleteVision(ctx context.Context, prompt string, image ImageI
 }
 
 func (c *Client) CompleteVisionWithOptions(ctx context.Context, prompt string, image ImageInput, opts CompletionOptions) (Completion, error) {
+	return c.CompleteImagesWithOptions(ctx, prompt, []ImageInput{image}, opts)
+}
+
+// CompleteImagesWithOptions sends an independent vision request with no tools or
+// conversation history. Images remain separate so comparisons retain detail.
+func (c *Client) CompleteImagesWithOptions(ctx context.Context, prompt string, images []ImageInput, opts CompletionOptions) (Completion, error) {
 	if c == nil {
 		return Completion{}, fmt.Errorf("provider client is not configured")
 	}
@@ -429,18 +435,24 @@ func (c *Client) CompleteVisionWithOptions(ctx context.Context, prompt string, i
 	if prompt == "" {
 		return Completion{}, fmt.Errorf("vision prompt is required")
 	}
-	if len(image.Data) == 0 {
+	if len(images) == 0 {
 		return Completion{}, fmt.Errorf("vision image data is required")
 	}
-	mimeType := strings.TrimSpace(image.MIMEType)
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
+	dataURLs := make([]string, 0, len(images))
+	for _, image := range images {
+		if len(image.Data) == 0 {
+			return Completion{}, fmt.Errorf("vision image data is required")
+		}
+		mimeType := strings.TrimSpace(image.MIMEType)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		dataURLs = append(dataURLs, "data:"+mimeType+";base64,"+base64.StdEncoding.EncodeToString(image.Data))
 	}
-	dataURL := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
 	if c.reasoningStyle == "openai" {
-		return c.completeVisionResponses(ctx, prompt, dataURL, opts)
+		return c.completeVisionResponses(ctx, prompt, dataURLs, opts)
 	}
-	return c.completeVisionChat(ctx, prompt, dataURL, opts)
+	return c.completeVisionChat(ctx, prompt, dataURLs, opts)
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
@@ -681,16 +693,18 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	}, nil
 }
 
-func (c *Client) completeVisionChat(ctx context.Context, prompt, dataURL string, opts CompletionOptions) (Completion, error) {
+func (c *Client) completeVisionChat(ctx context.Context, prompt string, dataURLs []string, opts CompletionOptions) (Completion, error) {
+	content := []map[string]any{{"type": "text", "text": prompt}}
+	for _, dataURL := range dataURLs {
+		content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": dataURL, "detail": "high"}})
+	}
+
 	body := map[string]any{
 		"model": c.model,
 		"messages": []map[string]any{
 			{
-				"role": "user",
-				"content": []map[string]any{
-					{"type": "text", "text": prompt},
-					{"type": "image_url", "image_url": map[string]any{"url": dataURL, "detail": "high"}},
-				},
+				"role":    "user",
+				"content": content,
 			},
 		},
 	}
@@ -903,16 +917,18 @@ func (c *Client) completeResponses(ctx context.Context, messages []Message, tool
 	}, nil
 }
 
-func (c *Client) completeVisionResponses(ctx context.Context, prompt, dataURL string, opts CompletionOptions) (Completion, error) {
+func (c *Client) completeVisionResponses(ctx context.Context, prompt string, dataURLs []string, opts CompletionOptions) (Completion, error) {
+	content := []map[string]any{{"type": "input_text", "text": prompt}}
+	for _, dataURL := range dataURLs {
+		content = append(content, map[string]any{"type": "input_image", "image_url": dataURL})
+	}
+
 	body := map[string]any{
 		"model": c.model,
 		"input": []map[string]any{
 			{
-				"role": "user",
-				"content": []map[string]any{
-					{"type": "input_text", "text": prompt},
-					{"type": "input_image", "image_url": dataURL},
-				},
+				"role":    "user",
+				"content": content,
 			},
 		},
 		"store": false,

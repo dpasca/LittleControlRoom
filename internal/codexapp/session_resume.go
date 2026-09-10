@@ -458,8 +458,8 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 			itemID, kind, text, image := s.renderThreadItemForTurn(turn.Status, item)
 			s.mergeRenderedHistoryItemLocked(turn.ID, itemID, kind, text, image)
 		}
-		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
-			s.appendEntryLocked("", TranscriptError, turn.Error.Message)
+		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.diagnosticText()) != "" {
+			s.appendEntryLocked("", TranscriptError, turn.Error.diagnosticText())
 		}
 	}
 	s.browserHandoffPending = browserHandoffPending

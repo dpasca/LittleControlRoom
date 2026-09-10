@@ -376,6 +376,9 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	if projectName := strings.TrimSpace(filepath.Base(snapshot.ProjectPath)); projectName != "" && projectName != "." {
 		parts = append(parts, codexBannerProjectStyle.Render(projectName))
 	}
+	if snapshot.ImageReviewEnabled {
+		parts = append(parts, detailWarningStyle.Render("External image review"))
+	}
 	if snapshot.BusyExternal {
 		parts = append(parts, detailWarningStyle.Render("Read-only"))
 	}

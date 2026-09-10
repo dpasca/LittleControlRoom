@@ -29,6 +29,9 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	applyCodexMCPOverrides(cmd, req)
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
+	if req.ImageReviewEnabled && strings.TrimSpace(req.ImageReviewAPIKey) != "" {
+		cmd.Env = withEnvOverride(cmd.Env, "LCR_IMAGE_REVIEW_API_KEY", req.ImageReviewAPIKey)
+	}
 	sourceHome, err := effectiveCodexHome(req.CodexHome)
 	if err != nil {
 		return err
@@ -963,6 +966,12 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.touchBusyLocked()
+		if msg.Turn.Error != nil {
+			if detail := msg.Turn.Error.diagnosticText(); detail != "" && detail != s.lastError {
+				s.lastError = detail
+				s.appendEntryLocked("", TranscriptError, detail)
+			}
+		}
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
 		s.mu.Unlock()
@@ -1176,19 +1185,17 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.notify()
 	case "error":
 		var msg struct {
-			ThreadID string `json:"threadId"`
-			Error    struct {
-				Message string `json:"message"`
-			} `json:"error"`
+			ThreadID string           `json:"threadId"`
+			Error    resumedTurnError `json:"error"`
 		}
-		if err := json.Unmarshal(params, &msg); err == nil && strings.TrimSpace(msg.Error.Message) != "" {
+		if err := json.Unmarshal(params, &msg); err == nil && msg.Error.diagnosticText() != "" {
 			s.mu.Lock()
 			matches := s.notificationMatchesThreadLocked(msg.ThreadID)
 			s.mu.Unlock()
 			if !matches {
 				return
 			}
-			s.appendSystemError(errors.New(msg.Error.Message))
+			s.appendSystemError(errors.New(msg.Error.diagnosticText()))
 		}
 	}
 }

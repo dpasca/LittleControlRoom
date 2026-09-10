@@ -289,6 +289,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					SessionID:   inv.SessionID,
 					Provider:    embeddedProvider(snapshot),
 				})
+			case codexslash.KindImageReview:
+				return m.setVisibleImageReview(snapshot, inv.ImageReviewMode)
 			case codexslash.KindReconnect:
 				m.status = "Reconnecting embedded " + label + " session..."
 				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))

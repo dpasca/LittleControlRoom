@@ -7,6 +7,19 @@ import (
 	"lcroom/internal/control"
 )
 
+func TestImageReviewCLIOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		args := []string{"--project-path", "/tmp/demo"}
+		if enabled {
+			args = append(args, "--image-review")
+		}
+		opts, err := parseRuntimeMCPOptions(args)
+		if err != nil || opts.imageReviewEnabled != enabled {
+			t.Fatalf("review opt-in: %+v %v", opts, err)
+		}
+	}
+}
+
 func TestParseRuntimeMCPOptionsKeepsBrowserAndRuntimeSessionKeysDistinct(t *testing.T) {
 	opts, err := parseRuntimeMCPOptions([]string{
 		"--project-path", "/tmp/demo",

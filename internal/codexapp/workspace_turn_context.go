@@ -32,6 +32,12 @@ func (s *appServerSession) SetWorkspaceContract(contract WorkspaceContract, hand
 
 func (s *appServerSession) managedTurnContext() map[string]additionalContextEntry {
 	contextEntries := s.managedBrowserTurnContext()
+	if s.imageReviewEnabled && s.runtimeMCPExpected {
+		if contextEntries == nil {
+			contextEntries = make(map[string]additionalContextEntry)
+		}
+		contextEntries["little-control-room/image-review-recovery"] = additionalContextEntry{Kind: applicationContextKind, Value: imageReviewTurnContext}
+	}
 	s.mu.Lock()
 	contract := normalizeWorkspaceContract(s.workspaceContract)
 	s.mu.Unlock()

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/imagereview"
 	"lcroom/internal/model"
 	"strings"
 	"time"
@@ -578,6 +579,7 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
 	cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
 	cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
+	cached.ImageReviewEnabled = state.ImageReviewEnabled
 	cached.Status = state.Status
 	cached.LastError = state.LastError
 	cached.LastSystemNotice = state.LastSystemNotice
@@ -618,6 +620,7 @@ func overlayCodexSnapshotBrowserState(cached, state codexapp.Snapshot) codexapp.
 	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
 	cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
 	cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
+	cached.ImageReviewEnabled = state.ImageReviewEnabled
 	if strings.TrimSpace(state.ProjectPath) != "" {
 		cached.ProjectPath = state.ProjectPath
 	}
@@ -1453,6 +1456,9 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 			}
 		}
 	}
+	if req.ImageReviewEnabled && provider == codexapp.ProviderCodex {
+		req.ImageReviewAPIKey = m.openAIAPIKey()
+	}
 	if provider == codexapp.ProviderLCAgent {
 		req.LCAgentProviderAccessCheck = true
 		if strings.TrimSpace(req.LCAgentPath) == "" {
@@ -2246,6 +2252,10 @@ func (m Model) reviewVisibleCodexSessionCmd() tea.Cmd {
 }
 
 func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
+	return m.reconnectVisibleCodexSessionWithImageReviewCmd(nil)
+}
+
+func (m Model) reconnectVisibleCodexSessionWithImageReviewCmd(imageReview *bool) tea.Cmd {
 	if m.codexManager == nil || strings.TrimSpace(m.codexVisibleProject) == "" {
 		return nil
 	}
@@ -2261,9 +2271,17 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 		req.Provider = embeddedProvider(snapshot)
 		req.ResumeID = strings.TrimSpace(snapshot.ThreadID)
 		req.Preset = snapshot.Preset
+		req.ImageReviewEnabled = snapshot.ImageReviewEnabled
 	}
 	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
+	}
+	if imageReview != nil {
+		req.ImageReviewEnabled = *imageReview
+	}
+	if imageReview != nil || req.ImageReviewEnabled {
+		// Never carry recovery opt-in into a fallback fresh thread.
+		req.RequireResumeID = true
 	}
 	req = m.enrichEmbeddedLaunchRequest(req)
 	provider := req.Provider.Normalized()
@@ -2275,8 +2293,19 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	}
 	manager := m.codexManager
 	return func() tea.Msg {
+		if imageReview != nil && *imageReview {
+			if req.RuntimeManager == nil {
+				return codexSessionOpenedMsg{projectPath: projectPath, provider: provider, openRequestID: requestID, err: fmt.Errorf("external image review requires the runtime MCP service (session unchanged)")}
+			}
+			if _, err := imagereview.NewClientWithKey(req.ImageReviewAPIKey); err != nil {
+				return codexSessionOpenedMsg{projectPath: projectPath, provider: provider, openRequestID: requestID, err: fmt.Errorf("external image review unavailable (session unchanged): %w", err)}
+			}
+		}
 		if existing, ok := manager.Session(projectPath); ok {
 			previous := existing.Snapshot()
+			if imageReview != nil && (previous.Busy || previous.BusyExternal || previous.ThreadID != req.ResumeID) {
+				return codexSessionOpenedMsg{projectPath: projectPath, provider: provider, openRequestID: requestID, err: fmt.Errorf("session changed or became busy; image review setting unchanged")}
+			}
 			req.ReconnectTranscript = previous.Entries
 			_ = manager.CloseProject(projectPath)
 			if waiter, ok := existing.(codexCloseWaiter); ok {
@@ -2293,7 +2322,7 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 			provider:      provider,
 			openRequestID: requestID,
 			snapshot:      snapshot,
-			status:        embeddedSessionReconnectStatus(req, snapshot),
+			status:        imageReviewReconnectStatus(req, snapshot, imageReview),
 		}
 	}
 }

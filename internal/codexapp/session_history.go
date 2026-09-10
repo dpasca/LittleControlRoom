@@ -146,11 +146,11 @@ func (s *appServerSession) prependHistoryTurnsLocked(turns []resumedTurn) {
 				GeneratedImage: cloneGeneratedImageArtifact(image),
 			})
 		}
-		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
+		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.diagnosticText()) != "" {
 			itemID := "history-turn-error:" + turnID
 			if _, exists := existingItems[itemID]; !exists {
 				existingItems[itemID] = struct{}{}
-				older = append(older, transcriptEntry{ItemID: itemID, TurnID: turnID, Kind: TranscriptError, Text: turn.Error.Message})
+				older = append(older, transcriptEntry{ItemID: itemID, TurnID: turnID, Kind: TranscriptError, Text: turn.Error.diagnosticText()})
 			}
 		}
 	}

@@ -16,6 +16,7 @@ import (
 )
 
 type runtimeMCPOptions struct {
+	imageReviewEnabled   bool
 	projectPath          string
 	provider             string
 	dataDir              string
@@ -37,6 +38,7 @@ func runRuntimeMCP(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := runtimemcp.Run(ctx, runtimemcp.Options{
+		ImageReviewEnabled:   opts.imageReviewEnabled,
 		ProjectPath:          opts.projectPath,
 		Provider:             opts.provider,
 		DataDir:              opts.dataDir,
@@ -56,6 +58,7 @@ func runRuntimeMCP(args []string) int {
 
 func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 	fs := flag.NewFlagSet("runtime-mcp", flag.ContinueOnError)
+	imageReviewEnabled := fs.Bool("image-review", false, "enable external image review for this helper only")
 	projectPath := fs.String("project-path", "", "project path")
 	provider := fs.String("provider", "codex", "embedded provider")
 	dataDir := fs.String("data-dir", "", "LCR data dir")
@@ -82,6 +85,7 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 		return runtimeMCPOptions{}, fmt.Errorf("--query-scope must be project or portfolio")
 	}
 	opts := runtimeMCPOptions{
+		imageReviewEnabled:   *imageReviewEnabled,
 		projectPath:          strings.TrimSpace(*projectPath),
 		provider:             strings.TrimSpace(*provider),
 		dataDir:              strings.TrimSpace(*dataDir),

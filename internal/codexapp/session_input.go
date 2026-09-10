@@ -18,6 +18,10 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 		return nil
 	}
 	s.mu.Lock()
+	if s.imageReviewEnabled && len(input.Attachments) > 0 {
+		s.mu.Unlock()
+		return fmt.Errorf("image recovery is enabled: send workspace image paths as text for external review, or use /image-review off before attaching images")
+	}
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("codex session is closed")

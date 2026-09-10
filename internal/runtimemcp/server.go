@@ -39,6 +39,7 @@ const (
 )
 
 type Options struct {
+	ImageReviewEnabled   bool
 	ProjectPath          string
 	Provider             string
 	DataDir              string
@@ -58,6 +59,7 @@ type Options struct {
 }
 
 type Server struct {
+	imageReviewEnabled   bool
 	projectPath          string
 	provider             string
 	dataDir              string
@@ -165,6 +167,7 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 	return &Server{
+		imageReviewEnabled:   opts.ImageReviewEnabled,
 		projectPath:          projectPath,
 		provider:             strings.TrimSpace(opts.Provider),
 		dataDir:              strings.TrimSpace(opts.DataDir),
@@ -253,7 +256,7 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": runtimeTools(s.todoMode, s.supportsStructuredTools(), s.claudeApprovalSocket != ""),
+				"tools": s.tools(),
 			},
 		}, true
 	case "tools/call":
@@ -331,6 +334,8 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		}
 		report, isErr := s.getControlOperation(ctx, req)
 		return s.jsonToolResult(report, isErr)
+	case "inspect_images":
+		return s.inspectImages(ctx, args)
 	case "list_processes":
 		var req listProcessesArgs
 		if err := json.Unmarshal(args, &req); err != nil {

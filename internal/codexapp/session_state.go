@@ -41,6 +41,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightPolicy:          policy,
 		playwrightMCPExpected:     shouldShadowPlaywrightSkill(policy),
 		runtimeMCPExpected:        shouldShadowRuntimeSkill(req),
+		imageReviewEnabled:        req.ImageReviewEnabled,
 		managedBrowserSessionKey:  strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                   strings.TrimSpace(req.AppDataDir),
 		runtimeManager:            req.RuntimeManager,
@@ -118,6 +119,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 	return Snapshot{
 		Provider:                 ProviderCodex,
 		ProjectPath:              s.projectPath,
+		ImageReviewEnabled:       s.imageReviewEnabled,
 		ThreadID:                 s.threadID,
 		Preset:                   s.preset,
 		BrowserActivity:          s.browserActivity.Normalize(),

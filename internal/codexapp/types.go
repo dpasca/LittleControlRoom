@@ -587,6 +587,7 @@ type BackgroundTaskSnapshot struct {
 }
 
 type Snapshot struct {
+	ImageReviewEnabled          bool
 	Provider                    Provider
 	ProjectPath                 string
 	ThreadID                    string
@@ -697,9 +698,13 @@ type Session interface {
 }
 
 type LaunchRequest struct {
-	Provider    Provider
-	ProjectPath string
-	ResumeID    string
+	// ImageReviewEnabled is operator-selected for this session only, never a global default.
+	ImageReviewEnabled bool
+	// ImageReviewAPIKey is passed only to the recovery MCP helper environment.
+	ImageReviewAPIKey string `json:"-"`
+	Provider          Provider
+	ProjectPath       string
+	ResumeID          string
 	// RequireResumeID makes ResumeID an exact target. The launch must fail
 	// instead of replacing a different live session or falling back to a new
 	// provider session when the target can no longer be resumed.

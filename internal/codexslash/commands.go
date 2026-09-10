@@ -17,6 +17,7 @@ const (
 	KindShowStatus     Kind = "show-status"
 	KindModel          Kind = "model"
 	KindReconnect      Kind = "reconnect"
+	KindImageReview    Kind = "image-review"
 	KindHandoff        Kind = "handoff"
 	KindLCAgentHandoff Kind = "lcagent-handoff"
 	KindPause          Kind = "pause"
@@ -48,6 +49,7 @@ const (
 
 type Invocation struct {
 	Kind                Kind
+	ImageReviewMode     string
 	Prompt              string
 	SessionID           string
 	PermissionLevel     string
@@ -85,6 +87,7 @@ var specs = []Spec{
 	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
+	{Name: "image-review", Usage: "/image-review [on|off]", Summary: "Explicitly enable or disable external API image review for this Codex session only"},
 }
 
 func Specs() []Spec {
@@ -143,6 +146,11 @@ func Suggestions(input string) []Suggestion {
 			Display: "/show-status",
 			Summary: "Show embedded session config, limits, and token usage",
 		}}
+	case "image-review":
+		return []Suggestion{
+			{Insert: "/image-review on", Display: "/image-review on", Summary: "Enable external API image review for this Codex session only"},
+			{Insert: "/image-review off", Display: "/image-review off", Summary: "Disable external image review and reconnect"},
+		}
 	case "reconnect":
 		return []Suggestion{{
 			Insert:  "/reconnect",
@@ -378,6 +386,12 @@ func Parse(input string) (Invocation, error) {
 			Kind:      KindShowStatus,
 			Canonical: "/show-status",
 		}, nil
+	case "image-review":
+		mode := strings.ToLower(strings.TrimSpace(rawArgs))
+		if mode != "" && mode != "on" && mode != "off" {
+			return Invocation{}, fmt.Errorf("usage: /image-review [on|off]")
+		}
+		return Invocation{Kind: KindImageReview, ImageReviewMode: mode, Canonical: slashcmd.CanonicalCommand("image-review", mode)}, nil
 	case "reconnect":
 		if strings.TrimSpace(rawArgs) != "" {
 			return Invocation{}, fmt.Errorf("usage: /reconnect")

@@ -68,6 +68,7 @@ type appServerSession struct {
 	playwrightPolicy          browserctl.Policy
 	playwrightMCPExpected     bool
 	runtimeMCPExpected        bool
+	imageReviewEnabled        bool
 	managedBrowserSessionKey  string
 	dataDir                   string
 	codexHomeOverlay          string
@@ -317,7 +318,9 @@ type mcpServerStatusEntry struct {
 }
 
 type resumedTurnError struct {
-	Message string `json:"message"`
+	Message           string          `json:"message"`
+	CodexErrorInfo    json.RawMessage `json:"codexErrorInfo,omitempty"`
+	AdditionalDetails json.RawMessage `json:"additionalDetails,omitempty"`
 }
 
 type resumedTurn struct {
@@ -510,8 +513,9 @@ type threadStartedNotification struct {
 type turnNotification struct {
 	ThreadID string `json:"threadId"`
 	Turn     struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
+		Error  *resumedTurnError `json:"error,omitempty"`
+		ID     string            `json:"id"`
+		Status string            `json:"status"`
 	} `json:"turn"`
 }
 

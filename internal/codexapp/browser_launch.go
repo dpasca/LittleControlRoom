@@ -103,10 +103,17 @@ func codexRuntimeMCPConfigOverrides(req LaunchRequest) []string {
 	if !ok {
 		return nil
 	}
-	return []string{
+	overrides := []string{
 		fmt.Sprintf("mcp_servers.lcr_runtime.command=%s", strconv.Quote(executablePath)),
 		fmt.Sprintf("mcp_servers.lcr_runtime.args=%s", formatCodexConfigStringArray(args)),
 	}
+	if req.ImageReviewEnabled {
+		overrides = append(overrides,
+			`mcp_servers.lcr_runtime.env_vars=["LCR_IMAGE_REVIEW_API_KEY","OPENAI_API_KEY","OPENAI_BASE_URL"]`,
+			"mcp_servers.lcr_runtime.tool_timeout_sec=150",
+		)
+	}
+	return overrides
 }
 
 func lcrCLIExecutablePath(req LaunchRequest) (string, error) {
@@ -184,6 +191,9 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 		"--project-path", projectPath,
 		"--control-scope", "portfolio",
 		"--query-scope", "portfolio",
+	}
+	if req.ImageReviewEnabled && provider == ProviderCodex {
+		args = append(args, "--image-review")
 	}
 	if dataDir := strings.TrimSpace(req.AppDataDir); dataDir != "" {
 		args = append(args, "--data-dir", dataDir)
