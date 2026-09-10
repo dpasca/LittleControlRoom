@@ -180,9 +180,14 @@ func (m *Model) finishScanCmd() tea.Cmd {
 
 func (m Model) scanCmd(forceRetryFailedAnalyses bool) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiProjectScanTimeout)
-		defer cancel()
+		// The service starts the scan deadline after any active scan finishes.
+		// Keep the model context so shutdown still cancels a queued refresh.
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		report, err := m.svc.ScanWithOptions(ctx, service.ScanOptions{
+			Timeout:                          tuiProjectScanTimeout,
 			ForceRetryFailedClassifications:  forceRetryFailedAnalyses,
 			ForceRetryFailedCommitTodoChecks: forceRetryFailedAnalyses,
 		})

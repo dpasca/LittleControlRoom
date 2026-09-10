@@ -173,6 +173,9 @@ type ScanReport struct {
 }
 
 type ScanOptions struct {
+	// Timeout bounds scan execution after acquiring the full-scan gate. Waiting
+	// remains cancellable through the caller's context without using this budget.
+	Timeout                          time.Duration
 	ForceRetryFailedClassifications  bool
 	ForceRetryFailedCommitTodoChecks bool
 	SkipLinkedWorktreeStatusRefresh  bool
@@ -1297,6 +1300,11 @@ func (s *Service) tryScanWithOptions(ctx context.Context, opts ScanOptions) (Sca
 }
 
 func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progress *scanProgressTracker) (ScanReport, error) {
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
 	progress.setPhase("starting project scan")
 	if opts.ForceRetryFailedCommitTodoChecks {
 		progress.setPhase("retrying failed commit TODO checks")

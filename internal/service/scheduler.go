@@ -45,9 +45,7 @@ func (s *Service) StartScheduler(ctx context.Context) {
 		case <-timer.C:
 		}
 
-		scanCtx, cancel := context.WithTimeout(ctx, s.scheduledScanTimeoutValue())
-		_, err, started := s.tryScanWithOptions(scanCtx, ScanOptions{})
-		cancel()
+		_, err, started := s.tryScanWithOptions(ctx, ScanOptions{Timeout: s.scheduledScanTimeoutValue()})
 		if ctx.Err() != nil {
 			return
 		}
