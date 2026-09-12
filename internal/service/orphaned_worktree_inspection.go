@@ -130,7 +130,7 @@ func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath strin
 			inspection.Resolution = OrphanedWorktreeResolutionClearResidue
 			inspection.Reason = "Git no longer has a live checkout at this path, and the remaining files passed the strict residue verification."
 			if residual.Kind == ResidualWorktreeCleanupOwned {
-				inspection.Reason = fmt.Sprintf("Retained folder: %s; %d owned clean nested worktrees. Clear residue permanently deletes verified tracked files and output ignored by the root repository's current rules, including build/artifact files. Untracked source, modified files and unrelated repositories block cleanup. Child commits are recorded before deletion; branches and shared repositories are preserved.", retainedSizeLabel(inspection.RetainedBytes), len(residual.Plan.Children))
+				inspection.Reason = fmt.Sprintf("Retained folder: %s; %d owned clean nested worktrees; %d verified ignored clones. Clear residue permanently deletes verified tracked files and ignored output, including dependency clones whose Git objects are recoverable from upstream. Local work and unverifiable repositories block cleanup. Nested commits and clone refs are recorded before deletion; parent branches and shared submodule repositories are preserved.", retainedSizeLabel(inspection.RetainedBytes), len(residual.Plan.Children), len(residual.Plan.Clones))
 			}
 			return inspection, nil
 		}

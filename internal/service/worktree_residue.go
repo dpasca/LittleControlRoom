@@ -552,6 +552,9 @@ func removeInspectedResidualWorktreeDirectory(ctx context.Context, inspection re
 		if err := validateRemovalPlanDirectory(inspection.Plan); err != nil {
 			return err
 		}
+		if err := validateRemovalClones(ctx, inspection.Plan); err != nil {
+			return err
+		}
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		depthI := residualPathDepth(entries[i].Path)

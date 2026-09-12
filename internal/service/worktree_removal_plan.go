@@ -25,8 +25,10 @@ type worktreeRemovalPlan struct {
 	Commit       string
 	Branch       string
 	Children     []ownedRemovalChild
+	Clones       []removalClone
 	Bytes        int64
 	Entries      []residualWorktreeEntry `json:"-"`
+	upstreamRefs map[string]string
 }
 
 type ownedRemovalChild struct {
@@ -186,11 +188,11 @@ func removalPathWithin(path, parent string) bool {
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// inspectRemovalPlan never infers ownership from a directory name. A gitlink
-// from the preserved commit, the root's shared module store, and both directions
-// of the child's registration must agree. Even force removal uses this check.
+// inspectRemovalPlan never infers ownership from a directory name. Linked
+// children require a preserved gitlink and matching shared-store registrations;
+// ignored clones require upstream object recoverability. Force skips neither.
 func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFiles bool) (worktreeRemovalPlan, error) {
-	plan := worktreeRemovalPlan{RootPath: root, Path: path, Commit: commit}
+	plan := worktreeRemovalPlan{RootPath: root, Path: path, Commit: commit, upstreamRefs: make(map[string]string)}
 	identity, err := removalPathIdentity(path)
 	if err != nil {
 		return plan, err
@@ -232,10 +234,13 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 		if current != path && entry.IsDir() {
 			if _, err := os.Lstat(filepath.Join(current, "HEAD")); err == nil {
 				if info, err := os.Lstat(filepath.Join(current, "objects")); err == nil && info.IsDir() {
-					return fmt.Errorf("possible nested bare repository requires review: %s", current)
+					return inspectRemovalCloneIntoPlan(ctx, &plan, current, tree)
 				}
 			}
 			if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+				if metadata, err := os.Lstat(filepath.Join(current, ".git")); err == nil && metadata.IsDir() {
+					return inspectRemovalCloneIntoPlan(ctx, &plan, current, tree)
+				}
 				child, err := inspectOwnedRemovalChild(ctx, root, path, current, tree)
 				if err != nil {
 					return err
@@ -423,6 +428,9 @@ func (s *Service) retainedRemovalCommit(ctx context.Context, path, root string, 
 }
 
 func removeOwnedChildren(ctx context.Context, plan worktreeRemovalPlan) error {
+	if err := validateRemovalClones(ctx, plan); err != nil {
+		return err
+	}
 	tree, err := readResidualGitTree(ctx, plan.RootPath, plan.Commit)
 	if err != nil {
 		return err
