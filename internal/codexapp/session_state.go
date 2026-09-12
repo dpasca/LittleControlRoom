@@ -116,6 +116,13 @@ func (s *appServerSession) TryStateSnapshot() (Snapshot, bool) {
 func (s *appServerSession) stateSnapshotLocked() Snapshot {
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
+	tier := s.serviceTier
+	if s.fastMode != nil && !s.busy && !s.busyExternal && s.activeTurnID == "" && s.fastModeApplied != "" {
+		tier = s.fastModeApplied
+	}
+	if s.closed && s.fastMode != nil {
+		tier = s.fastMode.value.Load().Tier
+	}
 	return Snapshot{
 		Provider:                 ProviderCodex,
 		ProjectPath:              s.projectPath,
@@ -154,7 +161,8 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		Model:                    s.model,
 		ModelProvider:            s.modelProvider,
 		ReasoningEffort:          s.reasoningEffort,
-		ServiceTier:              s.serviceTier,
+		ServiceTier:              tier,
+		FastMode:                 s.fastModeSnapshotLocked(),
 		PendingModel:             s.pendingModel,
 		PendingReasoning:         s.pendingReasoning,
 		MCPUsage:                 exportedMCPUsageSnapshot(s.mcpUsage),

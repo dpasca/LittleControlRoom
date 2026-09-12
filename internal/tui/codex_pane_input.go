@@ -262,7 +262,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
-			if snapshot.Closed && (inv.Kind == codexslash.KindModel ||
+			if snapshot.Closed && (inv.Kind == codexslash.KindFast || inv.Kind == codexslash.KindModel ||
 				inv.Kind == codexslash.KindStatus ||
 				inv.Kind == codexslash.KindShowStatus ||
 				inv.Kind == codexslash.KindContext ||
@@ -323,6 +323,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.status = label + " has no active turn to pause."
 					return m, nil
 				}
+			case codexslash.KindFast:
+				return m.setVisibleCodexFastMode(snapshot, inv.FastMode)
 			case codexslash.KindModel:
 				if embeddedProvider(snapshot).Normalized() == codexapp.ProviderLCAgent {
 					return m.openEmbeddedLCAgentModelPicker()

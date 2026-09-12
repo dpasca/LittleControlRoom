@@ -1178,6 +1178,13 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 
 func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLines int) []string {
 	rows := []string{}
+	if text, warning := codexFastModeLabel(snapshot); text != "" {
+		style := detailMutedStyle
+		if warning {
+			style = codexFastModeStyle
+		}
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Speed", text, style, width, 0)...)
+	}
 	model := strings.TrimSpace(snapshot.Model)
 	modelProvider := strings.TrimSpace(snapshot.ModelProvider)
 	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)

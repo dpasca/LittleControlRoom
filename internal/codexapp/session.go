@@ -81,6 +81,12 @@ type appServerSession struct {
 
 	writeMu sync.Mutex
 
+	fastMode                 *fastModeState
+	fastModeMu               sync.Mutex
+	fastModeApplied          string
+	fastModeError            string
+	fastModeSettingsRevision uint64
+
 	pendingMu sync.Mutex
 	pending   map[string]chan rpcEnvelope
 	nextID    int64
@@ -424,6 +430,7 @@ type turnSteerParams struct {
 }
 
 type turnStartParams struct {
+	ServiceTier       string                            `json:"serviceTier,omitempty"`
 	ThreadID          string                            `json:"threadId"`
 	Input             []userInput                       `json:"input"`
 	Model             string                            `json:"model,omitempty"`
@@ -437,6 +444,7 @@ type additionalContextEntry struct {
 }
 
 type threadStartParams struct {
+	ServiceTier    string `json:"serviceTier,omitempty"`
 	CWD            string `json:"cwd"`
 	ApprovalPolicy string `json:"approvalPolicy"`
 	Sandbox        string `json:"sandbox"`
@@ -444,6 +452,7 @@ type threadStartParams struct {
 }
 
 type threadResumeParams struct {
+	ServiceTier      string                              `json:"serviceTier,omitempty"`
 	ThreadID         string                              `json:"threadId"`
 	ApprovalPolicy   string                              `json:"approvalPolicy"`
 	Sandbox          string                              `json:"sandbox"`

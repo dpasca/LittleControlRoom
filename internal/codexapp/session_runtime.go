@@ -36,6 +36,8 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	if err != nil {
 		return err
 	}
+	s.fastMode = acquireFastModeState(sourceHome)
+	cmd.Args = append(cmd.Args, "-c", "features.fast_mode=true")
 	if _, err := sanitizeCodexStateRolloutPathsOnce(sourceHome); err != nil {
 		s.appendCodexHomeCleanupWarning(sourceHome, err)
 	}
@@ -131,6 +133,8 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	s.mu.Unlock()
 	s.notify()
 	s.scheduleRateLimitsRefresh()
+	_ = s.syncFastMode(ctx)
+	s.watchFastMode()
 	if compatibility.CodeModeHostDisabled {
 		s.appendSystemNotice(codexCodeModeHostFallback)
 	}
@@ -208,6 +212,7 @@ func (s *appServerSession) ensureFreshThread(ctx context.Context, threadID strin
 
 func (s *appServerSession) startThread(ctx context.Context) (string, error) {
 	result, err := s.call(ctx, "thread/start", threadStartParams{
+		ServiceTier:    s.sharedServiceTier(),
 		CWD:            s.projectPath,
 		ApprovalPolicy: approvalPolicyForPreset(s.preset),
 		Sandbox:        sandboxModeForPreset(s.preset),
@@ -266,6 +271,7 @@ func (s *appServerSession) resumeThread(ctx context.Context, threadID string) (s
 
 func (s *appServerSession) resumeThreadResponse(ctx context.Context, threadID string) (threadResumeResponse, error) {
 	params := threadResumeParams{
+		ServiceTier:    s.sharedServiceTier(),
 		ThreadID:       threadID,
 		ApprovalPolicy: approvalPolicyForPreset(s.preset),
 		Sandbox:        sandboxModeForPreset(s.preset),
@@ -922,6 +928,8 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.mu.Unlock()
 			s.notify()
 		}
+	case "thread/settings/updated":
+		s.handleFastModeSettingsUpdated(params)
 	case "turn/started":
 		var msg turnNotification
 		if err := json.Unmarshal(params, &msg); err != nil {
@@ -933,9 +941,13 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		turnID := strings.TrimSpace(msg.Turn.ID)
+		previousTurnID := s.activeTurnID
 		if !s.markTurnStartedLocked(turnID, time.Now()) {
 			s.mu.Unlock()
 			return
+		}
+		if turnID != previousTurnID && s.fastModeApplied != "" {
+			s.serviceTier = s.fastModeApplied
 		}
 		s.touchLocked()
 		if s.busy || strings.TrimSpace(s.activeTurnID) != "" {

@@ -429,3 +429,12 @@ separate bounded post-cancel verification pass and reports only bytes it can
 still prove were reclaimed. Each destructive group also shares the repository
 family's worktree-operation lock, preventing an in-process create or restore
 from changing the missing-path evidence between the repeat audit and deletion.
+
+## Embedded fast-mode policy
+
+LCR reads the shared speed policy from the resolved native Codex home's
+`config.toml` (`service_tier`, plus a selected user profile override). Per-launch
+home overlays and historical thread service tiers are not independent defaults.
+Native config writes do not hot-reload loaded threads' service tiers; LCR explicitly
+synchronizes them and passes the policy on new turns. This does not change artifact
+session discovery. See [Codex fast mode](codex_fast_mode.md).

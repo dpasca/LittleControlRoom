@@ -648,6 +648,7 @@ type Snapshot struct {
 	QualityPlanPhaseItems       []QualityPlanPhaseSnapshot
 	ReasoningEffort             string
 	ServiceTier                 string
+	FastMode                    FastModeSnapshot
 	PendingModel                string
 	PendingModelProvider        string
 	PendingReasoning            string

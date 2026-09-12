@@ -37,6 +37,8 @@ type Model struct {
 	busCh <-chan events.Event
 	unsub func()
 
+	codexFastModeBusy bool
+
 	allProjects               []model.ProjectSummary
 	archivedProjects          []model.ProjectSummary
 	projectCategories         []model.ProjectCategory
@@ -3117,6 +3119,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case codexSessionOpenedMsg:
 		return m.applyCodexSessionOpenedMsg(msg)
+	case codexFastModeMsg:
+		m.codexFastModeBusy = false
+		return m.applyCodexActionMsg(msg.action)
 	case codexActionMsg:
 		return m.applyCodexActionMsg(msg)
 	case codexModelListMsg:

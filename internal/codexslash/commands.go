@@ -16,6 +16,7 @@ const (
 	KindStatus         Kind = "status"
 	KindShowStatus     Kind = "show-status"
 	KindModel          Kind = "model"
+	KindFast           Kind = "fast"
 	KindReconnect      Kind = "reconnect"
 	KindImageReview    Kind = "image-review"
 	KindHandoff        Kind = "handoff"
@@ -50,6 +51,7 @@ const (
 type Invocation struct {
 	Kind                Kind
 	ImageReviewMode     string
+	FastMode            string
 	Prompt              string
 	SessionID           string
 	PermissionLevel     string
@@ -88,6 +90,7 @@ var specs = []Spec{
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
 	{Name: "image-review", Usage: "/image-review [on|off]", Summary: "Explicitly enable or disable external API image review for this Codex session only"},
+	{Name: "fast", Usage: "/fast [on|off|status]", Summary: "Inspect or change shared Codex fast mode (higher usage); applies to all LCR Codex engineers"},
 }
 
 func Specs() []Spec {
@@ -128,6 +131,12 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{resumeSuggestion("/sessions")}
 	case "session":
 		return []Suggestion{resumeSuggestion("/session")}
+	case "fast":
+		return []Suggestion{
+			{Insert: "/fast status", Display: "/fast status", Summary: "Show shared Codex fast mode"},
+			{Insert: "/fast on", Display: "/fast on", Summary: "Enable fast mode across Codex engineers; increases usage"},
+			{Insert: "/fast off", Display: "/fast off", Summary: "Disable fast mode across Codex engineers"},
+		}
 	case "model":
 		return []Suggestion{{
 			Insert:  "/model",
@@ -362,6 +371,15 @@ func Parse(input string) (Invocation, error) {
 			SessionID: sessionID,
 			Canonical: slashcmd.CanonicalCommand("resume", rawArgs),
 		}, nil
+	case "fast":
+		mode := strings.ToLower(strings.TrimSpace(rawArgs))
+		if mode == "" {
+			mode = "status"
+		}
+		if mode != "on" && mode != "off" && mode != "status" {
+			return Invocation{}, fmt.Errorf("usage: /fast [on|off|status]")
+		}
+		return Invocation{Kind: KindFast, FastMode: mode, Canonical: "/fast " + mode}, nil
 	case "model":
 		if strings.TrimSpace(rawArgs) != "" {
 			return Invocation{}, fmt.Errorf("usage: /model")

@@ -274,10 +274,27 @@ func (s *appServerSession) readMCPServerReady(ctx context.Context, name string) 
 }
 
 func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string) error {
+	s.fastModeMu.Lock()
+	defer s.fastModeMu.Unlock()
+	if err := s.syncFastModeLocked(ctx); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
 	params := turnStartParams{
 		ThreadID:          threadID,
 		Input:             encodeSubmissionInput(input),
 		AdditionalContext: s.managedTurnContext(),
+	}
+	if s.fastMode != nil {
+		// Order new turns against shared toggles, including a turn queued before /fast off.
+		s.fastMode.mu.Lock()
+		defer s.fastMode.mu.Unlock()
+		latest := readFastModeConfig(s.fastMode.home)
+		s.fastMode.publishLocked(latest)
+		if latest.Error != "" {
+			return fmt.Errorf("Codex fast mode status unknown: %s", latest.Error)
+		}
+		params.ServiceTier = latest.Tier
 	}
 	if pendingModel != "" {
 		params.Model = pendingModel
@@ -304,6 +321,10 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 		s.pendingReasoning = ""
 	} else {
 		s.reasoningEffort = currentReasoning
+	}
+	if params.ServiceTier != "" {
+		s.serviceTier = params.ServiceTier
+		s.fastModeApplied = params.ServiceTier
 	}
 	s.clearBrowserHandoffLocked()
 	s.setBusyLocked(response.Turn.ID, false)

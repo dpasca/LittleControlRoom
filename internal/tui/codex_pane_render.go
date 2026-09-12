@@ -373,6 +373,9 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	parts := []string{
 		sourceStyle(embeddedSessionFormat(provider), snapshot.Started && !snapshot.Closed).Render(provider.Label()),
 	}
+	if text, warning := codexFastModeLabel(snapshot); warning {
+		parts = append(parts, codexFastModeStyle.Render(text))
+	}
 	if projectName := strings.TrimSpace(filepath.Base(snapshot.ProjectPath)); projectName != "" && projectName != "." {
 		parts = append(parts, codexBannerProjectStyle.Render(projectName))
 	}

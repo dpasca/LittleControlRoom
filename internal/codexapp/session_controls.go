@@ -38,6 +38,14 @@ func (s *appServerSession) Compact() error {
 	startCtx, startCancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer startCancel()
 
+	if err := s.syncFastMode(startCtx); err != nil {
+		s.mu.Lock()
+		s.compacting = false
+		s.busySince = time.Time{}
+		s.mu.Unlock()
+		s.appendSystemError(err)
+		return err
+	}
 	_, err := s.call(startCtx, "thread/compact/start", threadCompactStartParams{
 		ThreadID: threadID,
 	})
@@ -83,6 +91,10 @@ func (s *appServerSession) Review() error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
+	if err := s.syncFastMode(ctx); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
 	result, err := s.call(ctx, "review/start", reviewStartParams{
 		ThreadID: threadID,
 		Target:   reviewTarget{Type: "uncommittedChanges"},

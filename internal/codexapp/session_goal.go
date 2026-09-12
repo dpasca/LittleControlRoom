@@ -59,6 +59,13 @@ func (s *appServerSession) ShowStatus() error {
 		rateLimitsByID,
 	)
 
+	if s.fastMode != nil {
+		state := s.StateSnapshot()
+		statusText += fmt.Sprintf("\nshared service tier: %s\nfast mode syncing: %t", state.FastMode.Tier, state.FastMode.Pending)
+		if state.FastMode.Error != "" {
+			statusText += "\nfast mode error: " + state.FastMode.Error
+		}
+	}
 	s.mu.Lock()
 	s.touchLocked()
 	s.appendEntryLocked("", TranscriptStatus, statusText)
@@ -403,6 +410,9 @@ func (s *appServerSession) ClearGoal() error {
 }
 
 func (s *appServerSession) setThreadGoal(ctx context.Context, threadID, objective string, tokenBudget *int64) (*ThreadGoal, error) {
+	if err := s.syncFastMode(ctx); err != nil {
+		return nil, err
+	}
 	result, err := s.call(ctx, "thread/goal/set", threadGoalSetParams{
 		ThreadID:    threadID,
 		Objective:   objective,
@@ -420,6 +430,11 @@ func (s *appServerSession) setThreadGoal(ctx context.Context, threadID, objectiv
 }
 
 func (s *appServerSession) setThreadGoalStatus(ctx context.Context, threadID string, status ThreadGoalStatus, previous *ThreadGoal) (*ThreadGoal, error) {
+	if status == ThreadGoalStatusActive {
+		if err := s.syncFastMode(ctx); err != nil {
+			return nil, err
+		}
+	}
 	params := threadGoalSetParams{
 		ThreadID: strings.TrimSpace(threadID),
 		Status:   status,
