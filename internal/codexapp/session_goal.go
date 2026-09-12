@@ -62,6 +62,9 @@ func (s *appServerSession) ShowStatus() error {
 	if s.fastMode != nil {
 		state := s.StateSnapshot()
 		statusText += fmt.Sprintf("\nshared service tier: %s\nfast mode syncing: %t", state.FastMode.Tier, state.FastMode.Pending)
+		if !state.FastMode.ExpiresAt.IsZero() {
+			statusText += "\nfast mode expires: " + state.FastMode.ExpiresAt.Local().Format(time.RFC3339)
+		}
 		if state.FastMode.Error != "" {
 			statusText += "\nfast mode error: " + state.FastMode.Error
 		}

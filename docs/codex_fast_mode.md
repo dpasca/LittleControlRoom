@@ -1,17 +1,43 @@
 # Codex fast mode
 
 In an embedded Codex engineer, `/fast` or `/fast status` reports the shared setting.
-Use `/fast on` to enable it explicitly and `/fast off` to select standard speed.
+Use `/fast on` to enable it for up to **two hours** and `/fast off` to select
+standard speed.
 Fast mode uses credits/limits more quickly; the command does not change the model
 or reasoning effort. Availability and rates depend on the model and account;
 see [OpenAI's speed documentation](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
-The sidebar shows a red **FAST** row adjacent to model/reasoning. The engineer
-header also shows the warning, including when the sidebar is hidden. Standard
+The sidebar shows a red **FAST 1:42:08** countdown adjacent to model/reasoning.
+The engineer header also shows the warning, including when the sidebar is hidden. Standard
 speed is explicitly labeled **fast OFF**. Pending changes and unknown/error states
 remain visible. A fast turn already running retains **FAST finishing · next OFF**
 after disabling; `/pause` can stop that turn. Enabling during a standard turn shows
 **FAST next · current OFF**.
+
+## Two-hour window
+
+The timer counts wall-clock time, including idle time and time while LCR is closed.
+Changing engineers, reopening old sessions, restarting LCR, or repeating `/fast on`
+while the window is active does not extend it. After expiry, use `/fast on` explicitly
+to start another two-hour window. `/fast off` can end the window early.
+
+The deadline is saved atomically in `lcroom-fast-mode-timer.json` in the resolved
+native Codex home before LCR enables fast mode. Existing native fast settings with
+no timer receive a two-hour window when LCR first observes them. Missing or invalid
+timer state cannot allow unbounded fast requests: inability to establish a valid
+persisted deadline makes LCR attempt to disable fast mode, and failed disabling
+blocks new inference and stays visible.
+
+While LCR is running, the timer continues even if all engineer sessions close.
+Expiry saves the standard default and updates loaded threads without sending a
+model prompt. When no engineer connection remains, LCR uses a short-lived Codex
+administrative connection to save the default. Already-running fast turns keep
+their warning until they finish; subsequent turns use standard speed.
+
+LCR cannot run a timer while its process is stopped. On reopening an engineer,
+it checks the saved deadline before allowing any new fast request and clears an
+expired default. Separate native Codex processes do not enforce LCR's timer while
+LCR is closed. `/fast status` and `/status` include the absolute expiry time.
 
 ## Shared state and persistence
 
@@ -56,4 +82,6 @@ Regression tests cover multiple loaded sessions, restart/resume with stale fast
 history, disabling during an active fast turn, explicit standard-tier requests,
 external config changes, malformed config, rejected writes and RPCs, nonblocking
 snapshots, command routing, duplicate activation, and narrow sidebar/header labels.
-These checks do not measure inference speed or account billing.
+Timer tests simulate two hours, restart, re-enabling, closed engineers, persistence
+failures, and expired-request rejection without waiting in real time. These checks
+do not measure inference speed or account billing.

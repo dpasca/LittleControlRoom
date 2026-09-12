@@ -435,6 +435,8 @@ from changing the missing-path evidence between the repeat audit and deletion.
 LCR reads the shared speed policy from the resolved native Codex home's
 `config.toml` (`service_tier`, plus a selected user profile override). Per-launch
 home overlays and historical thread service tiers are not independent defaults.
+The shared two-hour deadline is stored in `lcroom-fast-mode-timer.json` beside
+that native config, independently of session history and home overlays.
 Native config writes do not hot-reload loaded threads' service tiers; LCR explicitly
 synchronizes them and passes the policy on new turns. This does not change artifact
 session discovery. See [Codex fast mode](codex_fast_mode.md).

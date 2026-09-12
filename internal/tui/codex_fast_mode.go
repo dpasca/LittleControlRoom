@@ -5,6 +5,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"lcroom/internal/codexapp"
+	"strings"
+	"time"
 )
 
 var codexFastModeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555")).Bold(true)
@@ -49,6 +51,29 @@ func (m Model) setVisibleCodexFastMode(snapshot codexapp.Snapshot, mode string) 
 }
 
 func codexFastModeLabel(snapshot codexapp.Snapshot) (string, bool) {
+	return codexFastModeLabelAt(snapshot, time.Now())
+}
+
+func codexFastModeLabelAt(snapshot codexapp.Snapshot, now time.Time) (string, bool) {
+	label, warning := codexFastModeBaseLabel(snapshot)
+	if label == "" || snapshot.FastMode.ExpiresAt.IsZero() {
+		return label, warning
+	}
+	if snapshot.FastMode.Error != "" {
+		if snapshot.FastMode.Expired {
+			return "FAST expired · OFF failed", true
+		}
+		return label, warning
+	}
+	if remaining := snapshot.FastMode.ExpiresAt.Sub(now); remaining > 0 && !snapshot.FastMode.Expired {
+		seconds := int64((remaining + time.Second - 1) / time.Second)
+		timer := fmt.Sprintf("%d:%02d:%02d", seconds/3600, (seconds/60)%60, seconds%60)
+		return strings.Replace(label, "FAST", "FAST "+timer, 1), warning
+	}
+	return "FAST expired · switching off", true
+}
+
+func codexFastModeBaseLabel(snapshot codexapp.Snapshot) (string, bool) {
 	if snapshot.Provider != codexapp.ProviderCodex {
 		return "", false
 	}

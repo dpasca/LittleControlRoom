@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/codexapp"
@@ -67,5 +68,33 @@ func TestCodexFastModeUnsupportedBusyAndMissingSession(t *testing.T) {
 	updated, cmd = m.setVisibleCodexFastMode(codexapp.Snapshot{Provider: codexapp.ProviderCodex}, "on")
 	if cmd != nil || normalizeUpdateModel(updated).codexFastModeBusy {
 		t.Fatal("missing session left action busy")
+	}
+}
+
+func TestCodexFastModeCountdown(t *testing.T) {
+	now := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	snapshot := codexapp.Snapshot{Provider: codexapp.ProviderCodex, ServiceTier: "fast", FastMode: codexapp.FastModeSnapshot{Managed: true, Tier: "fast", ExpiresAt: now.Add(2 * time.Hour)}}
+	for _, tt := range []struct {
+		elapsed time.Duration
+		want    string
+	}{
+		{0, "FAST 2:00:00"},
+		{time.Hour + 42*time.Minute + 57*time.Second, "FAST 0:17:03"},
+		{2*time.Hour - time.Millisecond, "FAST 0:00:01"},
+		{2 * time.Hour, "FAST expired · switching off"},
+	} {
+		label, warning := codexFastModeLabelAt(snapshot, now.Add(tt.elapsed))
+		if !warning || !strings.Contains(label, tt.want) {
+			t.Fatalf("at %s: %q", tt.elapsed, label)
+		}
+	}
+	rows := embeddedSidebarModelRowsWithLimitAt(snapshot, 22, 2, now)
+	if !strings.Contains(ansi.Strip(strings.Join(rows, "\n")), "FAST 2:00:00") {
+		t.Fatalf("countdown missing from narrow sidebar: %v", rows)
+	}
+	snapshot.FastMode.Expired = true
+	snapshot.FastMode.Error = "disk full"
+	if label, _ := codexFastModeLabelAt(snapshot, now.Add(2*time.Hour)); label != "FAST expired · OFF failed" {
+		t.Fatalf("failure label=%q", label)
 	}
 }

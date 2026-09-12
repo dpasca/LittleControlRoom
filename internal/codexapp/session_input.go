@@ -289,7 +289,8 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 		// Order new turns against shared toggles, including a turn queued before /fast off.
 		s.fastMode.mu.Lock()
 		defer s.fastMode.mu.Unlock()
-		latest := readFastModeConfig(s.fastMode.home)
+		latest := s.fastMode.readLocked()
+		latest = s.fastMode.expireLocked(ctx, latest, s.call)
 		s.fastMode.publishLocked(latest)
 		if latest.Error != "" {
 			return fmt.Errorf("Codex fast mode status unknown: %s", latest.Error)

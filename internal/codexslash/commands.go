@@ -90,7 +90,7 @@ var specs = []Spec{
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
 	{Name: "image-review", Usage: "/image-review [on|off]", Summary: "Explicitly enable or disable external API image review for this Codex session only"},
-	{Name: "fast", Usage: "/fast [on|off|status]", Summary: "Inspect or change shared Codex fast mode (higher usage); applies to all LCR Codex engineers"},
+	{Name: "fast", Usage: "/fast [on|off|status]", Summary: "Inspect or change shared Codex fast mode (higher usage, two-hour limit)"},
 }
 
 func Specs() []Spec {
@@ -134,7 +134,7 @@ func Suggestions(input string) []Suggestion {
 	case "fast":
 		return []Suggestion{
 			{Insert: "/fast status", Display: "/fast status", Summary: "Show shared Codex fast mode"},
-			{Insert: "/fast on", Display: "/fast on", Summary: "Enable fast mode across Codex engineers; increases usage"},
+			{Insert: "/fast on", Display: "/fast on", Summary: "Enable fast mode for two hours across Codex engineers; increases usage"},
 			{Insert: "/fast off", Display: "/fast off", Summary: "Disable fast mode across Codex engineers"},
 		}
 	case "model":

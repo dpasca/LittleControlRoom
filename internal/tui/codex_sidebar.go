@@ -931,7 +931,7 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 	if detail {
 		modelLineLimit = 0
 	}
-	rows = append(rows, embeddedSidebarModelRowsWithLimit(snapshot, width, modelLineLimit)...)
+	rows = append(rows, embeddedSidebarModelRowsWithLimitAt(snapshot, width, modelLineLimit, now)...)
 	if row := embeddedSidebarContextRow(snapshot, width); row != "" {
 		rows = append(rows, row)
 	}
@@ -1177,8 +1177,12 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 }
 
 func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLines int) []string {
+	return embeddedSidebarModelRowsWithLimitAt(snapshot, width, maxLines, time.Now())
+}
+
+func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxLines int, now time.Time) []string {
 	rows := []string{}
-	if text, warning := codexFastModeLabel(snapshot); text != "" {
+	if text, warning := codexFastModeLabelAt(snapshot, now); text != "" {
 		style := detailMutedStyle
 		if warning {
 			style = codexFastModeStyle

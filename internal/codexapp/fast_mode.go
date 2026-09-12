@@ -17,24 +17,32 @@ import (
 // FastModeSnapshot separates the shared next-turn policy from a running turn.
 // Unknown/error states must never be presented as fast being disabled.
 type FastModeSnapshot struct {
-	Managed bool
-	Tier    string
-	Error   string
-	Pending bool
+	Managed   bool
+	Tier      string
+	Error     string
+	Pending   bool
+	ExpiresAt time.Time
+	Expired   bool
 }
 
 type fastModeConfig struct {
-	Tier    string
-	Profile string
-	Error   string
+	Tier      string
+	Profile   string
+	ExpiresAt time.Time
+	Expired   bool
+	Error     string
 }
 
 type fastModeState struct {
-	home      string
-	mu        sync.Mutex // disk reads and native config writes; never acquired by snapshots
-	value     atomic.Pointer[fastModeConfig]
-	listeners map[*appServerSession]chan struct{}
-	polling   bool
+	home             string
+	mu               sync.Mutex // disk reads and native config writes; never acquired by snapshots
+	value            atomic.Pointer[fastModeConfig]
+	listeners        map[*appServerSession]chan struct{}
+	polling          bool
+	now              func() time.Time
+	adminCall        fastModeRPCCall
+	expiryError      string
+	expiryRetryAfter time.Time
 }
 
 var fastModeHomes = struct {
@@ -107,7 +115,7 @@ func (f *fastModeState) publishLocked(value fastModeConfig) {
 func (f *fastModeState) refresh() fastModeConfig {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	value := readFastModeConfig(f.home)
+	value := f.readLocked()
 	f.publishLocked(value)
 	return value
 }
@@ -155,7 +163,11 @@ func (s *appServerSession) syncFastModeLocked(ctx context.Context) error {
 	if s.fastMode == nil {
 		return nil
 	}
-	value := s.fastMode.refresh()
+	s.fastMode.mu.Lock()
+	value := s.fastMode.readLocked()
+	value = s.fastMode.expireLocked(ctx, value, s.call)
+	s.fastMode.publishLocked(value)
+	s.fastMode.mu.Unlock()
 	if value.Error != "" {
 		return fmt.Errorf("Codex fast mode status unknown: %s", value.Error)
 	}
@@ -232,30 +244,29 @@ func (s *appServerSession) FastMode(mode string) error {
 		tier := "default"
 		if mode == "on" {
 			tier = "fast"
+			// Repeating /fast on during a window does not extend its deadline.
+			current := f.readLocked()
+			if IsFastServiceTier(value.Tier) && current.Error != "" && !current.Expired {
+				f.publishLocked(current)
+				f.mu.Unlock()
+				return fmt.Errorf("%s; use /fast off to recover", current.Error)
+			}
+			if !IsFastServiceTier(value.Tier) || current.Expired {
+				now := f.currentTime().UTC()
+				if err := f.saveTimerLocked(fastModeTimer{StartedAt: now, ExpiresAt: now.Add(fastModeMaxDuration)}); err != nil {
+					f.mu.Unlock()
+					return fmt.Errorf("cannot enable fast mode without a saved timer: %w", err)
+				}
+			}
 		}
-		edits := []map[string]any{
-			{"keyPath": "service_tier", "value": tier, "mergeStrategy": "replace"},
-		}
-		if strings.ContainsAny(value.Profile, ".\"[]") {
-			f.mu.Unlock()
-			return fmt.Errorf("cannot safely edit fast mode for profile %q; change service_tier in Codex config", value.Profile)
-		}
-		if value.Profile != "" {
-			edits = append(edits, map[string]any{"keyPath": "profiles." + value.Profile + ".service_tier", "value": tier, "mergeStrategy": "replace"})
-		}
-		if mode == "on" {
-			edits = append(edits, map[string]any{"keyPath": "features.fast_mode", "value": true, "mergeStrategy": "replace"})
-		}
-		_, err := s.call(ctx, "config/batchWrite", map[string]any{"filePath": filepath.Join(f.home, "config.toml"), "edits": edits})
-		updated := readFastModeConfig(f.home)
+		err := f.writeConfigLocked(ctx, value, tier, s.call)
+		updated := f.readLocked()
 		f.publishLocked(updated)
 		f.mu.Unlock()
 		if err != nil {
-			return fmt.Errorf("save Codex fast mode: %w", err)
+			return err
 		}
-		if updated.Error != "" || updated.Tier != tier {
-			return fmt.Errorf("Codex fast mode save could not be verified; use /fast status")
-		}
+
 	}
 	if err := s.syncFastMode(ctx); err != nil {
 		return err
@@ -267,6 +278,9 @@ func (s *appServerSession) FastMode(mode string) error {
 	}
 	if IsFastServiceTier(snapshot.FastMode.Tier) {
 		text = "Codex FAST ON — increased usage limits/credits consumption."
+		if !snapshot.FastMode.ExpiresAt.IsZero() {
+			text += " Automatically switches off at " + snapshot.FastMode.ExpiresAt.Local().Format("15:04:05 MST") + "."
+		}
 	}
 	text += " Shared across LCR Codex engineers, including new and resumed sessions. /fast off disables it."
 	if snapshot.Busy {
@@ -285,7 +299,7 @@ func (s *appServerSession) fastModeSnapshotLocked() FastModeSnapshot {
 		return FastModeSnapshot{}
 	}
 	value := s.fastMode.value.Load()
-	result := FastModeSnapshot{Managed: true, Tier: value.Tier, Error: value.Error, Pending: !sameFastModeTier(s.fastModeApplied, value.Tier)}
+	result := FastModeSnapshot{ExpiresAt: value.ExpiresAt, Expired: value.Expired, Managed: true, Tier: value.Tier, Error: value.Error, Pending: !sameFastModeTier(s.fastModeApplied, value.Tier)}
 	if s.closed {
 		result.Pending = false
 		return result
@@ -303,7 +317,11 @@ func (s *appServerSession) sharedServiceTier() string {
 	if s.fastMode == nil {
 		return ""
 	}
-	return s.fastMode.value.Load().Tier
+	value := s.fastMode.value.Load()
+	if value.Expired || value.Error != "" {
+		return "default"
+	}
+	return value.Tier
 }
 
 // One disk poll per Codex home, regardless of the number of loaded engineers.
@@ -311,14 +329,9 @@ func (f *fastModeState) poll() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		f.mu.Lock()
-		if len(f.listeners) == 0 {
-			f.polling = false
-			f.mu.Unlock()
+		if !f.pollOnce() {
 			return
 		}
-		f.publishLocked(readFastModeConfig(f.home))
-		f.mu.Unlock()
 	}
 }
 
@@ -356,4 +369,26 @@ func (s *appServerSession) handleFastModeSettingsUpdated(params json.RawMessage)
 	}
 	s.mu.Unlock()
 	s.notify()
+}
+
+func (f *fastModeState) writeConfigLocked(ctx context.Context, value fastModeConfig, tier string, call fastModeRPCCall) error {
+	if strings.ContainsAny(value.Profile, ".\"[]") {
+		return fmt.Errorf("cannot safely edit fast mode for profile %q; change service_tier in Codex config", value.Profile)
+	}
+	edits := []map[string]any{{"keyPath": "service_tier", "value": tier, "mergeStrategy": "replace"}}
+	if value.Profile != "" {
+		edits = append(edits, map[string]any{"keyPath": "profiles." + value.Profile + ".service_tier", "value": tier, "mergeStrategy": "replace"})
+	}
+	if IsFastServiceTier(tier) {
+		edits = append(edits, map[string]any{"keyPath": "features.fast_mode", "value": true, "mergeStrategy": "replace"})
+	}
+	_, err := call(ctx, "config/batchWrite", map[string]any{"filePath": filepath.Join(f.home, "config.toml"), "edits": edits})
+	if err != nil {
+		return fmt.Errorf("save Codex fast mode: %w", err)
+	}
+	updated := readFastModeConfig(f.home)
+	if updated.Error != "" || !sameFastModeTier(updated.Tier, tier) {
+		return fmt.Errorf("Codex fast mode save could not be verified; use /fast status")
+	}
+	return nil
 }
