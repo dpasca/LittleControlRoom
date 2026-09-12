@@ -1441,6 +1441,9 @@ func (s *Service) removeWorktree(ctx context.Context, projectPath string, force,
 		if err := validateRemovalPlanDirectory(plan); err != nil {
 			return err
 		}
+		if err := validateRemovalClones(ctx, plan); err != nil {
+			return err
+		}
 		// Git interprets absent gitlink directories as deleted files. Empty
 		// placeholders represent uninitialized submodules and let the normal
 		// clean-checkout removal retain Git's concurrent-change protection.

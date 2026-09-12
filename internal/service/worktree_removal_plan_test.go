@@ -25,13 +25,17 @@ type assetResidueFixture struct {
 }
 
 func newAssetResidueFixture(t *testing.T) assetResidueFixture {
+	return newRemovalFixture(t, []string{"TheFractalA", "TheFractalX", "TheRun", "TheRun2"})
+}
+
+func newRemovalFixture(t *testing.T, apps []string) assetResidueFixture {
 	t.Helper()
 	ctx := context.Background()
 	parent := t.TempDir()
 	parent, _ = filepath.EvalSymlinks(parent)
 	f := assetResidueFixture{root: filepath.Join(parent, "repo"), path: filepath.Join(parent, "repo--task"), other: filepath.Join(parent, "repo--live")}
 	initGitRepo(t, f.root)
-	for _, app := range []string{"TheFractalA", "TheFractalX", "TheRun", "TheRun2"} {
+	for _, app := range apps {
 		rel := filepath.Join("Apps", app, "Assets")
 		origin := filepath.Join(parent, "origin-"+app)
 		initGitRepo(t, origin)
