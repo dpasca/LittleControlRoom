@@ -727,3 +727,34 @@ func (f *codexCleanupFixture) addThread(t *testing.T, fixture cleanupThreadFixtu
 	}
 	return rolloutPath
 }
+
+func TestDeleteCodexCleanupWorktreeReportsFilesRemovedButIndexRetained(t *testing.T) {
+	fixture := newCodexCleanupFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	worktreePath := fixture.addDeletedWorktree(t, "locked-index", now.Add(-20*24*time.Hour), false)
+	rolloutPath := fixture.addThread(t, cleanupThreadFixture{ID: "thread-root", CWD: worktreePath, LastActivity: now.Add(-90 * 24 * time.Hour)})
+	audit, err := fixture.service.AuditCodexSessionStorage(context.Background(), CodexCleanupAuditOptions{Now: now})
+	if err != nil || len(audit.Groups) != 1 {
+		t.Fatalf("initial audit = %#v, %v", audit, err)
+	}
+	group := audit.Groups[0]
+	fixture.service.codexThreadDeleter = func(context.Context, string, []string, func(codexapp.ThreadDeleteProgress)) ([]string, error) {
+		if err := os.Remove(rolloutPath); err != nil {
+			t.Fatalf("remove fake rollout: %v", err)
+		}
+		return nil, errors.New("database is locked")
+	}
+
+	result, err := fixture.service.DeleteCodexCleanupWorktree(context.Background(), DeleteCodexCleanupWorktreeRequest{
+		WorktreePath:    group.WorktreePath,
+		RootProjectPath: group.RootProjectPath,
+		RootThreadIDs:   []string{"thread-root"},
+		Revision:        group.Revision,
+	})
+	if err == nil || !strings.Contains(err.Error(), "1 Codex thread records remain") {
+		t.Fatalf("locked-index error = %v", err)
+	}
+	if result.Verified || result.DeletedRootThreads != 0 || result.VerifiedReclaimedBytes != group.RecoverableBytes {
+		t.Fatalf("verified locked-index result = %#v", result)
+	}
+}

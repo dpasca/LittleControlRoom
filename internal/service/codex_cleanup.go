@@ -1128,7 +1128,13 @@ func verifyCodexCleanupGroup(ctx context.Context, home string, group CodexCleanu
 	if listErr != nil {
 		verificationErr = fmt.Errorf("verify Codex thread index after deletion: %w", listErr)
 	} else if !result.Verified {
-		verificationErr = fmt.Errorf("reclaimed storage could not be fully verified after the Codex app-server deletion request")
+		remainingThreads := 0
+		for _, exists := range remainingSet {
+			if exists {
+				remainingThreads++
+			}
+		}
+		verificationErr = fmt.Errorf("cleanup incomplete: %d Codex thread records remain; %d of %d rollout bytes verified reclaimed", remainingThreads, result.VerifiedReclaimedBytes, result.ExpectedBytes)
 	}
 	return result, verificationErr
 }

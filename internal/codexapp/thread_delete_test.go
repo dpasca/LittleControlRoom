@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,7 @@ func TestThreadDeleteHelperProcess(t *testing.T) {
 	logPath := os.Getenv("LCROOM_THREAD_DELETE_LOG")
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
+	attempts := 0
 	for scanner.Scan() {
 		var request struct {
 			ID     json.RawMessage        `json:"id"`
@@ -143,26 +145,23 @@ func TestThreadDeleteHelperProcess(t *testing.T) {
 		if len(request.ID) == 0 {
 			continue
 		}
+		if request.Method == "thread/delete" {
+			attempts++
+			lockCount, _ := strconv.Atoi(os.Getenv("LCROOM_THREAD_DELETE_LOCK_COUNT"))
+			if attempts <= lockCount {
+				_ = encoder.Encode(map[string]any{"id": request.ID, "error": map[string]any{"code": -32000, "message": "failed to delete app-server state: error returned from database: (code: 5) database is locked"}})
+				continue
+			}
+		}
 		if request.Method == "thread/delete" && request.Params["threadId"] == "thread-fail" {
+			fmt.Fprintln(os.Stderr, "old warning: database is locked")
 			_ = encoder.Encode(map[string]any{"id": request.ID, "error": map[string]any{"code": -32000, "message": "delete rejected"}})
 			continue
 		}
 		if request.Method == "thread/delete" && os.Getenv(threadDeleteBlockEnv) == "1" {
 			continue
 		}
-		if request.Method == "thread/delete" && os.Getenv("LCROOM_THREAD_DELETE_BARRIER") == "1" {
-			deadline := time.Now().Add(5 * time.Second)
-			for {
-				data, _ := os.ReadFile(logPath)
-				if strings.Count(string(data), "thread/delete:") >= 4 {
-					break
-				}
-				if time.Now().After(deadline) {
-					os.Exit(2)
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-		}
+
 		_ = encoder.Encode(map[string]interface{}{
 			"id":     json.RawMessage(request.ID),
 			"result": map[string]interface{}{},
@@ -170,12 +169,12 @@ func TestThreadDeleteHelperProcess(t *testing.T) {
 	}
 }
 
-func TestDeleteThreadsConcurrentProgressAndClientReuse(t *testing.T) {
+func TestDeleteThreadsSerialProgressAndClientReuse(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "requests.log")
 	original := newThreadAdminCommand
 	newThreadAdminCommand = func() *exec.Cmd {
 		cmd := exec.Command(os.Args[0], "-test.run=TestThreadDeleteHelperProcess")
-		cmd.Env = append(os.Environ(), threadDeleteHelperEnv+"=1", "LCROOM_THREAD_DELETE_BARRIER=1", "LCROOM_THREAD_DELETE_LOG="+logPath)
+		cmd.Env = append(os.Environ(), threadDeleteHelperEnv+"=1", "LCROOM_THREAD_DELETE_LOG="+logPath)
 		return cmd
 	}
 	t.Cleanup(func() { newThreadAdminCommand = original })
@@ -191,20 +190,20 @@ func TestDeleteThreadsConcurrentProgressAndClientReuse(t *testing.T) {
 			active++
 			peak = max(peak, active)
 		}
-		if active < 0 || active > 4 {
+		if active < 0 || active > 1 {
 			t.Errorf("active roots = %d", active)
 		}
 	})
-	if err != nil || strings.Join(deleted, ",") != strings.Join(ids, ",") || peak != 4 || completed != len(ids) || active != 0 {
+	if err != nil || strings.Join(deleted, ",") != strings.Join(ids, ",") || peak != 1 || completed != len(ids) || active != 0 {
 		t.Fatalf("deleted=%v error=%v peak=%d completed=%d active=%d", deleted, err, peak, completed, active)
 	}
 	data, err := os.ReadFile(logPath)
-	if err != nil || strings.Count(string(data), "initialize\n") != 4 {
-		t.Fatalf("expected four reused clients: %s (%v)", data, err)
+	if err != nil || strings.Count(string(data), "initialize\n") != 1 {
+		t.Fatalf("expected one reused client: %s (%v)", data, err)
 	}
 }
 
-func TestDeleteThreadsConcurrentCancellationStopsQueuedRoots(t *testing.T) {
+func TestDeleteThreadsCancellationStopsQueuedRoots(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "requests.log")
 	original := newThreadAdminCommand
 	newThreadAdminCommand = func() *exec.Cmd {
@@ -218,11 +217,11 @@ func TestDeleteThreadsConcurrentCancellationStopsQueuedRoots(t *testing.T) {
 	started := 0
 	deleted, err := DeleteThreadsWithProgress(ctx, t.TempDir(), []string{"a", "b", "c", "d", "queued-e", "queued-f"}, func(p ThreadDeleteProgress) {
 		started++
-		if started == 4 {
+		if started == 1 {
 			cancel()
 		}
 	})
-	if !errors.Is(err, context.Canceled) || len(deleted) != 0 || started != 4 {
+	if !errors.Is(err, context.Canceled) || len(deleted) != 0 || started != 1 {
 		t.Fatalf("deleted=%v error=%v started=%d", deleted, err, started)
 	}
 	data, _ := os.ReadFile(logPath)
@@ -273,5 +272,90 @@ func TestDeleteThreadsReportsStderrFromImmediateAppServerExit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), detail) {
 		t.Fatalf("error = %v, want it to carry app-server stderr %q", err, detail)
+	}
+}
+
+func TestDeleteThreadsLockRetries(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		locks         int
+		cancel        bool
+		wantAttempts  int
+		wantCompleted int
+	}{
+		{name: "transient", locks: 2, wantAttempts: 3, wantCompleted: 1},
+		{name: "exhausted", locks: 10, wantAttempts: 5},
+		{name: "cancel backoff", locks: 10, cancel: true, wantAttempts: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "requests.log")
+			original := newThreadAdminCommand
+			newThreadAdminCommand = func() *exec.Cmd {
+				cmd := exec.Command(os.Args[0], "-test.run=TestThreadDeleteHelperProcess")
+				cmd.Env = append(os.Environ(), threadDeleteHelperEnv+"=1", "LCROOM_THREAD_DELETE_LOG="+logPath,
+					"LCROOM_THREAD_DELETE_LOCK_COUNT="+strconv.Itoa(tc.locks))
+				return cmd
+			}
+			t.Cleanup(func() { newThreadAdminCommand = original })
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if tc.cancel {
+				go func() {
+					for ctx.Err() == nil {
+						data, _ := os.ReadFile(logPath)
+						if strings.Contains(string(data), "thread/delete:") {
+							cancel()
+							return
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+				}()
+			}
+			starts, completions := 0, 0
+			deleted, err := DeleteThreadsWithProgress(ctx, t.TempDir(), []string{"root"}, func(p ThreadDeleteProgress) {
+				if p.Completed {
+					completions++
+				} else {
+					starts++
+				}
+			})
+			if starts != 1 || completions != tc.wantCompleted || len(deleted) != tc.wantCompleted {
+				t.Fatalf("starts=%d completions=%d deleted=%v", starts, completions, deleted)
+			}
+			if tc.cancel {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("error=%v", err)
+				}
+			} else if tc.wantCompleted > 0 {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "after 5 attempts") {
+				t.Fatalf("error=%v", err)
+			}
+			data, _ := os.ReadFile(logPath)
+			if got := strings.Count(string(data), "thread/delete:"); got != tc.wantAttempts {
+				t.Fatalf("attempts=%d want=%d: %s", got, tc.wantAttempts, data)
+			}
+		})
+	}
+}
+
+func TestDeleteThreadsDoesNotRetryRejectionWithLockWarning(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "requests.log")
+	original := newThreadAdminCommand
+	newThreadAdminCommand = func() *exec.Cmd {
+		cmd := exec.Command(os.Args[0], "-test.run=TestThreadDeleteHelperProcess")
+		cmd.Env = append(os.Environ(), threadDeleteHelperEnv+"=1", "LCROOM_THREAD_DELETE_LOG="+logPath)
+		return cmd
+	}
+	t.Cleanup(func() { newThreadAdminCommand = original })
+	deleted, err := DeleteThreads(context.Background(), t.TempDir(), []string{"first", "thread-fail", "queued"})
+	if err == nil || !strings.Contains(err.Error(), "delete rejected") || strings.Join(deleted, ",") != "first" {
+		t.Fatalf("deleted=%v error=%v", deleted, err)
+	}
+	data, _ := os.ReadFile(logPath)
+	if strings.Count(string(data), "thread/delete:thread-fail") != 1 || strings.Contains(string(data), "thread/delete:queued") {
+		t.Fatalf("unexpected requests: %s", data)
 	}
 }

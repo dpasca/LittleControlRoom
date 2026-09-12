@@ -403,9 +403,12 @@ Space, the select-all control (or `A` while the table is focused), and opening
 and keep counts and defaults to **Back**. The user must explicitly focus and
 activate **Delete N sessions permanently**, or click that button. LCR repeats the
 complete audit and compares the preview revision before each group. It then
-calls Codex app-server `thread/delete` for each selected root through at most
-four persistent cleanup clients. Independent root trees can make progress
-concurrently; each client handles one request at a time. The Codex API
+calls Codex app-server `thread/delete` for each selected root through one
+persistent cleanup client, serializing writes to the shared Codex database.
+SQLite lock responses are retried up to five total attempts, with cancelable
+exponential waits of 250 ms, 500 ms, 1 s, and 2 s. Other failures stop immediately.
+Missing rollout files are tolerated by the API, so a retry can finish metadata
+removal after a partial deletion. The Codex API
 performs the root-and-descendant cascade. Direct SQLite or rollout-file
 deletion is not used.
 
@@ -423,7 +426,7 @@ does not claim filesystem block-level savings on sparse, compressed, or
 copy-on-write storage. The deletion job runs off the TUI update path: `B` hides
 it while `/codex-gc` reopens its progress or report. Esc cancels the active
 app-server clients and prevents queued roots and later groups from starting.
-An error in any worker also cancels the remaining workers and queue.
+An exhausted lock retry or other error stops the remaining queue.
 A cancellation cannot restore a thread already deleted, so LCR gives the in-flight group a
 separate bounded post-cancel verification pass and reports only bytes it can
 still prove were reclaimed. Each destructive group also shares the repository

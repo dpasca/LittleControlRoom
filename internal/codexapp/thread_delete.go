@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"lcroom/internal/codexcli"
 	"lcroom/internal/codexstate"
@@ -37,10 +38,10 @@ type ThreadDeleteProgress struct {
 	Completed bool
 }
 
-// DeleteThreadsWithProgress uses a bounded pool of persistent clients for
-// independent root trees. Callbacks are serialized on the calling goroutine.
+// DeleteThreadsWithProgress reuses one client so cleanup does not compete with
+// itself for Codex's shared SQLite writer. Callbacks run on the calling goroutine.
 func DeleteThreadsWithProgress(ctx context.Context, codexHome string, threadIDs []string, progress func(ThreadDeleteProgress)) ([]string, error) {
-	return deleteThreads(ctx, codexHome, threadIDs, 4, progress)
+	return deleteThreads(ctx, codexHome, threadIDs, 1, progress)
 }
 
 func deleteThreads(ctx context.Context, codexHome string, threadIDs []string, concurrency int, progress func(ThreadDeleteProgress)) ([]string, error) {
@@ -87,7 +88,7 @@ func deleteThreads(ctx context.Context, codexHome string, threadIDs []string, co
 					return
 				}
 				events <- event{progress: ThreadDeleteProgress{ThreadID: id}}
-				if _, err := client.call(ctx, "thread/delete", map[string]any{"threadId": id}); err != nil {
+				if err := client.deleteThread(ctx, id); err != nil {
 					cancel()
 					events <- event{err: fmt.Errorf("delete Codex thread %s: %w", shortID(id), err)}
 					return
@@ -139,6 +140,40 @@ type threadAdminClient struct {
 
 	stderrMu sync.Mutex
 	stderr   strings.Builder
+}
+
+// Keep protocol errors separate from process stderr: an unrelated old lock
+// warning in stderr must never make a rejected deletion retryable.
+type threadAdminRPCError struct {
+	message string
+}
+
+func (e *threadAdminRPCError) Error() string { return e.message }
+
+func (c *threadAdminClient) deleteThread(ctx context.Context, id string) error {
+	const attempts = 5
+	for attempt := 0; attempt < attempts; attempt++ {
+		_, err := c.call(ctx, "thread/delete", map[string]any{"threadId": id})
+		var rpcErr *threadAdminRPCError
+		if !errors.As(err, &rpcErr) ||
+			(!strings.Contains(rpcErr.message, "database is locked") &&
+				!strings.Contains(rpcErr.message, "database table is locked")) {
+			return err
+		}
+		if attempt == attempts-1 {
+			return fmt.Errorf("Codex database remained locked after %d attempts; cleanup may be partial: %w", attempts, err)
+		}
+		// thread/delete tolerates missing rollout files, allowing its metadata
+		// removal to finish after a previous attempt removed those files.
+		timer := time.NewTimer(250 * time.Millisecond * time.Duration(1<<attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
 }
 
 func startThreadAdminClient(ctx context.Context, codexHome string) (*threadAdminClient, error) {
@@ -256,7 +291,7 @@ func (c *threadAdminClient) call(ctx context.Context, method string, params any)
 				continue
 			}
 			if envelope.Error != nil {
-				return nil, c.withStderr(errors.New(envelope.Error.Message))
+				return nil, c.withStderr(&threadAdminRPCError{message: envelope.Error.Message})
 			}
 			return envelope.Result, nil
 		}
