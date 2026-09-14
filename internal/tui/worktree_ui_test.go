@@ -3355,7 +3355,7 @@ func TestWorktreeActionMsgSubmodulePublishBlockedReopensMergeDialog(t *testing.T
 	if got.worktreeMergeConfirm == nil {
 		t.Fatalf("submodule publish blocker should reopen the merge dialog")
 	}
-	if got.worktreeMergeConfirm.PublishBlocker == nil {
+	if got.worktreeMergeConfirm.RecoveryBlocker == nil {
 		t.Fatalf("merge dialog should retain the typed publish blocker for automatic recovery")
 	}
 	if got.worktreeMergeConfirm.Selected != worktreeMergeConfirmRecoveryIndex(got.worktreeMergeConfirm) {
@@ -3514,13 +3514,13 @@ func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testin
 		Cause:           errors.New("permission denied"),
 	}
 	confirm := &worktreeMergeConfirmState{
-		ProjectPath:    childPath,
-		RootPath:       rootPath,
-		ProjectName:    "repo--feat-submodule",
-		BranchName:     "feat/submodule",
-		TargetBranch:   "master",
-		ErrorMessage:   blocker.Error(),
-		PublishBlocker: &blocker,
+		ProjectPath:     childPath,
+		RootPath:        rootPath,
+		ProjectName:     "repo--feat-submodule",
+		BranchName:      "feat/submodule",
+		TargetBranch:    "master",
+		ErrorMessage:    blocker.Error(),
+		RecoveryBlocker: blocker,
 	}
 	confirm.Selected = worktreeMergeConfirmRecoveryIndex(confirm)
 	project := model.ProjectSummary{
@@ -3597,9 +3597,9 @@ func TestWorktreeMergeRecoveryBusyStateSurvivesOutstandingStatusRefresh(t *testi
 	m := Model{
 		status: "Creating merge recovery engineer task...",
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
-			ProjectPath:    childPath,
-			ErrorMessage:   blocker.Error(),
-			PublishBlocker: &blocker,
+			ProjectPath:     childPath,
+			ErrorMessage:    blocker.Error(),
+			RecoveryBlocker: blocker,
 		},
 		worktreeMergeRecoveryDialog: &worktreeMergeRecoveryDialogState{
 			Confirm:    worktreeMergeConfirmState{ProjectPath: childPath},
@@ -3666,13 +3666,13 @@ func TestWorktreeMergeRecoveryCreatesAndLaunchesTrackedEngineerTask(t *testing.T
 		Cause:           errors.New("remote: permission denied"),
 	}
 	confirm := &worktreeMergeConfirmState{
-		ProjectPath:    childPath,
-		RootPath:       rootPath,
-		ProjectName:    "repo--feat-submodule",
-		BranchName:     "feat/submodule",
-		TargetBranch:   "master",
-		ErrorMessage:   blocker.Error(),
-		PublishBlocker: &blocker,
+		ProjectPath:     childPath,
+		RootPath:        rootPath,
+		ProjectName:     "repo--feat-submodule",
+		BranchName:      "feat/submodule",
+		TargetBranch:    "master",
+		ErrorMessage:    blocker.Error(),
+		RecoveryBlocker: blocker,
 	}
 	confirm.Selected = worktreeMergeConfirmRecoveryIndex(confirm)
 	project := model.ProjectSummary{

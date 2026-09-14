@@ -628,7 +628,8 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		}
 		return result, nil
 	}
-	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
+	sourceStatus, err = s.waitForMergeBackIndexLocks(ctx, rootPath, projectPath, targetBranch, sourceBranch, false)
+	if err != nil {
 		return result, fmt.Errorf("preflight merge-back for %s: %w", rootPath, err)
 	}
 	if _, err := s.ensureMergeBackSubmodulesPublished(ctx, projectPath, rootPath, targetBranch, sourceStatus); err != nil {
@@ -800,10 +801,7 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 		SourceBranch:    sourceBranch,
 		TargetBranch:    targetBranch,
 	}
-	if err := gitlock.CheckIndexLock(ctx, projectPath); err != nil {
-		return result, fmt.Errorf("preflight worktree commit before merge-back for %s: %w", projectPath, err)
-	}
-	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
+	if _, err := s.waitForMergeBackIndexLocks(ctx, rootPath, projectPath, targetBranch, sourceBranch, true); err != nil {
 		return result, fmt.Errorf("preflight merge-back for %s: %w", rootPath, err)
 	}
 
@@ -824,6 +822,35 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 	return mergeResult, nil
 }
 
+// Revalidate after waiting: another Git writer may have changed either checkout
+// while holding its index lock. The initial preflight snapshots are then stale.
+func (s *Service) waitForMergeBackIndexLocks(ctx context.Context, rootPath, projectPath, targetBranch, sourceBranch string, allowDirtySource bool) (scanner.GitRepoStatus, error) {
+	if err := gitlock.WaitForCheckoutIndexLocks(ctx, rootPath, projectPath); err != nil {
+		return scanner.GitRepoStatus{}, err
+	}
+	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	if err != nil {
+		return scanner.GitRepoStatus{}, fmt.Errorf("recheck root status after index lock wait: %w", err)
+	}
+	if strings.TrimSpace(rootStatus.Branch) != targetBranch {
+		return scanner.GitRepoStatus{}, fmt.Errorf("root branch changed while waiting for Git; expected %s, found %s", targetBranch, rootStatus.Branch)
+	}
+	if rootStatus.Dirty {
+		return scanner.GitRepoStatus{}, fmt.Errorf("root worktree became dirty while waiting for Git; commit or discard changes before merging back")
+	}
+	sourceStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return scanner.GitRepoStatus{}, fmt.Errorf("recheck source status after index lock wait: %w", err)
+	}
+	if strings.TrimSpace(sourceStatus.Branch) != sourceBranch {
+		return scanner.GitRepoStatus{}, fmt.Errorf("source branch changed while waiting for Git; expected %s, found %s", sourceBranch, sourceStatus.Branch)
+	}
+	if !allowDirtySource && sourceStatus.Dirty {
+		return scanner.GitRepoStatus{}, fmt.Errorf("source worktree became dirty while waiting for Git; commit or discard changes before merging back")
+	}
+	return sourceStatus, nil
+}
+
 // readRootRepoStatusWithSubmoduleRepair retries a failed root status after
 // repairing stale canonical submodule worktree metadata. Callers must hold the
 // root repository's service-level Git write lock because repair updates the
@@ -834,7 +861,7 @@ func (s *Service) readRootRepoStatusWithSubmoduleRepair(ctx context.Context, roo
 		return status, nil
 	}
 	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
-		return scanner.GitRepoStatus{}, fmt.Errorf("%w (submodule metadata repair blocked: %v)", statusErr, err)
+		return scanner.GitRepoStatus{}, fmt.Errorf("%w (submodule metadata repair blocked: %w)", statusErr, err)
 	}
 	repaired, repairErr := worktreeprep.RepairRootSubmoduleWorktrees(ctx, rootPath)
 	if repairErr != nil {
@@ -2363,7 +2390,7 @@ func gitSubmoduleUpdateInitRecursive(ctx context.Context, repoPath string) error
 	if repoPath == "" {
 		return fmt.Errorf("repo path is required")
 	}
-	if err := gitlock.CheckIndexAndModuleLocks(ctx, repoPath); err != nil {
+	if err := gitlock.WaitForCheckoutIndexLocks(ctx, repoPath); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, "git", "-c", "protocol.file.allow=always", "-C", repoPath, "submodule", "update", "--init", "--recursive")

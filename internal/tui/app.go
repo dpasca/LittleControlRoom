@@ -18,6 +18,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/events"
+	"lcroom/internal/gitlock"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
@@ -580,6 +581,7 @@ type todoWorktreeLaunchMsg struct {
 }
 
 type worktreeActionMsg struct {
+	mergeConfirm           *worktreeMergeConfirmState
 	projectPath            string
 	removedProjectPath     string
 	selectPath             string
@@ -2883,10 +2885,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if shouldRefreshWorktreeMergeFamilyAfterError(msg.err) {
 				refreshCmd = m.refreshProjectStatusPathsCmd(msg.projectPath, msg.selectPath)
 			}
+			var indexLockErr gitlock.IndexLockError
+			if msg.mergeConfirm != nil && errors.As(msg.err, &indexLockErr) {
+				m.appendErrorLogEntry("Git index lock blocked merge", msg.err, msg.projectPath)
+				m.showWorktreeMergeBlockedDialog(msg, msg.err)
+				return m, refreshCmd
+			}
 			var submodulePublishErr service.SubmodulePublishBlockedError
 			if errors.As(msg.err, &submodulePublishErr) {
 				m.appendErrorLogEntry("Submodule publish blocked", msg.err, msg.projectPath)
-				m.showSubmodulePublishBlockedMergeDialog(msg, submodulePublishErr)
+				m.showWorktreeMergeBlockedDialog(msg, submodulePublishErr)
 				return m, refreshCmd
 			}
 			m.reportError("Worktree action failed", msg.err, msg.projectPath)
@@ -2894,6 +2902,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.worktreeMergeConfirm.Busy = false
 				m.worktreeMergeConfirm.BusyMessage = ""
 				m.worktreeMergeConfirm.ErrorMessage = msg.err.Error()
+				m.worktreeMergeConfirm.RecoveryBlocker = nil
+				m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 				m.worktreePostMerge = nil
 				m.worktreeRemoveConfirm = nil
 				return m, refreshCmd

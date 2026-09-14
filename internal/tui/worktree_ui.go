@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/gitlock"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -170,7 +171,7 @@ type worktreeMergeConfirmState struct {
 	HasOpenSession     bool
 	OpenSessionWarning string
 	ErrorMessage       string
-	PublishBlocker     *service.SubmodulePublishBlockedError
+	RecoveryBlocker    error
 	Busy               bool
 	BusyMessage        string
 	Selected           int
@@ -178,7 +179,7 @@ type worktreeMergeConfirmState struct {
 
 type worktreeMergeRecoveryTaskMsg struct {
 	Confirm     worktreeMergeConfirmState
-	Blocker     service.SubmodulePublishBlockedError
+	Blocker     error
 	Task        model.AgentTask
 	Provider    codexapp.Provider
 	CategoryErr error
@@ -187,7 +188,7 @@ type worktreeMergeRecoveryTaskMsg struct {
 
 type worktreeMergeRecoveryDialogState struct {
 	Confirm    worktreeMergeConfirmState
-	Blocker    service.SubmodulePublishBlockedError
+	Blocker    error
 	Provider   codexapp.Provider
 	Submitting bool
 }
@@ -281,7 +282,7 @@ func worktreeMergeConfirmOptionCount(confirm *worktreeMergeConfirmState) int {
 }
 
 func worktreeMergeConfirmHasRecovery(confirm *worktreeMergeConfirmState) bool {
-	return confirm != nil && confirm.PublishBlocker != nil
+	return confirm != nil && confirm.RecoveryBlocker != nil
 }
 
 func worktreeMergeConfirmRecoveryIndex(confirm *worktreeMergeConfirmState) int {
@@ -421,8 +422,8 @@ func worktreeMergeConfirmStatus(confirm *worktreeMergeConfirmState) string {
 		return reason
 	}
 	if message := strings.TrimSpace(confirm.ErrorMessage); message != "" {
-		if confirm.PublishBlocker != nil {
-			return "Submodule publish blocked. Review the merge dialog."
+		if confirm.RecoveryBlocker != nil {
+			return worktreeMergeBlockerStatus(confirm.RecoveryBlocker)
 		}
 		if worktreeMergeConflictMessage(message) {
 			return "Worktree merge conflict. Review the merge dialog."
@@ -544,7 +545,9 @@ func shouldRefreshWorktreeMergeFamilyAfterError(err error) bool {
 		strings.Contains(text, "merge conflict while updating")
 }
 
-func (m *Model) showSubmodulePublishBlockedMergeDialog(msg worktreeActionMsg, publishErr service.SubmodulePublishBlockedError) {
+func (m *Model) showWorktreeMergeBlockedDialog(msg worktreeActionMsg, blocker error) {
+	var publishErr service.SubmodulePublishBlockedError
+	_ = errors.As(blocker, &publishErr)
 	projectPath := firstNonEmptyTrimmed(msg.projectPath, publishErr.WorktreePath)
 	rootPath := firstNonEmptyTrimmed(publishErr.RootProjectPath, msg.selectPath)
 	projectName := ""
@@ -592,14 +595,23 @@ func (m *Model) showSubmodulePublishBlockedMergeDialog(msg worktreeActionMsg, pu
 		RemoveNow:          !hasOpenSession,
 		HasOpenSession:     hasOpenSession,
 		OpenSessionWarning: openSessionWarning,
-		ErrorMessage:       publishErr.Error(),
-		PublishBlocker:     &publishErr,
+		ErrorMessage:       blocker.Error(),
+		RecoveryBlocker:    blocker,
+	}
+	if msg.mergeConfirm != nil {
+		snapshot := *msg.mergeConfirm
+		snapshot.Busy = false
+		snapshot.BusyMessage = ""
+		snapshot.PendingRefresh = nil
+		snapshot.ErrorMessage = blocker.Error()
+		snapshot.RecoveryBlocker = blocker
+		confirm = &snapshot
 	}
 	confirm.Selected = worktreeMergeConfirmRecoveryIndex(confirm)
 	m.worktreeMergeConfirm = confirm
 	m.worktreePostMerge = nil
 	m.worktreeRemoveConfirm = nil
-	m.status = "Submodule publish blocked. Review the merge dialog."
+	m.status = worktreeMergeBlockerStatus(blocker)
 }
 
 func (m Model) worktreeMergeRecoveryProvider(confirm worktreeMergeConfirmState) codexapp.Provider {
@@ -611,7 +623,7 @@ func (m Model) worktreeMergeRecoveryProvider(confirm worktreeMergeConfirmState) 
 	return codexapp.ProviderCodex
 }
 
-func (m *Model) openWorktreeMergeRecoveryDialog(confirm worktreeMergeConfirmState, blocker service.SubmodulePublishBlockedError) {
+func (m *Model) openWorktreeMergeRecoveryDialog(confirm worktreeMergeConfirmState, blocker error) {
 	m.worktreeMergeRecoveryDialog = &worktreeMergeRecoveryDialogState{
 		Confirm:  confirm,
 		Blocker:  blocker,
@@ -680,20 +692,32 @@ func (m Model) updateWorktreeMergeRecoveryDialogMode(msg tea.KeyMsg) (tea.Model,
 	return m, nil
 }
 
-func worktreeMergeRecoveryTaskTitle(confirm worktreeMergeConfirmState, blocker service.SubmodulePublishBlockedError) string {
+func worktreeMergeRecoveryTaskTitle(confirm worktreeMergeConfirmState, blocker error) string {
 	projectBase := ""
 	if projectPath := strings.TrimSpace(confirm.ProjectPath); projectPath != "" {
 		projectBase = filepath.Base(projectPath)
 	}
 	projectName := firstNonEmptyTrimmed(confirm.ProjectName, projectBase, "worktree")
-	submodulePath := strings.TrimSpace(blocker.SubmodulePath)
+	var lockErr gitlock.IndexLockError
+	if errors.As(blocker, &lockErr) {
+		return truncateText("Resolve Git index lock for "+projectName, 96)
+	}
+	var publishErr service.SubmodulePublishBlockedError
+	_ = errors.As(blocker, &publishErr)
+	submodulePath := strings.TrimSpace(publishErr.SubmodulePath)
 	if submodulePath == "" {
 		return truncateText("Resolve merge blocker for "+projectName, 96)
 	}
 	return truncateText("Resolve submodule publish for "+projectName+": "+submodulePath, 96)
 }
 
-func worktreeMergeRecoveryEngineerPrompt(confirm worktreeMergeConfirmState, blocker service.SubmodulePublishBlockedError) string {
+func worktreeMergeRecoveryEngineerPrompt(confirm worktreeMergeConfirmState, failure error) string {
+	var lockErr gitlock.IndexLockError
+	if errors.As(failure, &lockErr) {
+		return worktreeIndexLockRecoveryEngineerPrompt(confirm, lockErr, failure)
+	}
+	var blocker service.SubmodulePublishBlockedError
+	_ = errors.As(failure, &blocker)
 	lines := []string{
 		"Resolve the submodule publication blocker that stopped Little Control Room from merging this linked worktree.",
 		"",
@@ -727,7 +751,7 @@ func worktreeMergeRecoveryEngineerPrompt(confirm worktreeMergeConfirmState, bloc
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmState, blocker service.SubmodulePublishBlockedError, provider codexapp.Provider) tea.Cmd {
+func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmState, blocker error, provider codexapp.Provider) tea.Cmd {
 	return func() tea.Msg {
 		msg := worktreeMergeRecoveryTaskMsg{
 			Confirm:  confirm,
@@ -739,8 +763,22 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 			return msg
 		}
 
+		var publishErr service.SubmodulePublishBlockedError
+		_ = errors.As(blocker, &publishErr)
 		resources := make([]model.AgentTaskResource, 0, 2)
-		worktreePath := firstNonEmptyTrimmed(confirm.ProjectPath, blocker.WorktreePath)
+		summary := ""
+		var lockErr gitlock.IndexLockError
+		if errors.As(blocker, &lockErr) {
+			// Keep the exact blocker discoverable even if launch fails or LCR
+			// restarts before the engineer receives its full recovery prompt.
+			resources = append(resources, model.AgentTaskResource{
+				Kind:  model.AgentTaskResourceFile,
+				Path:  lockErr.LockPath,
+				Label: "Git index lock blocking merge-back",
+			})
+			summary = "Resolve the attached Git index lock. Verify ownership, preserve a backup before clearing a verified stale lock, and preserve staged work. Get confirmation before stopping another process. Revalidate whether the merge already landed; leave merge-back and cleanup to the operator."
+		}
+		worktreePath := firstNonEmptyTrimmed(confirm.ProjectPath, publishErr.WorktreePath)
 		if worktreePath != "" {
 			resources = append(resources, model.AgentTaskResource{
 				Kind:        model.AgentTaskResourceProject,
@@ -748,12 +786,12 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 				Label:       "linked worktree with blocked merge-back",
 			})
 		}
-		rootPath := firstNonEmptyTrimmed(confirm.RootPath, blocker.RootProjectPath)
+		rootPath := firstNonEmptyTrimmed(confirm.RootPath, publishErr.RootProjectPath)
 		if rootPath != "" && normalizeProjectPath(rootPath) != normalizeProjectPath(worktreePath) {
 			resources = append(resources, model.AgentTaskResource{
 				Kind:        model.AgentTaskResourceProject,
 				ProjectPath: rootPath,
-				Label:       "unchanged merge target checkout",
+				Label:       "merge target checkout",
 			})
 		}
 
@@ -761,8 +799,9 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 		defer cancel()
 		task, err := m.svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
 			Title:              worktreeMergeRecoveryTaskTitle(confirm, blocker),
+			Summary:            summary,
 			Kind:               model.AgentTaskKindAgent,
-			Capabilities:       []string{"worktree.merge.recover", "git.submodule.publish"},
+			Capabilities:       worktreeMergeRecoveryCapabilities(blocker),
 			Resources:          resources,
 			OriginProjectPath:  rootPath,
 			OriginWorktreePath: worktreePath,
@@ -2082,6 +2121,10 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			m.status = "Worktree is unavailable right now"
 			return m, nil
 		}
+		if confirm.Selected == worktreeMergeConfirmRecoveryIndex(confirm) && confirm.RecoveryBlocker != nil {
+			m.openWorktreeMergeRecoveryDialog(*confirm, confirm.RecoveryBlocker)
+			return m, nil
+		}
 		if m.commitInFlightForWorktree(project, confirm.RootPath) {
 			m.status = "A commit is still in progress. Finish it before merging this worktree back."
 			confirm.Busy = false
@@ -2091,10 +2134,6 @@ func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			if toggleWorktreeMergeConfirmSelection(confirm) {
 				m.status = worktreeMergeConfirmStatus(confirm)
 			}
-			return m, nil
-		}
-		if confirm.Selected == worktreeMergeConfirmRecoveryIndex(confirm) && confirm.PublishBlocker != nil {
-			m.openWorktreeMergeRecoveryDialog(*confirm, *confirm.PublishBlocker)
 			return m, nil
 		}
 		if confirm.Selected == worktreeMergeConfirmKeepIndex(confirm) {
@@ -2121,6 +2160,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 	return func() tea.Msg {
 		projectPath := strings.TrimSpace(confirm.ProjectPath)
 		msg := worktreeActionMsg{
+			mergeConfirm:           &confirm,
 			projectPath:            projectPath,
 			selectPath:             strings.TrimSpace(confirm.RootPath),
 			clearPendingGitSummary: true,
@@ -3028,7 +3068,7 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 		lines = append(lines, renderWrappedDialogTextLines(headerStyle, panelInnerW, confirm.ErrorMessage)...)
 		if worktreeMergeConfirmHasRecovery(confirm) {
 			lines = append(lines, "", detailValueStyle.Render("Automatic recovery"))
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Ask Engineer starts a separate tracked repair task with the full Git failure and merge context. The primary checkout stays unchanged while it works.")...)
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Ask Engineer starts a separate tracked repair task with the full Git failure and merge context. "+worktreeMergeRecoverySafetyText(confirm.RecoveryBlocker))...)
 		}
 	}
 	if !confirm.Busy {
@@ -3069,7 +3109,7 @@ func (m Model) renderWorktreeMergeRecoveryOverlay(body string, bodyW, bodyH int)
 	lines := []string{
 		renderDialogHeader("Ask Engineer", dialog.Confirm.ProjectName, dialog.Confirm.BranchName, panelInnerW),
 	}
-	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, panelInnerW, "Start a separate tracked repair task for this submodule merge blocker. The primary checkout stays unchanged while it works.")...)
+	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, panelInnerW, worktreeMergeRecoveryLaunchText(dialog.Blocker))...)
 	lines = append(lines, "", detailSectionStyle.Render("Agent"))
 	for _, option := range embeddedLaunchProviderOptions() {
 		label := m.todoCopyProviderButtonLabel(dialog.Confirm.ProjectPath, option, settings)
