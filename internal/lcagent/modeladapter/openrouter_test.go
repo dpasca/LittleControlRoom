@@ -176,7 +176,7 @@ func TestSystemPromptVisionGuidanceIsBounded(t *testing.T) {
 	for _, want := range []string{
 		"Use it only when pixel-level evidence would materially improve",
 		"capture_screenshot is available for native desktop screenshots",
-		"capture one screenshot artifact and then call analyze_image on that path",
+		"capture one screenshot artifact and then call view_image on that path",
 		"Treat analyze_image verdict pass from purpose=verify as visual evidence",
 		"fail or uncertain requires repair",
 		"Keep visual review sparse and actionable",

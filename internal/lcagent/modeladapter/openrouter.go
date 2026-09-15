@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lcroom/internal/config"
+	"lcroom/internal/lcagent/imagemedia"
 	"lcroom/internal/model"
 	"lcroom/internal/modelcatalog"
 )
@@ -81,12 +82,14 @@ type FunctionSpec struct {
 }
 
 type Message struct {
-	Role             string        `json:"role"`
-	Content          string        `json:"content,omitempty"`
-	ReasoningContent string        `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID       string        `json:"tool_call_id,omitempty"`
-	CacheControl     *CacheControl `json:"-"`
+	Role             string                 `json:"role"`
+	Origin           string                 `json:"origin,omitempty"`
+	Content          string                 `json:"content,omitempty"`
+	Images           []imagemedia.Reference `json:"images,omitempty"`
+	ReasoningContent string                 `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall             `json:"tool_calls,omitempty"`
+	ToolCallID       string                 `json:"tool_call_id,omitempty"`
+	CacheControl     *CacheControl          `json:"-"`
 }
 
 type ToolCall struct {
@@ -111,7 +114,9 @@ type messageContentBlock struct {
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
-func (m Message) MarshalJSON() ([]byte, error) {
+// chatWireMessage is deliberately separate from Message's durable JSON format.
+// Checkpoints retain small image references; only HTTP requests contain pixels.
+func chatWireMessage(m Message) any {
 	type wireMessage struct {
 		Role             string     `json:"role"`
 		Content          any        `json:"content,omitempty"`
@@ -119,25 +124,54 @@ func (m Message) MarshalJSON() ([]byte, error) {
 		ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 		ToolCallID       string     `json:"tool_call_id,omitempty"`
 	}
-	var content any
-	if m.Content != "" {
-		if m.CacheControl != nil {
-			content = []messageContentBlock{{
-				Type:         "text",
-				Text:         m.Content,
-				CacheControl: m.CacheControl,
-			}}
-		} else {
-			content = m.Content
-		}
-	}
-	return json.Marshal(wireMessage{
+	return wireMessage{
 		Role:             m.Role,
-		Content:          content,
+		Content:          messageInputContent(m, false),
 		ReasoningContent: m.ReasoningContent,
 		ToolCalls:        m.ToolCalls,
 		ToolCallID:       m.ToolCallID,
-	})
+	}
+}
+
+func chatWireMessages(messages []Message) []any {
+	out := make([]any, 0, len(messages))
+	for _, msg := range messages {
+		out = append(out, chatWireMessage(msg))
+	}
+	return out
+}
+
+func messageInputContent(m Message, responses bool) any {
+	if len(m.Images) == 0 {
+		if m.CacheControl != nil && !responses && m.Content != "" {
+			return []messageContentBlock{{Type: "text", Text: m.Content, CacheControl: m.CacheControl}}
+		}
+		if m.Content == "" {
+			return nil
+		}
+		return m.Content
+	}
+	textType := "text"
+	if responses {
+		textType = "input_text"
+	}
+	var content []any
+	if m.Content != "" {
+		content = append(content, map[string]any{"type": textType, "text": m.Content})
+	}
+	for _, ref := range m.Images {
+		url, err := ref.DataURL()
+		if err != nil {
+			content = append(content, map[string]any{"type": textType, "text": fmt.Sprintf("Image pixels unavailable for %s: %v. Do not infer its contents; view_image must load a valid artifact before inspecting it again.", ref.Source, err)})
+			continue
+		}
+		if responses {
+			content = append(content, map[string]any{"type": "input_image", "image_url": url, "detail": "high"})
+		} else {
+			content = append(content, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url, "detail": "high"}})
+		}
+	}
+	return content
 }
 
 type ChatResponse struct {
@@ -553,7 +587,7 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	}
 	body := map[string]any{
 		"model":    c.model,
-		"messages": requestMessages,
+		"messages": chatWireMessages(requestMessages),
 	}
 	if !c.omitTemperature {
 		temperature := DefaultChatTemperature
@@ -1059,10 +1093,10 @@ func responsesInput(messages []Message, usePrevious bool) (string, []any, bool) 
 		case "assistant":
 			items = append(items, responsesAssistantItems(msg)...)
 		default:
-			if strings.TrimSpace(msg.Content) != "" {
+			if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
 				items = append(items, map[string]any{
 					"role":    firstNonEmpty(msg.Role, "user"),
-					"content": msg.Content,
+					"content": messageInputContent(msg, true),
 				})
 			}
 		}
@@ -1091,10 +1125,10 @@ func responsesContinuationInput(messages []Message) []any {
 				"output":  msg.Content,
 			})
 		case "user":
-			if strings.TrimSpace(msg.Content) != "" {
+			if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
 				items = append(items, map[string]any{
 					"role":    "user",
-					"content": msg.Content,
+					"content": messageInputContent(msg, true),
 				})
 			}
 		}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lcroom/internal/lcagent/session"
+	"lcroom/internal/lcagent/tools"
 )
 
 func TestImageInspectionDoesNotCreateOrEraseVerificationEvidence(t *testing.T) {
@@ -39,9 +40,16 @@ func TestImageInspectionDoesNotCreateOrEraseVerificationEvidence(t *testing.T) {
 	if before.NonPassing != 1 || before.LatestVerdict != ImageAnalysisVerdictFail {
 		t.Fatalf("explicit verification lost: %+v", before)
 	}
+	// A native loader bypasses auxiliary inference, but must preserve the same
+	// observation/acceptance boundary as a text-only model's vision fallback.
+	runner.ImageViewer = fakeNativeImageViewer{}
 	_, err = runner.RunTool(context.Background(), inspect)
 	if err != nil || runner.VisualEvidence() != before {
 		t.Fatalf("later inspection changed prior verification: before=%+v after=%+v err=%v", before, runner.VisualEvidence(), err)
+	}
+	_, err = runner.RunTool(context.Background(), Action{Type: "tool_call", Tool: "view_image", Args: raw(`{"path":"chooser.png"}`)})
+	if err != nil || runner.VisualEvidence() != before {
+		t.Fatalf("native view_image changed verification: %+v err=%v", runner.VisualEvidence(), err)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(stream.String()), "\n") {
 		var event map[string]json.RawMessage
@@ -52,6 +60,12 @@ func TestImageInspectionDoesNotCreateOrEraseVerificationEvidence(t *testing.T) {
 			t.Fatalf("inspection trace has a verification verdict: %s", line)
 		}
 	}
+}
+
+type fakeNativeImageViewer struct{}
+
+func (fakeNativeImageViewer) ViewImage(context.Context, ImageAnalysisRequest) (tools.ToolResult, error) {
+	return tools.ToolResult{Success: true, Output: "Pixels loaded directly."}, nil
 }
 
 func TestImageInspectionFailureDoesNotBecomeAcceptanceFailure(t *testing.T) {

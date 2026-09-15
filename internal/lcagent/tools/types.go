@@ -1,10 +1,14 @@
 package tools
 
-import "time"
+import (
+	"lcroom/internal/lcagent/imagemedia"
+	"time"
+)
 
 type ToolResult struct {
-	Success bool   `json:"success"`
-	Output  string `json:"output,omitempty"`
+	Success bool                   `json:"success"`
+	Output  string                 `json:"output,omitempty"`
+	Images  []imagemedia.Reference `json:"images,omitempty"`
 	// EvidenceHash hashes raw command output before presentation adds timings
 	// and artifact paths. It is not a semantic assessment of task progress.
 	EvidenceHash      string                   `json:"evidence_hash,omitempty"`

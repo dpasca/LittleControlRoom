@@ -35,6 +35,48 @@ explain this distinction. Existing scripted acceptance calls must explicitly
 add `purpose: "verify"`; existing recorded traces are not rewritten. The
 screenshot schema also documents the existing artifact-directory restriction.
 
+### Direct image input in the main conversation
+
+Image transport and the saved Main Model image-input check already existed,
+but only independent vision requests used them. The main tool conversation
+previously contained text descriptions of images, even with Vision Provider
+set to Main Model.
+
+When the configured vision route matches the main provider and model,
+`view_image` now loads pixels into the ongoing conversation without auxiliary
+inference. This includes Auto after the existing Main Model image check has
+passed, or explicit `--vision-provider main` with no different vision model.
+Capability is declared through that existing configuration; it is not guessed
+from model names. A separate configured vision model remains the text-only
+main model's fallback. Off still disables the image tools.
+
+Legacy `analyze_image` inspection calls take the same direct path, including
+two-image comparisons. `analyze_image purpose=verify` deliberately retains an
+independent request and the acceptance audit. Loading pixels cannot satisfy
+an acceptance check or erase a failed one. Prompts and tool descriptions direct
+ordinary screenshot reading and navigation to `view_image`.
+
+The adapters send Chat Completions `image_url` blocks or Responses `input_image`
+blocks in the ongoing history, with the current instructions and tools. All
+tool results in a batch precede the image messages. Responses continuation
+retains its main response ID across independent QA. The OpenAI encoding follows
+the [official image-input guide](https://developers.openai.com/api/docs/guides/images-vision).
+
+The host copies viewed pixels to session artifacts and saves their paths,
+content hashes, sizes, and MIME types in conversation checkpoints. Base64 is
+created only for provider requests. Changing the source screenshot does not
+change earlier evidence; missing or modified saved artifacts produce an explicit
+unavailable-pixels message. Files must be nonempty regular PNG, JPEG, GIF, or
+WebP inputs of at most 25 MiB and obey the run's read scope.
+
+Recent image attachments survive loop compaction and exact resume. At most four
+images totaling 25 MiB stay attached; older references remain available for
+reloading. Evicting pixels resets provider continuation so server-side history
+cannot defeat that bound. Image messages carry a host origin field so they do
+not replace the user's objective. Switching to a route without native input
+removes attached pixels explicitly. Final synthesis remains a text handoff and
+states that it relies on recorded observations rather than a new inspection.
+
 ### Structured progress checkpoints
 
 The shared engineer loop requires a `report_progress` call after 12 executed
@@ -87,6 +129,13 @@ steering, invalid reports, rejected execution, audit-triggered repair, image
 inspection versus verification, and real command output with timing changes
 and truncated tails.
 
+Native image tests also cover all seven adapters, mixed tool batches, direct
+inspection through both tool names, independent QA, text-only fallback, exact
+checkpoint reload, immutable saved pixels, compaction, model-route changes,
+missing/modified artifacts, payload bounds, and workspace read restrictions.
+These are transport and harness regressions, not live qualification of each
+provider's current model vision capabilities.
+
 These changes apply to models using the shared LCAgent engineer loop. They do
 not add a scanner driver, a desktop automation API, or a semantic judge of
 artifact correctness. The model can still make a poor progress assessment or
@@ -95,7 +144,7 @@ of the actual requested result. A checkpoint costs a model turn and a provider
 request, and a tool batch can exceed the checkpoint interval before returning.
 No paid live model comparison or production deployment is claimed.
 
-## Validation
+## Validation of initial repairs
 
 - `make test`: passed, including `go vet ./...`. The first concurrent run hit
   the existing browser-version inherited-pipe test's two-second timeout; that
@@ -106,3 +155,11 @@ No paid live model comparison or production deployment is claimed.
 - No TUI implementation changed; progress uses the existing assistant-message
   event and image results use the existing trace rendering.
 - Validation logs remain under the ignored `dist/harness-validation` directory.
+
+## Validation of native image input
+
+- `make test`: passed, including `go vet ./...` and the new image regressions.
+- `make scan` and `make doctor`: passed with isolated config/database paths
+  under `dist/native-vision-validation` and this worktree as the include path.
+- Logs remain in that ignored validation directory. No live model benchmark
+  or production deployment was performed.

@@ -26,6 +26,7 @@ type ToolOptions struct {
 	AdminWrite                 bool
 	BrowserAvailable           bool
 	VisionAnalysisEnabled      bool
+	NativeVisionEnabled        bool
 	LCRQueriesEnabled          bool
 	LCRControlsEnabled         bool
 	UserCommandRequestsEnabled bool
@@ -185,11 +186,33 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		},
 	}
 	if opts.VisionAnalysisEnabled {
+		viewDescription := "Inspect an image through the configured vision fallback. Returns observations only; this uses a separate model request."
+		analysisDescription := "Inspect image pixels to answer a visual question. Defaults to observation only. Set purpose=verify for an explicit acceptance check returning pass/fail/uncertain evidence."
+		if opts.NativeVisionEnabled {
+			viewDescription = "Load image pixels into your ongoing conversation for direct visual inspection. No separate model request. Loading pixels is observation, not acceptance evidence."
+			analysisDescription = "Request independent visual QA with purpose=verify and concrete acceptance checks; returns pass/fail/uncertain evidence using a separate model request. Use view_image for ordinary inspection. Legacy purpose=inspect calls load pixels directly."
+		}
+		defs = append(defs, ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "view_image",
+				Description: viewDescription,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":     map[string]any{"type": "string", "description": "Image path; workspace-relative or read-only absolute artifact path."},
+						"question": map[string]any{"type": "string", "maxLength": 1200, "description": "Optional focused question about the visible content."},
+					},
+					"required": []string{"path"},
+				},
+			},
+		})
 		defs = append(defs, ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "capture_screenshot",
-				Description: "Capture a native desktop screenshot artifact; call analyze_image on it when visual evidence is required. May fail if desktop/screen permission is unavailable.",
+				Description: "Capture a native desktop screenshot artifact; call view_image to inspect it, or analyze_image purpose=verify for independent visual QA. May fail if desktop/screen permission is unavailable.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -204,7 +227,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "analyze_image",
-				Description: "Inspect image pixels to answer a visual question. Defaults to observation only. Set purpose=verify for an explicit acceptance check returning pass/fail/uncertain evidence.",
+				Description: analysisDescription,
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

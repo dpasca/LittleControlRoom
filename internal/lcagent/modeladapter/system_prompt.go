@@ -16,6 +16,7 @@ type SystemPromptOptions struct {
 	AdminWrite                 bool
 	BrowserAvailable           bool
 	VisionAnalysisEnabled      bool
+	NativeVisionEnabled        bool
 	LCRQueriesEnabled          bool
 	LCRControlsEnabled         bool
 	UserCommandRequestsEnabled bool
@@ -115,10 +116,18 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		)
 	}
 	if opts.VisionAnalysisEnabled {
+		if opts.NativeVisionEnabled {
+			lines = append(lines,
+				"You can inspect image pixels directly. Use view_image to load an image into this conversation, then reason about it with the full task context. It makes no separate model request.",
+				"Use analyze_image purpose=verify only when independent visual QA against concrete acceptance criteria is needed. Ordinary screenshot reading and navigation should use view_image; they do not need a second model's description.",
+			)
+		} else {
+			lines = append(lines, "Direct image input is not enabled for this main model. view_image uses the configured vision model as a fallback and returns text observations; do not claim that you personally received the pixels.")
+		}
 		lines = append(lines,
-			"analyze_image is available for screenshot and image inspection. Use it only when pixel-level evidence would materially improve the answer or verification.",
-			"capture_screenshot is available for native desktop screenshots outside the managed browser. For GUI apps, games, or windows where visual evidence is required, capture one screenshot artifact and then call analyze_image on that path.",
-			"Use analyze_image purpose=inspect (the default) to observe UI state, navigate, read a document, or understand an image. Inspection is not acceptance evidence. Use purpose=verify only for a concrete acceptance check of the resulting artifact or behavior. Treat analyze_image verdict pass from purpose=verify as visual evidence; fail or uncertain requires repair or an honest partial/blocked/failed outcome.",
+			"view_image is available for screenshot and image inspection. Use it only when pixel-level evidence would materially improve the answer or verification.",
+			"capture_screenshot is available for native desktop screenshots outside the managed browser. For GUI apps, games, or windows where visual evidence is required, capture one screenshot artifact and then call view_image on that path.",
+			"Use view_image to observe UI state, navigate, read a document, or understand an image. Legacy analyze_image purpose=inspect calls also provide observation only. Inspection is not acceptance evidence. Use analyze_image purpose=verify only for a concrete acceptance check of the resulting artifact or behavior. Treat analyze_image verdict pass from purpose=verify as visual evidence; fail or uncertain requires repair or an honest partial/blocked/failed outcome.",
 			"Keep visual review sparse and actionable: ask a direct question about a concrete image, then change the artifact or finish honestly from the evidence.",
 			"When comparing visual state over time, use comparison_path for one focused side-by-side check.",
 		)

@@ -65,6 +65,7 @@ type Runner struct {
 	SearchRefiner        SearchRefiner
 	CodeScout            CodeScout
 	ImageAnalyzer        ImageAnalyzer
+	ImageViewer          ImageViewer
 	SearchRefineMinBytes int
 	Approvals            ApprovalBroker
 	UserCommands         UserCommandBroker
@@ -115,6 +116,11 @@ type CodeScout interface {
 
 type ImageAnalyzer interface {
 	AnalyzeImage(context.Context, ImageAnalysisRequest) (ImageAnalysisResult, error)
+}
+
+// ImageViewer loads pixels for the ongoing model conversation without inference.
+type ImageViewer interface {
+	ViewImage(context.Context, ImageAnalysisRequest) (tools.ToolResult, error)
 }
 
 type BrowserRunner interface {
@@ -1453,6 +1459,24 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
+	case "view_image":
+		var args struct {
+			Path     string `json:"path"`
+			Question string `json:"question"`
+		}
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		question := strings.TrimSpace(args.Question)
+		if question == "" {
+			question = "Describe the visible content relevant to the user's request, including any uncertainty."
+		}
+		var err error
+		result, err = r.runAnalyzeImage(ctx, analyzeImageArgs{Path: args.Path, Question: question, Purpose: tools.CommandPurposeInspect})
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
 	case "analyze_image":
 		var args analyzeImageArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -2127,6 +2151,7 @@ func isInspectionEvidenceTool(tool string) bool {
 		"file_outline",
 		"module_outline",
 		"capture_screenshot",
+		"view_image",
 		"analyze_image",
 		"web_search",
 		"browser_snapshot",
@@ -3115,7 +3140,7 @@ func (r *Runner) runScoutFiles(ctx context.Context, args scoutFilesArgs) (tools.
 }
 
 func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (tools.ToolResult, error) {
-	if r.ImageAnalyzer == nil {
+	if r.ImageAnalyzer == nil && r.ImageViewer == nil {
 		return tools.ToolResult{Success: false, Error: "analyze_image is not available for this LCAgent run"}, nil
 	}
 	purpose := strings.TrimSpace(args.Purpose)
@@ -3147,6 +3172,17 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 		Checks:         checks,
 	}
 	inputTruncated := questionTruncated || contextTruncated || len(args.Checks) > len(checks)
+	if purpose == tools.CommandPurposeInspect && r.ImageViewer != nil {
+		result, err := r.ImageViewer.ViewImage(ctx, request)
+		if err != nil {
+			return tools.ToolResult{Success: false, Error: err.Error()}, nil
+		}
+		result.Truncated = inputTruncated
+		return result, nil
+	}
+	if r.ImageAnalyzer == nil {
+		return tools.ToolResult{Success: false, Error: "independent image analysis is not configured"}, nil
+	}
 	if err := r.writeImageAnalysisStartedEvent(request, inputTruncated); err != nil {
 		return tools.ToolResult{}, err
 	}

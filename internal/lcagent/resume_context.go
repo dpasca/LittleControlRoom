@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/lcagent/imagemedia"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/session"
 )
@@ -892,6 +893,7 @@ func cloneModelMessages(messages []modeladapter.Message) []modeladapter.Message 
 	out := make([]modeladapter.Message, len(messages))
 	copy(out, messages)
 	for i := range out {
+		out[i].Images = append([]imagemedia.Reference(nil), messages[i].Images...)
 		if len(messages[i].ToolCalls) > 0 {
 			out[i].ToolCalls = append([]modeladapter.ToolCall(nil), messages[i].ToolCalls...)
 			for j := range out[i].ToolCalls {

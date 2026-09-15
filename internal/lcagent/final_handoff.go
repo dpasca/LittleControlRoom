@@ -464,6 +464,14 @@ func compactOpenRouterFinalMessagesWithOptions(messages []modeladapter.Message, 
 	}
 	user.WriteString("\n\n")
 	user.WriteString(strings.TrimSpace(finalPrompt))
+	if images := retainedImageMessages(messages); len(images) > 0 {
+		user.WriteString("\n\nImage pixels are omitted from this final synthesis. Use the recorded observations and verification results; do not claim a new visual inspection. Saved image references:\n")
+		for _, msg := range images {
+			for _, ref := range msg.Images {
+				fmt.Fprintf(&user, "- %s: %s\n", ref.Source, ref.Path)
+			}
+		}
+	}
 
 	compacted := []modeladapter.Message{}
 	if strings.TrimSpace(systemContent) != "" {
@@ -528,6 +536,7 @@ func compactOpenRouterLoopMessagesWithOptions(messages []modeladapter.Message, l
 		compacted = append(compacted, modeladapter.Message{Role: "user", Content: currentRequest})
 	}
 	compacted = append(compacted, modeladapter.Message{Role: "user", Content: context.String()})
+	compacted = append(compacted, retainedImageMessages(messages)...)
 	stats.CompactedMessages = len(compacted)
 	stats.CompactedChars = messagesApproxChars(compacted)
 	if stats.CompactedChars >= stats.OriginalChars {
@@ -545,7 +554,7 @@ func openRouterCurrentTaskMessageAnchors(messages []modeladapter.Message) (strin
 			systemContent = msg.Content
 			continue
 		}
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" && !isOpenRouterHarnessUserMessage(msg.Content) {
+		if msg.Role == "user" && msg.Origin != toolImageOrigin && strings.TrimSpace(msg.Content) != "" && !isOpenRouterHarnessUserMessage(msg.Content) {
 			currentRequest = msg.Content
 			currentUserIndex = i
 		}
@@ -554,7 +563,7 @@ func openRouterCurrentTaskMessageAnchors(messages []modeladapter.Message) (strin
 		return systemContent, currentRequest, currentUserIndex
 	}
 	for i, msg := range messages {
-		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+		if msg.Role == "user" && msg.Origin != toolImageOrigin && strings.TrimSpace(msg.Content) != "" {
 			return systemContent, msg.Content, i
 		}
 	}
@@ -620,7 +629,9 @@ func compactOpenRouterTranscript(messages []modeladapter.Message, originalUserIn
 		case "user":
 			if content := strings.TrimSpace(msg.Content); content != "" {
 				label := "user_note"
-				if strings.HasPrefix(content, loopCompactedContextPrefix) {
+				if msg.Origin == toolImageOrigin {
+					label = "image_tool_output"
+				} else if strings.HasPrefix(content, loopCompactedContextPrefix) {
 					label = "previous_compacted_context"
 				}
 				entries = append(entries, label+":\n"+indentBlock(truncateMiddle(content, opts.AssistantMaxChars)))
@@ -952,7 +963,7 @@ func compactRawJSON(raw json.RawMessage, limit int) string {
 }
 
 func messagesApproxChars(messages []modeladapter.Message) int {
-	return agentcontext.ApproxMessages(messages, func(msg modeladapter.Message) agentcontext.MessageParts {
+	textChars := agentcontext.ApproxMessages(messages, func(msg modeladapter.Message) agentcontext.MessageParts {
 		calls := make([]agentcontext.ToolCallParts, 0, len(msg.ToolCalls))
 		for _, call := range msg.ToolCalls {
 			calls = append(calls, agentcontext.ToolCallParts{
@@ -969,6 +980,12 @@ func messagesApproxChars(messages []modeladapter.Message) int {
 			ToolCalls:  calls,
 		}
 	})
+	// Image token costs vary by model and dimensions; reserve an approximate
+	// 2K tokens per image separately from text. Encoded bytes are bounded above.
+	for _, msg := range messages {
+		textChars += len(msg.Images) * 2048 * contextPackingApproxCharsPerToken
+	}
+	return textChars
 }
 
 func indentBlock(text string) string {

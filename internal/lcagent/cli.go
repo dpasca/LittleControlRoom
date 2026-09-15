@@ -447,7 +447,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&utilityReasoning, "utility-reasoning-effort", "", "optional reasoning effort for the utility model")
-	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "image input and QA provider: off, main (direct inspection), openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&visionReasoning, "vision-reasoning-effort", "", "optional reasoning effort for the vision model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
@@ -987,7 +987,31 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		runner.CodeScout = searchRefine.Scout
 		runner.SearchRefineMinBytes = searchRefine.MinBytes
 	}
+	if visionProvider == "main" {
+		// The main route may have explicit credentials or a custom endpoint.
+		// Its independent QA requests must use that same configured transport.
+		if visionCfg.APIKey == "" {
+			visionCfg.APIKey = cfg.APIKey
+		}
+		if visionCfg.BaseURL == "" {
+			visionCfg.BaseURL = cfg.BaseURL
+		}
+		if visionCfg.HTTPClient == nil {
+			visionCfg.HTTPClient = cfg.HTTPClient
+		}
+		if len(visionCfg.ProviderOnly) == 0 {
+			visionCfg.ProviderOnly = append([]string(nil), cfg.ProviderOnly...)
+		}
+	}
 	vision := newVisionProfile(visionProvider, visionCfg, providerLabel, client.Model())
+	// Selecting the main model for vision is the existing explicit capability
+	// declaration (Auto resolves here only after the saved image-input check).
+	// Equality also covers explicitly selecting the same provider/model pair.
+	nativeVision := vision.Enabled && vision.Provider == normalizeMainProvider(providerLabel) && vision.Model == client.Model()
+	if nativeVision {
+		runner.ImageViewer = nativeImageViewer{workspace: runner.Files.Workspace, artifactDir: runner.ArtifactsDir}
+		vision.Message = "LCAgent inspects image pixels in the main conversation; analyze_image purpose=verify runs independent visual QA."
+	}
 	if vision.Enabled {
 		runner.ImageAnalyzer = visionAnalyzer{
 			profile:       vision,
@@ -1006,12 +1030,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		return err
 	}
 	if err := writer.Write(session.Event{
-		"type":       "vision_profile",
-		"session_id": runner.SessionID,
-		"enabled":    vision.Enabled,
-		"provider":   vision.Provider,
-		"model":      vision.Model,
-		"message":    vision.Message,
+		"type":         "vision_profile",
+		"native_input": nativeVision,
+		"session_id":   runner.SessionID,
+		"enabled":      vision.Enabled,
+		"provider":     vision.Provider,
+		"model":        vision.Model,
+		"message":      vision.Message,
 	}); err != nil {
 		return err
 	}
@@ -1044,6 +1069,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
+	systemPromptOptions.NativeVisionEnabled = nativeVision
 	systemPromptOptions.LCRQueriesEnabled = runner.LCRQueries != nil
 	systemPromptOptions.LCRControlsEnabled = runner.LCRControls != nil
 	systemPromptOptions.UserCommandRequestsEnabled = runner.UserCommands != nil
@@ -1086,11 +1112,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 	}
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
+	boundConversationImages(messages, nativeVision)
 	toolOptions.WebSearchEnabled = webSearchEnabled
 	toolOptions.ManagedProcessesEnabled = runner.Processes != nil
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolOptions.BrowserAvailable = runner.BrowserAvailable
 	toolOptions.VisionAnalysisEnabled = vision.Enabled
+	toolOptions.NativeVisionEnabled = nativeVision
 	toolOptions.LCRQueriesEnabled = runner.LCRQueries != nil
 	toolOptions.LCRControlsEnabled = runner.LCRControls != nil
 	toolOptions.UserCommandRequestsEnabled = runner.UserCommands != nil
@@ -1372,6 +1400,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		var pendingVerificationFeedback []script.VerificationFeedback
 		var pendingPatchFeedback []script.PatchFeedback
+		var pendingImageMessages []modeladapter.Message
 		qualityPhaseCompactionPending := false
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
@@ -1474,6 +1503,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			pendingFinalSummary = ""
 			checkpoint.calls++
 			result, err := runner.RunTool(ctx, action)
+			if err == nil && result.Success && len(result.Images) > 0 {
+				pendingImageMessages = append(pendingImageMessages, toolImageMessage(call.ID, result))
+			}
 			if call.Function.Name == "read_file" {
 				readLedger.ObserveReadResult(result)
 			}
@@ -1507,6 +1539,12 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				// already recorded the failure for LCR.
 				continue
 			}
+		}
+		// Finish the entire tool-result batch before adding image-bearing user
+		// messages; Chat Completions requires every call to have its result first.
+		messages = append(messages, pendingImageMessages...)
+		if boundConversationImages(messages, nativeVision) {
+			client.ResetConversation()
 		}
 		for _, feedback := range pendingPatchFeedback {
 			if !feedbackTracker.Allow("patch", feedback.ModelMessage()) {
