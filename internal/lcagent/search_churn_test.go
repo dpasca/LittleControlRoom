@@ -43,17 +43,28 @@ func TestSearchConvergenceSurvivesLoopCompaction(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		note := body.Messages[len(body.Messages)-1].Content
+		var note string
+		for _, msg := range body.Messages {
+			note += msg.Content + "\n"
+		}
 		if requests == 3 {
 			for _, want := range []string{"phase: consolidation", "web search calls for the current request: 12", "update the user"} {
 				if !strings.Contains(note, want) {
 					t.Fatalf("post-compaction request missing %q:\n%s", want, note)
 				}
 			}
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"The archive exists, but the issue number remains unverified."}}]}`))
+			report := testProgressReport()
+			report.Objective = "Identify the historical magazine issue."
+			report.UserUpdate = "The archive exists, but the issue number remains unverified."
+			report.Decision = "finish"
+			replyHarnessTest(w, "deepseek", requests, "", harnessTestCall(progressCheckpointTool, report))
 			return
 		}
-		if requests > 3 {
+		if requests == 4 {
+			replyHarnessTest(w, "deepseek", requests, "", harnessTestCall("final_response", map[string]any{"summary": "The archive exists, but the issue number remains unverified.", "outcome": "partial", "files_changed": []string{}, "verification": []string{}}))
+			return
+		}
+		if requests > 4 {
 			t.Fatalf("unexpected model request %d", requests)
 		}
 		var calls []any
@@ -95,7 +106,7 @@ func TestSearchConvergenceSurvivesLoopCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runChatLoop: %v\n%s", err, stream.String())
 	}
-	if requests != 3 || searches != 12 || !strings.Contains(stream.String(), `"type":"context_compacted"`) {
+	if requests != 4 || searches != 12 || !strings.Contains(stream.String(), `"type":"context_compacted"`) || !strings.Contains(stream.String(), `"reason":"work_budget"`) {
 		t.Fatalf("requests=%d searches=%d; expected compaction and search checkpoint\n%s", requests, searches, stream.String())
 	}
 }

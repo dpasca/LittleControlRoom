@@ -172,6 +172,7 @@ type SearchRefineResult struct {
 
 type ImageAnalysisRequest struct {
 	SessionID      string
+	Purpose        string
 	UserRequest    string
 	Path           string
 	ComparisonPath string
@@ -186,6 +187,7 @@ type ImageAnalysisResult struct {
 	Summary        string
 	Observations   []string
 	BlockingIssues []string
+	Limitations    []string
 	Provider       string
 	Model          string
 	ErrorKind      string
@@ -340,6 +342,7 @@ type replaceFileArgs struct {
 }
 
 type analyzeImageArgs struct {
+	Purpose        string   `json:"purpose"`
 	Path           string   `json:"path"`
 	ComparisonPath string   `json:"comparison_path,omitempty"`
 	Question       string   `json:"question"`
@@ -560,7 +563,7 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 	}
 	if plan.RequiresTemporalVisualVerification && r.passingTemporalImageAnalyses == 0 {
 		code := "quality_plan_temporal_visual_evidence_missing"
-		message := "final_response outcome was completed, but the quality plan requires temporal visual verification and no passing analyze_image verdict with comparison_path is recorded. Capture or locate two observations separated in time, using capture_screenshot or browser_screenshot when available, run one focused analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable."
+		message := "final_response outcome was completed, but the quality plan requires temporal visual verification and no passing analyze_image verdict with comparison_path is recorded. Capture or locate two observations separated in time, using capture_screenshot or browser_screenshot when available, run one focused analyze_image with purpose=verify, path, and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable."
 		if r.temporalImageAnalyses > 0 {
 			code = "quality_plan_temporal_visual_evidence_not_passing"
 			message = "final_response outcome was completed, but the quality plan requires temporal visual verification and the recorded analyze_image result with comparison_path did not return a passing verdict. Fix the visible issue and rerun one focused temporal check, or set outcome to partial/blocked/failed and explain the remaining visual defect."
@@ -572,7 +575,7 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 	}
 	if plan.RequiresVisualVerification && r.passingImageAnalyses == 0 {
 		code := "quality_plan_visual_evidence_missing"
-		message := "final_response outcome was completed, but the quality plan requires visual verification and no passing analyze_image verdict is recorded. Capture or locate a screenshot/image, using capture_screenshot or browser_screenshot when available, and run one focused analyze_image check, or set outcome to partial/blocked/failed and explain why visual verification is unavailable."
+		message := "final_response outcome was completed, but the quality plan requires visual verification and no passing analyze_image verdict is recorded. Capture or locate a screenshot/image, using capture_screenshot or browser_screenshot when available, and run one focused analyze_image check with purpose=verify, or set outcome to partial/blocked/failed and explain why visual verification is unavailable."
 		if r.imageAnalyses > 0 {
 			code = "quality_plan_visual_evidence_not_passing"
 			message = "final_response outcome was completed, but the quality plan requires visual verification and the recorded analyze_image result did not return a passing verdict. Fix the visible issue and rerun one focused visual check, or set outcome to partial/blocked/failed and explain the remaining visual defect."
@@ -3115,6 +3118,13 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	if r.ImageAnalyzer == nil {
 		return tools.ToolResult{Success: false, Error: "analyze_image is not available for this LCAgent run"}, nil
 	}
+	purpose := strings.TrimSpace(args.Purpose)
+	if purpose == "" {
+		purpose = tools.CommandPurposeInspect
+	}
+	if purpose != tools.CommandPurposeInspect && purpose != tools.CommandPurposeVerify {
+		return tools.ToolResult{Success: false, Error: "analyze_image purpose must be inspect or verify"}, nil
+	}
 	path := strings.TrimSpace(args.Path)
 	if path == "" {
 		return tools.ToolResult{Success: false, Error: "analyze_image path is required"}, nil
@@ -3128,6 +3138,7 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	checks := cleanImageAnalysisChecks(args.Checks)
 	request := ImageAnalysisRequest{
 		SessionID:      r.SessionID,
+		Purpose:        purpose,
 		UserRequest:    strings.TrimSpace(r.Prompt),
 		Path:           path,
 		ComparisonPath: comparisonPath,
@@ -3155,11 +3166,21 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	if err := r.recordImageAnalysisResult(request, analyzed); err != nil {
 		return tools.ToolResult{}, err
 	}
-	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed, r.nonPassingImageAnalyses), Truncated: inputTruncated}, nil
+	output := formatImageAnalysisResult(analyzed, r.nonPassingImageAnalyses)
+	if purpose == tools.CommandPurposeInspect {
+		output = formatImageInspectionResult(analyzed)
+	}
+	return tools.ToolResult{Success: true, Output: output, Truncated: inputTruncated}, nil
 }
 
 func (r *Runner) recordImageAnalysisResult(request ImageAnalysisRequest, analyzed ImageAnalysisResult) error {
 	analyzed = normalizeImageAnalysisResult(analyzed)
+	if request.Purpose == tools.CommandPurposeInspect {
+		// Observation is useful context, but cannot satisfy or invalidate an
+		// acceptance check, including a previously failed verification.
+		analyzed.Verdict = ""
+		return r.writeImageAnalysisResultEvent(request, analyzed)
+	}
 	comparisonPath := strings.TrimSpace(request.ComparisonPath)
 	if imageAnalysisPassed(analyzed) {
 		r.passingImageAnalyses++
@@ -3427,12 +3448,27 @@ func formatImageAnalysisResult(result ImageAnalysisResult, nonPassingCount int) 
 	return b.String()
 }
 
+func formatImageInspectionResult(result ImageAnalysisResult) string {
+	var b strings.Builder
+	b.WriteString("image_inspection:\npurpose: inspect\n")
+	fmt.Fprintf(&b, "summary: %s\n", strings.TrimSpace(result.Summary))
+	for _, observation := range cleanStringList(result.Observations) {
+		fmt.Fprintf(&b, "- %s\n", observation)
+	}
+	for _, limitation := range cleanStringList(result.Limitations) {
+		fmt.Fprintf(&b, "limitation: %s\n", limitation)
+	}
+	b.WriteString("This is observation only. For acceptance evidence, run analyze_image with purpose=verify and a concrete check of the resulting artifact or behavior.\n")
+	return b.String()
+}
+
 func (r *Runner) writeImageAnalysisStartedEvent(request ImageAnalysisRequest, inputTruncated bool) error {
 	if r == nil || r.Session == nil {
 		return nil
 	}
 	return r.Session.Write(session.Event{
 		"type":            "image_analysis_started",
+		"purpose":         request.Purpose,
 		"session_id":      r.SessionID,
 		"path":            request.Path,
 		"comparison_path": request.ComparisonPath,
@@ -3449,15 +3485,17 @@ func (r *Runner) writeImageAnalysisResultEvent(request ImageAnalysisRequest, res
 	}
 	return r.Session.Write(session.Event{
 		"type":            "image_analysis_result",
+		"purpose":         request.Purpose,
 		"session_id":      r.SessionID,
 		"path":            request.Path,
 		"comparison_path": request.ComparisonPath,
 		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
 		"question":        request.Question,
-		"verdict":         NormalizeImageAnalysisVerdict(result.Verdict),
+		"verdict":         result.Verdict,
 		"summary":         strings.TrimSpace(result.Summary),
 		"observations":    cleanStringList(result.Observations),
 		"blocking_issues": cleanStringList(result.BlockingIssues),
+		"limitations":     cleanStringList(result.Limitations),
 		"provider":        strings.TrimSpace(result.Provider),
 		"model":           strings.TrimSpace(result.Model),
 		"error_kind":      strings.TrimSpace(result.ErrorKind),
@@ -3475,6 +3513,7 @@ func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, res
 	}
 	return r.Session.Write(session.Event{
 		"type":            "image_analysis_failed",
+		"purpose":         request.Purpose,
 		"session_id":      r.SessionID,
 		"path":            request.Path,
 		"comparison_path": request.ComparisonPath,

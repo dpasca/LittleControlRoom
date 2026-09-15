@@ -66,6 +66,17 @@ func TestParseVisionStructuredResponse(t *testing.T) {
 	}
 }
 
+func TestVisionInspectionDescribesIntermediateStateWithoutGradingTask(t *testing.T) {
+	prompt := buildVisionPrompt(script.ImageAnalysisRequest{Purpose: "inspect", UserRequest: "Scan both sides", Question: "Which folder is selected?"}, visionImage{})
+	if strings.Contains(prompt, `"verdict"`) || !strings.Contains(prompt, "not an acceptance test") || !strings.Contains(prompt, `"limitations"`) {
+		t.Fatalf("inspection prompt: %s", prompt)
+	}
+	result := parseVisionInspectionResponse(`{"summary":"Documents is selected.","observations":["A folder chooser is open."],"limitations":["The scan preview is obscured."]}`)
+	if result.Verdict != "" || len(result.BlockingIssues) != 0 || len(result.Limitations) != 1 || result.Summary != "Documents is selected." {
+		t.Fatalf("inspection result: %+v", result)
+	}
+}
+
 func TestParseVisionStructuredResponseTreatsNonJSONAsUncertain(t *testing.T) {
 	result := parseVisionStructuredResponse("boardwalk missing")
 	if result.Verdict != script.ImageAnalysisVerdictUncertain {

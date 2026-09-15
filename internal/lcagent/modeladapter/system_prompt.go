@@ -118,7 +118,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		lines = append(lines,
 			"analyze_image is available for screenshot and image inspection. Use it only when pixel-level evidence would materially improve the answer or verification.",
 			"capture_screenshot is available for native desktop screenshots outside the managed browser. For GUI apps, games, or windows where visual evidence is required, capture one screenshot artifact and then call analyze_image on that path.",
-			"Treat analyze_image verdict pass as visual evidence. Treat fail or uncertain as non-passing evidence: fix and rerun one focused check, or finish partial/blocked/failed.",
+			"Use analyze_image purpose=inspect (the default) to observe UI state, navigate, read a document, or understand an image. Inspection is not acceptance evidence. Use purpose=verify only for a concrete acceptance check of the resulting artifact or behavior. Treat analyze_image verdict pass from purpose=verify as visual evidence; fail or uncertain requires repair or an honest partial/blocked/failed outcome.",
 			"Keep visual review sparse and actionable: ask a direct question about a concrete image, then change the artifact or finish honestly from the evidence.",
 			"When comparing visual state over time, use comparison_path for one focused side-by-side check.",
 		)
@@ -178,6 +178,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"After edits, use the diff summary and run or explain verification before final_response. If verification used run_command, final_response verification must match the actual purpose=verify result.",
 		"For generated artifacts, separate directly verified behavior from source-inspected features.",
 		"For operational tasks, final_response must separate confirmed facts, attempted actions, failed or timed-out actions, inferences, and blockers when they differ. If verification failed, timed out, or was not run, do not claim completion.",
+		"Verify the actual requested outcome. A successful command exit, file listing, or UI setting alone does not establish correct artifact contents, freshness, page count, or completed behavior. Choose checks that would fail if the requested result were wrong.",
+		"A user message during ongoing work usually refines the current task. Preserve the original objective and accumulated constraints unless the user cancels or replaces them. Acknowledge corrections promptly, and revise the approach before more actions when the user objects to its impact.",
+		"For desktop work, prefer supported APIs, command-line tools, or file operations within the current policy when they avoid foreground interaction. If UI access is necessary and conflicts with the user's use of the computer, explain the blocker and request the needed human step rather than repeatedly taking focus.",
 		"Set final_response outcome to completed only when requested work is complete and verification/evidence did not fail; otherwise use failed, blocked, or partial honestly.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	)

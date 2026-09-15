@@ -3,8 +3,11 @@ package tools
 import "time"
 
 type ToolResult struct {
-	Success           bool                     `json:"success"`
-	Output            string                   `json:"output,omitempty"`
+	Success bool   `json:"success"`
+	Output  string `json:"output,omitempty"`
+	// EvidenceHash hashes raw command output before presentation adds timings
+	// and artifact paths. It is not a semantic assessment of task progress.
+	EvidenceHash      string                   `json:"evidence_hash,omitempty"`
 	Error             string                   `json:"error,omitempty"`
 	Denied            bool                     `json:"denied,omitempty"`
 	DenialReason      string                   `json:"denial_reason,omitempty"`

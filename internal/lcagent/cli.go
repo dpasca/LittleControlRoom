@@ -1108,16 +1108,21 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	// Count actual searches outside model context so compaction cannot restart
 	// the exploration allowance. A new steered objective gets a fresh count.
 	webSearchCalls := 0
+	checkpoint := progressCheckpointState{last: time.Now()}
+	pendingFinalSummary := ""
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		progressTracker.Observe(messages, runner)
 		select {
 		case steerMsg := <-runner.SteerMessages:
 			if strings.TrimSpace(steerMsg) != "" {
 				webSearchCalls = 0
-				activeObjective = trimActiveObjective(steerMsg)
-				if threadStore != nil {
-					threadStore.SetActiveObjective(activeObjective)
-				}
+				// A correction is not mechanically a replacement objective. The
+				// structured checkpoint interprets it with the full task context.
+				checkpoint.steered = true
+				checkpoint.failures = 0
+				checkpoint.finish = false
+				pendingFinalSummary = ""
+				finalResponseToolFeedbacks = 0
 				if err := writer.Write(session.Event{
 					"type":       "user_message",
 					"session_id": runner.SessionID,
@@ -1125,16 +1130,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					"message":    steerMsg,
 				}); err != nil {
 					return err
-				}
-				if activeObjective != "" {
-					if err := writer.Write(session.Event{
-						"type":       "active_objective",
-						"session_id": runner.SessionID,
-						"thread_id":  firstResumeNonEmpty(threadStoreThreadID(threadStore), runner.SessionID),
-						"objective":  activeObjective,
-					}); err != nil {
-						return err
-					}
 				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: steerMsg})
 			}
@@ -1157,7 +1152,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{
 			ToolProfile: string(toolProfile), WebSearchCalls: webSearchCalls,
 		})
-		if progressTracker.ShouldForceSynthesis(guidance) {
+		if !checkpoint.steered && progressTracker.ShouldForceSynthesis(guidance) {
 			guidance.Phase = "synthesis"
 			guidance.ForceSynthesis = true
 			guidance.SynthesisReason = "stalled"
@@ -1178,7 +1173,18 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		requestMessages := appendOpenRouterProgressNote(messages, guidance, readLedger)
 		requestTools := toolsDef
-		if guidance.ForceSynthesis {
+		checkpointReason := checkpoint.reason(time.Now())
+		if guidance.ForceSynthesis || pendingFinalSummary != "" || checkpoint.finish {
+			checkpointReason = ""
+		}
+		synthesisRequest := guidance.ForceSynthesis && pendingFinalSummary == "" && !checkpoint.finish
+		if checkpointReason != "" {
+			requestMessages = append(requestMessages, modeladapter.Message{Role: "user", Content: progressCheckpointPrompt(checkpointReason)})
+			requestTools = progressCheckpointTools()
+		} else if pendingFinalSummary != "" || checkpoint.finish {
+			requestTools = finalResponseOnlyTools(toolsDef)
+			requestMessages = append(requestMessages, modeladapter.Message{Role: "user", Content: "Finish through final_response now. Preserve the concrete user handoff and answer; supply honest outcome and verification metadata."})
+		} else if synthesisRequest {
 			var compaction finalHandoffCompactionStats
 			requestMessages, compaction = compactOpenRouterFinalMessagesWithOptions(messages, openRouterSynthesisFinalPrompt(guidance, requireFinalResponseTool), readLedger, contextOptions)
 			if requireFinalResponseTool {
@@ -1205,7 +1211,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		requestClient := client
 		requestPhase := "tool_loop"
 		requestOptions := openRouterCompletionOptions(cfg)
-		if guidance.ForceSynthesis {
+		if checkpointReason != "" {
+			requestPhase = "progress_checkpoint"
+		} else if synthesisRequest {
 			requestClient = finalClient
 			requestPhase = "synthesis"
 			requestOptions = openRouterFinalCompletionOptions(cfg)
@@ -1223,7 +1231,51 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 		msg.Content = sanitizedContent
 		ensureToolCallIDs(msg.ToolCalls, turn+1)
-		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 && (!requireFinalResponseTool || !allToolCallsNamed(msg.ToolCalls, "final_response")) {
+		if checkpointReason != "" {
+			var report *progressCheckpointReport
+			messages, report, err = acceptProgressCheckpoint(writer, runner.SessionID, messages, msg)
+			if err != nil {
+				return err
+			}
+			if report == nil {
+				checkpoint.failures++
+				if checkpoint.failures >= 2 {
+					return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("progress checkpoint failed twice; no further actions were executed"))
+				}
+				continue
+			}
+			checkpoint = progressCheckpointState{last: time.Now(), finish: report.Decision == "finish"}
+			activeObjective = trimActiveObjective(report.Objective)
+			if threadStore != nil {
+				threadStore.SetActiveObjective(activeObjective)
+			}
+			for _, event := range []session.Event{
+				{"type": "progress_checkpoint", "session_id": runner.SessionID, "reason": checkpointReason, "report": report},
+				{"type": "active_objective", "session_id": runner.SessionID, "thread_id": threadStoreThreadID(threadStore), "objective": activeObjective},
+				{"type": "assistant_message", "session_id": runner.SessionID, "message": report.UserUpdate},
+			} {
+				if err := writer.Write(event); err != nil {
+					return err
+				}
+			}
+			if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "progress_checkpoint", messages, contextCompacted); err != nil {
+				return err
+			}
+			continue
+		}
+		if (pendingFinalSummary != "" || checkpoint.finish) && len(msg.ToolCalls) > 0 && !allToolCallsNamed(msg.ToolCalls, "final_response") {
+			messages, err = rejectFinalizationTools(writer, runner.SessionID, messages, msg)
+			if err != nil {
+				return err
+			}
+			finalResponseToolFeedbacks++
+			if finalResponseToolFeedbacks >= 3 {
+				return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("finalization repeatedly requested unavailable tools; no additional actions were executed"))
+			}
+			continue
+		}
+		checkpoint.finish = false
+		if synthesisRequest && len(msg.ToolCalls) > 0 && (!requireFinalResponseTool || !allToolCallsNamed(msg.ToolCalls, "final_response")) {
 			feedback := synthesisToolCallRejectedFeedbackMessage()
 			if err := writeSynthesisToolCallRejected(writer, runner.SessionID, feedback, msg.ToolCalls); err != nil {
 				return err
@@ -1257,6 +1309,12 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			}
 			if requireFinalResponseTool && runner.HasStructuredFinalState() {
 				finalResponseToolFeedbacks++
+				if pendingFinalSummary == "" {
+					pendingFinalSummary = msg.Content
+				}
+				if finalResponseToolFeedbacks >= 3 {
+					return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("finalization failed to provide structured metadata after two retries"))
+				}
 				feedback := finalResponseToolFeedbackMessage()
 				if err := writer.Write(session.Event{
 					"type":       "final_response_feedback",
@@ -1354,8 +1412,15 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					deferNextSynthesis = true
 					continue
 				}
+				if pendingFinalSummary != "" {
+					// Metadata conversion must not paraphrase away a user question
+					// or human handoff. A failed audit reopens normal repair below.
+					final.Summary = pendingFinalSummary
+				}
 				audit := runner.FinalResponseAudit(final)
 				if shouldBounceFinalAudit(audit, finalVerificationFeedbacks) {
+					pendingFinalSummary = ""
+					finalResponseToolFeedbacks = 0
 					finalVerificationFeedbacks++
 					if err := writer.Write(session.Event{
 						"type":       "tool_call",
@@ -1406,6 +1471,8 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			if call.Function.Name == "web_search" {
 				webSearchCalls++
 			}
+			pendingFinalSummary = ""
+			checkpoint.calls++
 			result, err := runner.RunTool(ctx, action)
 			if call.Function.Name == "read_file" {
 				readLedger.ObserveReadResult(result)
@@ -1706,6 +1773,13 @@ func openRouterToolResultProgressKey(content string) string {
 	}
 	var result tools.ToolResult
 	if err := json.Unmarshal([]byte(content), &result); err == nil {
+		if result.EvidenceHash != "" {
+			// Compare command evidence, not the command's spelling or display
+			// metadata. Actual file changes and verification have separate counters.
+			content = fmt.Sprintf("command:%s:%q:%t:%d:%t", result.EvidenceHash, result.CWD, result.Success, result.ExitCode, result.TimedOut)
+			sum := sha256.Sum256([]byte(content))
+			return fmt.Sprintf("%x", sum)
+		}
 		result.Duration = 0
 		if stable, err := json.Marshal(result); err == nil {
 			content = string(stable)
@@ -2272,7 +2346,7 @@ func finalResponseOnlyTools(defs []modeladapter.ToolDefinition) []modeladapter.T
 }
 
 func finalResponseToolFeedbackMessage() string {
-	return "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text."
+	return "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text. This is metadata conversion only: preserve the preceding answer verbatim, including every question and concrete human action requested. Do not rewrite the answer or perform additional work. The harness retains the original answer while auditing your outcome and verification metadata."
 }
 
 func invalidToolArgumentsResult(toolName string, err error) tools.ToolResult {

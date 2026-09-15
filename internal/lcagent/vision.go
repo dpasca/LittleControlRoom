@@ -150,6 +150,9 @@ func (v visionAnalyzer) AnalyzeImage(ctx context.Context, request script.ImageAn
 	}
 	modelName := firstNonEmptyString(strings.TrimSpace(completion.Model), v.profile.Model)
 	result := parseVisionStructuredResponse(completion.Message.Content)
+	if request.Purpose == "inspect" {
+		result = parseVisionInspectionResponse(completion.Message.Content)
+	}
 	result.Provider = v.profile.Provider
 	result.Model = modelName
 	result.Usage = json.RawMessage(completion.Usage)
@@ -162,6 +165,21 @@ type visionStructuredResponse struct {
 	Summary        string   `json:"summary"`
 	Observations   []string `json:"observations"`
 	BlockingIssues []string `json:"blocking_issues"`
+	Limitations    []string `json:"limitations"`
+}
+
+func parseVisionInspectionResponse(raw string) script.ImageAnalysisResult {
+	result := script.ImageAnalysisResult{Output: strings.TrimSpace(raw)}
+	var parsed visionStructuredResponse
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil || strings.TrimSpace(parsed.Summary) == "" {
+		result.Summary = "vision model returned no structured image observation"
+		result.Limitations = []string{"The image could not be reliably described from this response."}
+		return result
+	}
+	result.Summary = strings.TrimSpace(parsed.Summary)
+	result.Observations = cleanVisionStructuredStrings(parsed.Observations)
+	result.Limitations = cleanVisionStructuredStrings(parsed.Limitations)
+	return result
 }
 
 func parseVisionStructuredResponse(raw string) script.ImageAnalysisResult {
@@ -328,8 +346,12 @@ func detectVisionMIMEType(path string, data []byte) string {
 func buildVisionPrompt(request script.ImageAnalysisRequest, image visionImage) string {
 	var b strings.Builder
 	b.WriteString("Inspect the attached image pixels and answer the user's visual question.\n")
-	b.WriteString("Be direct and concrete. Call out visible defects plainly: wrong app/window, missing requested elements, floating or clipped objects, surfaces or layers covering the wrong areas, bad camera framing, unreadable text, broken scale, or unstable frame-to-frame state.\n")
-	b.WriteString("Do not soften a real visual problem with vague phrasing. If something important is absent, misplaced, floating, occluded, or visibly wrong, say so explicitly.\n")
+	if request.Purpose == "inspect" {
+		b.WriteString("This is an observation, not an acceptance test of the overall task. Describe visible state, controls, text, and useful details relevant to the question. An intermediate dialog or unfinished task is not a failed check. State unreadable or unavailable information as limitations.\n")
+	} else {
+		b.WriteString("Be direct and concrete. Call out visible defects plainly: wrong app/window, missing requested elements, floating or clipped objects, surfaces or layers covering the wrong areas, bad camera framing, unreadable text, broken scale, or unstable frame-to-frame state.\n")
+		b.WriteString("Do not soften a real visual problem with vague phrasing. If something important is absent, misplaced, floating, occluded, or visibly wrong, say so explicitly.\n")
+	}
 	if comparisonPath := strings.TrimSpace(request.ComparisonPath); comparisonPath != "" {
 		b.WriteString("The attached image is a side-by-side temporal comparison: left is the primary image, right is the comparison image.\n")
 		fmt.Fprintf(&b, "Left image path: %s\n", strings.TrimSpace(request.Path))
@@ -360,6 +382,11 @@ func buildVisionPrompt(request script.ImageAnalysisRequest, image visionImage) s
 	b.WriteString("\nQuestion:\n")
 	b.WriteString(strings.TrimSpace(request.Question))
 	b.WriteString("\n\nRespond only as a compact JSON object with exactly these fields:\n")
+	if request.Purpose == "inspect" {
+		b.WriteString(`{"summary":"direct answer to the question","observations":["visible fact"],"limitations":["information that cannot be determined from these pixels"]}`)
+		b.WriteString("\nDo not issue a pass/fail verdict or judge completion of the original user request. Do not claim to inspect files beyond the image.")
+		return b.String()
+	}
 	b.WriteString(`{"verdict":"pass|fail|uncertain","summary":"one concise sentence","observations":["visible fact"],"blocking_issues":["user-impacting visible defect"]}`)
 	b.WriteString("\nUse verdict pass only when the requested visual state is actually visible and no important requested element is absent, garbled, blank, hidden, or broken. Use fail when user-impacting visual defects are visible. Use uncertain when the image is insufficient, unreadable, or the requested state cannot be judged from pixels. Do not claim to inspect code or files beyond the image.")
 	return b.String()

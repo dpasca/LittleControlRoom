@@ -194,7 +194,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":     map[string]any{"type": "string", "description": "Optional artifact filename/path. Defaults timestamped PNG."},
+						"path":     map[string]any{"type": "string", "description": "Optional filename inside the session artifact directory; paths outside it are rejected. Omit for a timestamped PNG."},
 						"delay_ms": map[string]any{"type": "integer", "minimum": 0, "maximum": 5000, "description": "Delay before capture. Defaults 0."},
 					},
 				},
@@ -204,7 +204,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "analyze_image",
-				Description: "Use the vision model for screenshot/image QA or comparison_path checks, returning pass/fail/uncertain pixel-level evidence.",
+				Description: "Inspect image pixels to answer a visual question. Defaults to observation only. Set purpose=verify for an explicit acceptance check returning pass/fail/uncertain evidence.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -212,6 +212,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"path":            map[string]any{"type": "string", "description": "Image path; workspace-relative or read-only absolute artifact path."},
 						"comparison_path": map[string]any{"type": "string", "description": "Optional second image for side-by-side/temporal comparison."},
 						"question":        map[string]any{"type": "string", "maxLength": 1200, "description": "Focused vision question."},
+						"purpose":         map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Defaults to inspect for reading or navigating images/UI. Use verify only to evaluate concrete acceptance criteria for the result; inspection never changes verification status."},
 						"context":         map[string]any{"type": "string", "maxLength": 4000, "description": "Optional expected visual state/context."},
 						"checks":          map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{"type": "string", "maxLength": 100}, "description": "Optional concrete visual checks."},
 					},

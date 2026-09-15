@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -183,6 +184,7 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	return ToolResult{
 		Success:          (err == nil || exitAllowed) && !timedOut,
 		Output:           p.Text,
+		EvidenceHash:     commandEvidenceHash(stdout.Bytes(), stderr.Bytes()),
 		Error:            errorString(displayErr, timedOut),
 		Command:          label,
 		Argv:             cleanArgv(spec.Argv),
@@ -198,6 +200,17 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		Binary:           p.Binary,
 		ArtifactPath:     p.ArtifactPath,
 	}
+}
+
+func commandEvidenceHash(stdout, stderr []byte) string {
+	h := sha256.New()
+	// Length delimiters preserve the stdout/stderr boundary, including binary
+	// output and differences beyond the inline truncation limit.
+	fmt.Fprintf(h, "%d:", len(stdout))
+	_, _ = h.Write(stdout)
+	fmt.Fprintf(h, "%d:", len(stderr))
+	_, _ = h.Write(stderr)
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 func commandContainsRecursiveRM(spec CommandSpec) bool {

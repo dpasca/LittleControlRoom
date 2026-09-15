@@ -506,7 +506,7 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 		`"type":"final_response_feedback"`,
 		`"response_id":"resp_final"`,
 		`"type":"turn_complete"`,
-		`"summary":"done from model"`,
+		`"summary":"plain final after verification"`,
 		`"final_outcome":"completed"`,
 	} {
 		if !strings.Contains(text, want) {

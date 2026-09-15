@@ -156,11 +156,11 @@ func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
 	}
 
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
-	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "pixel-level evidence") || !strings.Contains(spec.Description, "pass/fail/uncertain") {
+	if !strings.Contains(spec.Description, "observation only") || !strings.Contains(spec.Description, "purpose=verify") || !strings.Contains(spec.Description, "pass/fail/uncertain") {
 		t.Fatalf("analyze_image description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
-	for _, want := range []string{"path", "comparison_path", "question", "context", "checks"} {
+	for _, want := range []string{"path", "comparison_path", "question", "context", "checks", "purpose"} {
 		if _, ok := props[want]; !ok {
 			t.Fatalf("analyze_image missing %s property: %#v", want, props)
 		}
@@ -177,8 +177,8 @@ func TestSystemPromptVisionGuidanceIsBounded(t *testing.T) {
 		"Use it only when pixel-level evidence would materially improve",
 		"capture_screenshot is available for native desktop screenshots",
 		"capture one screenshot artifact and then call analyze_image on that path",
-		"Treat analyze_image verdict pass as visual evidence",
-		"Treat fail or uncertain as non-passing evidence",
+		"Treat analyze_image verdict pass from purpose=verify as visual evidence",
+		"fail or uncertain requires repair",
 		"Keep visual review sparse and actionable",
 		"ask a direct question about a concrete image",
 		"use comparison_path for one focused side-by-side check",

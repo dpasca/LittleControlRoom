@@ -690,7 +690,7 @@ func TestRunnerAnalyzesImageWithConfiguredVisionModel(t *testing.T) {
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "analyze_image",
-		Args: raw(`{"path":"screenshot.png","question":"Is the boardwalk visible?","context":"Expected: wooden boardwalk, ocean, player.","checks":["missing boardwalk","floating props"]}`),
+		Args: raw(`{"purpose":"verify","path":"screenshot.png","question":"Is the boardwalk visible?","context":"Expected: wooden boardwalk, ocean, player.","checks":["missing boardwalk","floating props"]}`),
 	})
 	if err != nil {
 		t.Fatalf("RunTool() error = %v", err)
@@ -726,7 +726,7 @@ func TestRunnerRecordsImageAnalysisProviderFailureAsUncertainEvidence(t *testing
 	_, err = runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "analyze_image",
-		Args: raw(`{"path":"screenshot.png","question":"Is the game visible?"}`),
+		Args: raw(`{"purpose":"verify","path":"screenshot.png","question":"Is the game visible?"}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "provider=deepseek") || !strings.Contains(err.Error(), "error_kind=provider_schema") {
 		t.Fatalf("RunTool() error = %v, want provider/model/kind details", err)
@@ -763,7 +763,7 @@ func TestRunnerAnalyzesImageWithComparisonPath(t *testing.T) {
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "analyze_image",
-		Args: raw(`{"path":"first.png","comparison_path":"second.png","question":"Does the visual state remain stable between frames?"}`),
+		Args: raw(`{"purpose":"verify","path":"first.png","comparison_path":"second.png","question":"Does the visual state remain stable between frames?"}`),
 	})
 	if err != nil {
 		t.Fatalf("RunTool() error = %v", err)
