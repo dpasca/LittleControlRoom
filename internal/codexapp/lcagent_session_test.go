@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -3203,4 +3205,81 @@ func TestLCAgentMoonshotCuratedOptionsIncludeKimiK3WithEfforts(t *testing.T) {
 	if k3.IsDefault {
 		t.Fatal("kimi-k3 should not be the default moonshot model")
 	}
+}
+
+func TestLCAgentOpenAIReasoningEffortOptionsExposeMax(t *testing.T) {
+	for _, model := range []string{"gpt-5.6", "gpt-5.6-luna", "openai/gpt-5.6"} {
+		efforts := effortValues(lcagentReasoningEffortOptionsForProvider("openai", model))
+		want := []string{"low", "medium", "high", "xhigh", "max"}
+		if !reflect.DeepEqual(efforts, want) {
+			t.Fatalf("openai %q efforts = %v, want %v", model, efforts, want)
+		}
+	}
+	efforts := effortValues(lcagentReasoningEffortOptionsForProvider("openai", "gpt-5.5"))
+	want := []string{"low", "medium", "high", "xhigh"}
+	if !reflect.DeepEqual(efforts, want) {
+		t.Fatalf("gpt-5.5 efforts = %v, want %v", efforts, want)
+	}
+}
+
+func TestLCAgentOpenRouterReasoningEffortOptionsFollowRoutedModel(t *testing.T) {
+	cases := []struct {
+		model string
+		want  []string
+	}{
+		{"deepseek/deepseek-v4-pro", []string{"high", "max"}},
+		{"moonshotai/kimi-k3", []string{"low", "high", "max"}},
+		{"openai/gpt-5.6", []string{"low", "medium", "high", "xhigh", "max"}},
+		{"openai/gpt-5.5", []string{"low", "medium", "high", "xhigh"}},
+		{"xiaomi/mimo-v2.5-pro", []string{"low", "medium", "high", "xhigh"}},
+		{"", []string{"low", "medium", "high", "xhigh"}},
+	}
+	for _, tt := range cases {
+		if got := effortValues(lcagentReasoningEffortOptionsForProvider("openrouter", tt.model)); !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("openrouter %q efforts = %v, want %v", tt.model, got, tt.want)
+		}
+	}
+	if got := lcagentReasoningEffortOptionsForProvider("openrouter", "moonshotai/kimi-k2.7-code"); got != nil {
+		t.Fatalf("openrouter kimi-k2.7 efforts = %#v, want nil", got)
+	}
+}
+
+// Every curated route must offer its own default, or the picker shows one
+// ladder while the session launches with a rung that was never on it.
+func TestLCAgentCuratedDefaultReasoningEffortIsAlwaysOffered(t *testing.T) {
+	for _, provider := range []string{"openrouter", "deepseek", "moonshot", "xiaomi", "openai"} {
+		for _, option := range lcagentModelOptionsForProvider(provider) {
+			def := strings.TrimSpace(option.DefaultReasoningEffort)
+			if def == "" {
+				continue
+			}
+			if !slices.Contains(effortValues(option.SupportedReasoningEfforts), def) {
+				t.Fatalf("%s/%s default %q is not among offered efforts %v",
+					provider, option.Model, def, effortValues(option.SupportedReasoningEfforts))
+			}
+		}
+	}
+}
+
+func TestLCAgentReasoningEffortFallbackStaysWithinOfferedOptions(t *testing.T) {
+	if got := lcagentReasoningEffortForProvider("openrouter", "deepseek/deepseek-v4-pro", "bogus"); got != "high" {
+		t.Fatalf("openrouter deepseek invalid effort = %q, want high", got)
+	}
+	if got := lcagentReasoningEffortForProvider("openrouter", "moonshotai/kimi-k3", "bogus"); got != "max" {
+		t.Fatalf("openrouter kimi-k3 invalid effort = %q, want max", got)
+	}
+	if got := lcagentReasoningEffortForProvider("openai", "gpt-5.6", "max"); got != "max" {
+		t.Fatalf("openai gpt-5.6 max = %q, want max", got)
+	}
+	if got := lcagentReasoningEffortForProvider("openai", "gpt-5.5", "max"); got != "low" {
+		t.Fatalf("openai gpt-5.5 max = %q, want default low", got)
+	}
+}
+
+func effortValues(options []ReasoningEffortOption) []string {
+	out := make([]string, 0, len(options))
+	for _, option := range options {
+		out = append(out, strings.TrimSpace(option.ReasoningEffort))
+	}
+	return out
 }

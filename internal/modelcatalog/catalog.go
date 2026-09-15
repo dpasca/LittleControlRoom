@@ -133,6 +133,17 @@ func IsKnown(provider, model string) bool {
 	}
 }
 
+// OpenAISupportsMaxReasoningEffort reports whether an OpenAI model accepts the
+// "max" reasoning effort rung above "xhigh". The GPT-5.6 generation introduced
+// it; GPT-5.5 and earlier reject it, so capability is keyed by model identity
+// rather than by provider. Verified against the model catalog the Codex
+// app-server reports, which lists low/medium/high/xhigh/max for every gpt-5.6-*
+// and gpt-6-* slug and stops at xhigh for gpt-5.5.
+func OpenAISupportsMaxReasoningEffort(model string) bool {
+	normalized := strings.ToLower(Normalize(ProviderOpenAI, model))
+	return strings.HasPrefix(normalized, "gpt-5.6") || strings.HasPrefix(normalized, "gpt-6")
+}
+
 // Accepted lists the model identifiers a provider is known to serve, for use in
 // error messages. It returns nil for open-ended or unrecognized providers,
 // which is the signal that the pair must not be reported as a mismatch.

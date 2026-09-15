@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/control"
 	"lcroom/internal/fuzzyfilter"
+	"lcroom/internal/lcagent/modeladapter"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -273,7 +274,7 @@ func (m Model) recentPrelaunchModelOptions(provider codexapp.Provider) []codexap
 			Description:   "Recently used " + provider.Label() + " model.",
 		}
 		if provider == codexapp.ProviderCodex {
-			option.SupportedReasoningEfforts = genericEmbeddedReasoningOptions()
+			option.SupportedReasoningEfforts = embeddedCodexReasoningOptions(modelID)
 			option.DefaultReasoningEffort = "medium"
 		}
 		options = append(options, option)
@@ -321,6 +322,22 @@ func genericEmbeddedReasoningOptions() []codexapp.ReasoningEffortOption {
 		{ReasoningEffort: "medium", Description: "Balanced"},
 		{ReasoningEffort: "high", Description: "More deliberate"},
 	}
+}
+
+// embeddedCodexReasoningOptions is the offline guess used only when neither a
+// live app-server nor a stored catalog can answer. A live Codex session reports
+// supportedReasoningEfforts per model and that passthrough always wins; this
+// exists so a recently used GPT-5.6 model is not silently capped at "high"
+// while the picker has no better source.
+func embeddedCodexReasoningOptions(model string) []codexapp.ReasoningEffortOption {
+	options := genericEmbeddedReasoningOptions()
+	if !modeladapter.OpenAISupportsMaxReasoningEffort(model) {
+		return options
+	}
+	return append(options,
+		codexapp.ReasoningEffortOption{ReasoningEffort: "xhigh", Description: "Extra deliberate"},
+		codexapp.ReasoningEffortOption{ReasoningEffort: "max", Description: "Most thorough"},
+	)
 }
 
 func mergePrelaunchModelOptions(groups ...[]codexapp.ModelOption) []codexapp.ModelOption {
