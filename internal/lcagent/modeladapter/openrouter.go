@@ -821,6 +821,21 @@ func MoonshotSupportsReasoningEffort(model string) bool {
 	return model == "kimi-k3" || strings.HasPrefix(model, "kimi-k3-")
 }
 
+// OpenAISupportsMaxReasoningEffort reports whether an OpenAI model accepts the
+// "max" reasoning effort rung above "xhigh". OpenAISupportsMaxReasoningEffort
+// delegates to modelcatalog.
+func OpenAISupportsMaxReasoningEffort(model string) bool {
+	return modelcatalog.OpenAISupportsMaxReasoningEffort(model)
+}
+
+// ProviderForModel resolves which direct provider a possibly router-qualified
+// model identifier belongs to ("deepseek/deepseek-v4-pro" is a DeepSeek model
+// however it is reached), or "" when no enumerable provider claims it.
+// ProviderForModel delegates to modelcatalog.
+func ProviderForModel(model string) string {
+	return modelcatalog.ProviderForModel(model)
+}
+
 func (c *Client) completeResponses(ctx context.Context, messages []Message, tools []ToolDefinition, opts CompletionOptions) (Completion, error) {
 	if opts.DisableThinking {
 		return Completion{}, fmt.Errorf("%s does not support disabling reasoning through lcagent options", c.providerLabel())

@@ -943,7 +943,43 @@ func lcagentOpenAIStyleReasoningEffortOptions() []ReasoningEffortOption {
 		{ReasoningEffort: "low", Description: "Light reasoning for coding turns."},
 		{ReasoningEffort: "medium", Description: "More reasoning for harder coding turns."},
 		{ReasoningEffort: "high", Description: "Deeper reasoning for difficult reviews or refactors."},
-		{ReasoningEffort: "xhigh", Description: "Maximum OpenAI-style reasoning effort for the hardest coding turns."},
+		{ReasoningEffort: "xhigh", Description: "Extra reasoning depth above high for demanding coding turns."},
+	}
+}
+
+// lcagentOpenAIReasoningEffortOptions is model-aware because the GPT-5.6
+// generation added a "max" rung above "xhigh" that GPT-5.5 and earlier reject.
+// The shared OpenAI-style ladder stops at xhigh, which hid that rung from every
+// direct OpenAI route even though the API accepts it.
+func lcagentOpenAIReasoningEffortOptions(model string) []ReasoningEffortOption {
+	options := lcagentOpenAIStyleReasoningEffortOptions()
+	if modeladapter.OpenAISupportsMaxReasoningEffort(model) {
+		options = append(options, ReasoningEffortOption{
+			ReasoningEffort: "max",
+			Description:     "Maximum OpenAI reasoning for the hardest coding turns; slowest and most expensive.",
+		})
+	}
+	return options
+}
+
+// lcagentOpenRouterReasoningEffortOptions keys the ladder off the routed model
+// rather than the router. A DeepSeek or Kimi model reached through OpenRouter is
+// still that model: it keeps its own "max" rung, and a kimi-k2.x route still
+// rejects reasoning effort outright. Treating every OpenRouter model as
+// OpenAI-style both hid rungs and offered ones the model refuses.
+func lcagentOpenRouterReasoningEffortOptions(model string) []ReasoningEffortOption {
+	switch modeladapter.ProviderForModel(model) {
+	case "deepseek":
+		return lcagentDeepSeekReasoningEffortOptions()
+	case "moonshot":
+		if modeladapter.MoonshotSupportsReasoningEffort(model) {
+			return lcagentMoonshotReasoningEffortOptions()
+		}
+		return nil
+	case "openai":
+		return lcagentOpenAIReasoningEffortOptions(model)
+	default:
+		return lcagentOpenAIStyleReasoningEffortOptions()
 	}
 }
 
@@ -967,8 +1003,12 @@ func lcagentDeepSeekReasoningEffortOptions() []ReasoningEffortOption {
 // not on kimi-k2.x), so capability is keyed by model identity, not just route.
 func lcagentReasoningEffortOptionsForProvider(provider, model string) []ReasoningEffortOption {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "", "openai", "openrouter", "xiaomi":
+	case "", "xiaomi":
 		return lcagentOpenAIStyleReasoningEffortOptions()
+	case "openai":
+		return lcagentOpenAIReasoningEffortOptions(model)
+	case "openrouter":
+		return lcagentOpenRouterReasoningEffortOptions(model)
 	case "moonshot":
 		if modeladapter.MoonshotSupportsReasoningEffort(model) {
 			return lcagentMoonshotReasoningEffortOptions()
@@ -1005,7 +1045,21 @@ func lcagentReasoningEffortForProvider(provider, model, reasoningEffort string) 
 			return strings.TrimSpace(option.ReasoningEffort)
 		}
 	}
-	return lcagentDefaultReasoningEffort(provider, model)
+	return lcagentFallbackReasoningEffortWithin(options, provider, model)
+}
+
+// lcagentFallbackReasoningEffortWithin keeps the fallback inside the ladder the
+// picker actually offered. The provider default is derived separately from the
+// options list, so for a custom or router-qualified model it could name a rung
+// the options omit and hand the session an effort no UI ever showed.
+func lcagentFallbackReasoningEffortWithin(options []ReasoningEffortOption, provider, model string) string {
+	fallback := strings.TrimSpace(lcagentDefaultReasoningEffort(provider, model))
+	for _, option := range options {
+		if strings.EqualFold(strings.TrimSpace(option.ReasoningEffort), fallback) {
+			return strings.TrimSpace(option.ReasoningEffort)
+		}
+	}
+	return strings.TrimSpace(options[0].ReasoningEffort)
 }
 
 func lcagentDefaultReasoningEffort(provider, model string) string {

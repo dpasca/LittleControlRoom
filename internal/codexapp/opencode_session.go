@@ -2567,6 +2567,10 @@ func openCodeReasoningRank(value string) int {
 		return 3
 	case "xhigh":
 		return 4
+	case "max":
+		return 5
+	case "ultra":
+		return 6
 	default:
 		return 100
 	}

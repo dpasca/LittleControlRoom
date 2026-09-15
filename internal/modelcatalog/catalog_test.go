@@ -114,3 +114,19 @@ func TestNormalizeForRequestPreservesCustomDirectModelSpelling(t *testing.T) {
 		t.Fatalf("NormalizeForRequest(unknown provider) = %q, want %q", got, want)
 	}
 }
+
+func TestOpenAISupportsMaxReasoningEffort(t *testing.T) {
+	for _, model := range []string{
+		"gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
+		"gpt-5.6-luna-2026-07-13", "openai/gpt-5.6", "GPT-5.6-Luna", "gpt-6-astra",
+	} {
+		if !OpenAISupportsMaxReasoningEffort(model) {
+			t.Fatalf("OpenAISupportsMaxReasoningEffort(%q) = false, want true", model)
+		}
+	}
+	for _, model := range []string{"", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "deepseek-v4-pro"} {
+		if OpenAISupportsMaxReasoningEffort(model) {
+			t.Fatalf("OpenAISupportsMaxReasoningEffort(%q) = true, want false", model)
+		}
+	}
+}
