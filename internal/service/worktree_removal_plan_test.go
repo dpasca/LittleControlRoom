@@ -437,3 +437,40 @@ func TestRemovalProcessProbeCancellation(t *testing.T) {
 		t.Fatal("stalled probe did not cancel promptly")
 	}
 }
+
+// Package caches (uv, for one) drop files named .git that carry no gitdir
+// pointer. Those are ordinary ignored residue, not nested repositories, and
+// must not strand the whole cleanup.
+func TestRemovalClassifiesGitFilesByPointerContent(t *testing.T) {
+	for _, tc := range []struct {
+		kind, content string
+		removable     bool
+	}{
+		{kind: "empty cache marker", content: "", removable: true},
+		{kind: "unrelated content", content: "*\n", removable: true},
+		{kind: "gitdir pointer", content: "gitdir: ../../elsewhere/.git\n"},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
+			f := newAssetResidueFixture(t)
+			cache := filepath.Join(f.path, "_artifacts", "uv-cache", "sdists-v9")
+			writeTestFile(t, filepath.Join(cache, ".git"), tc.content, 0600)
+			writeTestFile(t, filepath.Join(cache, ".gitignore"), "*\n", 0600)
+			err := f.svc.RemoveWorktree(context.Background(), f.path, false)
+			if tc.removable {
+				if err != nil {
+					t.Fatalf("ignored cache residue blocked removal: %v", err)
+				}
+				f.assertChildren(t, true)
+				if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
+					t.Fatalf("worktree remains: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "no preserved parent gitlink") {
+				t.Fatalf("unrelated nested repository accepted: %v", err)
+			}
+			f.assertChildren(t, false)
+		})
+	}
+}

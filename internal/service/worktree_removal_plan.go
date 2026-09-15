@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,6 +105,30 @@ func removalGitOutput(ctx context.Context, repo string, args ...string) (string,
 		return "", fmt.Errorf("inspect %s: git %s: %w", repo, strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// Git treats a regular .git file as a repository pointer only when it begins
+// with "gitdir: ". Anything else (an empty cache marker, an unrelated file) is
+// not metadata, so the enclosing directory is not a nested repository. A
+// non-regular .git is left for the walk's own symlink review.
+func isRemovalGitPointerFile(path string, info os.FileInfo) (bool, error) {
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	const prefix = "gitdir: "
+	header := make([]byte, len(prefix))
+	if _, err := io.ReadFull(file, header); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return false, nil
+		}
+		return false, err
+	}
+	return string(header) == prefix, nil
 }
 
 func inspectOwnedRemovalChild(ctx context.Context, root, parent, path string, tree map[string]residualGitTreeEntry) (ownedRemovalChild, error) {
@@ -237,33 +262,43 @@ func inspectRemovalPlan(ctx context.Context, root, path, commit string, verifyFi
 					return inspectRemovalCloneIntoPlan(ctx, &plan, current, tree)
 				}
 			}
-			if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
-				if metadata, err := os.Lstat(filepath.Join(current, ".git")); err == nil && metadata.IsDir() {
+			if metadata, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+				if metadata.IsDir() {
 					return inspectRemovalCloneIntoPlan(ctx, &plan, current, tree)
 				}
-				child, err := inspectOwnedRemovalChild(ctx, root, path, current, tree)
+				pointer, err := isRemovalGitPointerFile(filepath.Join(current, ".git"), metadata)
 				if err != nil {
 					return err
 				}
-				// Nested Git metadata needs its own ownership review; Git
-				// status alone can hide it. WalkDir never follows symlinks.
-				err = filepath.WalkDir(current, func(p string, e os.DirEntry, err error) error {
+				// A file named .git only claims a repository when it carries
+				// Git's gitdir line. Package caches (uv, for one) leave
+				// unrelated files under that name; those stay ordinary residue
+				// and are verified as ignored output like any other file.
+				if pointer {
+					child, err := inspectOwnedRemovalChild(ctx, root, path, current, tree)
 					if err != nil {
 						return err
 					}
-					if err := ctx.Err(); err != nil {
+					// Nested Git metadata needs its own ownership review; Git
+					// status alone can hide it. WalkDir never follows symlinks.
+					err = filepath.WalkDir(current, func(p string, e os.DirEntry, err error) error {
+						if err != nil {
+							return err
+						}
+						if err := ctx.Err(); err != nil {
+							return err
+						}
+						if e.Name() == ".git" && (e.Type()&os.ModeSymlink != 0 || p != filepath.Join(current, ".git")) {
+							return fmt.Errorf("nested metadata requires review: %s", p)
+						}
+						return nil
+					})
+					if err != nil {
 						return err
 					}
-					if e.Name() == ".git" && (e.Type()&os.ModeSymlink != 0 || p != filepath.Join(current, ".git")) {
-						return fmt.Errorf("nested metadata requires review: %s", p)
-					}
-					return nil
-				})
-				if err != nil {
-					return err
+					plan.Children = append(plan.Children, child)
+					return filepath.SkipDir
 				}
-				plan.Children = append(plan.Children, child)
-				return filepath.SkipDir
 			} else if !os.IsNotExist(err) {
 				return err
 			}
