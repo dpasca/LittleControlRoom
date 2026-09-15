@@ -225,7 +225,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "web_search",
-				Description: "Search the public web for current external information; returns concise URL sources.",
+				Description: "Search the public web for external information, including historical sources; returns concise URL sources. Search without a date filter unless recent publication is needed.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -233,7 +233,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"query":        map[string]any{"type": "string", "description": "Natural-language search query."},
 						"max_results":  map[string]any{"type": "integer", "minimum": 1, "maximum": 10, "description": "Max results. Defaults to 5."},
 						"site":         map[string]any{"type": "string", "description": "Optional domain filter."},
-						"recency_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365, "description": "Optional recency window in days."},
+						"recency_days": map[string]any{"type": "integer", "minimum": 0, "maximum": 365, "description": "Optional publication-date filter in days. Omit or use 0 for unrestricted dates (default). Use a positive value only when recently published pages are needed, not for historical research."},
 					},
 					"required": []string{"query"},
 				},

@@ -1105,11 +1105,15 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	progressTracker := newOpenRouterLoopProgressTracker(messages, runner)
 	lastQualityPlanCompletedPrefix := runner.QualityPlanCompletedPrefix()
+	// Count actual searches outside model context so compaction cannot restart
+	// the exploration allowance. A new steered objective gets a fresh count.
+	webSearchCalls := 0
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		progressTracker.Observe(messages, runner)
 		select {
 		case steerMsg := <-runner.SteerMessages:
 			if strings.TrimSpace(steerMsg) != "" {
+				webSearchCalls = 0
 				activeObjective = trimActiveObjective(steerMsg)
 				if threadStore != nil {
 					threadStore.SetActiveObjective(activeObjective)
@@ -1150,7 +1154,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			messages = compactedMessages
 			contextCompacted = true
 		}
-		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
+		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{
+			ToolProfile: string(toolProfile), WebSearchCalls: webSearchCalls,
+		})
 		if progressTracker.ShouldForceSynthesis(guidance) {
 			guidance.Phase = "synthesis"
 			guidance.ForceSynthesis = true
@@ -1396,6 +1402,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					return err
 				}
 				return nil
+			}
+			if call.Function.Name == "web_search" {
+				webSearchCalls++
 			}
 			result, err := runner.RunTool(ctx, action)
 			if call.Function.Name == "read_file" {

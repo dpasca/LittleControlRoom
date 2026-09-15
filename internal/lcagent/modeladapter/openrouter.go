@@ -835,7 +835,7 @@ func (c *Client) completeResponses(ctx context.Context, messages []Message, tool
 		"input": input,
 		"store": true,
 	}
-	if instructions != "" && !usedPrevious {
+	if instructions != "" {
 		body["instructions"] = instructions
 	}
 	if usedPrevious {
@@ -1015,20 +1015,26 @@ type responsesResponse struct {
 }
 
 func responsesInput(messages []Message, usePrevious bool) (string, []any, bool) {
+	// Responses stores conversation items, but instructions apply only to the
+	// current request. Rebuild them even when sending only new tool outputs.
+	var instructions []string
+	for _, msg := range messages {
+		if (msg.Role == "system" || msg.Role == "developer") && strings.TrimSpace(msg.Content) != "" {
+			instructions = append(instructions, strings.TrimSpace(msg.Content))
+		}
+	}
+	instructionText := strings.Join(instructions, "\n\n")
 	if usePrevious {
 		items := responsesContinuationInput(messages)
 		if len(items) > 0 {
-			return "", items, true
+			return instructionText, items, true
 		}
 	}
-	var instructions []string
 	var items []any
 	for _, msg := range messages {
 		switch msg.Role {
 		case "system", "developer":
-			if strings.TrimSpace(msg.Content) != "" {
-				instructions = append(instructions, strings.TrimSpace(msg.Content))
-			}
+			continue
 		case "tool":
 			items = append(items, map[string]any{
 				"type":    "function_call_output",
@@ -1046,7 +1052,7 @@ func responsesInput(messages []Message, usePrevious bool) (string, []any, bool) 
 			}
 		}
 	}
-	return strings.Join(instructions, "\n\n"), items, false
+	return instructionText, items, false
 }
 
 func responsesContinuationInput(messages []Message) []any {
@@ -1108,6 +1114,9 @@ func responsesTools(tools []ToolDefinition) []map[string]any {
 			"name":        tool.Function.Name,
 			"description": tool.Function.Description,
 			"parameters":  tool.Function.Parameters,
+			// Keep the shared Chat Completions schema's optional parameters.
+			// Responses otherwise attempts automatic strict normalization.
+			"strict": false,
 		})
 	}
 	return out

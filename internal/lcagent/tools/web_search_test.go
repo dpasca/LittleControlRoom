@@ -3,10 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeBrowserWebSearcher struct {
@@ -49,9 +52,83 @@ func TestWebSearchRunnerSearXNG(t *testing.T) {
 	if !result.Success {
 		t.Fatalf("Search() failed: %#v", result)
 	}
-	for _, want := range []string{"backend: searxng", "query: lcagent", "LCAgent docs", "https://example.com/docs", "Search result snippet"} {
+	for _, want := range []string{"backend: searxng", "LCAgent docs", "https://example.com/docs", "Search result snippet"} {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("output missing %q:\n%s", want, result.Output)
+		}
+	}
+}
+
+type webSearchTestTransport func(*http.Request) (*http.Response, error)
+
+func (f webSearchTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestWebSearchDateFiltersAndRepeatedEvidence(t *testing.T) {
+	for _, backend := range []WebSearchBackend{WebSearchBackendExa, WebSearchBackendGoogle, WebSearchBackendSearXNG} {
+		for _, days := range []int{0, 30} {
+			t.Run(fmt.Sprintf("%s/%d_days", backend, days), func(t *testing.T) {
+				requests := 0
+				runner := WebSearchRunner{
+					Backend: backend, APIKey: "test-key", SearchEngineID: "test-engine", URL: "https://search.example.test",
+					HTTPClient: &http.Client{Transport: webSearchTestTransport(func(r *http.Request) (*http.Response, error) {
+						requests++
+						switch backend {
+						case WebSearchBackendExa:
+							var body map[string]any
+							if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+								t.Fatal(err)
+							}
+							filter, present := body["startPublishedDate"]
+							if days == 0 && present {
+								t.Fatalf("unrestricted search sent publication filter: %#v", filter)
+							}
+							if days > 0 {
+								date, err := time.Parse(time.RFC3339, fmt.Sprint(filter))
+								if err != nil || time.Since(date.Add(time.Duration(days)*24*time.Hour)).Abs() > 5*time.Second {
+									t.Fatalf("incorrect publication filter: %#v, err=%v", filter, err)
+								}
+							}
+						case WebSearchBackendGoogle, WebSearchBackendSearXNG:
+							key, value := "dateRestrict", "d30"
+							if backend == WebSearchBackendSearXNG {
+								key, value = "time_range", "month"
+							}
+							if days == 0 {
+								if r.URL.Query().Has(key) {
+									t.Fatalf("unrestricted search sent %s", key)
+								}
+							} else if got := r.URL.Query().Get(key); got != value {
+								t.Fatalf("%s=%q, want %q", key, got, value)
+							}
+						}
+						return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"results":[{"title":"Archive","url":"https://example.com/archive","summary":"Same evidence","content":"Same evidence"}],"items":[{"title":"Archive","link":"https://example.com/archive","snippet":"Same evidence"}]}`))}, nil
+					})},
+				}
+				first := runner.Search(context.Background(), "historical magazine", 5, "", days)
+				second := runner.Search(context.Background(), "historical magazine alternate wording", 5, "", days)
+				if !first.Success || !second.Success || requests != 2 {
+					t.Fatalf("requests=%d first=%+v second=%+v", requests, first, second)
+				}
+				if first.Output != second.Output || !strings.Contains(first.Output, "https://example.com/archive") {
+					t.Fatalf("identical evidence changed with query wording: %q vs %q", first.Output, second.Output)
+				}
+			})
+		}
+	}
+}
+
+func TestWebSearchUnrestrictedBrowserAndInvalidDates(t *testing.T) {
+	browser := &fakeBrowserWebSearcher{result: ToolResult{Success: true}}
+	runner := WebSearchRunner{Backend: WebSearchBackendBrowser, Browser: browser}
+	if result := runner.Search(context.Background(), "archive", 5, "", 0); !result.Success || browser.recencyDays != 0 {
+		t.Fatalf("unrestricted browser search: %+v, days=%d", result, browser.recencyDays)
+	}
+	for _, days := range []int{-1, 366} {
+		result := runner.Search(context.Background(), "invalid", 5, "", days)
+		if result.Success || !strings.Contains(result.Error, "recency_days") || browser.query != "archive" {
+			t.Fatalf("invalid filter reached backend: days=%d result=%+v query=%q", days, result, browser.query)
 		}
 	}
 }

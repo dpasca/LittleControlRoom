@@ -32,6 +32,37 @@ func TestOpenRouterProgressGuidancePhases(t *testing.T) {
 	}
 }
 
+func TestSearchGuidanceConvergesBeforeTheModelTurnBudget(t *testing.T) {
+	for _, test := range []struct {
+		searches int
+		phase    string
+	}{
+		{0, "exploration"},
+		{11, "exploration"},
+		{12, "consolidation"},
+		{114, "consolidation"},
+	} {
+		// An empty message slice also models post-compaction history: the host
+		// tally, rather than surviving tool messages, drives this checkpoint.
+		guidance := openRouterGuidanceForTurnWithOptions(4, 160, nil, nil, openRouterGuidanceOptions{WebSearchCalls: test.searches})
+		if guidance.Phase != test.phase || guidance.ForceSynthesis || guidance.WebSearchCalls != test.searches {
+			t.Fatalf("searches=%d: guidance=%+v", test.searches, guidance)
+		}
+		if test.searches >= 12 {
+			note := openRouterProgressNote(guidance, nil)
+			for _, want := range []string{"update the user", "what remains unknown", "Different query wording", "not a hard limit"} {
+				if !strings.Contains(note, want) {
+					t.Fatalf("search checkpoint missing %q:\n%s", want, note)
+				}
+			}
+		}
+	}
+	late := openRouterGuidanceForTurnWithOptions(136, 160, nil, nil, openRouterGuidanceOptions{WebSearchCalls: 114})
+	if late.Phase != "endgame" {
+		t.Fatalf("search checkpoint overwrote endgame: %+v", late)
+	}
+}
+
 func TestOpenRouterProgressNoteIncludesReadLedgerAndSynthesisInstructions(t *testing.T) {
 	ledger := newReadLedger()
 	if !ledger.ObserveReadResult(tools.ToolResult{

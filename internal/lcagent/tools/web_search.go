@@ -121,6 +121,9 @@ func (r WebSearchRunner) Search(ctx context.Context, query string, maxResults in
 	if query == "" {
 		return ToolResult{Success: false, Error: "query is required"}
 	}
+	if recencyDays < 0 || recencyDays > 365 {
+		return ToolResult{Success: false, Error: "recency_days must be between 0 and 365; omit it or use 0 for unrestricted dates"}
+	}
 	maxResults = clampInt(maxResults, defaultWebSearchMaxResults, maxWebSearchMaxResults)
 	switch r.Backend {
 	case WebSearchBackendExa:
@@ -188,7 +191,7 @@ func (r WebSearchRunner) searchExa(ctx context.Context, query string, maxResults
 		source := firstNonEmpty(item.PublishedDate, item.Author)
 		results = append(results, webSearchResult{Title: item.Title, URL: item.URL, Snippet: snippet, Source: source})
 	}
-	return formatWebSearchResults("exa", query, results, duration)
+	return formatWebSearchResults("exa", results, duration)
 }
 
 func (r WebSearchRunner) searchGoogle(ctx context.Context, query string, maxResults int, site string, recencyDays int) ToolResult {
@@ -229,7 +232,7 @@ func (r WebSearchRunner) searchGoogle(ctx context.Context, query string, maxResu
 	for _, item := range parsed.Items {
 		results = append(results, webSearchResult{Title: item.Title, URL: item.Link, Snippet: item.Snippet})
 	}
-	return formatWebSearchResults("google", query, results, duration)
+	return formatWebSearchResults("google", results, duration)
 }
 
 func (r WebSearchRunner) searchSearXNG(ctx context.Context, query string, maxResults int, site string, recencyDays int) ToolResult {
@@ -267,7 +270,7 @@ func (r WebSearchRunner) searchSearXNG(ctx context.Context, query string, maxRes
 		}
 		results = append(results, webSearchResult{Title: item.Title, URL: item.URL, Snippet: item.Content, Source: item.Engine})
 	}
-	return formatWebSearchResults("searxng", query, results, duration)
+	return formatWebSearchResults("searxng", results, duration)
 }
 
 func (r WebSearchRunner) postJSON(ctx context.Context, rawURL string, body map[string]any, headers map[string]string) ([]byte, time.Duration, error) {
@@ -335,10 +338,11 @@ type webSearchResult struct {
 	Source  string
 }
 
-func formatWebSearchResults(backend, query string, results []webSearchResult, duration time.Duration) ToolResult {
+func formatWebSearchResults(backend string, results []webSearchResult, duration time.Duration) ToolResult {
 	var b strings.Builder
 	fmt.Fprintf(&b, "backend: %s\n", backend)
-	fmt.Fprintf(&b, "query: %s\n", query)
+	// The tool call already records the query. Echoing it here makes identical
+	// evidence look new to the loop's exact-result repetition detector.
 	fmt.Fprintf(&b, "results: %d\n\n", len(results))
 	if len(results) == 0 {
 		b.WriteString("No results.\n")

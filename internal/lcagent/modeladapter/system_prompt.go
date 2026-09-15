@@ -109,7 +109,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	}
 	if opts.WebSearchEnabled {
 		lines = append(lines,
-			"Use web_search for current public info/docs when workspace evidence is not enough; cite result URLs in final_response when web evidence affects the answer.",
+			"Use web_search for public information/docs, including historical sources, when workspace evidence is not enough; cite result URLs in final_response when web evidence affects the answer.",
+			"Leave recency_days omitted or 0 unless the task needs recently published pages. A historical event date is not a publication-date filter.",
+			"After each search batch, assess whether the results add evidence toward the user's question. Prefer inspecting a promising source over generating more query variants. If the evidence remains insufficient, report what is known and the specific gap honestly; do not invent an answer or keep searching just because tools remain available.",
 		)
 	}
 	if opts.VisionAnalysisEnabled {

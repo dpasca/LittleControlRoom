@@ -1241,8 +1241,8 @@ func TestOpenAIClientResponsesContinuationUsesPreviousResponseID(t *testing.T) {
 			if req.PreviousResponseID != "resp_1" {
 				t.Fatalf("second previous_response_id = %q", req.PreviousResponseID)
 			}
-			if req.Instructions != "" {
-				t.Fatalf("second instructions = %q, want omitted for previous_response_id continuation", req.Instructions)
+			if req.Instructions != "system guidance" {
+				t.Fatalf("second instructions = %q, want current system guidance on continuation", req.Instructions)
 			}
 			if len(req.Input) != 2 {
 				t.Fatalf("second input = %#v", req.Input)

@@ -14,6 +14,7 @@ const (
 	openRouterMinimumTurnBeforeStallCheck = 12
 	openRouterConsolidationTurnMultiplier = 2
 	openRouterEndgameTurnPercent          = 85
+	openRouterSearchConsolidationCalls    = 12
 )
 
 type openRouterProgressGuidance struct {
@@ -25,13 +26,15 @@ type openRouterProgressGuidance struct {
 	SynthesisReason  string `json:"synthesis_reason,omitempty"`
 	NoProgressTurns  int    `json:"no_progress_turns,omitempty"`
 	ToolResults      int    `json:"tool_results"`
+	WebSearchCalls   int    `json:"web_search_calls,omitempty"`
 	ToolProfile      string `json:"tool_profile,omitempty"`
 	ReadLedgerFiles  int    `json:"read_ledger_files,omitempty"`
 	ReadLedgerRanges int    `json:"read_ledger_ranges,omitempty"`
 }
 
 type openRouterGuidanceOptions struct {
-	ToolProfile string
+	ToolProfile    string
+	WebSearchCalls int
 }
 
 func openRouterGuidanceForTurn(turn, maxTurns int, messages []modeladapter.Message, ledger *readLedger) openRouterProgressGuidance {
@@ -53,13 +56,14 @@ func openRouterGuidanceForTurnWithOptions(turn, maxTurns int, messages []modelad
 		TurnsRemaining:   remaining,
 		Phase:            "exploration",
 		ToolResults:      countToolResultMessages(messages),
+		WebSearchCalls:   opts.WebSearchCalls,
 		ToolProfile:      strings.TrimSpace(opts.ToolProfile),
 		ReadLedgerFiles:  files,
 		ReadLedgerRanges: ranges,
 	}
 	if turn*100 >= maxTurns*openRouterEndgameTurnPercent {
 		guidance.Phase = "endgame"
-	} else if turn*openRouterConsolidationTurnMultiplier >= maxTurns {
+	} else if turn*openRouterConsolidationTurnMultiplier >= maxTurns || opts.WebSearchCalls >= openRouterSearchConsolidationCalls {
 		guidance.Phase = "consolidation"
 	}
 	return guidance
@@ -89,11 +93,21 @@ func openRouterProgressNote(guidance openRouterProgressGuidance, ledger *readLed
 	if guidance.ReadLedgerFiles > 0 {
 		fmt.Fprintf(&b, "\n- read ledger: %d files, %d ranges", guidance.ReadLedgerFiles, guidance.ReadLedgerRanges)
 	}
+	if guidance.WebSearchCalls > 0 {
+		fmt.Fprintf(&b, "\n- web search calls for the current request: %d", guidance.WebSearchCalls)
+	}
 	if ledgerText := ledger.Format(openRouterProgressLedgerChars); ledgerText != "" {
 		b.WriteString("\n\nRead ledger summary:\n")
 		b.WriteString(indentBlock(ledgerText))
 	}
 	b.WriteString("\n\nGuidance:\n")
+	if guidance.WebSearchCalls >= openRouterSearchConsolidationCalls && !guidance.ForceSynthesis {
+		// This is a work-budget checkpoint, not an intent or relevance classifier.
+		// The model must assess the evidence; search count alone never stops work.
+		b.WriteString("- Before another search batch, briefly update the user with what is established, what remains unknown, and which specific gap the next action will resolve.\n")
+		b.WriteString("- Assess whether recent searches added useful evidence. Different query wording or snippets alone do not establish progress. Inspect promising sources, correct unsuitable filters, or finish with an honest partial answer when no productive next step remains.\n")
+		b.WriteString("- The search count is a checkpoint, not a hard limit. Continue justified investigation or execution when a concrete completion blocker remains.\n")
+	}
 	switch guidance.Phase {
 	case "synthesis":
 		b.WriteString("- Tools are unavailable for this request. Produce the final user-facing answer now from gathered evidence.\n")
