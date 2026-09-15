@@ -658,7 +658,7 @@ func (m *Model) openWorktreeMergeRecoveryModelPickerCmd() tea.Cmd {
 	provider := explicitEmbeddedProvider(dialog.Provider)
 	dialog.Provider = provider
 	m.openCodexModelPickerLoadingForProvider(codexModelPickerTargetWorktreeRecovery, provider)
-	m.status = "Loading " + provider.Label() + " models for merge recovery..."
+	m.status = "Loading " + provider.Label() + " models for worktree recovery..."
 	return m.openPrelaunchCodexModelPickerCmd(provider, codexModelPickerTargetWorktreeRecovery)
 }
 
@@ -673,7 +673,11 @@ func (m Model) updateWorktreeMergeRecoveryDialogMode(msg tea.KeyMsg) (tea.Model,
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.worktreeMergeRecoveryDialog = nil
-		m.status = "Merge recovery handoff canceled"
+		m.status = "Worktree recovery handoff canceled"
+		var cleanup staleWorktreeRecoveryError
+		if errors.As(dialog.Blocker, &cleanup) && m.staleWorktreeCleanup != nil {
+			m.staleWorktreeCleanup.Backgrounded = false
+		}
 		return m, nil
 	case "down", "j":
 		m.cycleWorktreeMergeRecoveryProvider(1)
@@ -686,7 +690,7 @@ func (m Model) updateWorktreeMergeRecoveryDialogMode(msg tea.KeyMsg) (tea.Model,
 	case "enter":
 		dialog.Submitting = true
 		provider := explicitEmbeddedProvider(dialog.Provider)
-		m.status = "Creating merge recovery engineer task..."
+		m.status = "Creating worktree recovery engineer task..."
 		return m, m.createWorktreeMergeRecoveryTaskCmd(dialog.Confirm, dialog.Blocker, provider)
 	}
 	return m, nil
@@ -698,6 +702,10 @@ func worktreeMergeRecoveryTaskTitle(confirm worktreeMergeConfirmState, blocker e
 		projectBase = filepath.Base(projectPath)
 	}
 	projectName := firstNonEmptyTrimmed(confirm.ProjectName, projectBase, "worktree")
+	var cleanup staleWorktreeRecoveryError
+	if errors.As(blocker, &cleanup) {
+		return truncateText("Resolve cleanup blocker for "+projectName, 96)
+	}
 	var lockErr gitlock.IndexLockError
 	if errors.As(blocker, &lockErr) {
 		return truncateText("Resolve Git index lock for "+projectName, 96)
@@ -712,6 +720,10 @@ func worktreeMergeRecoveryTaskTitle(confirm worktreeMergeConfirmState, blocker e
 }
 
 func worktreeMergeRecoveryEngineerPrompt(confirm worktreeMergeConfirmState, failure error) string {
+	var cleanup staleWorktreeRecoveryError
+	if errors.As(failure, &cleanup) {
+		return staleWorktreeRecoveryPrompt(cleanup)
+	}
 	var lockErr gitlock.IndexLockError
 	if errors.As(failure, &lockErr) {
 		return worktreeIndexLockRecoveryEngineerPrompt(confirm, lockErr, failure)
@@ -783,7 +795,7 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 			resources = append(resources, model.AgentTaskResource{
 				Kind:        model.AgentTaskResourceProject,
 				ProjectPath: worktreePath,
-				Label:       "linked worktree with blocked merge-back",
+				Label:       "linked worktree requiring repair",
 			})
 		}
 		rootPath := firstNonEmptyTrimmed(confirm.RootPath, publishErr.RootProjectPath)
@@ -791,10 +803,14 @@ func (m Model) createWorktreeMergeRecoveryTaskCmd(confirm worktreeMergeConfirmSt
 			resources = append(resources, model.AgentTaskResource{
 				Kind:        model.AgentTaskResourceProject,
 				ProjectPath: rootPath,
-				Label:       "merge target checkout",
+				Label:       "primary checkout",
 			})
 		}
 
+		var cleanup staleWorktreeRecoveryError
+		if errors.As(blocker, &cleanup) {
+			summary = staleWorktreeRecoveryPrompt(cleanup)
+		}
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
 		task, err := m.svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
@@ -835,7 +851,7 @@ func (m Model) applyWorktreeMergeRecoveryTaskMsg(msg worktreeMergeRecoveryTaskMs
 		confirm.BusyMessage = ""
 	}
 	if msg.Err != nil {
-		m.reportError("Merge recovery task failed", msg.Err, msg.Confirm.ProjectPath)
+		m.reportError("Worktree recovery task failed", msg.Err, msg.Confirm.ProjectPath)
 		return m, nil
 	}
 	if msg.CategoryErr != nil {
@@ -848,7 +864,7 @@ func (m Model) applyWorktreeMergeRecoveryTaskMsg(msg worktreeMergeRecoveryTaskMs
 	}
 	project, err := projectSummaryForAgentTask(msg.Task)
 	if err != nil {
-		m.reportError("Merge recovery engineer task failed", err, msg.Confirm.ProjectPath)
+		m.reportError("Worktree recovery engineer task failed", err, msg.Confirm.ProjectPath)
 		return m, nil
 	}
 	prompt := m.agentTaskLaunchPromptWithRuntimeContext(
@@ -883,7 +899,7 @@ func (m Model) worktreeMergeRecoveryTaskForProjectPath(projectPath string) (mode
 	var newest model.AgentTask
 	found := false
 	for _, task := range m.openAgentTasks {
-		if !agentTaskIsVisible(task) || !agentTaskHasCapability(task, "worktree.merge.recover") {
+		if !agentTaskIsVisible(task) || (!agentTaskHasCapability(task, "worktree.merge.recover") && !agentTaskHasCapability(task, "worktree.cleanup.recover")) {
 			continue
 		}
 		linked := false

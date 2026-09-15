@@ -16,6 +16,10 @@ func worktreeMergeBlockerStatus(blocker error) string {
 }
 
 func worktreeMergeRecoveryCapabilities(blocker error) []string {
+	var cleanup staleWorktreeRecoveryError
+	if errors.As(blocker, &cleanup) {
+		return []string{"worktree.cleanup.recover"}
+	}
 	var lockErr gitlock.IndexLockError
 	if errors.As(blocker, &lockErr) {
 		return []string{"worktree.merge.recover", "git.index_lock.recover"}
@@ -24,6 +28,10 @@ func worktreeMergeRecoveryCapabilities(blocker error) []string {
 }
 
 func worktreeMergeRecoverySafetyText(blocker error) string {
+	var cleanup staleWorktreeRecoveryError
+	if errors.As(blocker, &cleanup) {
+		return "The engineer preserves local work, verifies backups when needed, and prepares a safe /clean retry."
+	}
 	var lockErr gitlock.IndexLockError
 	if errors.As(blocker, &lockErr) {
 		return "The engineer checks active Git processes, preserves stale lock backups, and prepares a safe retry."
@@ -32,6 +40,10 @@ func worktreeMergeRecoverySafetyText(blocker error) string {
 }
 
 func worktreeMergeRecoveryLaunchText(blocker error) string {
+	var cleanup staleWorktreeRecoveryError
+	if errors.As(blocker, &cleanup) {
+		return "Start a tracked repair task for this cleanup failure. " + worktreeMergeRecoverySafetyText(blocker)
+	}
 	var lockErr gitlock.IndexLockError
 	if errors.As(blocker, &lockErr) {
 		return "Start a tracked repair task for this Git lock. " + worktreeMergeRecoverySafetyText(blocker)

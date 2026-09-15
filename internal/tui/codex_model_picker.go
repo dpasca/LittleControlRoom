@@ -1191,7 +1191,7 @@ func (m Model) applyWorktreeMergeRecoveryModelPickerSelection(modelOption codexa
 	if dialog := m.worktreeMergeRecoveryDialog; dialog != nil {
 		dialog.Provider = provider
 	}
-	return m.applyPrelaunchModelPickerSelection(modelOption, effort, "Merge recovery")
+	return m.applyPrelaunchModelPickerSelection(modelOption, effort, "Worktree recovery")
 }
 
 func (m Model) applyPrelaunchModelPickerSelection(modelOption codexapp.ModelOption, effort, launchLabel string) (tea.Model, tea.Cmd) {

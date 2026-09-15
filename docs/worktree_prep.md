@@ -112,3 +112,11 @@ Merge-back lock failures reopen the merge dialog with **Ask Engineer** selected,
 LCR applies the requested profile when one is supplied by the worktree creation request. Otherwise it applies `default_profile` from `.lcroom/worktrees.toml`. If neither is present, it applies `submodules-auto`.
 
 This gives LCR a generic hook for a later model-based chooser: the model can select among declared profile names, and the same deterministic preparer applies the selected profile.
+
+### Recovering failed stale cleanup
+
+The `/clean` report keeps concise results and offers **↑↓** to select a worktree, **D** for full diagnostics (**PgUp/PgDn** to scroll), **E — Ask Engineer** for a failed removal, and **R** to retry remaining items with fresh eligibility and live-state checks. Completed removals are retained as receipts. Closing the report hides it; `/clean` reopens it. When all items are removed, **R** starts a new audit.
+
+Ask Engineer uses the existing provider/model/reasoning picker and creates a tracked repair task linked to the worktree and repository root. The full failure and partial cleanup state are persisted with the task, so a completed TODO is not mistaken for an incomplete merge. Repeated handoffs reopen the existing task. **Cleanup recovery** in the project details and the **e recovery** footer reopen the engineer; after reviewing the repair, return to `/clean` and press **R**.
+
+The engineer investigates nested dependency repositories and generated caches without assuming they are disposable. It can repair verifiable upstream access or prepare a durable, verified preservation plan for local files and Git objects, including unreachable history and borrowed objects. It leaves deletion to `/clean` and presents a concrete decision if credentials, process shutdown, or relocating preserved data require the operator's help. The removal safety checks remain in effect.

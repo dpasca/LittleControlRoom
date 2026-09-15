@@ -393,7 +393,7 @@ func staleWorktreeCleanupTestSummary(now time.Time) model.ProjectSummary {
 
 func TestRenderStaleWorktreeCleanupResultsWrapsLongDetails(t *testing.T) {
 	longError := "linked TODO was completed, but removing the worktree failed: symlink /tmp/demo--stale/.git: file exists and cannot be replaced safely"
-	dialog := &staleWorktreeCleanupDialogState{Results: []staleWorktreeCleanupResult{
+	dialog := &staleWorktreeCleanupDialogState{ShowDetails: true, Results: []staleWorktreeCleanupResult{
 		{Candidate: staleWorktreeCleanupTestCandidate("/tmp/demo--stale", "feature/stale", time.Now().Add(-48*time.Hour)), Err: fmt.Errorf("%s", longError)},
 		{Candidate: staleWorktreeCleanupTestCandidate("/tmp/demo--recent", "ui/recent", time.Now()), SkippedReason: "the embedded Codex session was used within the last 24 hours"},
 	}}
@@ -406,7 +406,9 @@ func TestRenderStaleWorktreeCleanupResultsWrapsLongDetails(t *testing.T) {
 	if !strings.Contains(joined, longError) {
 		t.Fatalf("expected full failure detail in report, got:\n%s", rendered)
 	}
-	if !strings.Contains(joined, "skipped: the embedded Codex session was used within the last 24 hours") {
+	dialog.Selected = 1
+	joined = strings.Join(strings.Fields(ansi.Strip(renderStaleWorktreeCleanupResults(dialog, 100, 40))), " ")
+	if !strings.Contains(joined, "the embedded Codex session was used within the last 24 hours") {
 		t.Fatalf("expected full skip reason in report, got:\n%s", rendered)
 	}
 	for _, line := range strings.Split(rendered, "\n") {

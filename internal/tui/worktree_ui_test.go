@@ -3564,7 +3564,7 @@ func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testin
 	if got.worktreeMergeRecoveryDialog == nil || !got.worktreeMergeRecoveryDialog.Submitting {
 		t.Fatalf("recovery launch dialog = %#v, want submitting while the task is created", got.worktreeMergeRecoveryDialog)
 	}
-	if got.status != "Creating merge recovery engineer task..." {
+	if got.status != "Creating worktree recovery engineer task..." {
 		t.Fatalf("status = %q, want recovery creation status", got.status)
 	}
 	created, ok := cmd().(worktreeMergeRecoveryTaskMsg)
@@ -3582,7 +3582,7 @@ func TestWorktreeMergeRecoveryActionIsAsyncAndKeepsDialogOnTaskFailure(t *testin
 	if got.worktreeMergeConfirm == nil || got.worktreeMergeRecoveryDialog == nil || got.worktreeMergeRecoveryDialog.Submitting {
 		t.Fatalf("failed recovery should leave both dialogs available, merge=%#v launch=%#v", got.worktreeMergeConfirm, got.worktreeMergeRecoveryDialog)
 	}
-	if got.status != "Merge recovery task failed (use /errors)" {
+	if got.status != "Worktree recovery task failed (use /errors)" {
 		t.Fatalf("status = %q, want logged recovery task failure", got.status)
 	}
 }
@@ -3595,7 +3595,7 @@ func TestWorktreeMergeRecoveryBusyStateSurvivesOutstandingStatusRefresh(t *testi
 		Cause:         errors.New("permission denied"),
 	}
 	m := Model{
-		status: "Creating merge recovery engineer task...",
+		status: "Creating worktree recovery engineer task...",
 		worktreeMergeConfirm: &worktreeMergeConfirmState{
 			ProjectPath:     childPath,
 			ErrorMessage:    blocker.Error(),
@@ -3614,7 +3614,7 @@ func TestWorktreeMergeRecoveryBusyStateSurvivesOutstandingStatusRefresh(t *testi
 	if got.worktreeMergeRecoveryDialog == nil || !got.worktreeMergeRecoveryDialog.Submitting {
 		t.Fatalf("status refresh unlocked recovery submission: %#v", got.worktreeMergeRecoveryDialog)
 	}
-	if got.status != "Creating merge recovery engineer task..." {
+	if got.status != "Creating worktree recovery engineer task..." {
 		t.Fatalf("status refresh replaced recovery status with %q", got.status)
 	}
 }

@@ -39,10 +39,22 @@ func cloneGitOutput(ctx context.Context, repo, input string, args ...string) (st
 	return strings.TrimSpace(string(out)), nil
 }
 
+// NestedRepositoryRemovalError preserves structured context for cleanup recovery.
+type NestedRepositoryRemovalError struct {
+	Path  string
+	Cause error
+}
+
+func (e *NestedRepositoryRemovalError) Error() string {
+	return fmt.Sprintf("nested repository %s cannot be safely removed: %v; preserve local work or restore upstream access, then retry cleanup", e.Path, e.Cause)
+}
+
+func (e *NestedRepositoryRemovalError) Unwrap() error { return e.Cause }
+
 func inspectRemovalCloneIntoPlan(ctx context.Context, plan *worktreeRemovalPlan, path string, tree map[string]residualGitTreeEntry) error {
 	clone, err := inspectRemovalClone(ctx, *plan, path, tree)
 	if err != nil {
-		return fmt.Errorf("nested repository %s cannot be safely removed: %w; preserve local work or restore upstream access, then retry cleanup", path, err)
+		return &NestedRepositoryRemovalError{Path: path, Cause: err}
 	}
 	plan.Clones = append(plan.Clones, clone)
 	plan.Entries = append(plan.Entries, clone.Entries...)

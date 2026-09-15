@@ -234,7 +234,7 @@ func (m Model) renderFooter(width int) string {
 		case m.staleWorktreeCleanup.Removing:
 			return m.renderModalFooter(width, "Stale worktrees: removal in progress, Esc cancel and close", supplementSegments...)
 		case m.staleWorktreeCleanup.Finished:
-			return m.renderModalFooter(width, "Stale worktree report: Enter/Esc close", supplementSegments...)
+			return m.renderModalFooter(width, "Stale worktree report: ↑↓ select, E engineer, D details, R retry, Esc close", supplementSegments...)
 		default:
 			return m.renderModalFooter(width, "Stale worktrees: ↑↓ inspect, Space toggle, Enter remove, R refresh, Esc cancel", supplementSegments...)
 		}
@@ -256,9 +256,9 @@ func (m Model) renderFooter(width int) string {
 		}
 	}
 	if m.worktreeMergeRecoveryDialog != nil {
-		label := "Merge recovery: ↑↓/j/k choose agent, m model, Enter launch, Esc back"
+		label := "Worktree recovery: ↑↓/j/k choose agent, m model, Enter launch, Esc back"
 		if m.worktreeMergeRecoveryDialog.Submitting {
-			label = "Merge recovery: creating tracked engineer task..."
+			label = "Worktree recovery: creating tracked engineer task..."
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}

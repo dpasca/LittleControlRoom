@@ -28,6 +28,8 @@ type staleWorktreeCleanupDialogState struct {
 	Finalizing      bool
 	Audit           service.StaleWorktreeCleanupAudit
 	Selected        int
+	ShowDetails     bool
+	DetailOffset    int
 	Chosen          map[string]bool
 	Loading         bool
 	Removing        bool
@@ -355,6 +357,15 @@ func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg
 	}
 	dialog.Removing = false
 	dialog.Finished = true
+	dialog.Selected = 0
+	for i, result := range dialog.Results {
+		if result.Err != nil {
+			dialog.Selected = i
+			break
+		}
+	}
+	dialog.ShowDetails = false
+	dialog.DetailOffset = 0
 	removed, skipped, failed := staleWorktreeCleanupResultCounts(dialog.Results)
 	m.status = staleWorktreeCleanupFinishedStatus(removed, skipped, failed)
 	if dialog.CancelRequested {
@@ -397,9 +408,53 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		return m, nil
 	}
 	if dialog.Finished {
-		if msg.String() == "esc" || msg.String() == "enter" {
-			m.staleWorktreeCleanup = nil
-			m.status = "Stale worktree cleanup report closed"
+		switch msg.String() {
+		case "esc", "enter":
+			dialog.Backgrounded = true
+			m.status = "Cleanup report hidden; /clean reopens results and recovery actions"
+		case "up", "k":
+			dialog.Selected = max(0, dialog.Selected-1)
+			dialog.DetailOffset = 0
+		case "down", "j":
+			dialog.Selected = max(0, min(len(dialog.Results)-1, dialog.Selected+1))
+			dialog.DetailOffset = 0
+		case "d":
+			dialog.ShowDetails = !dialog.ShowDetails
+			dialog.DetailOffset = 0
+		case "pgup", "ctrl+u":
+			dialog.DetailOffset = max(0, dialog.DetailOffset-5)
+		case "pgdown", "ctrl+d":
+			// Clamp against rendered detail lines so repeated paging can always return.
+			dialog.DetailOffset = min(max(0, staleWorktreeCleanupDetailLineCount(dialog, max(34, min(max(68, m.width-12), 108)-4))-1), dialog.DetailOffset+5)
+		case "e":
+			if len(dialog.Results) > 0 {
+				return m.askStaleWorktreeCleanupEngineer(dialog.Results[dialog.Selected])
+			}
+		case "r":
+			// Preserve successful receipts and retry only remaining worktrees. Each goes
+			// through the same asynchronous revalidation and live-state checks as before.
+			var kept []staleWorktreeCleanupResult
+			dialog.Queue = nil
+			for _, result := range dialog.Results {
+				if result.Finalize.WorktreeRemoved {
+					kept = append(kept, result)
+				} else {
+					dialog.Queue = append(dialog.Queue, result.Candidate)
+				}
+			}
+			if len(dialog.Queue) == 0 {
+				m.staleWorktreeCleanup = nil
+				return m.openStaleWorktreeCleanup()
+			}
+			dialog.Results = kept
+			dialog.QueueIndex = 0
+			dialog.Finished = false
+			dialog.Removing = true
+			dialog.CancelRequested = false
+			dialog.ErrorMessage = ""
+			m.resetStaleWorktreeCleanupContext()
+			m.status = "Rechecking remaining worktrees before cleanup..."
+			return m, m.staleWorktreeCleanupRevalidateCmd(dialog.Queue[0])
 		}
 		return m, nil
 	}
@@ -479,6 +534,18 @@ func selectedStaleWorktreeCleanupCandidates(dialog *staleWorktreeCleanupDialogSt
 }
 
 func (m Model) staleWorktreeCleanupLiveState(projectPath, rootPath string) (string, codexapp.Provider) {
+	for _, task := range m.openAgentTasks {
+		if !agentTaskIsVisible(task) || !agentTaskHasCapability(task, "worktree.cleanup.recover") || normalizeProjectPath(task.OriginWorktreePath) != normalizeProjectPath(projectPath) {
+			continue
+		}
+		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusActive {
+			return "a cleanup repair engineer is active", ""
+		}
+		if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && staleWorktreeCleanupSessionBlockReason(snapshot, m.currentTime()) != "" {
+			return "a cleanup repair engineer is active", ""
+		}
+	}
+
 	if _, ok := m.pendingGitOperation(projectPath); ok {
 		return "a Git action is in progress", ""
 	}
@@ -752,68 +819,82 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 	if dialog.CancelRequested {
 		lines = append(lines, detailWarningStyle.Render("Cleanup canceled. Completed removals were kept; remaining items were skipped."))
 	}
-	budget := max(2, bodyH-13)
-	used := 0
-	for index, result := range dialog.Results {
-		name := staleWorktreeCleanupCandidateName(result.Candidate)
-		var style lipgloss.Style
-		var marker, detail string
+	if len(dialog.Results) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	selected := max(0, min(dialog.Selected, len(dialog.Results)-1))
+	visible := max(1, (bodyH-20)/2)
+	if dialog.ShowDetails {
+		visible = 1
+	}
+	start := max(0, selected-visible+1)
+	end := min(len(dialog.Results), start+visible)
+	lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("Result %d of %d · ↑↓ select", selected+1, len(dialog.Results))))
+	for i := start; i < end; i++ {
+		result := dialog.Results[i]
+		marker, detail := "!", "removal did not complete"
+		style := detailDangerStyle
 		switch {
 		case result.Finalize.WorktreeRemoved:
+			marker, detail = "✓", "removed"
 			style = classificationCategoryStyle(model.SessionCategoryCompleted)
-			marker = "✓"
-			detail = "removed"
 			if result.ClosedSession {
 				detail += "; idle session closed"
 			}
-			if result.Finalize.LinkedTodoMarkedDone {
+			if result.Finalize.LinkedTodoMarkedDone || result.Finalize.LinkedTodoAlreadyDone {
 				detail += "; linked TODO done"
 			}
+			if result.Err != nil {
+				detail += "; follow-up failed (D details)"
+			}
 		case result.SkippedReason != "":
+			marker, detail = "-", "skipped: "+result.SkippedReason
 			style = detailWarningStyle
-			marker = "-"
-			detail = "skipped: " + result.SkippedReason
 		case result.Err != nil:
-			style = detailDangerStyle
-			marker = "!"
-			detail = result.Err.Error()
-		default:
-			style = detailDangerStyle
-			marker = "!"
-			detail = "removal did not complete"
+			detail = staleWorktreeCleanupFailureSummary(result.Err)
+			if result.Finalize.LinkedTodoMarkedDone || result.Finalize.LinkedTodoAlreadyDone {
+				detail += " TODO done."
+			}
 		}
-		block := staleWorktreeCleanupResultBlock(style, width, marker, name, detail)
-		if index > 0 && used+len(block) > budget {
-			lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("+%d more results", len(dialog.Results)-index)))
-			break
+		rowStyle := style
+		if i == selected {
+			rowStyle = commandPaletteSelectStyle
 		}
-		lines = append(lines, block...)
-		used += len(block)
+		lines = append(lines, rowStyle.Render(truncateText(marker+" "+staleWorktreeCleanupCandidateName(result.Candidate), width)), style.Render(truncateText("  "+detail, width)))
 	}
-	lines = append(lines, "", renderDialogAction("Enter/Esc", "close report", cancelActionKeyStyle, cancelActionTextStyle))
-	return clampDialogContent(strings.Join(lines, "\n"), max(10, bodyH-4), 4, detailMutedStyle.Render("… more results hidden …"))
+	result := dialog.Results[selected]
+	if dialog.ShowDetails {
+		details := staleWorktreeCleanupDetailLines(result, width)
+		budget := max(1, bodyH-len(lines)-11)
+		offset := min(dialog.DetailOffset, max(0, len(details)-budget))
+		lines = append(lines, "", detailSectionStyle.Render("Full details · PgUp/PgDn scroll"))
+		lines = append(lines, details[offset:min(len(details), offset+budget)]...)
+	} else {
+		lines = append(lines, "", detailMutedStyle.Render(truncateText("Path: "+result.Candidate.ProjectPath, width)))
+	}
+	lines = append(lines, "")
+	if result.Err != nil && !result.Finalize.WorktreeRemoved {
+		lines = append(lines, renderDialogAction("E", "Ask Engineer", commitActionKeyStyle, commitActionTextStyle))
+	}
+	lines = append(lines, renderDialogAction("R", "retry remaining / audit again", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("D", "details", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Enter/Esc", "close report", navigateActionKeyStyle, navigateActionTextStyle))
+	return strings.Join(lines, "\n")
 }
 
-// staleWorktreeCleanupResultBlock renders one report entry, keeping it on a
-// single line when it fits and otherwise wrapping the detail under an indented
-// continuation so long failure messages stay fully readable.
-func staleWorktreeCleanupResultBlock(style lipgloss.Style, width int, marker, name, detail string) []string {
-	textWidth := max(10, width-2)
-	single := marker + " " + name + " · " + detail
-	if lipgloss.Width(single) <= textWidth && !strings.ContainsAny(detail, "\r\n") {
-		return []string{style.Render(single)}
+func staleWorktreeCleanupDetailLines(result staleWorktreeCleanupResult, width int) []string {
+	detail := result.Candidate.ProjectPath
+	if result.Err != nil {
+		detail += "\n" + result.Err.Error()
+	} else if result.SkippedReason != "" {
+		detail += "\n" + result.SkippedReason
 	}
-	out := []string{style.Render(marker + " " + truncateText(name, textWidth))}
-	detailWidth := max(8, textWidth-2)
-	for _, raw := range strings.Split(strings.ReplaceAll(detail, "\r\n", "\n"), "\n") {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		wrapped := lipgloss.NewStyle().Width(detailWidth).Render(trimmed)
-		for _, line := range strings.Split(wrapped, "\n") {
-			out = append(out, style.Render("  "+strings.TrimRight(line, " ")))
-		}
+	return renderWrappedDialogTextLines(detailMutedStyle, width, detail)
+}
+
+func staleWorktreeCleanupDetailLineCount(dialog *staleWorktreeCleanupDialogState, width int) int {
+	if len(dialog.Results) == 0 {
+		return 0
 	}
-	return out
+	selected := max(0, min(dialog.Selected, len(dialog.Results)-1))
+	return len(staleWorktreeCleanupDetailLines(dialog.Results[selected], width))
 }

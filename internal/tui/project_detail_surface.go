@@ -151,12 +151,20 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
 			status = "engineer returned · press e to inspect the result"
 			if p.WorktreeKind == model.WorktreeKindLinked {
-				status += " · then press M to retry merge-back"
+				if agentTaskHasCapability(task, "worktree.cleanup.recover") {
+					status += " · then /clean and R to retry"
+				} else {
+					status += " · then press M to retry merge-back"
+				}
 			}
 			tone = projectDetailToneWarning
 		}
 		title := firstNonEmptyTrimmed(task.Title, task.ID, "recovery task")
-		surface.WrappedField("Merge recovery", fmt.Sprintf("%s · %s", title, status), tone)
+		label := "Merge recovery"
+		if agentTaskHasCapability(task, "worktree.cleanup.recover") {
+			label = "Cleanup recovery"
+		}
+		surface.WrappedField(label, fmt.Sprintf("%s · %s", title, status), tone)
 	}
 
 	rootPath := projectWorktreeRootPath(p)
