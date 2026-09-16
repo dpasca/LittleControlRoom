@@ -18,9 +18,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const staleWorktreeCleanupTimeout = 30 * time.Minute
+
 const staleWorktreeCleanupSuccessStatusPrefix = "Stale worktree cleanup finished successfully:"
 
 type staleWorktreeCleanupDialogState struct {
+	RecoveryBusy    bool
+	PurgeConfirm    bool
+	RecoveryMessage string
 	Context         context.Context
 	Cancel          context.CancelFunc
 	CancelRequested bool
@@ -178,13 +183,13 @@ func (m Model) staleWorktreeCleanupRevalidateCmd(candidate service.StaleWorktree
 			}
 		}
 
-		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
+		ctx, cancel := context.WithTimeout(parent, staleWorktreeCleanupTimeout)
 		defer cancel()
 		revalidated, reason, err := svc.RevalidateStaleWorktreeCleanupCandidate(ctx, candidate.ProjectPath, now)
 		if err != nil {
 			return staleWorktreeCleanupRevalidateMsg{ctx: parent,
 				candidate: candidate,
-				err:       timeoutActionError(err, tuiGitActionTimeout, "revalidating the stale worktree"),
+				err:       timeoutActionError(err, staleWorktreeCleanupTimeout, "revalidating the stale worktree"),
 			}
 		}
 		if reason != "" {
@@ -267,12 +272,20 @@ func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCl
 			}
 		}
 
-		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
+		ctx, cancel := context.WithTimeout(parent, staleWorktreeCleanupTimeout)
 		defer cancel()
-		result.Finalize, result.Err = svc.FinalizeMergedWorktree(ctx, candidate.ProjectPath, service.FinalizeMergedWorktreeOptions{
-			MarkLinkedTodoDone: candidate.LinkedTodoID > 0,
-			RemoveWorktree:     true,
-		})
+		if candidate.RecoveryResume {
+			result.Finalize, result.Err = svc.FinalizeWorktreeRemoval(ctx, candidate.ProjectPath, service.FinalizeWorktreeRemovalOptions{})
+		} else {
+			result.Finalize, result.Err = svc.FinalizeMergedWorktree(ctx, candidate.ProjectPath, service.FinalizeMergedWorktreeOptions{
+				MarkLinkedTodoDone: candidate.LinkedTodoID > 0,
+				RemoveWorktree:     true,
+			})
+		}
+		if result.Finalize.Recovery == nil {
+			result.Finalize.Recovery, _ = svc.ReviewWorktreeRecovery(ctx, candidate.ProjectPath)
+		}
+
 		var inUse *service.WorktreeProcessesInUseError
 		if errors.As(result.Err, &inUse) {
 			result.SkippedReason = inUse.Error()
@@ -281,7 +294,7 @@ func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCl
 			}
 			result.Err = nil
 		}
-		result.Err = timeoutActionError(result.Err, tuiGitActionTimeout, "removing the stale worktree")
+		result.Err = timeoutActionError(result.Err, staleWorktreeCleanupTimeout, "removing the stale worktree")
 		return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 	}
 }
@@ -386,6 +399,20 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 	if dialog == nil {
 		return m, nil
 	}
+	if dialog.RecoveryBusy {
+		return m, nil
+	}
+	if dialog.PurgeConfirm {
+		if msg.String() == "esc" {
+			dialog.PurgeConfirm = false
+			return m, nil
+		}
+		if msg.String() == "y" {
+			dialog.PurgeConfirm = false
+			return m, m.staleRecoveryActionCmd("purge")
+		}
+		return m, nil
+	}
 	if dialog.Removing {
 		if msg.String() == "esc" {
 			dialog.CancelRequested = true
@@ -407,8 +434,27 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		}
 		return m, nil
 	}
+	if !dialog.Finished && msg.String() == "v" && len(dialog.Audit.Recoveries) > 0 {
+		dialog.Results = nil
+		for _, r := range dialog.Audit.Recoveries {
+			r := r
+			dialog.Results = append(dialog.Results, staleWorktreeCleanupResult{Candidate: service.StaleWorktreeCleanupCandidate{ProjectPath: r.ProjectPath, RootProjectPath: r.RootPath, ProjectName: filepath.Base(r.ProjectPath)}, Finalize: service.FinalizeMergedWorktreeResult{WorktreeRemoved: r.Phase == "removed", Recovery: &r}})
+		}
+		dialog.Finished = true
+		dialog.Selected = 0
+		return m, nil
+	}
 	if dialog.Finished {
 		switch msg.String() {
+		case "v":
+			return m, m.staleRecoveryActionCmd("review")
+		case "o":
+			return m, m.staleRecoveryActionCmd("restore")
+		case "p":
+			if len(dialog.Results) > 0 && dialog.Results[dialog.Selected].Finalize.Recovery != nil {
+				dialog.PurgeConfirm = true
+			}
+			return m, nil
 		case "esc", "enter":
 			dialog.Backgrounded = true
 			m.status = "Cleanup report hidden; /clean reopens results and recovery actions"
@@ -689,6 +735,9 @@ func (m Model) renderStaleWorktreeCleanupOverlay(body string, bodyW, bodyH int) 
 
 func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDialogState, width, bodyH int) string {
 	lines := []string{commandPaletteTitleStyle.Render("Clean stale worktrees")}
+	if len(dialog.Audit.Recoveries) > 0 {
+		lines = append(lines, renderDialogAction("V", "review retained recoveries", navigateActionKeyStyle, navigateActionTextStyle))
+	}
 	if dialog.Loading {
 		lines = append(lines,
 			commandPaletteHintStyle.Render("Read-only audit: finding merged, clean linked worktrees idle for more than 24 hours."),
@@ -770,7 +819,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 	}
 	lines = append(lines,
 		"",
-		detailMutedStyle.Render("Branches and AI conversation history are preserved. Every selected worktree is freshly revalidated; changed candidates are skipped."),
+		detailMutedStyle.Render("Branches and AI conversation history are preserved. Uncertain nested data is automatically preserved and verified locally; recoveries remain until explicitly deleted."),
 		"",
 		renderDialogAction("Space", "toggle", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Enter", "remove selected", commitActionKeyStyle, commitActionTextStyle)+"   "+
@@ -837,6 +886,9 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 		switch {
 		case result.Finalize.WorktreeRemoved:
 			marker, detail = "✓", "removed"
+			if r := result.Finalize.Recovery; r != nil && r.Phase != "purged" {
+				detail = "removed with recovery retained"
+			}
 			style = classificationCategoryStyle(model.SessionCategoryCompleted)
 			if result.ClosedSession {
 				detail += "; idle session closed"
@@ -863,6 +915,21 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 		lines = append(lines, rowStyle.Render(truncateText(marker+" "+staleWorktreeCleanupCandidateName(result.Candidate), width)), style.Render(truncateText("  "+detail, width)))
 	}
 	result := dialog.Results[selected]
+	if r := result.Finalize.Recovery; r != nil {
+		lines = append(lines, detailField("Recovery", r.Location), detailField("Retained", fmt.Sprintf("%d bytes allocated · %s", r.RetainedBytes, r.Phase)))
+		if r.Phase != "purged" {
+			lines = append(lines, renderDialogAction("V", "Review", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("O", "Restore", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("P", "Permanently delete", cancelActionKeyStyle, cancelActionTextStyle))
+		}
+	}
+	if dialog.RecoveryBusy {
+		lines = append(lines, detailMutedStyle.Render("Verifying recovery…"))
+	}
+	if dialog.RecoveryMessage != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, dialog.RecoveryMessage)...)
+	}
+	if dialog.PurgeConfirm {
+		lines = append(lines, detailDangerStyle.Render("Permanently delete this recovery? This cannot be undone."), detailWarningStyle.Render("Y confirms permanent deletion · Esc cancels"))
+	}
 	if dialog.ShowDetails {
 		details := staleWorktreeCleanupDetailLines(result, width)
 		budget := max(1, bodyH-len(lines)-11)

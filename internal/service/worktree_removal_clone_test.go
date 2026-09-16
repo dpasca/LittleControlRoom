@@ -82,7 +82,7 @@ func TestRemovalWithIgnoredPackageClones(t *testing.T) {
 }
 
 func TestRemovalPackageCloneProtection(t *testing.T) {
-	for _, kind := range []string{"dirty", "untracked", "ignored", "local commit", "stash", "reflog", "dangling blob", "local tag", "cache commit", "no remote", "unavailable remote", "origin cycle", "linked worktree", "metadata symlink", "lock", "assume unchanged", "not ignored", "local hook"} {
+	for _, kind := range []string{"dirty", "untracked", "ignored", "local commit", "stash", "reflog", "dangling blob", "local tag", "cache commit", "no remote", "unavailable remote", "advanced upstream", "origin cycle", "linked worktree", "metadata symlink", "lock", "assume unchanged", "not ignored", "local hook"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			f := newRemovalFixture(t, nil)
@@ -123,6 +123,9 @@ func TestRemovalPackageCloneProtection(t *testing.T) {
 				runGit(t, checkout, "git", "remote", "remove", "origin")
 			case "unavailable remote":
 				runGit(t, cache, "git", "remote", "set-url", "origin", filepath.Join(f.root, "missing"))
+			case "advanced upstream":
+				writeTestFile(t, filepath.Join(origin, "README.md"), "new remote tip absent from the local cache", 0600)
+				runGit(t, origin, "git", "commit", "-am", "upstream advanced")
 			case "origin cycle":
 				runGit(t, cache, "git", "remote", "set-url", "origin", checkout)
 			case "linked worktree":
@@ -143,8 +146,21 @@ func TestRemovalPackageCloneProtection(t *testing.T) {
 				writeTestFile(t, filepath.Join(checkout, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 0\n", 0700)
 			}
 			ctx := context.Background()
-			if err := f.svc.RemoveWorktree(ctx, f.path, true); err == nil {
-				t.Fatal("force discarded an unverified package repository")
+			err := f.svc.RemoveWorktree(ctx, f.path, true)
+			blocked := kind == "linked worktree" || kind == "metadata symlink" || kind == "lock"
+			if !blocked {
+				if err != nil {
+					t.Fatal(err)
+				}
+				recovery, err := f.svc.ReviewWorktreeRecovery(ctx, f.path)
+				if err != nil || recovery == nil || !recovery.Verified {
+					t.Fatalf("data not verifiably preserved: %#v, %v", recovery, err)
+				}
+				f.assertChildren(t, true)
+				return
+			}
+			if err == nil {
+				t.Fatal("unsafe package dependency removed")
 			}
 			f.assertChildren(t, false)
 			f.orphan(t, true)

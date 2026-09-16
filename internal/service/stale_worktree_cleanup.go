@@ -13,6 +13,7 @@ import (
 const StaleWorktreeCleanupWindow = 24 * time.Hour
 
 type StaleWorktreeCleanupCandidate struct {
+	RecoveryResume    bool
 	ProjectPath       string
 	ProjectName       string
 	RootProjectPath   string
@@ -25,6 +26,7 @@ type StaleWorktreeCleanupCandidate struct {
 }
 
 type StaleWorktreeCleanupAudit struct {
+	Recoveries             []WorktreeRecovery
 	AuditedAt              time.Time
 	ScannedLinkedWorktrees int
 	Candidates             []StaleWorktreeCleanupCandidate
@@ -119,11 +121,23 @@ func (s *Service) AuditStaleWorktreeCleanup(ctx context.Context, now time.Time) 
 		return StaleWorktreeCleanupAudit{}, fmt.Errorf("list projects for stale worktree cleanup: %w", err)
 	}
 	audit := StaleWorktreeCleanupAudit{AuditedAt: now}
+	audit.Recoveries, err = s.ListWorktreeRecoveries(ctx)
+	if err != nil {
+		return audit, err
+	}
 	for _, project := range projects {
 		if project.WorktreeKind != model.WorktreeKindLinked {
 			continue
 		}
 		audit.ScannedLinkedWorktrees++
+		candidate, resumed, resumeErr := s.recoveryResumeCandidate(ctx, project.Path)
+		if resumeErr != nil {
+			continue
+		}
+		if resumed {
+			audit.Candidates = append(audit.Candidates, candidate)
+			continue
+		}
 		candidate, _, ok := EvaluateStaleWorktreeCleanupCandidate(project, now)
 		if ok {
 			audit.Candidates = append(audit.Candidates, candidate)
@@ -151,6 +165,9 @@ func (s *Service) RevalidateStaleWorktreeCleanupCandidate(ctx context.Context, p
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		return StaleWorktreeCleanupCandidate{}, "", fmt.Errorf("worktree path is required")
+	}
+	if candidate, ok, err := s.recoveryResumeCandidate(ctx, projectPath); ok || err != nil {
+		return candidate, "", err
 	}
 	if err := s.RefreshProjectStatusWithOptions(ctx, projectPath, ScanOptions{SkipLinkedWorktreeStatusRefresh: true}); err != nil {
 		return StaleWorktreeCleanupCandidate{}, "", fmt.Errorf("refresh stale worktree status: %w", err)
