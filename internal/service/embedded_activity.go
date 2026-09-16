@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexstate"
 	"lcroom/internal/config"
+	"lcroom/internal/lcagent"
 	"lcroom/internal/model"
 )
 
@@ -114,7 +116,7 @@ func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivit
 	if sessionID == "" {
 		return model.SessionEvidence{}
 	}
-	sessionFile := resolveEmbeddedSessionFile(source, sessionID, rawSessionID, activity.StartedAt, activity.LastActivityAt, cfg)
+	sessionFile := resolveEmbeddedSessionFile(source, sessionID, rawSessionID, projectPath, activity.StartedAt, activity.LastActivityAt, cfg)
 	return model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
 		Source:               source,
 		SessionID:            sessionID,
@@ -215,7 +217,7 @@ func sameEmbeddedActivitySession(existing, activity model.SessionEvidence) bool 
 	return existing.ExternalID() != "" && existing.ExternalID() == activity.ExternalID()
 }
 
-func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessionID string, startedAt, lastActivityAt time.Time, cfg config.AppConfig) string {
+func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessionID, projectPath string, startedAt, lastActivityAt time.Time, cfg config.AppConfig) string {
 	source = model.NormalizeSessionSource(source)
 	sessionID = strings.TrimSpace(sessionID)
 	rawSessionID = strings.TrimSpace(rawSessionID)
@@ -230,6 +232,13 @@ func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessio
 		if rawSessionID != "" && strings.TrimSpace(cfg.OpenCodeHome) != "" {
 			return filepath.Join(cfg.OpenCodeHome, "opencode.db") + "#session:" + rawSessionID
 		}
+	case model.SessionSourceClaudeCode:
+		if rawSessionID != "" && strings.TrimSpace(cfg.ClaudeCodeHome) != "" && strings.TrimSpace(projectPath) != "" {
+			path := filepath.Join(cfg.ClaudeCodeHome, "projects", claudeartifact.ProjectDirectoryName(projectPath), rawSessionID+".jsonl")
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				return path
+			}
+		}
 	case model.SessionSourceCodex:
 		lookupID := rawSessionID
 		if lookupID == "" {
@@ -241,7 +250,7 @@ func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessio
 		if lookupID == "" {
 			lookupID = sessionID
 		}
-		return resolveLCAgentSessionFile(cfg.DataDir, lookupID, startedAt, lastActivityAt)
+		return resolveLCAgentSessionFile(cfg.DataDir, lookupID, projectPath, startedAt, lastActivityAt)
 	}
 
 	return ""
@@ -277,10 +286,22 @@ func resolveCodexSessionFile(codexHome, sessionID string, times ...time.Time) st
 	return ""
 }
 
-func resolveLCAgentSessionFile(dataDir, sessionID string, times ...time.Time) string {
+func resolveLCAgentSessionFile(dataDir, sessionID, projectPath string, times ...time.Time) string {
 	dataDir = strings.TrimSpace(dataDir)
 	sessionID = strings.TrimSpace(sessionID)
 	if dataDir == "" || sessionID == "" {
+		return ""
+	}
+	// Embedded sessions keep a logical thread ID across runs; trace filenames
+	// use the run ID. Resolve the exact thread's checkpoint, never another
+	// session merely because it is the newest one in the project.
+	if info, ok, err := lcagent.LoadThreadStateInfo(dataDir, sessionID, projectPath); err != nil {
+		return ""
+	} else if ok {
+		sessionID = strings.TrimSpace(info.LastRunID)
+		times = append(times, info.UpdatedAt)
+	}
+	if sessionID == "" || filepath.Base(sessionID) != sessionID || strings.ContainsAny(sessionID, "*?[]") {
 		return ""
 	}
 
@@ -299,6 +320,13 @@ func resolveLCAgentSessionFile(dataDir, sessionID string, times ...time.Time) st
 		}
 	}
 
+	// A resumed run may have started days before its latest activity.
+	matches, _ := filepath.Glob(filepath.Join(dataDir, "lcagent", "sessions", "*", "*", "*", sessionID+".jsonl"))
+	for _, path := range matches {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
 	return ""
 }
 

@@ -3361,6 +3361,7 @@ func (s *Service) refreshProjectStatusWithOptions(ctx context.Context, projectPa
 					detail.Sessions[0].Source,
 					detail.Sessions[0].SessionID,
 					detail.Sessions[0].RawSessionID,
+					projectPath,
 					detail.Sessions[0].StartedAt,
 					detail.Sessions[0].LastEventAt,
 					runtime.cfg,

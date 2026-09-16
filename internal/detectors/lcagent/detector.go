@@ -267,7 +267,10 @@ func parseSessionFile(path string) (parseResult, error) {
 		}
 		switch eventType {
 		case "session_meta":
-			result.sessionID = rawString(event["id"])
+			result.sessionID = rawString(event["thread_id"])
+			if result.sessionID == "" {
+				result.sessionID = rawString(event["id"])
+			}
 			result.cwd = rawString(event["cwd"])
 			result.startedAt = rawTime(event["started_at"])
 			if result.lastEventAt.IsZero() {

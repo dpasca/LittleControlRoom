@@ -78,6 +78,23 @@ and early assistant updates when multi-megabyte structured tool results push
 all conversational events outside the tail window; any newer conversational
 tail events still take precedence.
 
+### Assessment artifacts for other providers
+
+Assessments also accept Claude Code JSONL, OpenCode SQLite sessions, and LCAgent
+JSONL traces. Embedded turn completion and targeted project refresh resolve
+missing artifact references before queueing an assessment:
+
+- Claude Code uses `<claude-code-home>/projects/<sanitized-cwd>/<session-id>.jsonl`.
+  The project-directory sanitizer is shared with the Claude artifact reader.
+- OpenCode uses `<opencode-home>/opencode.db#session:<session-id>`.
+- LCAgent uses the logical `thread_id` from `session_meta` as its session identity,
+  falling back to `id` for older traces. Its checkpoint at
+  `<data-dir>/lcagent/threads/<thread-id>/state.json` identifies `last_run_id`;
+  the corresponding trace is under `lcagent/sessions/YYYY/MM/DD/<run-id>.jsonl`.
+  Lookup validates project ownership and can find a run that began days before
+  its latest activity. Multiple runs of one thread share an assessment identity,
+  with the latest run supplying the transcript.
+
 ### Embedded transcript link evidence
 
 The embedded `Open Links` picker combines structured generated-image, viewed-image,

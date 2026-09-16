@@ -76,6 +76,42 @@ func TestDetectorIgnoresOutOfScopeSessions(t *testing.T) {
 	}
 }
 
+func TestDetectorUsesLogicalThreadIdentityAcrossRuns(t *testing.T) {
+	t.Parallel()
+	dataDir, project := t.TempDir(), t.TempDir()
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions", "2026", "09", "15")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []struct{ id, started, finished string }{
+		{"lca_first", "2026-09-15T01:00:00Z", "2026-09-15T01:01:00Z"},
+		{"lca_second", "2026-09-15T02:00:00Z", "2026-09-15T02:01:00Z"},
+	} {
+		body := `{"type":"session_meta","id":"` + run.id + `","thread_id":"lct_shared","cwd":"` + filepath.ToSlash(project) + `","started_at":"` + run.started + `"}
+{"type":"turn_complete","timestamp":"` + run.finished + `","summary":"Finished."}
+`
+		if err := os.WriteFile(filepath.Join(sessionDir, run.id+".jsonl"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results, err := New(dataDir).Detect(context.Background(), scanner.NewPathScope([]string{project}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := results[project]
+	if entry == nil || len(entry.Sessions) != 2 {
+		t.Fatalf("expected evidence from both runs: %+v", entry)
+	}
+	for _, session := range entry.Sessions {
+		if session.SessionID != "lcagent:lct_shared" || session.RawSessionID != "lct_shared" {
+			t.Fatalf("run must share the embedded thread identity: %+v", session)
+		}
+	}
+	if got := filepath.Base(entry.Sessions[0].SessionFile); got != "lca_second.jsonl" {
+		t.Fatalf("latest run artifact = %s", got)
+	}
+}
+
 func TestDetectorIgnoresInternalRepositoryScoutActivity(t *testing.T) {
 	dataDir := t.TempDir()
 	project := t.TempDir()

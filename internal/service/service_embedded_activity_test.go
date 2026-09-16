@@ -1239,7 +1239,7 @@ func TestResolveEmbeddedSessionFileFindsLCAgentSessionFile(t *testing.T) {
 	if got := embeddedActivityDefaultFormat(model.SessionSourceLCAgent); got != "lcagent_jsonl" {
 		t.Fatalf("embeddedActivityDefaultFormat(LCAgent) = %q, want lcagent_jsonl", got)
 	}
-	got := resolveEmbeddedSessionFile(model.SessionSourceLCAgent, "lcagent:"+sessionID, "", now, now, cfg)
+	got := resolveEmbeddedSessionFile(model.SessionSourceLCAgent, "lcagent:"+sessionID, "", "", now, now, cfg)
 	if got != want {
 		t.Fatalf("resolveEmbeddedSessionFile() = %q, want %q", got, want)
 	}
