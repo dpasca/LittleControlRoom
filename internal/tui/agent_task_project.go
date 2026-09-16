@@ -11,6 +11,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	agentTaskDetailSummarySentenceLimit = 2
+	agentTaskDetailSummaryCharLimit     = 240
+	agentTaskDetailSummaryMaxLines      = 4
+)
+
 func (m Model) agentTaskProjectSummaries() []model.ProjectSummary {
 	if len(m.openAgentTasks) == 0 {
 		return nil
@@ -214,14 +220,31 @@ func agentTaskListSummary(task model.AgentTask) string {
 	return strings.Join(parts, " - ")
 }
 
+// Recovery tasks persist their entire engineer prompt as the summary so the
+// blocker survives a restart, and finished workers can report several
+// paragraphs. The detail pane only needs the opening statement, so condense to
+// the first sentences and let the renderer cut anything still too tall.
+func agentTaskDetailSummary(summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return ""
+	}
+	condensed := engineerNoticeSummaryText(summary, agentTaskDetailSummarySentenceLimit)
+	condensed = cleanEngineerNoticeSummary(compactEngineerNoticeText(condensed, agentTaskDetailSummaryCharLimit))
+	if engineerNoticeHasUsefulDetail(condensed) {
+		return condensed
+	}
+	return cleanEngineerNoticeSummary(compactEngineerNoticeText(summary, agentTaskDetailSummaryCharLimit))
+}
+
 func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) string {
-	summary := strings.TrimSpace(task.Summary)
+	summary := agentTaskDetailSummary(task.Summary)
 	summaryStyle := detailValueStyle
 	if summary == "" {
 		summary = "No engineer summary yet"
 		summaryStyle = detailMutedStyle
 	}
-	lines := []string{renderWrappedDetailField("Summary", summaryStyle, width, summary)}
+	lines := []string{renderWrappedDetailFieldLimited("Summary", summaryStyle, width, summary, agentTaskDetailSummaryMaxLines)}
 	lines = append(lines, detailField("Path", detailValueStyle.Render(task.WorkspacePath)))
 	lines = appendDetailFields(lines, width,
 		detailField("Kind", detailValueStyle.Render("agent task")),

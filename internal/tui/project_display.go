@@ -1024,13 +1024,26 @@ func detailField(label, value string) string {
 }
 
 func renderWrappedDetailField(label string, style lipgloss.Style, width int, text string) string {
+	return renderWrappedDetailFieldLimited(label, style, width, text, 0)
+}
+
+// renderWrappedDetailFieldLimited wraps like renderWrappedDetailField but keeps
+// a long value from taking over the detail pane: past maxLines the value is cut
+// and marked with an ellipsis. maxLines <= 0 means no limit.
+func renderWrappedDetailFieldLimited(label string, style lipgloss.Style, width int, text string, maxLines int) string {
 	prefixPlain := label + ": "
 	labelRendered := detailLabelStyle.Render(label + ":")
 	if width <= len(prefixPlain) {
 		return labelRendered + " " + style.Render(text)
 	}
-	wrapped := lipgloss.NewStyle().Width(max(1, width-len(prefixPlain))).Render(text)
+	valueWidth := max(1, width-len(prefixPlain))
+	wrapped := lipgloss.NewStyle().Width(valueWidth).Render(text)
 	lines := strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n")
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+		last := maxLines - 1
+		lines[last] = truncateText(strings.TrimRight(lines[last], " ")+" ...", valueWidth)
+	}
 	for i := range lines {
 		if i == 0 {
 			lines[i] = labelRendered + " " + style.Render(lines[i])
