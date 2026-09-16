@@ -301,7 +301,7 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	case codexapp.TranscriptTool:
 		return renderCodexToolLine(text, width)
 	case codexapp.TranscriptError:
-		return renderCodexMessageBlockForProject("Error", text, lipgloss.Color("203"), lipgloss.Color("252"), width, options.projectPath)
+		return renderCodexMessageBlockForProject("Error", codexErrorBlockText(entry, text, blockMode), lipgloss.Color("203"), lipgloss.Color("252"), width, options.projectPath)
 	case codexapp.TranscriptStatus:
 		return renderCodexStatusBlock(text, width)
 	case codexapp.TranscriptSystem:
@@ -309,6 +309,21 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	default:
 		return renderCodexMessageBlockForProject("", text, lipgloss.Color("244"), lipgloss.Color("252"), width, options.projectPath)
 	}
+}
+
+// Codex error entries keep the provider's raw diagnostics in Text and a short
+// operator-facing line in DisplayText. Default to the summary so a transient
+// reconnect is one readable line, and hand over the full payload in the
+// expanded block mode where the operator asked for detail.
+func codexErrorBlockText(entry codexapp.TranscriptEntry, text string, blockMode codexDenseBlockMode) string {
+	if blockMode.full() {
+		return text
+	}
+	summary := strings.TrimSpace(sanitizeCodexRenderedText(entry.DisplayText))
+	if summary == "" || summary == text {
+		return text
+	}
+	return summary + "\nAlt+L expands the raw provider error."
 }
 
 func repeatedCodexDenseBlockLabel(label string, occurrenceCount int) string {

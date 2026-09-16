@@ -150,7 +150,14 @@ func (s *appServerSession) prependHistoryTurnsLocked(turns []resumedTurn) {
 			itemID := "history-turn-error:" + turnID
 			if _, exists := existingItems[itemID]; !exists {
 				existingItems[itemID] = struct{}{}
-				older = append(older, transcriptEntry{ItemID: itemID, TurnID: turnID, Kind: TranscriptError, Text: turn.Error.diagnosticText()})
+				detail := turn.Error.diagnosticText()
+				older = append(older, transcriptEntry{
+					ItemID:      itemID,
+					TurnID:      turnID,
+					Kind:        TranscriptError,
+					Text:        detail,
+					DisplayText: summarizeCodexError(detail).Display,
+				})
 			}
 		}
 	}

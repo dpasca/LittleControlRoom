@@ -496,15 +496,21 @@ func tracksBusyItemLifecycle(itemType string) bool {
 }
 
 func formatTurnCompletionStatus(turnStatus string, busySince, now time.Time) string {
-	status := normalizeTurnStatus(turnStatus)
-	switch status {
-	case "", "complete", "completed":
+	if isCompletedTurnStatus(turnStatus) {
 		if !busySince.IsZero() {
 			return "Completed in " + formatTurnStatusDuration(now.Sub(busySince))
 		}
 		return "Turn completed"
+	}
+	return "Turn " + normalizeTurnStatus(turnStatus)
+}
+
+func isCompletedTurnStatus(turnStatus string) bool {
+	switch normalizeTurnStatus(turnStatus) {
+	case "", "complete", "completed":
+		return true
 	default:
-		return "Turn " + status
+		return false
 	}
 }
 

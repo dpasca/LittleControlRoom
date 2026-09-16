@@ -76,6 +76,12 @@ app-server, including in resumed transcript errors. This aids diagnosis of nativ
 image failures without classifying errors by keywords or automatically enabling
 external review.
 
+The transcript entry keeps that raw payload, but the pane shows a one-line summary
+by default and reveals the unabridged diagnostics in the expanded block mode
+(`Alt+L`). Consecutive retries of one incident, such as Codex's `Reconnecting... 2/5`
+sequence, share a single transcript line that tracks the current attempt and is
+marked recovered once the turn completes successfully.
+
 ## Validation
 
 Unit tests cover opt-in discovery and rejection, exact-thread reconnect,
