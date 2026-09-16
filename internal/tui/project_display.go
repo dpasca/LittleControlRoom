@@ -127,10 +127,27 @@ func projectAssessmentText(project model.ProjectSummary) string {
 }
 
 func (m Model) projectAssessmentDisplayTextAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {
+	if failure := m.projectStoppedSessionError(project); failure != "" {
+		return failure
+	}
 	if pending := m.pendingGitSummary(project.Path); pending != "" {
 		return pending
 	}
 	return projectAssessmentTextAt(project, now, stuckThreshold)
+}
+
+func (m Model) projectStoppedSessionError(project model.ProjectSummary) string {
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		return codexapp.StoppedSessionError(snapshot)
+	}
+	// Transport failures close the connection; retain their cached reason.
+	if snapshot, ok := m.codexCachedSnapshot(project.Path); ok && snapshot.Closed {
+		if project.LatestSessionID != "" && !closedEmbeddedSnapshotMatchesProject(project, normalizeProjectPath(project.Path), snapshot) {
+			return ""
+		}
+		return codexapp.StoppedSessionError(snapshot)
+	}
+	return ""
 }
 
 func projectAssessmentTextAt(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) string {

@@ -132,3 +132,46 @@ func TestSummarizeCodexErrorIgnoresDistantAttemptCounters(t *testing.T) {
 		t.Fatalf("family = %q, want no retry folding for an unrelated counter", got.Family)
 	}
 }
+
+func TestFailedTurnSettlesOutstandingToolsAndRecoveryClearsError(t *testing.T) {
+	for _, detail := range []string{`,"error":{"message":"Bad Request","codexErrorInfo":"other"}`, ""} {
+		t.Run(detail, func(t *testing.T) {
+			s := &appServerSession{notify: func() {}}
+			s.setBusyLocked("failed-turn", false)
+			s.markItemActiveLocked("failed-turn", "unfinished-search")
+			s.handleNotification("turn/completed", json.RawMessage(`{"turn":{"id":"failed-turn","status":"failed"`+detail+`}}`))
+			if s.busy || s.activeTurnID != "" || !s.latestTurnCompleted || s.pendingCompletion != nil {
+				t.Fatalf("terminal failure left the session working: busy=%v active=%q settled=%v", s.busy, s.activeTurnID, s.latestTurnCompleted)
+			}
+			if s.lastError == "" || len(s.entries) == 0 || s.status != "Codex turn failed" {
+				t.Fatalf("failure was not surfaced: error=%q status=%q", s.lastError, s.status)
+			}
+			s.handleNotification("turn/started", json.RawMessage(`{"turn":{"id":"control-only"}}`))
+			if s.lastError == "" {
+				t.Fatal("a control-only turn must not erase the stopped error")
+			}
+			s.setBusyLocked("recovery-turn", false)
+			if s.lastError != "" {
+				t.Fatalf("new turn retained the old error: %q", s.lastError)
+			}
+			s.handleNotification("error", reconnectErrorNotification(1, 5))
+			s.handleNotification("turn/completed", json.RawMessage(`{"turn":{"id":"recovery-turn","status":"completed"}}`))
+			if s.lastError != "" || s.busy {
+				t.Fatalf("successful recovery retained an error or busy state: %q", s.lastError)
+			}
+		})
+	}
+}
+
+func TestResumeRestoresOnlyLatestTurnFailure(t *testing.T) {
+	s := &appServerSession{notify: func() {}}
+	failed := resumedTurn{ID: "failed-turn", Status: "failed", Error: &resumedTurnError{Message: "Bad Request"}}
+	s.hydrateResumedThread(resumedThread{ID: "thread", Turns: []resumedTurn{failed}})
+	if s.lastError != "Bad Request" || s.busy || !s.latestTurnCompleted {
+		t.Fatalf("resume lost terminal failure: error=%q busy=%v settled=%v", s.lastError, s.busy, s.latestTurnCompleted)
+	}
+	s.hydrateResumedThread(resumedThread{ID: "thread", Turns: []resumedTurn{failed, {ID: "success", Status: "completed"}}})
+	if s.lastError != "" {
+		t.Fatalf("historical failure masked later success: %q", s.lastError)
+	}
+}

@@ -66,6 +66,15 @@ Observed recent conversational text usable for model-based "where was work left 
 - `event_msg.payload.type == "agent_message"` (`message`)
 - `event_msg.payload.type == "task_complete"` (`last_agent_message`)
 
+Assessment input also preserves structured `event_msg` errors (`message` and
+`codex_error_info`) and `turn_aborted` reasons as error/status items. These are
+provider evidence for model-based classification, not natural-language trigger
+rules. A settled embedded session's current provider error overrides an older
+dashboard assessment with a blocked state while that snapshot is available.
+Successful Codex completion or a new turn clears the current error; historical
+diagnostics remain in the transcript. Failed app-server turns settle even when
+outstanding tool items never deliver their individual completion events.
+
 `response_item` messages with `role == "user"` are model-context inputs, not
 user-visible transcript events. They can contain injected `AGENTS.md`, skill,
 permission, or environment context alongside the real prompt. User-facing

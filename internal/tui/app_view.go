@@ -1298,6 +1298,12 @@ func (m Model) renderProjectList(width, height int) string {
 			statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
 			summaryStyle = detailValueStyle
 		}
+		if failure := m.projectStoppedSessionError(p); failure != "" && !agentTaskRow && !browserAttentionRow && !pendingLaunchRow {
+			statusText = "blocked"
+			assessmentText = failure
+			statusStyle = classificationCategoryStyle(model.SessionCategoryBlocked)
+			summaryStyle = detailConflictStyle
+		}
 		if resolver, ok := m.mergeConflictResolverForProject(p.Path); ok && !agentTaskRow && !browserAttentionRow && !pendingLaunchRow {
 			switch resolver.Phase {
 			case mergeConflictResolverStarting, mergeConflictResolverRunning:

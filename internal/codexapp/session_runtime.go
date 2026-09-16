@@ -981,15 +981,31 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		// Only an explicitly successful turn retires a folded reconnect line;
 		// any other outcome leaves the last reported attempt standing.
 		recovered := msg.Turn.Error == nil && isCompletedTurnStatus(msg.Turn.Status)
+		failed := msg.Turn.Error != nil || normalizeTurnStatus(msg.Turn.Status) == "failed"
+		if recovered {
+			s.lastError = ""
+		}
 		if msg.Turn.Error != nil {
 			if detail := msg.Turn.Error.diagnosticText(); detail != "" && detail != s.lastError {
 				s.lastError = detail
 				s.appendErrorEntryLocked(detail)
 			}
 		}
+		if failed && s.lastError == "" {
+			s.lastError = codexTurnFailureWithoutDetails
+			s.appendErrorEntryLocked(s.lastError)
+		}
 		s.resolveRetryErrorLocked(recovered)
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
+		if failed {
+			status = "Codex turn failed"
+		}
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
+		if failed {
+			// Failed turns may never emit completion for their outstanding tools.
+			// The terminal provider result must retire the working indicator.
+			s.finishPendingCompletionLocked()
+		}
 		s.mu.Unlock()
 		s.notify()
 	case "turn/aborted":
