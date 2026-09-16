@@ -33,6 +33,8 @@ the query the agent intends to run.
 
 | Query | Required scope | Result |
 | --- | --- | --- |
+| `knowledge.list` | `project` | Index of built-in LCR operating guidance topics. |
+| `knowledge.get` | `project` | One versioned documentation topic by exact id, with Markdown content and source reference. |
 | `portfolio.overview` | `portfolio` | Portfolio counts and highest-attention visible projects. |
 | `project.list` | `project` | Attention-ordered visible project summaries. Project scope returns only the originating project. |
 | `project.search` | `portfolio` | Project metadata and persisted-summary search, never transcript search. |
@@ -53,6 +55,17 @@ embedded-session launchers explicitly grant `portfolio` scope so an agent can
 coordinate with other non-private projects when the user's task calls for it.
 Scope controls discovery and execution: a query outside the caller's scope is
 not listed and is rejected if invoked directly.
+
+The `knowledge` domain starts with `submodule-worktrees`: LCR's nested worktree
+layout, safe diagnostics, shared versus worktree-specific configuration, and the
+`extensions.worktreeConfig` migration trap. A short startup instruction points
+agents to this topic before diagnosing submodule dirtiness or changing Git
+configuration. The content is embedded from versioned Markdown in
+`internal/agentquery/knowledge/`; adding knowledge requires a reviewed repository
+change. It is shared across the MCP and native query adapters, including Help
+Chat, without opening arbitrary file access or relying on assistant memory.
+Existing provider sessions need to reload their LCR runtime/context after an
+application update to receive the new guidance.
 
 `demo_recording.latest` is intentionally available at `project` scope so a
 lower-authority caller can discover that a recording exists without learning
@@ -103,6 +116,10 @@ Integration queries instead declare `configuration_on_disk` or `catalog_fetch`.
 They do not assert running-session availability. Project visibility is checked
 before reading integration sources; credentials and native MCP arguments are
 omitted. See [Agent integrations](agent_integrations.md) for scope and limits.
+
+Knowledge queries declare `built_in_documentation`. Their `as_of` timestamp is
+the response time, not proof of live Git state or when the documentation was
+authored. Agents must still inspect the affected checkout before a repair.
 
 The demo-recording query reads LCR's private discovery reference and the
 package manifest at call time. An incomplete package is reported as active or

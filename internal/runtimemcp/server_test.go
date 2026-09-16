@@ -50,6 +50,9 @@ func TestRuntimeMCPListsTools(t *testing.T) {
 	if !strings.Contains(string(responses[0].Result), serverName) {
 		t.Fatalf("initialize result = %s, want server name", responses[0].Result)
 	}
+	if !strings.Contains(string(responses[0].Result), agentquery.KnowledgeInstructions) {
+		t.Fatalf("initialize result missing LCR knowledge guidance: %s", responses[0].Result)
+	}
 	if !strings.Contains(string(responses[0].Result), "instead of asking the operator to relay the message") {
 		t.Fatalf("initialize result = %s, want engineer handoff guidance", responses[0].Result)
 	}
@@ -279,6 +282,10 @@ func TestRuntimeMCPProgressiveQueriesUseStructuredBoundsAndPrivacy(t *testing.T)
 	projectQueries := callRuntimeToolForMap(t, server, "list_lcr_queries", `{"domain":"project"}`)
 	if !strings.Contains(mustJSON(t, projectQueries), string(agentquery.QueryProjectSearch)) {
 		t.Fatalf("project query catalog = %#v, want project.search", projectQueries)
+	}
+	knowledge := callRuntimeToolForMap(t, server, "run_lcr_query", `{"query":"knowledge.get","arguments":{"topic":"submodule-worktrees"}}`)
+	if knowledge["freshness"] != "built_in_documentation" || !strings.Contains(fmt.Sprint(knowledge["markdown"]), "extensions.worktreeConfig=true") {
+		t.Fatalf("knowledge read = %#v", knowledge)
 	}
 	described := callRuntimeToolForMap(t, server, "describe_lcr_query", `{"name":"project.list"}`)
 	if !strings.Contains(mustJSON(t, described), `"input_schema"`) || !strings.Contains(mustJSON(t, described), `"persisted_snapshot"`) {

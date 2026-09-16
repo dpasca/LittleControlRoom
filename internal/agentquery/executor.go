@@ -146,6 +146,8 @@ func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMes
 	var result map[string]any
 	var err error
 	switch capability.Name {
+	case QueryKnowledgeList, QueryKnowledgeGet:
+		result, err = readKnowledge(capability.Name, arguments)
 	case QueryEngineerModels:
 		result, err = e.engineerModels(ctx, arguments)
 	case QueryIntegrationsList:

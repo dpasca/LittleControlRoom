@@ -265,6 +265,8 @@ func TestSystemPromptIncludesProgressiveLCRQueryGuidance(t *testing.T) {
 		"describe_lcr_query before run_lcr_query",
 		"bounded persisted snapshots",
 		"excludes other private-category projects",
+		"knowledge.get",
+		"submodule-worktrees",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("LCR query prompt missing %q:\n%s", want, prompt)

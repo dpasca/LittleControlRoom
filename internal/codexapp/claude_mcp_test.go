@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/todocapture"
@@ -37,6 +38,8 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 	}
 	for _, want := range []string{
 		strings.TrimSpace(todocapture.AgentInstructions(todocapture.ModeExplicit)),
+		"submodule-worktrees",
+		"extensions.worktreeConfig",
 		"Little Control Room managed-browser contract",
 		"lcr_runtime/request_browser_attention",
 	} {
@@ -125,8 +128,8 @@ func TestClaudeRuntimeMCPConfigKeepsProcessToolsWhenTODOCaptureIsOff(t *testing.
 	if options.Config == "" {
 		t.Fatal("buildClaudeMCPOptions() config is empty; process tools should remain available")
 	}
-	if options.Prompt != "" {
-		t.Fatalf("buildClaudeMCPOptions() prompt = %q, want no TODO or browser instructions", options.Prompt)
+	if options.Prompt != agentquery.KnowledgeInstructions {
+		t.Fatalf("buildClaudeMCPOptions() prompt = %q, want knowledge guidance without TODO or browser instructions", options.Prompt)
 	}
 	if slices.Contains(options.AllowedTools, claudePlaywrightMCPAllowedTools) {
 		t.Fatalf("classic browser allowed tools = %#v, want no Playwright wildcard", options.AllowedTools)

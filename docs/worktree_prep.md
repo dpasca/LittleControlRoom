@@ -77,6 +77,24 @@ Nested submodule worktrees start detached at the parent repo's pinned gitlink co
 
 When `/wt update` advances a parent linked worktree, LCR updates an existing nested submodule worktree directly to the new gitlink commit. It does not run the ordinary submodule checkout path against that nested worktree, because Git would otherwise rewrite the shared submodule `core.worktree` metadata and make the canonical checkout unreadable.
 
+Agents can discover `knowledge.list` and `knowledge.get` in the LCR query catalog's
+`knowledge` domain. The built-in `submodule-worktrees` topic explains this layout,
+read-only diagnostics, and configuration scope. The versioned source is
+[submodule-worktrees.md](../internal/agentquery/knowledge/submodule-worktrees.md).
+Runtime MCP instructions and managed Codex, Claude Code, and LCAgent context point
+agents to it before diagnosing submodule dirtiness or editing Git configuration.
+
+When `extensions.worktreeConfig` is enabled, the canonical submodule's
+`core.worktree` belongs in its own `config.worktree`, not the shared `config`.
+A leftover shared value can make a linked checkout report false deletions even
+when the canonical checkout remains clean. LCR's metadata repair writes or
+verifies the canonical override before removing the shared value, preserves
+sibling overrides, and does not enable or disable the extension. Nested
+submodule preparation runs this repair before creating another linked checkout.
+With the extension disabled, a correct relative shared value is left intact.
+Canonical submodule hydration also runs the repair after Git updates the files:
+Git itself can reintroduce the shared value when advancing a submodule commit.
+
 If a clean linked worktree already records a detached nested submodule commit that is not reachable from a remote branch or tag, merge-back publishes that commit on an LCR-owned submodule branch before merging the parent worktree. This keeps the root checkout's post-merge submodule sync from failing on a locally-created gitlink commit.
 
 If an LCR-generated remote branch already exists with divergent history, merge-back preserves that branch and automatically retries the publication under a collision-free branch suffixed with the intended submodule commit. User-owned branches are never forked this way. If the submodule remote still rejects publication—for example because authentication or write access is unavailable—merge-back stops before changing the root checkout and reports a submodule publish blocker. The blocker dialog offers a separate tracked engineer repair task with the full Git failure and merge context; before launching it, you can choose the engineer plus its model and reasoning preference. The task stays in the source project's category and remains linked to both the worktree and repository root. Selecting the generated `[A]` task and pressing `Enter` opens its engineer. Selecting either linked project shows a **Merge recovery** line and an `e recovery` footer action, so `e` reopens the same tracked session even when the generated task row is hidden by the current list filter. A `review` task state means the engineer returned and its result needs inspection; after confirming the blocker is resolved, select the linked worktree and press `M` to retry merge-back. The task is instructed to preserve the linked worktree and leave the root checkout unchanged for that retry. You can also push the submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote before retrying manually.

@@ -2398,7 +2398,11 @@ func gitSubmoduleUpdateInitRecursive(ctx context.Context, repoPath string) error
 	if err != nil {
 		return gitCommandError(fmt.Sprintf("sync submodules for %s", repoPath), err, out)
 	}
-	return nil
+	// Git can reintroduce core.worktree in the shared config even when the
+	// canonical submodule already uses config.worktree. Restore its scope after
+	// hydration so existing and future linked checkouts remain independent.
+	_, err = worktreeprep.RepairRootSubmoduleWorktrees(ctx, repoPath)
+	return err
 }
 
 func gitWorktreePrune(ctx context.Context, repoPath string) error {
