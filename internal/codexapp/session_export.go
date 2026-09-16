@@ -564,7 +564,7 @@ func (s *appServerSession) appendSystemError(err error) {
 	message := err.Error()
 	s.mu.Lock()
 	s.touchLocked()
-	s.appendEntryLocked("", TranscriptError, message)
+	s.appendErrorEntryLocked(message)
 	s.lastError = message
 	s.lastSystemNotice = message
 	if label := compactCodexStatusLabel(message); label != "" {
@@ -745,8 +745,24 @@ func codexGenericStderrStatusLabel(message string) string {
 	}
 }
 
+// codexRetryStatusLabel keeps an in-flight reconnect readable in the pane
+// header instead of pasting the provider's multi-line diagnostic there.
+func codexRetryStatusLabel(message string) string {
+	summary := summarizeCodexError(message)
+	if summary.Family == "" {
+		return ""
+	}
+	if summary.Attempt > 0 && summary.Total > 0 {
+		return fmt.Sprintf("Codex reconnecting (%d/%d)", summary.Attempt, summary.Total)
+	}
+	return "Codex reconnecting"
+}
+
 func compactCodexStatusLabel(message string) string {
 	if label := codexAuthFailureStatusLabel(message); label != "" {
+		return label
+	}
+	if label := codexRetryStatusLabel(message); label != "" {
 		return label
 	}
 	normalized := normalizeCodexStatusMessage(message)
@@ -819,6 +835,72 @@ func (s *appServerSession) maybeAppendAuthDiagnosis(message string) {
 	}
 	s.mu.Unlock()
 	s.notify()
+}
+
+// appendErrorEntryLocked is the single funnel for Codex error entries. It hides
+// the provider's raw diagnostics behind a short summary and folds consecutive
+// retries of one incident into the entry already on screen, so a turn that
+// reconnects five times shows one line that tracks the current attempt instead
+// of five near-identical JSON blocks.
+func (s *appServerSession) appendErrorEntryLocked(text string) {
+	summary := summarizeCodexError(text)
+	if summary.Family != "" {
+		s.pendingRetryError = codexRetryErrorState{
+			Family:  summary.Family,
+			Text:    text,
+			Attempt: summary.Attempt,
+			Total:   summary.Total,
+		}
+		if index, ok := s.lastErrorEntryIndexLocked(); ok {
+			if previous := summarizeCodexError(s.entries[index].Text); previous.Family == summary.Family {
+				s.invalidateTranscriptCacheLocked()
+				s.entries[index].Text = text
+				s.entries[index].DisplayText = summary.Display
+				return
+			}
+		}
+	} else {
+		s.pendingRetryError = codexRetryErrorState{}
+	}
+	s.appendEntryWithDisplayLocked("", TranscriptError, text, summary.Display)
+}
+
+// lastErrorEntryIndexLocked reports the trailing error entry that a retry may
+// still update. Only an unbound entry qualifies: item-scoped entries belong to
+// a streamed transcript item and must not be rewritten in place.
+func (s *appServerSession) lastErrorEntryIndexLocked() (int, bool) {
+	if len(s.entries) == 0 {
+		return 0, false
+	}
+	index := len(s.entries) - 1
+	entry := s.entries[index]
+	if entry.Kind != TranscriptError || entry.ItemID != "" || entry.GeneratedImage != nil {
+		return 0, false
+	}
+	return index, true
+}
+
+// resolveRetryErrorLocked closes out a folded retry line. Codex reports every
+// attempt but never the recovery, so without this a finished turn keeps a stale
+// "attempt 4 of 5" that reads like an unresolved failure.
+func (s *appServerSession) resolveRetryErrorLocked(recovered bool) {
+	pending := s.pendingRetryError
+	s.pendingRetryError = codexRetryErrorState{}
+	if pending.Family == "" || !recovered {
+		return
+	}
+	for index := len(s.entries) - 1; index >= 0; index-- {
+		entry := s.entries[index]
+		if entry.Kind == TranscriptUser {
+			return
+		}
+		if entry.Kind != TranscriptError || entry.Text != pending.Text {
+			continue
+		}
+		s.entries[index].DisplayText = codexRecoveredRetryDisplayText(pending)
+		s.invalidateTranscriptCacheLocked()
+		return
+	}
 }
 
 func (s *appServerSession) appendEntryLocked(itemID string, kind TranscriptKind, text string) {

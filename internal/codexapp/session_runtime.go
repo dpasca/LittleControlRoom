@@ -978,12 +978,16 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.touchBusyLocked()
+		// Only an explicitly successful turn retires a folded reconnect line;
+		// any other outcome leaves the last reported attempt standing.
+		recovered := msg.Turn.Error == nil && isCompletedTurnStatus(msg.Turn.Status)
 		if msg.Turn.Error != nil {
 			if detail := msg.Turn.Error.diagnosticText(); detail != "" && detail != s.lastError {
 				s.lastError = detail
-				s.appendEntryLocked("", TranscriptError, detail)
+				s.appendErrorEntryLocked(detail)
 			}
 		}
+		s.resolveRetryErrorLocked(recovered)
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
 		s.mu.Unlock()
@@ -1004,6 +1008,7 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.touchBusyLocked()
+		s.resolveRetryErrorLocked(false)
 		status := formatTurnCompletionStatus(firstNonEmpty(msg.Turn.Status, msg.Reason, "interrupted"), s.busySince, time.Now())
 		s.queueTurnCompletionLocked(turnID, status)
 		s.mu.Unlock()

@@ -119,6 +119,7 @@ type appServerSession struct {
 	status                  string
 	lastError               string
 	lastSystemNotice        string
+	pendingRetryError       codexRetryErrorState
 	lastActivityAt          time.Time
 	lastBusyActivityAt      time.Time
 	currentCWD              string
