@@ -84,6 +84,22 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.pendingCompletion = nil
 	currentBrowserPageURL := s.mergeResumedThreadItemsLocked(thread)
 	s.mergeReconnectTranscriptLocked(thread.ID)
+	if busy && activeTurnID != previousTurnID {
+		s.lastError = ""
+	}
+	if hasLatestTurn && !busy {
+		switch {
+		case normalizeTurnStatus(latestTurn.Status) == "failed":
+			s.lastError = codexTurnFailureWithoutDetails
+			if latestTurn.Error != nil {
+				if detail := latestTurn.Error.diagnosticText(); detail != "" {
+					s.lastError = detail
+				}
+			}
+		case latestTurn.Error == nil && isCompletedTurnStatus(latestTurn.Status):
+			s.lastError = ""
+		}
+	}
 
 	busySince := time.Time{}
 	lastBusyActivityAt := time.Time{}

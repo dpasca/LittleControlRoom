@@ -418,6 +418,11 @@ func createSubmoduleWorktreeAtCommit(ctx context.Context, rootPath, worktreePath
 	if err := ensureContained(worktreePath, targetPath); err != nil {
 		return PreparedSubmodule{}, err
 	}
+	// A partially migrated worktreeConfig extension can make every new linked
+	// checkout inherit the canonical checkout's path from the shared config.
+	if _, err := RepairRootSubmoduleWorktrees(ctx, rootPath); err != nil {
+		return PreparedSubmodule{}, err
+	}
 	if err := removeEmptySubmodulePlaceholder(targetPath); err != nil {
 		return PreparedSubmodule{}, err
 	}
@@ -512,25 +517,18 @@ func repairRootSubmoduleWorktrees(ctx context.Context, repoPath, pathPrefix stri
 			continue
 		}
 
-		configuredWorktree, configured, err := gitCoreWorktree(ctx, submoduleGitDir, submodulePath)
-		if err != nil {
-			return fmt.Errorf("read root submodule worktree metadata for %s: %w", displayPath, err)
+		// A linked checkout is not the canonical owner of the shared config.
+		if _, err := os.Stat(filepath.Join(submoduleGitDir, "commondir")); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
-		if configured {
-			configuredPath := filepath.Clean(configuredWorktree)
-			if !filepath.IsAbs(configuredPath) {
-				configuredPath = filepath.Join(submoduleGitDir, configuredPath)
-			}
-			if !sameCleanPath(configuredPath, submodulePath) {
-				expectedWorktree, err := filepath.Rel(submoduleGitDir, submodulePath)
-				if err != nil {
-					return fmt.Errorf("resolve canonical root worktree for submodule %s: %w", displayPath, err)
-				}
-				if err := setGitCoreWorktree(ctx, submoduleGitDir, submodulePath, expectedWorktree); err != nil {
-					return fmt.Errorf("repair root submodule worktree metadata for %s: %w", displayPath, err)
-				}
-				*repaired = append(*repaired, displayPath)
-			}
+		changed, err := repairCanonicalWorktreeConfig(ctx, submoduleGitDir, submodulePath)
+		if err != nil {
+			return fmt.Errorf("repair root submodule worktree metadata for %s: %w", displayPath, err)
+		}
+		if changed {
+			*repaired = append(*repaired, displayPath)
 		}
 		if err := repairRootSubmoduleWorktrees(ctx, submodulePath, displayPath, visited, repaired); err != nil {
 			return err
@@ -576,17 +574,58 @@ func directSubmoduleGitDir(submodulePath string) (string, bool, error) {
 	return value, true, nil
 }
 
-func gitCoreWorktree(ctx context.Context, gitDir, worktreePath string) (string, bool, error) {
-	cmd := exec.CommandContext(
-		ctx,
-		"git",
-		"--git-dir="+gitDir,
-		"--work-tree="+worktreePath,
-		"config",
-		"--local",
-		"--get",
-		"core.worktree",
-	)
+func repairCanonicalWorktreeConfig(ctx context.Context, gitDir, worktreePath string) (bool, error) {
+	extension, _, err := readSubmoduleConfig(ctx, gitDir, worktreePath, "--local", "--bool", "--get", "extensions.worktreeConfig")
+	if err != nil {
+		return false, err
+	}
+	scope := "--local"
+	if extension == "true" {
+		scope = "--worktree"
+	}
+	value, found, err := readSubmoduleConfig(ctx, gitDir, worktreePath, scope, "--get", "core.worktree")
+	if err != nil {
+		return false, err
+	}
+	configuredPath := value
+	if !filepath.IsAbs(configuredPath) {
+		configuredPath = filepath.Join(gitDir, configuredPath)
+	}
+	changed := false
+	if (found || extension == "true") && (!found || !sameCleanPath(configuredPath, worktreePath)) {
+		expected, err := filepath.Rel(gitDir, worktreePath)
+		if err != nil {
+			return false, err
+		}
+		if err := writeSubmoduleConfig(ctx, gitDir, worktreePath, scope, "core.worktree", expected); err != nil {
+			return false, err
+		}
+		changed = true
+	}
+	if extension == "true" {
+		_, shared, err := readSubmoduleConfig(ctx, gitDir, worktreePath, "--local", "--get", "core.worktree")
+		if err != nil {
+			return changed, err
+		}
+		if shared {
+			// Write/verify the canonical override first. Removing the shared value
+			// restores normal linked-worktree discovery without changing siblings.
+			if err := writeSubmoduleConfig(ctx, gitDir, worktreePath, "--local", "--unset-all", "core.worktree"); err != nil {
+				return changed, err
+			}
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+func submoduleConfigCommand(ctx context.Context, gitDir, worktreePath string, args ...string) *exec.Cmd {
+	base := []string{"--git-dir=" + gitDir, "--work-tree=" + worktreePath, "config"}
+	return exec.CommandContext(ctx, "git", append(base, args...)...)
+}
+
+func readSubmoduleConfig(ctx context.Context, gitDir, worktreePath string, args ...string) (string, bool, error) {
+	cmd := submoduleConfigCommand(ctx, gitDir, worktreePath, args...)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return strings.TrimSpace(string(out)), true, nil
@@ -598,17 +637,8 @@ func gitCoreWorktree(ctx context.Context, gitDir, worktreePath string) (string, 
 	return "", false, fmt.Errorf("git config failed: %w: %s", err, strings.TrimSpace(string(out)))
 }
 
-func setGitCoreWorktree(ctx context.Context, gitDir, worktreePath, value string) error {
-	cmd := exec.CommandContext(
-		ctx,
-		"git",
-		"--git-dir="+gitDir,
-		"--work-tree="+worktreePath,
-		"config",
-		"--local",
-		"core.worktree",
-		value,
-	)
+func writeSubmoduleConfig(ctx context.Context, gitDir, worktreePath string, args ...string) error {
+	cmd := submoduleConfigCommand(ctx, gitDir, worktreePath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git config failed: %w: %s", err, strings.TrimSpace(string(out)))
@@ -669,14 +699,22 @@ func gitSubmoduleUpdate(ctx context.Context, repoPath, submodulePath string) err
 	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
 		return err
 	}
-	return gitRun(ctx, repoPath, "update submodule "+submodulePath, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive", "--", submodulePath)
+	if err := gitRun(ctx, repoPath, "update submodule "+submodulePath, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive", "--", submodulePath); err != nil {
+		return err
+	}
+	_, err := RepairRootSubmoduleWorktrees(ctx, repoPath)
+	return err
 }
 
 func gitSubmoduleUpdateAll(ctx context.Context, repoPath string) error {
 	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
 		return err
 	}
-	return gitRun(ctx, repoPath, "update submodules", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+	if err := gitRun(ctx, repoPath, "update submodules", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"); err != nil {
+		return err
+	}
+	_, err := RepairRootSubmoduleWorktrees(ctx, repoPath)
+	return err
 }
 
 func ensureRootSubmoduleHasCommit(ctx context.Context, rootPath, submodulePath, commit string) error {

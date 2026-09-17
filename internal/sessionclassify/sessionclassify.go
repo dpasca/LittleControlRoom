@@ -20,7 +20,7 @@ import (
 
 const (
 	DefaultModel      = config.DefaultOpenAIProjectModel
-	ClassifierVersion = "session-v7"
+	ClassifierVersion = "session-v8"
 )
 
 type Result struct {

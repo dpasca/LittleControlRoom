@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"lcroom/internal/agentquery"
 )
 
 const managedWorkspaceContextSource = "little-control-room/workspace-boundary"
@@ -32,6 +34,12 @@ func (s *appServerSession) SetWorkspaceContract(contract WorkspaceContract, hand
 
 func (s *appServerSession) managedTurnContext() map[string]additionalContextEntry {
 	contextEntries := s.managedBrowserTurnContext()
+	if s.runtimeMCPExpected {
+		if contextEntries == nil {
+			contextEntries = make(map[string]additionalContextEntry)
+		}
+		contextEntries["little-control-room/knowledge"] = additionalContextEntry{Kind: applicationContextKind, Value: agentquery.KnowledgeInstructions}
+	}
 	if s.imageReviewEnabled && s.runtimeMCPExpected {
 		if contextEntries == nil {
 			contextEntries = make(map[string]additionalContextEntry)

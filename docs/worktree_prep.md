@@ -77,6 +77,24 @@ Nested submodule worktrees start detached at the parent repo's pinned gitlink co
 
 When `/wt update` advances a parent linked worktree, LCR updates an existing nested submodule worktree directly to the new gitlink commit. It does not run the ordinary submodule checkout path against that nested worktree, because Git would otherwise rewrite the shared submodule `core.worktree` metadata and make the canonical checkout unreadable.
 
+Agents can discover `knowledge.list` and `knowledge.get` in the LCR query catalog's
+`knowledge` domain. The built-in `submodule-worktrees` topic explains this layout,
+read-only diagnostics, and configuration scope. The versioned source is
+[submodule-worktrees.md](../internal/agentquery/knowledge/submodule-worktrees.md).
+Runtime MCP instructions and managed Codex, Claude Code, and LCAgent context point
+agents to it before diagnosing submodule dirtiness or editing Git configuration.
+
+When `extensions.worktreeConfig` is enabled, the canonical submodule's
+`core.worktree` belongs in its own `config.worktree`, not the shared `config`.
+A leftover shared value can make a linked checkout report false deletions even
+when the canonical checkout remains clean. LCR's metadata repair writes or
+verifies the canonical override before removing the shared value, preserves
+sibling overrides, and does not enable or disable the extension. Nested
+submodule preparation runs this repair before creating another linked checkout.
+With the extension disabled, a correct relative shared value is left intact.
+Canonical submodule hydration also runs the repair after Git updates the files:
+Git itself can reintroduce the shared value when advancing a submodule commit.
+
 If a clean linked worktree already records a detached nested submodule commit that is not reachable from a remote branch or tag, merge-back publishes that commit on an LCR-owned submodule branch before merging the parent worktree. This keeps the root checkout's post-merge submodule sync from failing on a locally-created gitlink commit.
 
 If an LCR-generated remote branch already exists with divergent history, merge-back preserves that branch and automatically retries the publication under a collision-free branch suffixed with the intended submodule commit. User-owned branches are never forked this way. If the submodule remote still rejects publication—for example because authentication or write access is unavailable—merge-back stops before changing the root checkout and reports a submodule publish blocker. The blocker dialog offers a separate tracked engineer repair task with the full Git failure and merge context; before launching it, you can choose the engineer plus its model and reasoning preference. The task stays in the source project's category and remains linked to both the worktree and repository root. Selecting the generated `[A]` task and pressing `Enter` opens its engineer. Selecting either linked project shows a **Merge recovery** line and an `e recovery` footer action, so `e` reopens the same tracked session even when the generated task row is hidden by the current list filter. A `review` task state means the engineer returned and its result needs inspection; after confirming the blocker is resolved, select the linked worktree and press `M` to retry merge-back. The task is instructed to preserve the linked worktree and leave the root checkout unchanged for that retry. You can also push the submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote before retrying manually.
@@ -98,6 +116,12 @@ Ignored dependency clones and bare caches (for example, SwiftPM's `.build/checko
 LCR checks the entire object inventory against objects reachable from currently advertised upstream refs. This protects unpublished commits, stashes, reflog-only history, annotated tags, and dangling blobs; local remote-tracking refs are not accepted as proof of publication. The inspection uses Git's [remote ref advertisement](https://git-scm.com/docs/git-ls-remote), [object inventory](https://git-scm.com/docs/git-cat-file), and [reachability traversal](https://git-scm.com/docs/git-rev-list). An origin pointing into the selected worktree is followed through its cache to an independent upstream. Missing or unverifiable upstreams stop cleanup, including force removal, with a retryable explanation. Remote probes are non-interactive, cancellable, limited to 20 seconds each, and shared by checkouts using the same cache during an inspection. No fetch or push occurs. An upstream whose newer refs are absent locally may require refreshing the dependency before retrying.
 
 Before deletion, LCR records the clone HEAD and refs in the removal receipt and rechecks the complete filesystem snapshot for changes. The same verification applies to the separately confirmed retained-folder cleanup. Repositories with local work must be preserved or published before retrying; force removal does not bypass these checks.
+
+Codex's curated plugin snapshot is a disposable cache with a different provenance contract: `HEAD`, its single shallow boundary, `refs/codex/curated-sync`, and its direct-commit `FETCH_HEAD` record must agree, and the recorded source must be `https://github.com/openai/plugins`. Only branch refs at that same commit are allowed alongside the sync ref, and every stored Git object must belong to the fetched snapshot. The other checkout, ownership, and revalidation checks above still apply. Such a cache is removed without contacting GitHub or preserving a backup; it does not need an `origin` remote or a currently advertised upstream tip. Additional local work or missing provenance still blocks deletion. A `.tmp` or `dist` name by itself never grants permission to discard a repository.
+
+Ignored empty Git initializations are also removable without an upstream: they must have an unborn symbolic `HEAD`, no refs or object files, and pass the same ownership and clean-checkout checks. Staged files, dangling objects, and unfinished object/pack files prevent them from being treated as empty. Removal receipts identify both empty repositories and disposable Codex snapshots explicitly.
+
+If merge-back succeeds but its selected cleanup fails, the UI reports the successful merge and incomplete cleanup separately, records the cleanup cause in `/errors`, and closes the merge confirmation instead of offering to repeat the completed merge.
 
 ## Git Lock Handling
 

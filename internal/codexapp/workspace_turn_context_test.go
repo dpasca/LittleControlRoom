@@ -27,6 +27,19 @@ func TestManagedTurnContextIncludesWorkspaceContract(t *testing.T) {
 	}
 }
 
+func TestManagedTurnContextKnowledgeRequiresRuntime(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		session := &appServerSession{runtimeMCPExpected: enabled}
+		entry, present := session.managedTurnContext()["little-control-room/knowledge"]
+		if present != enabled {
+			t.Fatalf("knowledge present=%v, runtime enabled=%v", present, enabled)
+		}
+		if enabled && (!strings.Contains(entry.Value, "knowledge.get") || !strings.Contains(entry.Value, "submodule-worktrees")) {
+			t.Fatalf("knowledge context missing discovery and submodule guidance: %q", entry.Value)
+		}
+	}
+}
+
 func TestCommandFromCanonicalRootWarnsAndReportsExcursionOnce(t *testing.T) {
 	reported := make(chan WorkspaceExcursion, 2)
 	session := &appServerSession{

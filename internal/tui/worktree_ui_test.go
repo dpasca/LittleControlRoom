@@ -4141,3 +4141,35 @@ func TestWorktreeActionMsgErrorLogsAsyncPostMergeFailure(t *testing.T) {
 		t.Fatalf("error log message = %q, want %q", got.errorLogEntries[0].Message, errText)
 	}
 }
+
+func TestWorktreeActionMsgMergeSucceededCleanupFailed(t *testing.T) {
+	child := "/tmp/repo--merged"
+	m := Model{
+		worktreeMergeConfirm: &worktreeMergeConfirmState{ProjectPath: child, Busy: true},
+		pendingGitSummaries:  map[string]string{child: worktreeMergePendingSummary},
+	}
+	updated, _ := m.Update(worktreeActionMsg{
+		projectPath:            child,
+		selectPath:             "/tmp/repo",
+		mergeSucceeded:         true,
+		status:                 "Merged feature into master. Linked TODO marked done.",
+		clearPendingGitSummary: true,
+		err:                    errors.New("cleanup blocked by local changes"),
+	})
+	got := updated.(Model)
+	if got.worktreeMergeConfirm != nil {
+		t.Fatal("offered to repeat a completed merge")
+	}
+	if got.err != nil {
+		t.Fatalf("merge reported as failed: %v", got.err)
+	}
+	if got.status != "Merged feature into master. Linked TODO marked done. Cleanup incomplete (use /errors)." {
+		t.Fatalf("status = %q", got.status)
+	}
+	if got.pendingGitSummary(child) != "" {
+		t.Fatal("merge still shown as running")
+	}
+	if len(got.errorLogEntries) != 1 || got.errorLogEntries[0].Status != "Merge succeeded; cleanup incomplete" {
+		t.Fatalf("error log = %#v", got.errorLogEntries)
+	}
+}

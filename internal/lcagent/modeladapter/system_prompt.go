@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/todocapture"
 )
 
@@ -89,6 +90,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	)
 	if opts.LCRQueriesEnabled {
 		lines = append(lines,
+			agentquery.KnowledgeInstructions,
 			"For cross-project LCR state, use the progressive query catalog: call list_lcr_queries without a domain, then with one exact domain, then describe_lcr_query before run_lcr_query.",
 			"Follow next_cursor for more results. Most query responses are bounded persisted snapshots with as_of timestamps, not live TUI state. Integrations queries read native configuration or fetch catalogs. For skill, plugin, or MCP management, discover the integrations query/control domains, inspect the chosen provider and scope, then propose changes with the inspected revision. Never submit literal credentials; use environment-variable references and native authentication. Saved configuration does not establish running-session availability.",
 			"The LCR query catalog excludes other private-category projects, Help Chat transcripts, raw event payloads, and arbitrary repository files.",
@@ -97,7 +99,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.LCRControlsEnabled {
 		lines = append(lines,
 			"For LCR actions, call list_control_capabilities, then describe_control_capability, then propose_control_operation with arguments matching the described schema.",
-			"A successful proposal has not executed. It waits for explicit operator confirmation in Little Control Room; stop the turn after proposing and inspect it with get_control_operation only on a later user turn.",
+			"A successful proposal has not necessarily executed. Follow automatic_delivery and requires_new_user_turn: approved project collaboration can deliver exact-session engineer messages without another approval. Otherwise stop for explicit operator confirmation. Inspect delivery with get_control_operation without tight polling. Continue work already authorized by the user; do not invent new approval checkpoints or send acknowledgment-only reply loops.",
 			"When asked to tell, hand off to, continue, trigger, or steer another engineer, inspect the target project/session with LCR queries and propose engineer.send_prompt. Use the exact target_session_id when a specific recipient is known; durable delivery waits for that recipient instead of asking the operator to relay the message.",
 		)
 	}

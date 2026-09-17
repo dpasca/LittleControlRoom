@@ -483,14 +483,31 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 		return TranscriptItem{Role: payload.Role, Text: text, Visible: true}, true
 	case "event_msg":
 		var payload struct {
-			Type             string `json:"type"`
-			Message          string `json:"message"`
-			LastAgentMessage string `json:"last_agent_message"`
+			Type             string          `json:"type"`
+			Message          string          `json:"message"`
+			LastAgentMessage string          `json:"last_agent_message"`
+			Reason           string          `json:"reason"`
+			CodexErrorInfo   json.RawMessage `json:"codex_error_info"`
 		}
 		if err := json.Unmarshal(top.Payload, &payload); err != nil {
 			return TranscriptItem{}, false
 		}
 		switch payload.Type {
+		case "error":
+			text := strings.TrimSpace(payload.Message)
+			if len(payload.CodexErrorInfo) > 0 && string(payload.CodexErrorInfo) != "null" {
+				text += "\ncodex_error_info: " + string(payload.CodexErrorInfo)
+			}
+			if strings.TrimSpace(text) == "" {
+				text = "Codex reported an error without details."
+			}
+			return TranscriptItem{Role: "error", Text: sanitizeTranscriptText(text)}, true
+		case "turn_aborted":
+			text := "Codex turn aborted"
+			if reason := strings.TrimSpace(payload.Reason); reason != "" {
+				text += ": " + reason
+			}
+			return TranscriptItem{Role: "status", Text: sanitizeTranscriptText(text)}, true
 		case "user_message":
 			text := sanitizeTranscriptText(payload.Message)
 			if text == "" {

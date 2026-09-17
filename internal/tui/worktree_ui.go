@@ -1336,16 +1336,23 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 		}
 	}
 	baseProjects := make([]model.ProjectSummary, 0, len(projects))
+	// `projects` arrives already sorted, so an entry's incoming index is the
+	// rank that grouping below has to preserve.
+	baseRanks := make([]int, 0, len(projects))
 	affiliatedTasks := map[string][]model.ProjectSummary{}
+	affiliatedRanks := map[string]int{}
 	standaloneTasks := []model.ProjectSummary{}
-	for _, project := range projects {
+	standaloneRanks := []int{}
+	for index, project := range projects {
 		if model.NormalizeProjectKind(project.Kind) != model.ProjectKindAgentTask {
 			baseProjects = append(baseProjects, project)
+			baseRanks = append(baseRanks, index)
 			continue
 		}
 		task, ok := m.agentTaskForProjectPath(project.Path)
 		if !ok {
 			standaloneTasks = append(standaloneTasks, project)
+			standaloneRanks = append(standaloneRanks, index)
 			continue
 		}
 		anchor := cleanAgentTaskPath(task.OriginWorktreePath)
@@ -1368,35 +1375,71 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 		}
 		if _, ok := basePaths[anchor]; !ok || anchor == "" {
 			standaloneTasks = append(standaloneTasks, project)
+			standaloneRanks = append(standaloneRanks, index)
 			continue
 		}
 		affiliatedTasks[anchor] = append(affiliatedTasks[anchor], project)
+		if best, ok := affiliatedRanks[anchor]; !ok || index < best {
+			affiliatedRanks[anchor] = index
+		}
 	}
 	projects = baseProjects
 
+	// A repo and its linked worktrees render as one block, so the block must
+	// follow its most urgent row: rank each group by the best rank among its
+	// members and their affiliated agent tasks, otherwise a quiet repo root
+	// drags a waiting worktree or task down the list with it.
 	type group struct {
-		rootPath string
-		members  []model.ProjectSummary
+		rootPath   string
+		members    []model.ProjectSummary
+		standalone bool
+		rank       int
 	}
-	order := []string{}
+	order := []*group{}
 	groups := map[string]*group{}
-	for _, project := range projects {
+	addMember := func(entry *group, project model.ProjectSummary, rank int) {
+		if best, ok := affiliatedRanks[cleanAgentTaskPath(project.Path)]; ok && best < rank {
+			rank = best
+		}
+		if len(entry.members) == 0 || rank < entry.rank {
+			entry.rank = rank
+		}
+		entry.members = append(entry.members, project)
+	}
+	for i, project := range projects {
 		if !projectParticipatesInWorktreeFamily(project) {
 			key := filepath.Clean(strings.TrimSpace(project.Path))
 			if key == "" || key == "." {
 				key = project.Path
 			}
-			order = append(order, key)
-			groups[key] = &group{rootPath: key, members: []model.ProjectSummary{project}}
+			entry := &group{rootPath: key}
+			addMember(entry, project, baseRanks[i])
+			order = append(order, entry)
+			groups[key] = entry
 			continue
 		}
 		rootPath := projectWorktreeRootPath(project)
-		if _, ok := groups[rootPath]; !ok {
-			order = append(order, rootPath)
-			groups[rootPath] = &group{rootPath: rootPath}
+		entry, ok := groups[rootPath]
+		if !ok {
+			entry = &group{rootPath: rootPath}
+			order = append(order, entry)
+			groups[rootPath] = entry
 		}
-		groups[rootPath].members = append(groups[rootPath].members, project)
+		addMember(entry, project, baseRanks[i])
 	}
+	// Standalone tasks are top-level rows, so they compete for list position
+	// with every project instead of being parked below all of them.
+	for i, task := range standaloneTasks {
+		order = append(order, &group{
+			rootPath:   task.Path,
+			members:    []model.ProjectSummary{task},
+			standalone: true,
+			rank:       standaloneRanks[i],
+		})
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return order[i].rank < order[j].rank
+	})
 
 	rows := make([]model.ProjectSummary, 0, len(projects))
 	meta := make([]projectListRow, 0, len(projects))
@@ -1411,9 +1454,19 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 			})
 		}
 	}
-	for _, rootPath := range order {
-		group := groups[rootPath]
+	for _, group := range order {
 		if group == nil || len(group.members) == 0 {
+			continue
+		}
+		rootPath := group.rootPath
+		if group.standalone {
+			task := group.members[0]
+			rows = append(rows, task)
+			meta = append(meta, projectListRow{
+				Kind:        projectListRowStandalone,
+				ProjectPath: task.Path,
+				RootPath:    task.Path,
+			})
 			continue
 		}
 		if !projectUsesRepoUI(group.members[0]) {
@@ -1498,14 +1551,6 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 			})
 			appendAffiliatedTasks(orphan.Path, 2)
 		}
-	}
-	for _, task := range standaloneTasks {
-		rows = append(rows, task)
-		meta = append(meta, projectListRow{
-			Kind:        projectListRowStandalone,
-			ProjectPath: task.Path,
-			RootPath:    task.Path,
-		})
 	}
 	return rows, meta
 }
@@ -2222,12 +2267,14 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			msg.refresh = invalidateProjectStructure(rootPath)
 		}
 		status := worktreeMergeStatusText(result)
+		msg.mergeSucceeded = true
 		if (confirm.MarkTodoDone && confirm.HasLinkedTodo) || confirm.RemoveNow {
 			finalized, err := m.finalizeMergedWorktreeWithTimeout(projectPath, service.FinalizeMergedWorktreeOptions{
 				MarkLinkedTodoDone: confirm.MarkTodoDone && confirm.HasLinkedTodo,
 				RemoveWorktree:     confirm.RemoveNow,
 			})
 			if err != nil {
+				msg.status = worktreeFinalizeStatus(status, finalized)
 				msg.err = fmt.Errorf("%s; cleanup stopped and the worktree was kept when possible: %w", status, err)
 				return msg
 			}

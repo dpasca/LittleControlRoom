@@ -303,6 +303,9 @@ func recordedEngineerSessionSummary(evidence model.SessionEvidence) string {
 }
 
 func liveEngineerSessionSummary(snapshot codexapp.Snapshot) string {
+	if failure := codexapp.StoppedSessionError(snapshot); failure != "" {
+		return failure
+	}
 	for i := len(snapshot.Entries) - 1; i >= 0; i-- {
 		entry := snapshot.Entries[i]
 		if entry.Kind == codexapp.TranscriptReasoning {

@@ -575,6 +575,7 @@ Also consider the brief git_status snapshot as supporting context.
 If latest_turn_state_known is true, treat latest_turn_completed as a strong workflow signal:
 - true usually means the assistant finished that turn, but it does not automatically mean the project is completed
 - false means the assistant may still be mid-turn unless the transcript clearly shows a handoff
+Transcript items with role error or status are structured provider events, not assistant claims. An unresolved provider failure that stopped work is blocked, not needs_follow_up, even if the last assistant update promised to continue. Mention the failure in the summary. Earlier errors may have recovered: consider later turn events and actual work outcomes. A turn_aborted event means the turn stopped, not that the task succeeded; an intentional user interruption alone does not prove a provider failure. A failed individual tool command alone does not mean the session stopped.
 Dirty or unsynced git state can be evidence of unfinished follow-up, but transcript evidence should remain primary.
 For repository facts, current git_status evidence supersedes stale transcript claims about uncommitted, unmerged, or unpushed work. LCR or the user may have completed these steps after the engineer's last message.
 When git_status.integration is present, merge_status describes integration into target_branch. A clean worktree with merge_status=merged resolves commit-and-merge follow-ups, including old requests for approval to perform those now-completed actions.

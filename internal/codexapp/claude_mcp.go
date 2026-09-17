@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"lcroom/internal/agentquery"
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/todocapture"
 )
@@ -50,6 +51,7 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 	runtimeEnabled := false
 	if executablePath, args, ok := runtimeMCPCommand(req); ok {
 		runtimeEnabled = true
+		promptParts = append(promptParts, agentquery.KnowledgeInstructions)
 		servers["lcr_runtime"] = claudeMCPServer{
 			Type:    "stdio",
 			Command: executablePath,

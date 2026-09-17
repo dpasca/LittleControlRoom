@@ -107,7 +107,7 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 	if err != nil {
 		return nil, err
 	}
-	return OperationReport(created, created.ID != operationID), nil
+	return e.operationReport(ctx, created, created.ID != operationID)
 }
 
 func (e *Executor) Get(ctx context.Context, operationID string) (map[string]any, error) {
@@ -121,7 +121,24 @@ func (e *Executor) Get(ctx context.Context, operationID string) (map[string]any,
 	if operation.Source != e.source || operation.SessionKey != e.sessionKey {
 		return nil, errors.New("control operation belongs to a different embedded session")
 	}
-	return OperationReport(operation, false), nil
+	return e.operationReport(ctx, operation, false)
+}
+
+func (e *Executor) operationReport(ctx context.Context, operation control.Operation, replay bool) (map[string]any, error) {
+	report := OperationReport(operation, replay)
+	if operation.Status == control.OperationProposed || operation.Status == control.OperationWaitingForConfirmation {
+		allowed, err := e.store.CollaborationAllowsOperation(ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
+			report["automatic_delivery"] = true
+			report["operator_confirmation"] = false
+			report["requires_new_user_turn"] = false
+			report["message"] = "Project collaboration is already approved. LCR will deliver this message automatically through its durable queue. Continue independent authorized work without asking for approval; check get_control_operation for delivery. Queued does not mean delivered. Do not create acknowledgment-only reply loops."
+		}
+	}
+	return report, nil
 }
 
 func OperationReport(operation control.Operation, idempotentReplay bool) map[string]any {
@@ -137,6 +154,9 @@ func OperationReport(operation control.Operation, idempotentReplay bool) map[str
 		message = "Little Control Room could not complete the operation. Stop this turn and report the failure. Do not retry or continue later write or external-action steps from the same requested workflow through other tools."
 	case control.OperationCanceled:
 		message = "The operator canceled the proposal. Stop this turn and report the cancellation. Do not retry or continue later write or external-action steps from the same requested workflow through other tools."
+	}
+	if operation.ConfirmationBy == control.ConfirmationProjectCollaboration && operation.Status == control.OperationRunning {
+		message = "Project collaboration authorized this message. Little Control Room is executing it or waiting to deliver it to the exact session."
 	}
 	return map[string]any{
 		"success":           true,

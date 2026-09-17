@@ -30,6 +30,10 @@ No project-local `.codex` directory was observed under scanned project roots in 
 
 Codex project association is still discoverable from global artifacts (mainly session logs containing `cwd`).
 
+### Curated plugin cache in an isolated Codex home
+
+Observed on 2026-09-17: a validation run's isolated home under ignored `dist/image-review-validation/internal-workspaces/lcroom-codex-home-*/` contained `.tmp/plugins`, a self-contained shallow Git checkout with no remote configured. `HEAD`, the shallow boundary, and `refs/codex/curated-sync` pointed to the same commit. `FETCH_HEAD` recorded a direct SHA fetch from `https://github.com/openai/plugins`. This is generated plugin cache data, separate from conversation artifacts. Worktree cleanup recognizes this Git provenance, checks for additional local work, and removes the disposable snapshot without requiring live upstream access or making a backup. See [worktree cleanup](worktree_prep.md#cleanup).
+
 ## 2. Session file formats observed
 
 ### Format A: modern JSONL (`session_meta`)
@@ -65,6 +69,15 @@ Observed recent conversational text usable for model-based "where was work left 
 - `event_msg.payload.type == "user_message"` (`message`)
 - `event_msg.payload.type == "agent_message"` (`message`)
 - `event_msg.payload.type == "task_complete"` (`last_agent_message`)
+
+Assessment input also preserves structured `event_msg` errors (`message` and
+`codex_error_info`) and `turn_aborted` reasons as error/status items. These are
+provider evidence for model-based classification, not natural-language trigger
+rules. A settled embedded session's current provider error overrides an older
+dashboard assessment with a blocked state while that snapshot is available.
+Successful Codex completion or a new turn clears the current error; historical
+diagnostics remain in the transcript. Failed app-server turns settle even when
+outstanding tool items never deliver their individual completion events.
 
 `response_item` messages with `role == "user"` are model-context inputs, not
 user-visible transcript events. They can contain injected `AGENTS.md`, skill,

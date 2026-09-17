@@ -2205,6 +2205,9 @@ func (m Model) embeddedSidebarSummary(snapshot codexapp.Snapshot) (string, lipgl
 		}
 		return summary, detailWarningStyle, true
 	}
+	if failure := codexapp.StoppedSessionError(snapshot); failure != "" {
+		return failure, detailConflictStyle, true
+	}
 	if startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project); active {
 		return formatLiveEngineerSummary(liveEngineerActiveSummaryDetail(snapshot, project), startedAt, now), detailValueStyle, true
 	}

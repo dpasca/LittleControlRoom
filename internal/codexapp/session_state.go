@@ -232,8 +232,12 @@ func (s *appServerSession) restoreBusyLocked(turnID string, external bool) {
 func (s *appServerSession) updateBusyLocked(turnID string, external, refreshActivity bool) {
 	turnID = strings.TrimSpace(turnID)
 	now := time.Now()
+	startingWork := !s.busy || (turnID != "" && turnID != strings.TrimSpace(s.activeTurnID))
 	if !s.markTurnStartedLocked(turnID, now) {
 		return
+	}
+	if startingWork {
+		s.lastError = ""
 	}
 	turnChanged := turnID != "" && s.activeTurnID != "" && s.activeTurnID != turnID
 	if turnChanged {

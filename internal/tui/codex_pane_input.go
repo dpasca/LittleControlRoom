@@ -385,6 +385,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m.openHelpChatModeOrSetupPrompt()
 			case codexslash.KindSkills:
 				return m, m.openSkillsDialog()
+			case codexslash.KindCollab:
+				return m, m.openProjectCollaborations(m.codexVisibleProject)
 			case codexslash.KindSettings:
 				if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
 					return m, m.openEmbeddedLCAgentSettingsMode(m.codexVisibleProject)

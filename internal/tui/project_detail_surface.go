@@ -45,6 +45,11 @@ func projectDetailFieldValue(label, text string, tone projectDetailSurfaceTone) 
 func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.ProjectDetail) projectDetailSurface {
 	now := m.currentTime()
 	stuckThreshold := m.assessmentStallThreshold()
+	if failure := m.projectStoppedSessionError(p); failure != "" {
+		p.LatestSessionClassification = model.ClassificationCompleted
+		p.LatestSessionClassificationType = model.SessionCategoryBlocked
+		p.LatestSessionSummary = failure
+	}
 	surface := uisurface.BuildProjectDetailOverview(p, uisurface.BuildOptions{
 		Now:            now,
 		StuckThreshold: stuckThreshold,

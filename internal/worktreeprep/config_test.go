@@ -489,6 +489,147 @@ func TestRepairRootSubmoduleWorktreesRestoresNestedCanonicalCheckout(t *testing.
 	}
 }
 
+func TestRepairRootSubmoduleWorktreeConfigMigration(t *testing.T) {
+	for _, override := range []string{"missing", "canonical", "stale"} {
+		t.Run(override, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			mainPath := filepath.Join(root, "main")
+			initRepoWithSubmodule(t, mainPath, filepath.Join(root, "origin"), "Assets")
+			worktreePath := filepath.Join(root, "task")
+			runGit(t, mainPath, "worktree", "add", "-b", "task", worktreePath, "HEAD")
+			if _, err := Prepare(t.Context(), mainPath, worktreePath, ""); err != nil {
+				t.Fatal(err)
+			}
+			canonical := filepath.Join(mainPath, "Assets")
+			child := filepath.Join(worktreePath, "Assets")
+			gitDir := gitOutputTest(t, canonical, "rev-parse", "--absolute-git-dir")
+			head := gitOutputTest(t, child, "rev-parse", "HEAD")
+			shared := gitOutputTest(t, canonical, "config", "--local", "--get", "core.worktree")
+			sibling := filepath.Join(root, "sibling-assets")
+			runGit(t, canonical, "worktree", "add", "--detach", sibling, head)
+			siblingGitDir := gitOutputTest(t, sibling, "rev-parse", "--absolute-git-dir")
+			runGit(t, canonical, "config", "extensions.worktreeConfig", "true")
+			runGit(t, mainPath, "--git-dir="+siblingGitDir, "--work-tree="+sibling, "config", "--worktree", "core.worktree", sibling)
+			siblingConfig, err := os.ReadFile(filepath.Join(siblingGitDir, "config.worktree"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if override != "missing" {
+				value := canonical
+				if override == "stale" {
+					value = filepath.Join(root, "removed")
+				}
+				runGit(t, mainPath, "--git-dir="+gitDir, "--work-tree="+canonical, "config", "--worktree", "core.worktree", value)
+			}
+			if got := gitOutputTest(t, child, "rev-parse", "--show-toplevel"); samePath(t, got, child) {
+				t.Fatal("fixture did not reproduce misdirected linked worktree")
+			}
+			repaired, err := RepairRootSubmoduleWorktrees(t.Context(), mainPath)
+			if err != nil || len(repaired) != 1 {
+				t.Fatalf("repair = %v, %v", repaired, err)
+			}
+			for _, path := range []string{canonical, child, sibling, mainPath, worktreePath} {
+				if got := gitOutputTest(t, path, "status", "--porcelain=v2"); got != "" {
+					t.Fatalf("%s status = %q", path, got)
+				}
+				if got := gitOutputTest(t, path, "rev-parse", "--show-toplevel"); !samePath(t, got, path) {
+					t.Fatalf("%s top-level = %q", path, got)
+				}
+			}
+			if gitOutputTest(t, child, "rev-parse", "HEAD") != head {
+				t.Fatal("repair changed the child commit")
+			}
+			if got, err := os.ReadFile(filepath.Join(siblingGitDir, "config.worktree")); err != nil || string(got) != string(siblingConfig) {
+				t.Fatalf("sibling config changed: %q, %v", got, err)
+			}
+			if _, found, err := readSubmoduleConfig(t.Context(), gitDir, canonical, "--local", "--get", "core.worktree"); err != nil || found {
+				t.Fatalf("shared core.worktree remains: found=%v err=%v", found, err)
+			}
+			if err := os.WriteFile(filepath.Join(child, "asset.txt"), []byte("local work\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			repaired, err = RepairRootSubmoduleWorktrees(t.Context(), mainPath)
+			if err != nil || len(repaired) != 0 {
+				t.Fatalf("second repair = %v, %v", repaired, err)
+			}
+			if gitOutputTest(t, child, "status", "--porcelain") == "" || gitOutputTest(t, canonical, "status", "--porcelain") != "" {
+				t.Fatal("repair hid local edits or redirected the canonical checkout")
+			}
+			// New preparation also repairs incomplete migration before linking a
+			// checkout, preserving existing siblings and their local changes.
+			runGit(t, canonical, "config", "--local", "core.worktree", shared)
+			newPath := filepath.Join(root, "new-task")
+			runGit(t, mainPath, "worktree", "add", "-b", "new-task", newPath, "HEAD")
+			if _, err := Prepare(t.Context(), mainPath, newPath, ""); err != nil {
+				t.Fatal(err)
+			}
+			if got := gitOutputTest(t, newPath, "status", "--porcelain"); got != "" {
+				t.Fatalf("new parent status = %q", got)
+			}
+			if gitOutputTest(t, child, "status", "--porcelain") == "" {
+				t.Fatal("preparation hid sibling changes")
+			}
+		})
+	}
+}
+
+func TestSubmoduleHydrationPreservesWorktreeConfig(t *testing.T) {
+	for _, mode := range []string{"path", "all"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			parent, origin := filepath.Join(root, "parent"), filepath.Join(root, "origin")
+			initRepoWithSubmodule(t, parent, origin, "Assets")
+			canonical, child := filepath.Join(parent, "Assets"), filepath.Join(root, "child")
+			runGit(t, canonical, "worktree", "add", "--detach", child)
+			runGit(t, canonical, "config", "extensions.worktreeConfig", "true")
+			if _, err := RepairRootSubmoduleWorktrees(t.Context(), parent); err != nil {
+				t.Fatal(err)
+			}
+			next := commitFile(t, origin, "asset.txt", "updated\n", "advance assets")
+			runGit(t, parent, "update-index", "--cacheinfo", "160000", next, "Assets")
+			var err error
+			if mode == "path" {
+				err = gitSubmoduleUpdate(t.Context(), parent, "Assets")
+			} else {
+				err = gitSubmoduleUpdateAll(t.Context(), parent)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{canonical, child} {
+				if got := gitOutputTest(t, path, "rev-parse", "--show-toplevel"); !samePath(t, got, path) {
+					t.Fatalf("%s top-level = %q", path, got)
+				}
+				if got := gitOutputTest(t, path, "status", "--porcelain"); got != "" {
+					t.Fatalf("%s status = %q", path, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRepairWorktreeConfigKeepsSharedValueWhenCanonicalWriteFails(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	initRepoWithSubmodule(t, mainPath, filepath.Join(root, "origin"), "Assets")
+	canonical := filepath.Join(mainPath, "Assets")
+	gitDir := gitOutputTest(t, canonical, "rev-parse", "--absolute-git-dir")
+	shared := gitOutputTest(t, canonical, "config", "--local", "--get", "core.worktree")
+	runGit(t, canonical, "config", "extensions.worktreeConfig", "true")
+	if err := os.WriteFile(filepath.Join(gitDir, "config.worktree.lock"), []byte("another writer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RepairRootSubmoduleWorktrees(t.Context(), mainPath); err == nil {
+		t.Fatal("repair ignored the canonical config lock")
+	}
+	if got := gitOutputTest(t, canonical, "config", "--local", "--get", "core.worktree"); got != shared {
+		t.Fatalf("shared value changed after failed canonical write: %q", got)
+	}
+}
+
 func initRepoWithSubmodule(t *testing.T, mainPath, originPath, submoduleName string) {
 	t.Helper()
 	initGitRepo(t, originPath)
