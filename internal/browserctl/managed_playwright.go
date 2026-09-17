@@ -44,26 +44,27 @@ type ManagedPlaywrightPaths struct {
 }
 
 type ManagedPlaywrightState struct {
-	SessionKey              string            `json:"session_key"`
-	ProfileKey              string            `json:"profile_key"`
-	Provider                string            `json:"provider"`
-	ProjectPath             string            `json:"project_path"`
-	LaunchMode              ManagedLaunchMode `json:"launch_mode"`
-	Policy                  Policy            `json:"policy"`
-	OwnerPID                int               `json:"owner_pid,omitempty"`
-	MCPPID                  int               `json:"mcp_pid"`
-	BrowserPID              int               `json:"browser_pid"`
-	BrowserAppPath          string            `json:"browser_app_path"`
-	BrowserAppName          string            `json:"browser_app_name"`
-	BrowserExecutable       string            `json:"browser_executable"`
-	ProfileBackupPath       string            `json:"profile_backup_path,omitempty"`
-	ProfileRecoveryReason   string            `json:"profile_recovery_reason,omitempty"`
-	ProfilePreflightWarning string            `json:"profile_preflight_warning,omitempty"`
-	Hidden                  bool              `json:"hidden"`
-	AudioMode               string            `json:"audio_mode,omitempty"`
-	AudioAllowed            bool              `json:"audio_allowed,omitempty"`
-	RevealSupported         bool              `json:"reveal_supported"`
-	UpdatedAt               time.Time         `json:"updated_at"`
+	SessionKey              string               `json:"session_key"`
+	ProfileKey              string               `json:"profile_key"`
+	Provider                string               `json:"provider"`
+	ProjectPath             string               `json:"project_path"`
+	LaunchMode              ManagedLaunchMode    `json:"launch_mode"`
+	Policy                  Policy               `json:"policy"`
+	OwnerPID                int                  `json:"owner_pid,omitempty"`
+	MCPPID                  int                  `json:"mcp_pid"`
+	BrowserPID              int                  `json:"browser_pid"`
+	BrowserAppPath          string               `json:"browser_app_path"`
+	BrowserAppName          string               `json:"browser_app_name"`
+	BrowserExecutable       string               `json:"browser_executable"`
+	ProfileBackupPath       string               `json:"profile_backup_path,omitempty"`
+	ProfileRecoveryReason   string               `json:"profile_recovery_reason,omitempty"`
+	ProfilePreflightWarning string               `json:"profile_preflight_warning,omitempty"`
+	Hidden                  bool                 `json:"hidden"`
+	ScreenshotLeases        map[string]time.Time `json:"screenshot_leases,omitempty"`
+	AudioMode               string               `json:"audio_mode,omitempty"`
+	AudioAllowed            bool                 `json:"audio_allowed,omitempty"`
+	RevealSupported         bool                 `json:"reveal_supported"`
+	UpdatedAt               time.Time            `json:"updated_at"`
 }
 
 type ManagedBrowserProcess struct {
@@ -383,6 +384,9 @@ func HideManagedPlaywrightSession(dataDir, sessionKey string, browser ManagedBro
 				return err
 			}
 			if state.BrowserPID > 0 && state.BrowserPID != browser.PID {
+				return nil
+			}
+			if managedScreenshotLeaseActive(state, time.Now()) {
 				return nil
 			}
 			if err := managedPlaywrightProcessHider(browser.PID); err != nil {

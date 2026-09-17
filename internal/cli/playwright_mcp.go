@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -109,12 +110,24 @@ func runPlaywrightMCP(args []string) int {
 	}
 
 	cmd := exec.Command("mcp-server-playwright", childArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "playwright-mcp input pipe: %v\n", err)
+		return 1
+	}
+	relay := &playwrightScreenshotRelay{
+		output: os.Stdout, log: os.Stderr,
+		begin: func() (func() error, error) {
+			return browserctl.BeginManagedScreenshot(paths.DataDir, paths.SessionKey)
+		},
+	}
+	defer relay.close()
+	cmd.Stdout = relay
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
 
 	if err := cmd.Start(); err != nil {
+		_ = input.Close()
 		fmt.Fprintf(os.Stderr, "playwright-mcp start failed: %v\n", err)
 		return 1
 	}
@@ -129,14 +142,27 @@ func runPlaywrightMCP(args []string) int {
 	defer cancel()
 	go monitorManagedPlaywrightBrowser(ctx, paths, cmd.Process.Pid, opts.launchMode == browserctl.ManagedLaunchModeBackground, browserExecutable)
 	go forwardPlaywrightMCPSignals(ctx, cmd)
+	go func() {
+		if err := relay.forwardInput(os.Stdin, input); err != nil {
+			fmt.Fprintf(os.Stderr, "playwright-mcp input relay: %v\n", err)
+			relay.close()
+		}
+	}()
 
 	err = cmd.Wait()
+	relay.close()
 	cancel()
 
-	state.UpdatedAt = time.Now().UTC()
-	state.OwnerPID = 0
-	state.MCPPID = 0
-	_ = writeManagedPlaywrightState(paths, state)
+	_ = browserctl.WithManagedPlaywrightStateLock(paths.DataDir, paths.SessionKey, func() error {
+		latest, err := readManagedPlaywrightState(paths.DataDir, paths.SessionKey)
+		if err != nil {
+			return err
+		}
+		latest.UpdatedAt = time.Now().UTC()
+		latest.OwnerPID = 0
+		latest.MCPPID = 0
+		return writeManagedPlaywrightState(paths, latest)
+	})
 
 	if err == nil {
 		return 0
@@ -395,7 +421,7 @@ func managedBrowserStateNeedsWrite(previous, next browserctl.ManagedPlaywrightSt
 	lastWrite := previous.UpdatedAt
 	previous.UpdatedAt = time.Time{}
 	next.UpdatedAt = time.Time{}
-	if previous != next {
+	if !reflect.DeepEqual(previous, next) {
 		return true
 	}
 	if lastWrite.IsZero() {

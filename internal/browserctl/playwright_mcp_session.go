@@ -187,9 +187,16 @@ func (s *PlaywrightMCPBrowserSession) Close() error {
 	return nil
 }
 
-func (s *PlaywrightMCPBrowserSession) callTool(ctx context.Context, name string, args map[string]any) (string, error) {
+func (s *PlaywrightMCPBrowserSession) callTool(ctx context.Context, name string, args map[string]any) (text string, err error) {
 	if err := s.ensureStarted(ctx); err != nil {
 		return "", err
+	}
+	if name == "browser_take_screenshot" {
+		finish, beginErr := BeginManagedScreenshot(s.paths.DataDir, s.paths.SessionKey)
+		if beginErr != nil {
+			return "", beginErr
+		}
+		defer func() { err = errors.Join(err, finish()) }()
 	}
 	resp, err := s.call(ctx, "tools/call", map[string]any{"name": name, "arguments": args})
 	if err != nil {
