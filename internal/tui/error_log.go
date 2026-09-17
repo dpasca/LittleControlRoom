@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -40,6 +41,7 @@ type errorLogAppendResult struct {
 
 func (m Model) openErrorLog() (tea.Model, tea.Cmd) {
 	m.errorLogVisible = true
+	m.errorLogDetailOffset = 0
 	m.commandMode = false
 	if len(m.errorLogEntries) == 0 {
 		m.errorLogSelected = 0
@@ -222,6 +224,7 @@ func (m *Model) moveErrorLogSelection(delta int) {
 	if total == 0 || delta == 0 {
 		return
 	}
+	m.errorLogDetailOffset = 0
 	m.errorLogSelected += delta
 	if m.errorLogSelected < 0 {
 		m.errorLogSelected = 0
@@ -260,6 +263,7 @@ func (m Model) updateErrorLogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingG = false
 		if msg.String() == "g" {
 			m.errorLogSelected = 0
+			m.errorLogDetailOffset = 0
 			return m, nil
 		}
 	}
@@ -275,15 +279,17 @@ func (m Model) updateErrorLogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveErrorLogSelection(1)
 		return m, nil
 	case "pgup", "ctrl+u":
-		m.moveErrorLogSelection(-5)
+		m.scrollErrorLogDetails(-5)
 		return m, nil
 	case "pgdown", "ctrl+d":
-		m.moveErrorLogSelection(5)
+		m.scrollErrorLogDetails(5)
 		return m, nil
 	case "home":
+		m.errorLogDetailOffset = 0
 		m.errorLogSelected = 0
 		return m, nil
 	case "end", "G":
+		m.errorLogDetailOffset = 0
 		m.errorLogSelected = len(entries) - 1
 		return m, nil
 	case "g":
@@ -371,21 +377,19 @@ func (m Model) renderErrorLogOverlay(body string, bodyW, bodyH int) string {
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
+func errorLogPanelDimensions(bodyW, bodyH int) (panelWidth, innerWidth, contentHeight int) {
+	panelWidth = max(4, min(bodyW-2, min(max(72, bodyW-12), 108)))
+	return panelWidth, max(1, panelWidth-4), max(1, bodyH-2)
+}
+
 func (m Model) renderErrorLogPanel(bodyW, bodyH int) string {
-	panelWidth := min(bodyW, min(max(72, bodyW-12), 108))
-	panelInnerWidth := max(32, panelWidth-4)
-	maxContentHeight := max(12, bodyH-2)
+	panelWidth, panelInnerWidth, maxContentHeight := errorLogPanelDimensions(bodyW, bodyH)
 	content := m.renderErrorLogContent(panelInnerWidth, maxContentHeight)
-	content = clampDialogContent(
-		content,
-		maxContentHeight,
-		min(6, max(0, maxContentHeight/3)),
-		dialogOverflowHintLine(panelInnerWidth, "... more. Enter copies the full error."),
-	)
+	content = clampDialogContent(content, maxContentHeight, 0, dialogOverflowHintLine(panelInnerWidth, "PgDn: details; Enter copies the full error."))
 	return renderDialogPanel(panelWidth, panelInnerWidth, content)
 }
 
-func (m Model) renderErrorLogContent(width, maxHeight int) string {
+func (m Model) errorLogHeaderLines(width, maxHeight int) []string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Error Log"),
 		errorLogLegendLine(),
@@ -394,10 +398,10 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 	entries := m.currentErrorLogEntries()
 	if len(entries) == 0 {
 		lines = append(lines, "", detailMutedStyle.Render("No errors recorded yet."))
-		return strings.Join(lines, "\n")
+		return strings.Split(ansi.Hardwrap(strings.Join(lines, "\n"), width, true), "\n")
 	}
 
-	listLimit := errorLogListLimit(len(entries), maxHeight)
+	listLimit := min(errorLogListLimit(len(entries), maxHeight), max(1, (maxHeight-10)/2))
 	start := 0
 	if m.errorLogSelected >= listLimit {
 		start = m.errorLogSelected - listLimit + 1
@@ -419,13 +423,45 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d older", len(entries)-end)))
 	}
 
+	return strings.Split(ansi.Hardwrap(strings.Join(lines, "\n"), width, true), "\n")
+}
+
+func (m *Model) scrollErrorLogDetails(delta int) {
 	selected, ok := m.currentErrorLogEntry()
 	if !ok {
-		return strings.Join(lines, "\n")
+		return
+	}
+	layout := m.bodyLayout()
+	_, width, height := errorLogPanelDimensions(layout.width, layout.height)
+	budget := max(1, height-len(m.errorLogHeaderLines(width, height))-4)
+	maximum := max(0, len(m.errorLogDetailLines(selected, width))-budget)
+	m.errorLogDetailOffset = max(0, min(maximum, min(m.errorLogDetailOffset, maximum)+delta))
+}
+
+func (m Model) renderErrorLogContent(width, maxHeight int) string {
+	header := m.errorLogHeaderLines(width, maxHeight)
+	selected, ok := m.currentErrorLogEntry()
+	if !ok {
+		return strings.Join(header, "\n")
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, detailSectionStyle.Render("Details"))
+	// Split rendered physical lines before budgeting; a joined error's cause and
+	// context can each contain newlines or wrap to many terminal rows.
+	details := m.errorLogDetailLines(selected, width)
+	budget := max(1, maxHeight-len(header)-4)
+	offset := min(m.errorLogDetailOffset, max(0, len(details)-budget))
+	endDetail := min(len(details), offset+budget)
+	header = append(header, "", detailSectionStyle.Render("Details"))
+	header = append(header, details[offset:endDetail]...)
+	if offset > 0 || endDetail < len(details) {
+		header = append(header, dialogOverflowHintLine(width, fmt.Sprintf("Lines %d–%d/%d · PgUp/PgDn scroll. Enter copies the full error.", offset+1, endDetail, len(details))))
+	}
+	return strings.Join(header, "\n")
+}
+
+func (m Model) errorLogDetailLines(selected errorLogEntry, width int) []string {
+	var lines []string
+
 	lines = append(lines, detailField("Summary", detailValueStyle.Render(selected.Status)))
 	lines = append(lines, detailField("When", detailMutedStyle.Render(selected.At.Format("2006-01-02 15:04:05 MST"))))
 	if selected.ProjectName != "" {
@@ -447,12 +483,13 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 	lines = append(lines, "")
 	lines = append(lines, detailDangerStyle.Render("Full error"))
 	lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, selected.Message)...)
-	return strings.Join(lines, "\n")
+	return strings.Split(ansi.Hardwrap(strings.Join(lines, "\n"), width, true), "\n")
 }
 
 func errorLogLegendLine() string {
 	return renderHelpPanelActionRow(
 		renderDialogAction("↑↓", "choose", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("PgUp/PgDn", "details", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Enter/c", "copy", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("t", "ask engineer", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
@@ -461,9 +498,9 @@ func errorLogLegendLine() string {
 
 func (m Model) renderErrorLogRow(entry errorLogEntry, selected bool, width int) string {
 	timeLabel := entry.At.Format("01-02 15:04")
-	summary := entry.Status
+	summary := firstNonEmptyErrorLine(entry.Status)
 	if entry.ProjectName != "" {
-		summary = summary + " - " + entry.ProjectName
+		summary = summary + " - " + firstNonEmptyErrorLine(entry.ProjectName)
 	}
 	lines := []string{
 		truncateText(strings.TrimSpace(timeLabel+"  "+summary), width),
@@ -533,7 +570,7 @@ func errorLogEngineerPrompt(entry errorLogEntry) string {
 func errorLogPreview(entry errorLogEntry) string {
 	switch {
 	case strings.TrimSpace(effectiveErrorLogRootCause(entry)) != "":
-		return effectiveErrorLogRootCause(entry)
+		return firstNonEmptyErrorLine(effectiveErrorLogRootCause(entry))
 	case strings.TrimSpace(entry.Message) != "":
 		return firstNonEmptyErrorLine(entry.Message)
 	default:

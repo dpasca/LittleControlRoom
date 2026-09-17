@@ -191,3 +191,37 @@ func TestRenderErrorLogRowShowsCausePreview(t *testing.T) {
 		t.Fatalf("row missing preview cause: %q", rendered)
 	}
 }
+
+func TestErrorLogJoinedErrorsStayWithinViewportAndScroll(t *testing.T) {
+	message := strings.Repeat("external consumer inspection incomplete: context canceled\n", 80) + "FINAL ERROR LINE"
+	m := Model{width: 100, height: 26, errorLogEntries: []errorLogEntry{
+		{Status: "Cleanup failed", Message: message, RootCause: message, Context: []string{message}},
+		{Status: "Earlier failure", Message: "older"},
+	}}
+	for _, selected := range []bool{false, true} {
+		if height := lipgloss.Height(m.renderErrorLogRow(m.errorLogEntries[0], selected, 80)); height != 2 {
+			t.Fatalf("multiline cause expanded entry to %d rows", height)
+		}
+	}
+	for _, size := range [][2]int{{120, 40}, {100, 24}, {72, 18}, {40, 12}} {
+		panel := m.renderErrorLogPanel(size[0], size[1])
+		if lipgloss.Height(panel) > size[1] || lipgloss.Width(panel) > size[0] {
+			t.Fatalf("panel %dx%d exceeds viewport %v", lipgloss.Width(panel), lipgloss.Height(panel), size)
+		}
+	}
+	for i := 0; i < 200; i++ {
+		updated, _ := m.updateErrorLogMode(tea.KeyMsg{Type: tea.KeyPgDown})
+		m = updated.(Model)
+	}
+	if m.errorLogSelected != 0 || !strings.Contains(ansi.Strip(m.renderErrorLogPanel(100, 24)), "FINAL ERROR LINE") {
+		t.Fatal("paging did not reach full error details for selected entry")
+	}
+	updated, _ := m.updateErrorLogMode(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	if m.errorLogSelected != 1 || m.errorLogDetailOffset != 0 {
+		t.Fatal("selecting another entry did not reset scroll")
+	}
+	if !strings.Contains(formatErrorLogCopyText(m.errorLogEntries[0]), message) {
+		t.Fatal("full copy was truncated")
+	}
+}

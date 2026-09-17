@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"lcroom/internal/appfs"
 	"lcroom/internal/scanner"
@@ -195,6 +197,53 @@ func recoveryNeeded(ctx context.Context, path string) (bool, error) {
 	return found, err
 }
 
+// WorktreeConsumerScanCanceledError means cancellation stopped read-only consumer
+// inspection before recovery could relocate or remove the checkout.
+type WorktreeConsumerScanCanceledError struct{}
+
+func (*WorktreeConsumerScanCanceledError) Error() string {
+	return "cleanup canceled while checking external consumers; checkout left untouched"
+}
+
+func (*WorktreeConsumerScanCanceledError) Unwrap() error { return context.Canceled }
+
+// Resolve only roots and actual references, never every ordinary file visited.
+func recoveryConsumerPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(path)
+}
+
+func recoveryConsumerRoots(roots []string) []string {
+	unique := make(map[string]bool, len(roots))
+	for _, root := range roots {
+		// Keep the leaf link itself for consumer detection as well as its
+		// resolved directory for traversal. WalkDir does not follow symlinks.
+		unique[filepath.Join(recoveryConsumerPath(filepath.Dir(root)), filepath.Base(root))] = true
+		unique[recoveryConsumerPath(root)] = true
+	}
+	ordered := make([]string, 0, len(unique))
+	for root := range unique {
+		ordered = append(ordered, root)
+	}
+	sort.Strings(ordered)
+	result := make([]string, 0, len(ordered))
+	for _, root := range ordered {
+		covered := false
+		for _, parent := range result {
+			if removalPathWithin(root, parent) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			result = append(result, root)
+		}
+	}
+	return result
+}
+
 // Inspect known external consumers over the repository family and configured
 // project roots. Unknown repositories outside this scope cannot be discovered
 // by Git (alternates have no reverse index).
@@ -209,13 +258,33 @@ func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error
 			roots = append(roots, p.Path)
 		}
 	}
+	return inspectRecoveryConsumers(ctx, path, s.recoveryBase(), roots)
+}
+
+func inspectRecoveryConsumers(ctx context.Context, path, recoveryBase string, roots []string) error {
+	// An incomplete safety check blocks removal, but must not occupy the entire
+	// cleanup job's thirty-minute budget on an unrelated repository tree.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return &WorktreeConsumerScanCanceledError{}
+		}
+		return err
+	}
+	path = recoveryConsumerPath(path)
+	recoveryBase = recoveryConsumerPath(recoveryBase)
 	var problems []error
-	seen := map[string]bool{}
-	for _, root := range roots {
-		if seen[root] {
+	for _, root := range recoveryConsumerRoots(roots) {
+		if root == path || removalPathWithin(root, path) || root == recoveryBase || removalPathWithin(root, recoveryBase) {
 			continue
 		}
-		seen[root] = true
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) && len(problems) == 0 {
+				return &WorktreeConsumerScanCanceledError{}
+			}
+			return errors.Join(append(problems, fmt.Errorf("external consumer inspection incomplete at %s: %w", root, err))...)
+		}
 		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -223,7 +292,7 @@ func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if samePath(p, path) || samePath(p, s.recoveryBase()) {
+			if p == path || p == recoveryBase {
 				if d.IsDir() {
 					return filepath.SkipDir
 				}
@@ -231,7 +300,7 @@ func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error
 			}
 			if d.Type()&os.ModeSymlink != 0 {
 				target, linkErr := filepath.EvalSymlinks(p)
-				if linkErr == nil && (samePath(target, path) || removalPathWithin(target, path)) {
+				if linkErr == nil && (target == path || removalPathWithin(target, path)) {
 					problems = append(problems, fmt.Errorf("external symbolic-link consumer %s points into removal tree: %s", p, target))
 				}
 				return nil
@@ -257,7 +326,7 @@ func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error
 				if resolved, err := filepath.EvalSymlinks(value); err == nil {
 					value = resolved
 				}
-				if samePath(value, path) || removalPathWithin(value, path) {
+				if value == path || removalPathWithin(value, path) {
 					problems = append(problems, fmt.Errorf("external Git metadata consumer %s depends on %s", p, value))
 				}
 				return nil
@@ -279,14 +348,20 @@ func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error
 				if resolved, err := filepath.EvalSymlinks(line); err == nil {
 					line = resolved
 				}
-				if samePath(line, path) || removalPathWithin(line, path) {
+				if line == path || removalPathWithin(line, path) {
 					problems = append(problems, fmt.Errorf("external object consumer %s borrows from %s", p, line))
 				}
 			}
 			return nil
 		})
 		if err != nil {
-			problems = append(problems, fmt.Errorf("external consumer inspection incomplete: %w", err))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				if errors.Is(ctxErr, context.Canceled) && len(problems) == 0 {
+					return &WorktreeConsumerScanCanceledError{}
+				}
+				return errors.Join(append(problems, fmt.Errorf("external consumer inspection incomplete at %s: %w", root, ctxErr))...)
+			}
+			problems = append(problems, fmt.Errorf("external consumer inspection incomplete at %s: %w", root, err))
 		}
 	}
 	return errors.Join(problems...)

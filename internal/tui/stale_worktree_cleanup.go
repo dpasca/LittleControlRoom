@@ -332,6 +332,14 @@ func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg
 		m.clearPendingGitSummary(expected.RootProjectPath)
 		dialog.Finalizing = false
 	}
+	var consumerScanCanceled *service.WorktreeConsumerScanCanceledError
+	if dialog.CancelRequested && errors.As(msg.result.Err, &consumerScanCanceled) {
+		msg.result.SkippedReason = consumerScanCanceled.Error()
+		if msg.result.Finalize.LinkedTodoMarkedDone || msg.result.Finalize.LinkedTodoAlreadyDone {
+			msg.result.SkippedReason += "; linked TODO is done"
+		}
+		msg.result.Err = nil
+	}
 	// Keep partial mutation failures visible; a cancellation before finalization
 	// has a separate skipped result from the revalidation handler.
 	dialog.Results = append(dialog.Results, msg.result)

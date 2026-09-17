@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,5 +200,74 @@ func TestRecoveryMissingManifestCannotFallThroughToDeletion(t *testing.T) {
 	}
 	if _, err := os.Stat(f.path); err != nil {
 		t.Fatal("source was removed")
+	}
+}
+
+func TestRecoveryConsumerScanDeduplicatesRootsAndResolvesAliases(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	consumer := filepath.Join(base, "consumer")
+	outside := t.TempDir()
+	for _, path := range []string{target, consumer} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestFile(t, filepath.Join(consumer, ".git"), "gitdir: ../target\n", 0600)
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(outside, "commondir"), target, 0600)
+	// Resolving the explicit symlink root must retain the external tree even
+	// though the link itself sits beneath the already-covered parent.
+	err := inspectRecoveryConsumers(context.Background(), target, filepath.Join(base, "recoveries"), []string{consumer, base, consumer, alias})
+	if err == nil || strings.Count(err.Error(), "external Git metadata consumer") != 2 {
+		t.Fatalf("expected two unique consumers, got %v", err)
+	}
+}
+
+func TestRecoveryConsumerScanCancellationAndDeadline(t *testing.T) {
+	base := t.TempDir()
+	for _, deadline := range []bool{false, true} {
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if deadline {
+			ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		} else {
+			ctx, cancel = context.WithCancel(context.Background())
+			cancel()
+		}
+		defer cancel()
+		err := inspectRecoveryConsumers(ctx, filepath.Join(base, "target"), filepath.Join(base, "recoveries"), []string{base, base + "-missing", base + "-also-missing"})
+		var canceled *WorktreeConsumerScanCanceledError
+		if deadline {
+			if !errors.Is(err, context.DeadlineExceeded) || errors.As(err, &canceled) {
+				t.Fatalf("deadline was treated as cancellation: %v", err)
+			}
+		} else if !errors.As(err, &canceled) || !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "\n") {
+			t.Fatalf("cancellation should be one typed result: %v", err)
+		}
+	}
+}
+
+func TestRecoveryConsumerScanKeepsInspectionFailures(t *testing.T) {
+	base := t.TempDir()
+	missing := filepath.Join(base, "missing")
+	err := inspectRecoveryConsumers(context.Background(), filepath.Join(base, "target"), filepath.Join(base, "recoveries"), []string{missing})
+	if err == nil || !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "inspection incomplete") {
+		t.Fatalf("missing root must block removal with path context: %v", err)
+	}
+}
+
+func TestRecoveryConsumerScanRetainsExternalRootSymlink(t *testing.T) {
+	target := t.TempDir()
+	external := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(target, external); err != nil {
+		t.Fatal(err)
+	}
+	err := inspectRecoveryConsumers(context.Background(), target, filepath.Join(t.TempDir(), "recoveries"), []string{external})
+	if err == nil || !strings.Contains(err.Error(), "external symbolic-link consumer") {
+		t.Fatalf("resolving a root hid an external reference: %v", err)
 	}
 }

@@ -151,6 +151,7 @@ type Model struct {
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
 	errorLogSelected                    int
+	errorLogDetailOffset                int
 	errorLogEntries                     []errorLogEntry
 	projectFilter                       string
 	projectFilterDialog                 *projectFilterDialogState

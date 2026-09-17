@@ -522,3 +522,26 @@ func TestStaleWorktreeCleanupCanceledFinalizeDoesNotStart(t *testing.T) {
 		t.Fatalf("canceled finalization reached dependencies: %#v", msg)
 	}
 }
+
+func TestStaleWorktreeCleanupConsumerScanCancellationIsSkipped(t *testing.T) {
+	candidate := staleWorktreeCleanupTestCandidate("/tmp/demo--canceled", "canceled", time.Now())
+	m := Model{staleWorktreeCleanup: &staleWorktreeCleanupDialogState{
+		Removing: true, Finalizing: true, CancelRequested: true, Queue: []service.StaleWorktreeCleanupCandidate{candidate},
+	}}
+	m.resetStaleWorktreeCleanupContext()
+	updated, _ := m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{
+		ctx: m.staleWorktreeCleanup.Context,
+		result: staleWorktreeCleanupResult{Candidate: candidate, ClosedSession: true,
+			Finalize: service.FinalizeMergedWorktreeResult{LinkedTodoMarkedDone: true},
+			Err:      fmt.Errorf("cleanup blocked: %w", &service.WorktreeConsumerScanCanceledError{}),
+		},
+	})
+	m = updated.(Model)
+	result := m.staleWorktreeCleanup.Results[0]
+	if result.Err != nil || !strings.Contains(result.SkippedReason, "checkout left untouched") || !strings.Contains(result.SkippedReason, "TODO is done") || !result.ClosedSession {
+		t.Fatalf("incorrect cancellation result: %#v", result)
+	}
+	if len(m.errorLogEntries) != 0 || !m.staleWorktreeCleanup.Finished {
+		t.Fatal("read-only cancellation logged as failure")
+	}
+}
