@@ -17,6 +17,7 @@ import (
 
 type externalControlProposalLoadedMsg struct {
 	operation control.Operation
+	automatic bool
 	err       error
 }
 
@@ -36,9 +37,11 @@ type externalControlCancellationRecordedMsg struct {
 }
 
 type externalControlConfirmationState struct {
-	operation control.Operation
-	preview   string
-	reviewing bool
+	operation  control.Operation
+	preview    string
+	reviewing  bool
+	submitting bool
+	errorText  string
 }
 
 const externalControlReviewKey = "ctrl+g"
@@ -53,8 +56,8 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 		if svc == nil || svc.Store() == nil {
 			return externalControlProposalLoadedMsg{err: errors.New("service store unavailable")}
 		}
-		operation, err := svc.Store().GetControlOperation(parent, operationID)
-		return externalControlProposalLoadedMsg{operation: operation, err: err}
+		operation, automatic, err := svc.Store().ConfirmProjectCollaboration(parent, operationID)
+		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, err: err}
 	}
 }
 
@@ -63,6 +66,12 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		m.appendBackgroundErrorLogEntry("Agent control proposal failed", msg.err, "")
 		m.status = "Agent control proposal failed: " + msg.err.Error()
 		return m, nil
+	}
+	if msg.automatic {
+		m.status = "Delivering approved project collaboration message"
+		return m, func() tea.Msg {
+			return bossui.ControlInvocationConfirmedMsg{Invocation: msg.operation.Invocation, OperationRecorded: true}
+		}
 	}
 	if msg.operation.Status != control.OperationWaitingForConfirmation {
 		switch msg.operation.Status {
@@ -131,8 +140,20 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 	if !m.externalControlReviewActive() {
 		return m, nil
 	}
+	if m.externalControlConfirmation.submitting {
+		return m, nil
+	}
 	invocation := m.externalControlConfirmation.operation.Invocation
 	switch msg.String() {
+	case "a", "A":
+		if _, ok := control.CollaborationForOperation(m.externalControlConfirmation.operation); !ok {
+			return m, nil
+		}
+		state := *m.externalControlConfirmation
+		state.submitting = true
+		state.errorText = ""
+		m.externalControlConfirmation = &state
+		return m, m.approveProjectCollaborationCmd(state.operation.ID)
 	case "enter":
 		m.externalControlConfirmation = nil
 		m.status = bossui.ControlProposalSubmittingStatus(invocation)
@@ -164,6 +185,9 @@ func (m Model) renderExternalControlConfirmationOverlay(body string, bodyW, body
 		bodyW,
 		bodyH,
 	)
+	if _, ok := control.CollaborationForOperation(confirmation.operation); ok {
+		panel, err = bossui.RenderCollaborationConfirmationDialog(confirmation.operation.Invocation, confirmation.operation.ProjectPath, confirmation.submitting, confirmation.errorText, bodyW, bodyH)
+	}
 	if err != nil {
 		return body
 	}
@@ -184,7 +208,7 @@ func (m Model) retryExternalControlProposalCmd(operation control.Operation) tea.
 		case <-parent.Done():
 			return nil
 		case <-timer.C:
-			return externalControlProposalLoadedMsg{operation: operation}
+			return m.loadExternalControlProposalCmd(operation.ID)()
 		}
 	}
 }

@@ -674,7 +674,7 @@ func lcrControlToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "propose_control_operation",
-				Description: "Propose one described LCR capability for explicit operator confirmation. This records but never directly executes the action; stop the turn after success.",
+				Description: "Propose one described LCR capability. Approved project collaboration delivers exact-session engineer messages automatically. Follow automatic_delivery and requires_new_user_turn in the result: continue authorized work when automatic, otherwise stop for confirmation. Queued is not delivered.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

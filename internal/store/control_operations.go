@@ -150,23 +150,45 @@ func (s *Store) ClaimNextControlOperation(ctx context.Context) (control.Operatio
 		return control.Operation{}, false, err
 	}
 	defer tx.Rollback()
+	// Read the queue off the UI thread. Trusted messages must be able to pass
+	// an unrelated pending manual confirmation.
+	rows, err := tx.QueryContext(ctx, controlOperationSelect+` WHERE status = ? ORDER BY created_at, id`, string(control.OperationProposed))
+	if err != nil {
+		return control.Operation{}, false, err
+	}
+	var candidates []control.Operation
+	for rows.Next() {
+		op, scanErr := scanControlOperation(rows)
+		if scanErr != nil {
+			rows.Close()
+			return control.Operation{}, false, scanErr
+		}
+		candidates = append(candidates, op)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return control.Operation{}, false, err
+	}
+	var waiting bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM control_operations WHERE status = ?)`, string(control.OperationWaitingForConfirmation)).Scan(&waiting); err != nil {
+		return control.Operation{}, false, err
+	}
 	var id string
-	err = tx.QueryRowContext(ctx, `
-		SELECT id
-		FROM control_operations
-		WHERE status = ?
-		  AND NOT EXISTS (
-			SELECT 1 FROM control_operations WHERE status = ?
-		  )
-		ORDER BY created_at ASC, id ASC
-		LIMIT 1
-	`, string(control.OperationProposed), string(control.OperationWaitingForConfirmation)).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
+	for _, candidate := range candidates {
+		allowed, checkErr := collaborationAllowed(ctx, tx, candidate)
+		if checkErr != nil {
+			return control.Operation{}, false, checkErr
+		}
+		if allowed || !waiting {
+			id = candidate.ID
+			break
+		}
+	}
+	if id == "" {
 		return control.Operation{}, false, nil
 	}
-	if err != nil {
-		return control.Operation{}, false, fmt.Errorf("select proposed control operation: %w", err)
-	}
+
 	now := time.Now()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE control_operations
@@ -233,7 +255,9 @@ func (s *Store) UpdateControlOperationStatus(ctx context.Context, id string, sta
 	completedAt := current.CompletedAt
 	if status == control.OperationRunning {
 		confirmed = true
-		confirmationBy = "operator"
+		if confirmationBy == "" {
+			confirmationBy = "operator"
+		}
 		if startedAt.IsZero() {
 			startedAt = now
 		}

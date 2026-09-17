@@ -64,6 +64,14 @@ func (m Model) renderDetailViewport(width, height int) string {
 }
 
 func (m Model) View() string {
+	body := m.view()
+	if m.projectCollaborationDialog != nil {
+		return m.renderProjectCollaborations(body, m.width, m.height)
+	}
+	return body
+}
+
+func (m Model) view() string {
 	// Rendering only consumes snapshots already delivered to the model. Looking
 	// up live sessions here makes every Bubble Tea redraw contend with session
 	// workers, even when the user is only moving the list selection.

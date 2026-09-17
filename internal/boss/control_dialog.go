@@ -3,6 +3,7 @@ package boss
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"lcroom/internal/control"
@@ -25,6 +26,41 @@ func RenderControlConfirmationDialog(inv control.Invocation, preview string, bod
 		},
 	}
 	return m.renderControlConfirmationDialog(bodyW, bodyH), nil
+}
+
+// RenderCollaborationConfirmationDialog keeps the persistent choice visible
+// above the prompt, including when the prompt must be clipped on short screens.
+func RenderCollaborationConfirmationDialog(inv control.Invocation, origin string, busy bool, errorText string, bodyW, bodyH int) (string, error) {
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return "", err
+	}
+	input, err := engineerSendPromptInputFromInvocation(normalized)
+	if err != nil {
+		return "", err
+	}
+	panelW := minInt(bodyW-4, 88)
+	width := maxInt(28, panelW-4)
+	actions := "Enter: send once   A: always allow this pair   Esc: cancel"
+	if busy {
+		actions = "Saving collaboration approval..."
+	}
+	lines := []string{
+		renderBossControlDetail("From", filepath.Base(origin)+" ("+origin+")", width),
+		renderBossControlDetail("To", filepath.Base(input.ProjectPath)+" ("+input.ProjectPath+")", width),
+		fitLine("Always allow: messages in both directions, including future sessions.", width),
+		fitLine("Agents may continue authorized work. Other approvals still apply.", width),
+		fitLine("Manage or revoke with /collab in either project.", width),
+		"", fitLine(actions, width),
+	}
+	if errorText != "" {
+		lines = append(lines, fitLine(errorText, width))
+	}
+	lines = append(lines, "", renderBossControlDetail("Session", input.Provider.Label()+" / "+input.TargetSessionID, width),
+		bossControlSectionStyle.Render("Prompt"), renderBossControlPromptBox(input.Prompt, width))
+	content := strings.Join(lines, "\n")
+	panelH := minInt(countBlockLines(content)+4, maxInt(8, bodyH-2))
+	return renderBossControlPanel("Project Collaboration", content, panelW, panelH), nil
 }
 
 func (m Model) renderControlConfirmationOverlay(body string, bodyW, bodyH int) string {

@@ -114,7 +114,7 @@ When the user asks you to tell, ask, hand off to, continue, trigger, or steer an
 3. Propose ` + "`engineer.send_prompt`" + ` with ` + "`session_mode: \"resume_or_new\"`" + `. For a known target, set ` + "`target_session_id`" + ` to the inspected id and set the matching explicit ` + "`provider`" + `. Keep ` + "`reveal`" + ` false unless the user asks to open the target pane.
 4. LCR persists the message before attempting delivery. An idle exact target is resumed and receives a new turn. An active Codex target is steered when its live state permits it; active OpenCode, Claude Code, and LCAgent targets stay queued until idle. A stale target fails instead of silently delivering to a replacement session.
 
-A handoff document can carry detailed context, but it is not the delivery mechanism. Send a concise executable message that names the document or other evidence the receiving engineer should use. The normal proposal confirmation and stop-turn rules below still apply.
+A handoff document can carry detailed context, but it is not the delivery mechanism. Send a concise executable message that names the document or other evidence the receiving engineer should use. Follow the proposal result and the conditional confirmation rules below. With approved project collaboration, coordinate and continue already-authorized work without inventing new approval checkpoints. Collaboration does not expand task scope or override an explicit stop. Do not send acknowledgment-only replies that create endless message loops.
 
 ## Progressive LCR control discovery
 
@@ -123,8 +123,8 @@ For an LCR action beyond the direct runtime and repository-scoped TODO tools:
 1. Call ` + "`list_control_capabilities`" + `, optionally with one exact domain.
 2. Select one capability and call ` + "`describe_control_capability`" + ` to load its exact schema and confirmation policy.
 3. Call ` + "`propose_control_operation`" + ` with arguments matching that schema. Supply a stable ` + "`request_id`" + ` for exact retries.
-4. A successful proposal does not mean the action ran. It is waiting for explicit operator confirmation in Little Control Room. Stop the turn, tell the user what needs confirmation, and do not poll.
-5. On a later user turn, call ` + "`get_control_operation`" + ` with the returned operation id to read the confirmed result.
+4. A successful proposal does not mean the action ran. When automatic_delivery is true, the project pair is already approved: do not ask for confirmation; continue independent authorized work. When requires_new_user_turn is true, stop the turn, tell the user what needs confirmation, and do not poll. Other control capabilities still require confirmation.
+5. For automatic delivery, or on a later user turn after confirmation, call ` + "`get_control_operation`" + ` with the returned operation id to read the confirmed result.
 
 Never claim that a proposed action completed until ` + "`get_control_operation`" + ` reports a terminal result. Do not bypass this confirmation path with shell commands, direct database edits, or another tool.
 

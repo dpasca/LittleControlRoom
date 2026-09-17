@@ -109,3 +109,45 @@ func mustJSON(t *testing.T, value any) string {
 	}
 	return string(data)
 }
+
+func TestApprovedCollaborationReportDoesNotAskAgain(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "lcr.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	origin, target := t.TempDir(), t.TempDir()
+	executor, err := NewExecutor(Options{Store: st, OriginProjectPath: origin, Scope: control.AuthorityScopePortfolio, Source: "codex", Provider: "codex", SessionKey: "sender"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(control.EngineerSendPromptInput{ProjectPath: target, Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew, TargetSessionID: "target", Prompt: "Review and continue the authorized task"})
+	first, err := executor.Propose(ctx, string(control.CapabilityEngineerSendPrompt), args, "first")
+	if err != nil || first["requires_new_user_turn"] != true {
+		t.Fatal(first, err)
+	}
+	op := first["operation"].(control.Operation)
+	if _, _, err := st.ClaimNextControlOperation(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApproveProjectCollaboration(ctx, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := executor.Propose(ctx, string(control.CapabilityEngineerSendPrompt), args, "next")
+	if err != nil || next["automatic_delivery"] != true || next["requires_new_user_turn"] != false || next["operator_confirmation"] != false {
+		t.Fatal(next, err)
+	}
+	nextOp := next["operation"].(control.Operation)
+	if nextOp.Confirmed || nextOp.Status != control.OperationProposed {
+		t.Fatal("proposal falsely claimed delivery", nextOp)
+	}
+	pairs, _ := st.ListProjectCollaborations(ctx, origin)
+	if err := st.RevokeProjectCollaboration(ctx, pairs[0]); err != nil {
+		t.Fatal(err)
+	}
+	report, err := executor.Get(ctx, nextOp.ID)
+	if err != nil || report["requires_new_user_turn"] != true {
+		t.Fatal("revoked proposal does not ask", report, err)
+	}
+}

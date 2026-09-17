@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const ConfirmationContract = "Every available control capability is proposed first and executed only after explicit operator confirmation in Little Control Room."
+const ConfirmationContract = "Every available control capability is proposed first. Execution requires operator confirmation unless an existing project-pair collaboration grant covers an exact-session engineer message. Other capabilities always require confirmation. Follow the proposal result: automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping."
 
 // ListReport returns the transport-neutral progressive control catalog. MCP and
 // in-process agent hosts should expose this result rather than duplicating the
@@ -40,8 +40,9 @@ func DescribeReport(nameRaw string, authority AuthorityScope, proposalTool strin
 		return nil, fmt.Errorf("control capability %q requires %s scope; this agent has %s scope", capability.Name, capability.Scope, NormalizeAuthorityScope(string(authority)))
 	}
 	return map[string]any{
-		"success":    true,
-		"capability": capability,
+		"success":               true,
+		"capability":            capability,
+		"confirmation_contract": ConfirmationContract,
 		"proposal": map[string]any{
 			"tool": strings.TrimSpace(proposalTool),
 			"arguments": map[string]any{

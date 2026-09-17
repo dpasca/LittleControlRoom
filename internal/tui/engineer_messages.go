@@ -88,11 +88,21 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 		State:                  control.EngineerMessageQueued,
 	}
 	return func() tea.Msg {
+		message := message // Keep repeat command execution/idempotent retries stable.
 		if svc == nil || svc.Store() == nil {
 			return engineerMessageQueuedMsg{err: errors.New("service store unavailable for durable engineer messaging")}
 		}
 		ctx, cancel := context.WithTimeout(parent, engineerMessageStoreTimeout)
 		defer cancel()
+		if control.IsExternalOperationID(message.OperationID) {
+			op, err := svc.Store().GetControlOperation(ctx, message.OperationID)
+			if err != nil {
+				return engineerMessageQueuedMsg{message: message, err: err}
+			}
+			if op.ConfirmationBy == control.ConfirmationProjectCollaboration {
+				message.Prompt = "LCR project collaboration is approved between " + op.ProjectPath + " and " + message.ProjectPath + ". Coordinate through engineer.send_prompt using exact session targets. Continue already-authorized work without new approval checkpoints; respect task limits and explicit stops. Do not send acknowledgment-only replies.\n\n" + message.Prompt
+			}
+		}
 		created, err := svc.Store().CreateEngineerMessage(ctx, message)
 		return engineerMessageQueuedMsg{message: created, err: err}
 	}

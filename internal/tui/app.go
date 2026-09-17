@@ -147,6 +147,7 @@ type Model struct {
 	helpChatModelActive                 bool
 	helpChatModel                       bossui.Model
 	externalControlConfirmation         *externalControlConfirmationState
+	projectCollaborationDialog          *projectCollaborationDialog
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
 	errorLogSelected                    int
@@ -1503,6 +1504,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(projectCollaborationApprovedMsg); ok {
+		return m.applyProjectCollaborationApproved(msg)
+	}
+	if msg, ok := msg.(projectCollaborationsLoadedMsg); ok {
+		if m.projectCollaborationDialog != nil && m.projectCollaborationDialog.project == msg.project {
+			d := *m.projectCollaborationDialog
+			d.busy = false
+			d.errorText = ""
+			if msg.err != nil {
+				d.errorText = "Collaboration settings failed: " + msg.err.Error()
+			} else {
+				d.pairs = msg.pairs
+			}
+			d.selected = min(d.selected, max(0, len(d.pairs)-1))
+			m.projectCollaborationDialog = &d
+		}
+		return m, nil
+	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.projectCollaborationDialog != nil {
+		return m.updateProjectCollaborations(key)
+	}
+	if _, ok := msg.(tea.MouseMsg); ok && m.projectCollaborationDialog != nil {
+		return m, nil
+	}
 	if _, ok := msg.(bossui.ExitMsg); ok {
 		m.closeHelpChatMode("Chat hidden")
 		return m, nil

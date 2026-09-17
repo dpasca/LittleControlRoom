@@ -330,6 +330,12 @@ func (s *Store) initSchema(ctx context.Context) error {
 			UNIQUE(run_id, position)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_boss_goal_trace_entries_run_position ON boss_goal_trace_entries(run_id, position);`,
+		`CREATE TABLE IF NOT EXISTS project_collaborations (
+			project_a TEXT NOT NULL,
+			project_b TEXT NOT NULL,
+			approved_at INTEGER NOT NULL,
+			PRIMARY KEY(project_a, project_b)
+		);`,
 		`CREATE TABLE IF NOT EXISTS control_operations (
 			id TEXT PRIMARY KEY,
 			client_request_id TEXT NOT NULL DEFAULT '',

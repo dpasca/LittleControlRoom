@@ -530,6 +530,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.handleCategoryCommand(inv)
 	case commands.KindSetup:
 		return m, m.openQuickSetupSettingsMode(true)
+	case commands.KindCollab:
+		return m, m.openProjectCollaborations(m.currentSelectedProjectPath())
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindSkills:

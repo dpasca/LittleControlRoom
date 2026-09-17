@@ -12,6 +12,7 @@ import (
 type Kind string
 
 const (
+	KindCollab          Kind = "collab"
 	KindChat            Kind = "chat"
 	KindAIStats         Kind = "ai-stats"
 	KindPerf            Kind = "perf"
@@ -174,6 +175,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
 	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
+	{Name: "collab", Usage: "/collab", Summary: "View or revoke trusted project collaboration"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Manage agent skills, MCP connections, and plugins"},
 	{Name: "integrations", Usage: "/integrations", Summary: "Manage agent skills, MCP connections, and plugins"},
@@ -518,6 +520,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /setup")
 		}
 		return Invocation{Kind: KindSetup, Canonical: "/setup"}, nil
+	case "collab":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /collab")
+		}
+		return Invocation{Kind: KindCollab, Canonical: "/collab"}, nil
 	case "settings":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /settings")
