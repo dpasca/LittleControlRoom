@@ -115,10 +115,10 @@ func (m Model) inspectOrphanedWorktreeCmd(projectPath string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiWorktreeRemoveTimeout)
+		ctx, cancel := m.actionContext(tuiWorktreeInspectTimeout)
 		defer cancel()
 		inspection, err := m.svc.InspectOrphanedWorktree(ctx, projectPath)
-		err = timeoutActionError(err, tuiWorktreeRemoveTimeout, "inspecting the orphaned worktree")
+		err = timeoutActionError(err, tuiWorktreeInspectTimeout, "inspecting the orphaned worktree")
 		return orphanedWorktreeInspectionMsg{
 			ProjectPath: projectPath,
 			Inspection:  inspection,

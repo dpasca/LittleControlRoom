@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	"lcroom/internal/events"
 	"lcroom/internal/scanner"
 	"lcroom/internal/worktreerecovery"
 )
@@ -258,14 +259,35 @@ func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error
 			roots = append(roots, p.Path)
 		}
 	}
-	return inspectRecoveryConsumers(ctx, path, s.recoveryBase(), roots)
+	return inspectRecoveryConsumersWithProgress(ctx, path, s.recoveryBase(), roots, func(current string, entries int64) {
+		s.publishWorktreeRemovalProgress(path, fmt.Sprintf("Checking external consumers: %d entries · %s", entries, current))
+	})
 }
 
 func inspectRecoveryConsumers(ctx context.Context, path, recoveryBase string, roots []string) error {
-	// An incomplete safety check blocks removal, but must not occupy the entire
-	// cleanup job's thirty-minute budget on an unrelated repository tree.
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
+	return inspectRecoveryConsumersWithProgress(ctx, path, recoveryBase, roots, nil)
+}
+
+func (s *Service) publishWorktreeRemovalProgress(path, detail string) {
+	if s.bus == nil {
+		return
+	}
+	s.bus.Publish(events.Event{Type: events.WorktreeRemovalProgress, At: time.Now(), ProjectPath: path, Payload: map[string]string{"detail": detail}})
+}
+
+func inspectRecoveryConsumersWithProgress(ctx context.Context, path, recoveryBase string, roots []string, progress func(string, int64)) error {
+	// The caller owns the removal deadline, including consumer inspection and
+	// local recovery. Do not impose a shorter hidden deadline on large scans.
+	var entries int64
+	lastProgress := time.Time{}
+	report := func(current string) {
+		if progress == nil || time.Since(lastProgress) < time.Second {
+			return
+		}
+		progress(current, entries)
+		lastProgress = time.Now()
+	}
+
 	if err := ctx.Err(); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return &WorktreeConsumerScanCanceledError{}
@@ -285,9 +307,19 @@ func inspectRecoveryConsumers(ctx context.Context, path, recoveryBase string, ro
 			}
 			return errors.Join(append(problems, fmt.Errorf("external consumer inspection incomplete at %s: %w", root, err))...)
 		}
+		report(root)
 		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
+				// Persisted project presence can be stale, and caches can disappear
+				// during traversal. An absent path cannot be a live consumer.
+				if os.IsNotExist(err) {
+					return nil
+				}
 				return err
+			}
+			entries++
+			if d.IsDir() {
+				report(p)
 			}
 			if err := ctx.Err(); err != nil {
 				return err
@@ -310,6 +342,9 @@ func inspectRecoveryConsumers(ctx context.Context, path, recoveryBase string, ro
 			}
 			if d.Name() == ".git" || d.Name() == "commondir" {
 				data, err := os.ReadFile(p)
+				if os.IsNotExist(err) {
+					return nil
+				}
 				if err != nil {
 					return err
 				}
@@ -335,6 +370,9 @@ func inspectRecoveryConsumers(ctx context.Context, path, recoveryBase string, ro
 				return nil
 			}
 			data, err := os.ReadFile(p)
+			if os.IsNotExist(err) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -389,6 +427,7 @@ func (s *Service) recoverAndRemove(ctx context.Context, root, path string) (bool
 		}
 	}
 	if j == nil {
+		s.publishWorktreeRemovalProgress(path, "Inspecting files to preserve...")
 		needed, err := recoveryNeeded(ctx, path)
 		if err != nil {
 			return false, err
@@ -443,6 +482,7 @@ func (s *Service) recoverAndRemove(ctx context.Context, root, path string) (bool
 		if err := s.checkRecoveryConsumers(ctx, path); err != nil {
 			return fail(err)
 		}
+		s.publishWorktreeRemovalProgress(path, "Preparing and verifying local recovery...")
 		j, err = worktreerecovery.Prepare(ctx, s.recoveryBase(), root, path)
 		if err != nil {
 			return fail(err)
@@ -522,9 +562,11 @@ func (s *Service) recoverAndRemove(ctx context.Context, root, path string) (bool
 	if err := checkRemovalProcesses(ctx, j.Directory); err != nil {
 		return fail(err)
 	}
+	s.publishWorktreeRemovalProgress(path, "Preserving checkout in local recovery...")
 	if err := j.Relocate(ctx); err != nil {
 		return fail(err)
 	}
+	s.publishWorktreeRemovalProgress(path, "Removing preserved worktree registrations...")
 	for _, child := range children {
 		if err := removeAbsentRecoveryRegistration(ctx, child.Repository, child.Path, child.GitDir, j); err != nil {
 			return fail(err)

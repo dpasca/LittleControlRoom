@@ -924,3 +924,28 @@ func TestIgnoredPickerListsAndRestoresIgnoredPaths(t *testing.T) {
 		t.Fatalf("ignored projects after restore = %#v, want none", ignored)
 	}
 }
+
+func TestWorktreeRemovalProgressDoesNotReloadProjectsOrReviveFinishedAction(t *testing.T) {
+	path := "/tmp/repo--task"
+	candidate := service.StaleWorktreeCleanupCandidate{ProjectPath: path}
+	m := Model{staleWorktreeCleanup: &staleWorktreeCleanupDialogState{Removing: true, Finalizing: true, Queue: []service.StaleWorktreeCleanupCandidate{candidate}}}
+	m.setPendingGitSummary(path, worktreeRemovePendingSummary)
+	event := busMsg(events.Event{Type: events.WorktreeRemovalProgress, ProjectPath: path, Payload: map[string]string{"detail": "Checking external consumers: 123 entries"}})
+	updated, _ := m.Update(event)
+	m = updated.(Model)
+	if got := m.pendingGitSummary(path); got != event.Payload["detail"] {
+		t.Fatalf("progress = %q", got)
+	}
+	if m.staleWorktreeCleanup.ProgressMessage != event.Payload["detail"] {
+		t.Fatal("/clean did not receive progress")
+	}
+	if m.projectsReloadInFlight || m.scanInFlight {
+		t.Fatal("progress triggered a project reload")
+	}
+	m.clearPendingGitSummary(path)
+	updated, _ = m.Update(event)
+	m = updated.(Model)
+	if m.pendingGitSummary(path) != "" {
+		t.Fatal("late progress recreated the finished action")
+	}
+}

@@ -18,7 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const staleWorktreeCleanupTimeout = 30 * time.Minute
+const staleWorktreeCleanupTimeout = tuiWorktreeRemoveTimeout
 
 const staleWorktreeCleanupSuccessStatusPrefix = "Stale worktree cleanup finished successfully:"
 
@@ -26,6 +26,7 @@ type staleWorktreeCleanupDialogState struct {
 	RecoveryBusy    bool
 	PurgeConfirm    bool
 	RecoveryMessage string
+	ProgressMessage string
 	Context         context.Context
 	Cancel          context.CancelFunc
 	CancelRequested bool
@@ -226,6 +227,7 @@ func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupReval
 		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: msg.ctx, result: result})
 	}
 
+	dialog.ProgressMessage = ""
 	dialog.Finalizing = true
 	m.setPendingGitSummary(msg.candidate.ProjectPath, "Removing stale worktree...")
 	m.setPendingGitSummary(msg.candidate.RootProjectPath, "Removing stale worktree...")
@@ -331,6 +333,7 @@ func (m Model) applyStaleWorktreeCleanupRemove(msg staleWorktreeCleanupRemoveMsg
 		m.clearPendingGitSummary(expected.ProjectPath)
 		m.clearPendingGitSummary(expected.RootProjectPath)
 		dialog.Finalizing = false
+		dialog.ProgressMessage = ""
 	}
 	var consumerScanCanceled *service.WorktreeConsumerScanCanceledError
 	if dialog.CancelRequested && errors.As(msg.result.Err, &consumerScanCanceled) {
@@ -854,6 +857,9 @@ func renderStaleWorktreeCleanupProgress(dialog *staleWorktreeCleanupDialogState,
 		"",
 		detailField("Progress", fmt.Sprintf("%d removed · %d skipped · %d failed", removed, skipped, failed)),
 		"",
+	}
+	if dialog.ProgressMessage != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, dialog.ProgressMessage)...)
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
 		"Each checkout is rechecked for merge, cleanliness, assessment, activity, runtime, and engineer state. An idle managed session closes only after those checks pass.")...)

@@ -3178,11 +3178,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexResumeChoices(msg)
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
-		if m.helpChatMode {
+		if m.helpChatMode && msg.Type != events.WorktreeRemovalProgress {
 			m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 			cmds = append(cmds, m.helpChatModel.RefreshCmd())
 		}
 		switch msg.Type {
+		case events.WorktreeRemovalProgress:
+			detail := strings.TrimSpace(msg.Payload["detail"])
+			// Late events must not recreate a completed action's pending state.
+			if detail != "" && m.pendingGitSummary(msg.ProjectPath) != "" {
+				m.setPendingGitSummary(msg.ProjectPath, detail)
+				if normalizeProjectPath(msg.ProjectPath) == m.currentSelectedProjectPath() {
+					m.status = detail
+				}
+				if m.staleWorktreeCleanupFinalizing(msg.ProjectPath) {
+					m.staleWorktreeCleanup.ProgressMessage = detail
+				}
+			}
+			return m, batchCmds(cmds...)
 		case events.GitPullProgress:
 			elapsed, _ := time.ParseDuration(strings.TrimSpace(msg.Payload["elapsed"]))
 			if m.applyPendingPullProgress(msg.ProjectPath, msg.Payload["phase"], msg.Payload["detail"], msg.At, elapsed) {

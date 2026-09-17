@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/events"
+	"lcroom/internal/model"
 	"lcroom/internal/worktreerecovery"
 )
 
@@ -251,12 +253,84 @@ func TestRecoveryConsumerScanCancellationAndDeadline(t *testing.T) {
 	}
 }
 
-func TestRecoveryConsumerScanKeepsInspectionFailures(t *testing.T) {
+func TestRecoveryConsumerScanSkipsMissingRootsButKeepsLiveConsumers(t *testing.T) {
 	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	consumer := filepath.Join(base, "consumer")
 	missing := filepath.Join(base, "missing")
-	err := inspectRecoveryConsumers(context.Background(), filepath.Join(base, "target"), filepath.Join(base, "recoveries"), []string{missing})
-	if err == nil || !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "inspection incomplete") {
-		t.Fatalf("missing root must block removal with path context: %v", err)
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectRecoveryConsumers(context.Background(), target, filepath.Join(base, "recoveries"), []string{missing}); err != nil {
+		t.Fatalf("stale missing project blocked inspection: %v", err)
+	}
+	if err := os.Symlink(target, consumer); err != nil {
+		t.Fatal(err)
+	}
+	err := inspectRecoveryConsumers(context.Background(), target, filepath.Join(base, "recoveries"), []string{missing, consumer})
+	if err == nil || !strings.Contains(err.Error(), "external symbolic-link consumer") || strings.Contains(err.Error(), "inspection incomplete") {
+		t.Fatalf("expected only the live consumer blocker: %v", err)
+	}
+}
+
+func TestRecoveryConsumerScanKeepsPermissionFailures(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read mode-000 directories")
+	}
+	base := t.TempDir()
+	blocked := filepath.Join(base, "blocked")
+	if err := os.Mkdir(blocked, 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(blocked, 0755)
+	err := inspectRecoveryConsumers(context.Background(), filepath.Join(base, "target"), filepath.Join(base, "recoveries"), []string{blocked})
+	if err == nil || !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "inspection incomplete") {
+		t.Fatalf("unreadable existing directory must still block removal: %v", err)
+	}
+}
+
+func TestRecoveryConsumerScanCancellationDuringProgressStopsRemainingRoots(t *testing.T) {
+	base := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reports := 0
+	err := inspectRecoveryConsumersWithProgress(ctx, filepath.Join(base, "target"), filepath.Join(base, "recoveries"), []string{base, t.TempDir()}, func(_ string, _ int64) {
+		reports++
+		cancel()
+	})
+	var canceled *WorktreeConsumerScanCanceledError
+	if !errors.As(err, &canceled) || reports != 1 || strings.Contains(err.Error(), "\n") {
+		t.Fatalf("cancellation did not stop the scan: reports=%d err=%v", reports, err)
+	}
+}
+
+func TestRecoveryRemovalIgnoresStaleMissingProjectAndPublishesProgress(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	missing := filepath.Join(t.TempDir(), "no-longer-present")
+	if err := f.st.UpsertProjectState(context.Background(), model.ProjectState{Path: missing, Name: "stale", PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	stream, unsubscribe := f.svc.bus.Subscribe(64)
+	defer unsubscribe()
+	if err := f.svc.RemoveWorktree(context.Background(), f.path, false); err != nil {
+		t.Fatalf("stale unrelated project blocked removal: %v", err)
+	}
+	if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
+		t.Fatalf("checkout still present: %v", err)
+	}
+	recovery, err := f.svc.ReviewWorktreeRecovery(context.Background(), f.path)
+	if err != nil || recovery == nil || !recovery.Verified {
+		t.Fatalf("ignored files not preserved: %#v %v", recovery, err)
+	}
+	var details []string
+	for len(stream) > 0 {
+		event := <-stream
+		if event.Type == events.WorktreeRemovalProgress && event.ProjectPath == f.path {
+			details = append(details, event.Payload["detail"])
+		}
+	}
+	if text := strings.Join(details, "\n"); !strings.Contains(text, "Checking external consumers") || !strings.Contains(text, "Preparing and verifying local recovery") || !strings.Contains(text, "Removing preserved worktree registrations") {
+		t.Fatalf("missing removal progress: %v", details)
 	}
 }
 

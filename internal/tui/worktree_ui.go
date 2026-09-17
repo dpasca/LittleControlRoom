@@ -47,8 +47,11 @@ const (
 	worktreeOrphanCleanupSummary      = "Verifying and clearing orphaned worktree..."
 	worktreeFinalizeRemoveSummary     = "Completing linked TODO and removing worktree..."
 	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
-	tuiWorktreeRemoveTimeout          = 20 * time.Second
-	tuiWorktreeFinalizeTimeout        = tuiQuickActionTimeout + tuiWorktreeRemoveTimeout
+	// Removal may inventory and verify large local recoveries. All removal
+	// entry points need the same budget as /clean, including TODO finalization.
+	tuiWorktreeRemoveTimeout   = 30 * time.Minute
+	tuiWorktreeFinalizeTimeout = tuiWorktreeRemoveTimeout
+	tuiWorktreeInspectTimeout  = 20 * time.Second
 )
 
 type projectListRow struct {
