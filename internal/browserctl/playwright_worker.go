@@ -150,15 +150,22 @@ func (s *PlaywrightBrowserSession) Close() error {
 	return nil
 }
 
-func (s *PlaywrightBrowserSession) call(ctx context.Context, method string, params map[string]any) (BrowserActionResult, error) {
+func (s *PlaywrightBrowserSession) call(ctx context.Context, method string, params map[string]any) (result BrowserActionResult, err error) {
 	if err := s.ensureStarted(ctx); err != nil {
 		return BrowserActionResult{}, err
+	}
+	if method == "screenshot" {
+		finish, beginErr := BeginManagedScreenshot(s.paths.DataDir, s.paths.SessionKey)
+		if beginErr != nil {
+			return BrowserActionResult{}, beginErr
+		}
+		defer func() { err = errors.Join(err, finish()) }()
 	}
 	id := strconv.FormatUint(atomic.AddUint64(&s.seq, 1), 10)
 	ch := make(chan playwrightWorkerResponse, 1)
 	s.mu.Lock()
 	s.respCh[id] = ch
-	err := json.NewEncoder(s.stdin).Encode(playwrightWorkerRequest{ID: id, Method: method, Params: params})
+	err = json.NewEncoder(s.stdin).Encode(playwrightWorkerRequest{ID: id, Method: method, Params: params})
 	if err == nil {
 		err = s.stdin.Flush()
 	}
