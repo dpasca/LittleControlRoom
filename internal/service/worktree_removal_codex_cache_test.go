@@ -117,13 +117,32 @@ func TestRemovalCodexCacheProtectsLocalWork(t *testing.T) {
 				exclude, _ := gitPath(context.Background(), f.root, "info/exclude")
 				writeTestFile(t, exclude, "", 0600)
 			}
-			if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err == nil {
-				t.Fatal("discarded local or unidentified work")
+			before, err := os.ReadFile(readme)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := os.Stat(filepath.Join(cache, ".git")); err != nil {
-				t.Fatalf("cache lost: %v", err)
+			reflog, _ := os.ReadFile(filepath.Join(cache, ".git", "logs", "HEAD"))
+			if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err != nil {
+				t.Fatal(err)
 			}
-			f.assertChildren(t, false)
+			recovery, err := f.svc.ReviewWorktreeRecovery(context.Background(), f.path)
+			if err != nil || recovery == nil || !recovery.Verified {
+				t.Fatalf("local data was not verifiably preserved: %#v %v", recovery, err)
+			}
+			rel, _ := filepath.Rel(f.path, cache)
+			saved := filepath.Join(recovery.Location, "tree", rel)
+			after, err := os.ReadFile(filepath.Join(saved, "README.md"))
+			if err != nil || string(before) != string(after) {
+				t.Fatalf("working data changed: %v", err)
+			}
+			savedLog, err := os.ReadFile(filepath.Join(saved, ".git", "logs", "HEAD"))
+			if err != nil || string(reflog) != string(savedLog) {
+				t.Fatalf("reflog changed: %v", err)
+			}
+			if _, err := os.Stat(cache); !os.IsNotExist(err) {
+				t.Fatalf("selected cache path remains: %v", err)
+			}
+			f.assertChildren(t, true)
 		})
 	}
 }
@@ -166,21 +185,23 @@ func TestRemovalWithEmptyNestedRepository(t *testing.T) {
 				}
 			}
 			_, err = f.svc.FinalizeMergedWorktree(context.Background(), f.path, FinalizeMergedWorktreeOptions{RemoveWorktree: true})
-			disposable := kind == "bare" || kind == "checkout"
-			if disposable {
-				if err != nil {
-					t.Fatal(err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recovery, err := f.svc.ReviewWorktreeRecovery(context.Background(), f.path)
+			if err != nil || recovery == nil || !recovery.Verified {
+				t.Fatalf("unborn repository not preserved: %#v %v", recovery, err)
+			}
+			rel, _ := filepath.Rel(f.path, cache)
+			saved := filepath.Join(recovery.Location, "tree", rel)
+			if kind == "incomplete object" {
+				data, err := os.ReadFile(filepath.Join(saved, ".git", "objects", "tmp_pack"))
+				if err != nil || string(data) != "unfinished data" {
+					t.Fatalf("opaque object data lost: %q %v", data, err)
 				}
-				if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
-					t.Fatalf("retained empty cache: %v", err)
-				}
-			} else {
-				if err == nil {
-					t.Fatal("discarded nonempty repository")
-				}
-				if _, err := os.Lstat(metadata); err != nil {
-					t.Fatalf("lost repository: %v", err)
-				}
+			}
+			if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
+				t.Fatalf("checkout remains: %v", err)
 			}
 		})
 	}

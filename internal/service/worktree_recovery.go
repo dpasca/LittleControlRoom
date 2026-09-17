@@ -1,0 +1,512 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"lcroom/internal/appfs"
+	"lcroom/internal/scanner"
+	"lcroom/internal/worktreerecovery"
+)
+
+type WorktreeRecovery struct {
+	ProjectPath   string
+	RootPath      string
+	Location      string
+	Phase         string
+	RetainedBytes int64
+	Verified      bool
+}
+
+func (s *Service) ListWorktreeRecoveries(ctx context.Context) ([]WorktreeRecovery, error) {
+	entries, err := os.ReadDir(s.recoveryBase())
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var results []WorktreeRecovery
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(s.recoveryBase(), entry.Name())
+		j, err := worktreerecovery.Load(dir)
+		if err != nil {
+			return nil, err
+		}
+		if j.Phase == "purged" {
+			continue
+		}
+		bytes, err := worktreerecovery.Storage(dir)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, WorktreeRecovery{ProjectPath: j.Original, RootPath: j.Root, Location: dir, Phase: j.Phase, RetainedBytes: bytes, Verified: !j.Verified.IsZero()})
+	}
+	return results, nil
+}
+
+func (s *Service) recoveryResumeCandidate(ctx context.Context, path string) (StaleWorktreeCleanupCandidate, bool, error) {
+	j, err := worktreerecovery.Load(worktreerecovery.Location(s.recoveryBase(), path))
+	if os.IsNotExist(err) {
+		return StaleWorktreeCleanupCandidate{}, false, nil
+	}
+	if err != nil {
+		return StaleWorktreeCleanupCandidate{}, false, err
+	}
+	if j.Phase != "relocating" && j.Phase != "relocated" && j.Phase != "discarding_duplicate" && j.Phase != "promoting" && j.Phase != "promoted" && j.Phase != "removed" {
+		return StaleWorktreeCleanupCandidate{}, false, nil
+	}
+	summary, err := s.store.GetProjectSummary(ctx, path, true)
+	if err != nil {
+		return StaleWorktreeCleanupCandidate{}, false, err
+	}
+	if summary.Pinned {
+		return StaleWorktreeCleanupCandidate{}, false, fmt.Errorf("worktree is pinned")
+	}
+	if j.Phase == "removed" && !summary.PresentOnDisk {
+		return StaleWorktreeCleanupCandidate{}, false, nil
+	}
+	if err := j.VerifyResume(ctx); err != nil {
+		return StaleWorktreeCleanupCandidate{}, false, err
+	}
+	return StaleWorktreeCleanupCandidate{ProjectPath: path, RootProjectPath: j.Root, ProjectName: filepath.Base(path), RecoveryResume: true}, true, nil
+}
+
+func recoveryPathKey(path string) string { return filepath.Base(worktreerecovery.Location("", path)) }
+
+func (s *Service) recoveryBase() string {
+	p := filepath.Join(s.cfg.DataDir, "worktree-recoveries")
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
+// ReviewWorktreeRecovery re-verifies on a worker, not the TUI render path.
+func (s *Service) ReviewWorktreeRecovery(ctx context.Context, path string) (*WorktreeRecovery, error) {
+	dir := worktreerecovery.Location(s.recoveryBase(), path)
+	j, err := worktreerecovery.Load(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	bytes, err := worktreerecovery.Storage(dir)
+	if err != nil {
+		return nil, err
+	}
+	r := &WorktreeRecovery{ProjectPath: j.Original, RootPath: j.Root, Location: dir, Phase: j.Phase, RetainedBytes: bytes}
+	if j.Phase == "purged" {
+		return r, nil
+	}
+	err = j.Verify(ctx)
+	r.Verified = err == nil
+	return r, err
+}
+
+func (s *Service) RestoreWorktreeRecovery(ctx context.Context, path, destination string) error {
+	unlock, err := worktreerecovery.Lock(s.recoveryBase(), path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	j, err := worktreerecovery.Load(worktreerecovery.Location(s.recoveryBase(), path))
+	if err != nil {
+		return err
+	}
+	return j.Restore(ctx, destination)
+}
+
+func (s *Service) PurgeWorktreeRecovery(ctx context.Context, path, confirmation string) error {
+	unlock, err := worktreerecovery.Lock(s.recoveryBase(), path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	j, err := worktreerecovery.Load(worktreerecovery.Location(s.recoveryBase(), path))
+	if err != nil {
+		return err
+	}
+	if err := checkRemovalProcesses(ctx, j.Directory); err != nil {
+		return err
+	}
+	return j.Purge(ctx, confirmation)
+}
+
+// recoveryNeeded inventories the entire removal tree instead of aborting at
+// the first dependency. All nested repositories use local preservation; there
+// is no credential/network prerequisite and no cache-name exemption.
+func recoveryNeeded(ctx context.Context, path string) (bool, error) {
+	found := false
+	err := filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if p == path {
+			return nil
+		}
+		if d.Name() == ".git" {
+			// The selected worktree's own pointer is expected. Nested pointer
+			// files also represent repositories with administrative history.
+			if filepath.Dir(p) != path {
+				found = true
+			}
+			if d.IsDir() {
+				found = true
+				return filepath.SkipDir
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				found = true
+			}
+			return nil
+		}
+		if d.IsDir() {
+			if _, err := os.Lstat(filepath.Join(p, "HEAD")); err == nil {
+				if _, err := os.Lstat(filepath.Join(p, "objects")); err == nil {
+					found = true
+					return filepath.SkipDir
+				}
+			}
+		}
+		return nil
+	})
+	if err == nil && !found {
+		ignored, gitErr := cloneGitOutput(ctx, path, "", "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+		if gitErr != nil {
+			return false, gitErr
+		}
+		found = ignored != ""
+	}
+	return found, err
+}
+
+// Inspect known external consumers over the repository family and configured
+// project roots. Unknown repositories outside this scope cannot be discovered
+// by Git (alternates have no reverse index).
+func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error {
+	roots := []string{filepath.Dir(path)}
+	projects, err := s.store.ListProjects(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, p := range projects {
+		if p.PresentOnDisk {
+			roots = append(roots, p.Path)
+		}
+	}
+	var problems []error
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if samePath(p, path) || samePath(p, s.recoveryBase()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				target, linkErr := filepath.EvalSymlinks(p)
+				if linkErr == nil && (samePath(target, path) || removalPathWithin(target, path)) {
+					problems = append(problems, fmt.Errorf("external symbolic-link consumer %s points into removal tree: %s", p, target))
+				}
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if d.Name() == ".git" || d.Name() == "commondir" {
+				data, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				value := strings.TrimSpace(string(data))
+				if d.Name() == ".git" {
+					if !strings.HasPrefix(value, "gitdir: ") {
+						return nil
+					}
+					value = strings.TrimPrefix(value, "gitdir: ")
+				}
+				if !filepath.IsAbs(value) {
+					value = filepath.Join(filepath.Dir(p), value)
+				}
+				if resolved, err := filepath.EvalSymlinks(value); err == nil {
+					value = resolved
+				}
+				if samePath(value, path) || removalPathWithin(value, path) {
+					problems = append(problems, fmt.Errorf("external Git metadata consumer %s depends on %s", p, value))
+				}
+				return nil
+			}
+			if d.Name() != "alternates" || filepath.Base(filepath.Dir(p)) != "info" {
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				if line == "" {
+					continue
+				}
+				if !filepath.IsAbs(line) {
+					line = filepath.Join(filepath.Dir(filepath.Dir(p)), line)
+				}
+				if resolved, err := filepath.EvalSymlinks(line); err == nil {
+					line = resolved
+				}
+				if samePath(line, path) || removalPathWithin(line, path) {
+					problems = append(problems, fmt.Errorf("external object consumer %s borrows from %s", p, line))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			problems = append(problems, fmt.Errorf("external consumer inspection incomplete: %w", err))
+		}
+	}
+	return errors.Join(problems...)
+}
+
+// recoverAndRemove is entered only after the normal primary/dirty-source and
+// process safeguards. Git removes exact registrations after atomic relocation;
+// it never gets a chance to recursively delete a newly recreated original path.
+func (s *Service) recoverAndRemove(ctx context.Context, root, path string) (bool, error) {
+	for p := s.recoveryBase(); p != filepath.Dir(p); p = filepath.Dir(p) {
+		if appfs.IsManagedInternalPath(p, []string{appfs.InternalWorkspaceRoot(appfs.DefaultDataDir())}) {
+			return true, fmt.Errorf("recovery storage must be outside temporary task workspaces")
+		}
+	}
+	directory := worktreerecovery.Location(s.recoveryBase(), path)
+	j, loadErr := worktreerecovery.Load(directory)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		return true, loadErr
+	}
+	if loadErr != nil {
+		if _, err := os.Lstat(directory); err == nil {
+			return true, fmt.Errorf("incomplete recovery journal at %s; source left untouched: %w", directory, loadErr)
+		} else if !os.IsNotExist(err) {
+			return true, err
+		}
+	}
+	if j == nil {
+		needed, err := recoveryNeeded(ctx, path)
+		if err != nil {
+			return false, err
+		}
+		if !needed {
+			return false, nil
+		}
+	}
+	unlock, err := worktreerecovery.Lock(s.recoveryBase(), path)
+	if err != nil {
+		return true, err
+	}
+	defer unlock()
+	fail := func(err error) (bool, error) {
+		return true, fmt.Errorf("worktree cleanup blocked; recovery %s: %w", directory, err)
+	}
+	if _, err := os.Lstat(path); err == nil {
+		admin, err := cloneGitOutput(ctx, path, "", "rev-parse", "--absolute-git-dir")
+		if err != nil {
+			return fail(err)
+		}
+		parent, err := gitPath(ctx, root, "worktrees")
+		if err != nil {
+			return fail(err)
+		}
+		if !samePath(filepath.Dir(admin), parent) {
+			return fail(fmt.Errorf("selected checkout does not own an administrative directory in the expected repository"))
+		}
+		backlink, err := os.ReadFile(filepath.Join(admin, "gitdir"))
+		if err != nil {
+			return fail(err)
+		}
+		if !samePath(strings.TrimSpace(string(backlink)), filepath.Join(path, ".git")) {
+			return fail(fmt.Errorf("worktree pointer belongs to another checkout; selected directory left untouched"))
+		}
+	} else if !os.IsNotExist(err) {
+		return fail(err)
+	}
+	if j == nil || j.Verified.IsZero() {
+		if err := checkRemovalProcesses(ctx, path); err != nil {
+			return fail(err)
+		}
+		registrations, err := scanner.ListGitWorktrees(ctx, root)
+		if err != nil {
+			return fail(err)
+		}
+		for _, r := range registrations {
+			if samePath(r.Path, path) && (r.IsMain || r.LockedReason != "") {
+				return fail(fmt.Errorf("primary or locked worktree: %s", path))
+			}
+		}
+		if err := s.checkRecoveryConsumers(ctx, path); err != nil {
+			return fail(err)
+		}
+		j, err = worktreerecovery.Prepare(ctx, s.recoveryBase(), root, path)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	receipt := worktreeRemovalPlan{RootPath: root, Path: path, Commit: j.Repositories[0].Head}
+	for _, repo := range j.Repositories {
+		receipt.Clones = append(receipt.Clones, removalClone{Path: repo.Path, Head: repo.Head, Refs: repo.Refs})
+	}
+	if err := s.saveRemovalReceipt(ctx, receipt); err != nil {
+		return fail(err)
+	}
+	// The manifest resolves filesystem aliases. Ownership checks must compare
+	// child paths in that same namespace (not /var against /private/var).
+	root, path = j.Root, j.Original
+	// Capture owned submodule registrations before relocation. Foreign linked
+	// checkouts still require review and are never silently unregistered.
+	var children []ownedRemovalChild
+	var childProblems []error
+	tree, err := readResidualGitTree(ctx, root, j.Repositories[0].Head)
+	if err != nil {
+		return fail(err)
+	}
+	for _, r := range j.Repositories[1:] {
+		if samePath(r.GitDir, r.Common) {
+			continue
+		}
+		if j.Phase == "verified" || j.Phase == "relocating" {
+			rel, err := filepath.Rel(path, r.Path)
+			if err != nil {
+				childProblems = append(childProblems, err)
+				continue
+			}
+			configured, err := cloneGitOutput(ctx, r.Path, "", "config", "--file", filepath.Join(r.Common, "config"), "--get", "core.worktree")
+			var exit *exec.ExitError
+			if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
+				childProblems = append(childProblems, err)
+				continue
+			}
+			if configured != "" {
+				if !filepath.IsAbs(configured) {
+					configured = filepath.Join(r.Common, configured)
+				}
+				if !samePath(configured, filepath.Join(root, rel)) {
+					childProblems = append(childProblems, fmt.Errorf("invalid shared submodule core.worktree for %s; repair the primary submodule metadata before cleanup", r.Path))
+					continue
+				}
+			}
+			child, err := inspectOwnedRemovalChild(ctx, root, path, r.Path, tree)
+			if err != nil {
+				childProblems = append(childProblems, err)
+				continue
+			}
+			children = append(children, child)
+		} else {
+			rel, _ := filepath.Rel(path, r.Path)
+			if tree[filepath.ToSlash(rel)].Mode != "160000" {
+				return fail(fmt.Errorf("unrelated nested linked worktree %s", r.Path))
+			}
+			children = append(children, ownedRemovalChild{Path: r.Path, Repository: filepath.Join(root, rel), GitDir: r.GitDir})
+		}
+	}
+	if err := errors.Join(childProblems...); err != nil {
+		return fail(err)
+	}
+	plan := worktreeRemovalPlan{RootPath: root, Path: path, ResolvedPath: path, Children: children}
+	if j.Phase == "verified" || j.Phase == "relocating" {
+		if err := verifyRemovalChildRegistrations(ctx, plan, tree, false); err != nil {
+			return fail(err)
+		}
+	}
+	if _, err := os.Lstat(path); err == nil {
+		if err := checkRemovalProcesses(ctx, path); err != nil {
+			return fail(err)
+		}
+	}
+	if err := checkRemovalProcesses(ctx, j.Directory); err != nil {
+		return fail(err)
+	}
+	if err := j.Relocate(ctx); err != nil {
+		return fail(err)
+	}
+	for _, child := range children {
+		if err := removeAbsentRecoveryRegistration(ctx, child.Repository, child.Path, child.GitDir, j); err != nil {
+			return fail(err)
+		}
+	}
+	if err := removeAbsentRecoveryRegistration(ctx, root, path, j.Repositories[0].GitDir, j); err != nil {
+		return fail(err)
+	}
+	if err := verifyRemovalChildRegistrations(ctx, plan, tree, true); err != nil {
+		return fail(err)
+	}
+	if err := j.Complete(ctx); err != nil {
+		return fail(err)
+	}
+	return true, nil
+}
+
+func removeAbsentRecoveryRegistration(ctx context.Context, root, path, gitDir string, journal *worktreerecovery.Journal) error {
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return fmt.Errorf("path recreated after preservation: %s", path)
+	}
+	worktrees, err := scanner.ListGitWorktrees(ctx, root)
+	if err != nil {
+		return err
+	}
+	for _, w := range worktrees {
+		if samePath(w.Path, path) {
+			if w.IsMain || w.LockedReason != "" {
+				return fmt.Errorf("primary or locked worktree: %s", path)
+			}
+			common, err := gitPath(ctx, root, "worktrees")
+			if err != nil {
+				return err
+			}
+			if !samePath(filepath.Dir(gitDir), common) {
+				return fmt.Errorf("unexpected worktree administrative directory: %s", gitDir)
+			}
+			backlink, err := os.ReadFile(filepath.Join(gitDir, "gitdir"))
+			if err != nil {
+				return err
+			}
+			if !samePath(strings.TrimSpace(string(backlink)), filepath.Join(path, ".git")) {
+				return fmt.Errorf("worktree registration changed: %s", gitDir)
+			}
+			if err := journal.PreserveRegistration(ctx, gitDir); err != nil {
+				return err
+			}
+		}
+	}
+	worktrees, err = scanner.ListGitWorktrees(ctx, root)
+	if err != nil {
+		return err
+	}
+	for _, w := range worktrees {
+		if samePath(w.Path, path) {
+			return fmt.Errorf("registration still present: %s", path)
+		}
+	}
+	return nil
+}

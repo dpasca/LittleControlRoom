@@ -2874,6 +2874,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyWorktreeRestoreCandidates(msg)
 	case worktreeRestoreActionMsg:
 		return m.applyWorktreeRestoreAction(msg)
+	case staleRecoveryActionMsg:
+		return m.applyStaleRecoveryAction(msg)
 	case staleWorktreeCleanupAuditMsg:
 		return m.applyStaleWorktreeCleanupAudit(msg)
 	case staleWorktreeCleanupRevalidateMsg:

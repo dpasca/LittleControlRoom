@@ -1317,7 +1317,9 @@ func TestRemoveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
-	svc := New(config.Default(), st, events.NewBus(), nil)
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	svc := New(cfg, st, events.NewBus(), nil)
 	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
 		ParentPath: root,
 		Name:       "repo",
@@ -1347,6 +1349,13 @@ func TestRemoveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
 
 	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+	recovery, err := svc.ReviewWorktreeRecovery(ctx, result.WorktreePath)
+	if err != nil || recovery == nil || !recovery.Verified {
+		t.Fatalf("recovery lost across a parent path alias: %#v %v", recovery, err)
+	}
+	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+		t.Fatalf("retry through path alias: %v", err)
 	}
 	if _, err := os.Lstat(result.WorktreePath); !os.IsNotExist(err) {
 		t.Fatalf("worktree path still exists after safe residual cleanup: %v", err)
@@ -1628,6 +1637,7 @@ func TestRemoveWorktreeRetriesWithForceForInitializedSubmodules(t *testing.T) {
 	defer st.Close()
 
 	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
 	svc := New(cfg, st, events.NewBus(), nil)
 	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
 		ParentPath: root,
@@ -1665,7 +1675,8 @@ func TestRemoveWorktreeRetriesWithForceForInitializedSubmodules(t *testing.T) {
 		t.Fatalf("CreateTodoWorktree() error = %v", err)
 	}
 
-	runGit(t, result.WorktreePath, "git", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+	// CreateTodoWorktree already initializes this linked submodule. Running
+	// submodule update again can rewrite its shared core.worktree setting.
 
 	if err := gitWorktreeRemove(ctx, projectPath, result.WorktreePath, false); err == nil {
 		t.Fatalf("plain gitWorktreeRemove() unexpectedly succeeded for initialized submodule worktree")

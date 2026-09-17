@@ -65,6 +65,7 @@ func newRemovalFixture(t *testing.T, apps []string) assetResidueFixture {
 	}
 	t.Cleanup(func() { f.st.Close() })
 	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
 	cfg.IncludePaths = []string{parent}
 	f.svc = New(cfg, f.st, events.NewBus(), nil)
 	if _, err := f.svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{ParentPath: parent, Name: "repo"}); err != nil {
@@ -226,6 +227,16 @@ func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
 				writeTestFile(t, filepath.Join(f.path, "source.txt"), "untracked", 0600)
 			case "dirty parent":
 				writeTestFile(t, filepath.Join(f.path, "README.md"), "changed", 0600)
+			}
+			if kind == "unrelated repo" || kind == "bare repo" {
+				if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err != nil {
+					t.Fatal(err)
+				}
+				r, err := f.svc.ReviewWorktreeRecovery(context.Background(), f.path)
+				if err != nil || r == nil || !r.Verified {
+					t.Fatalf("nested data not preserved: %#v %v", r, err)
+				}
+				return
 			}
 			if kind != "untracked parent" && kind != "dirty parent" {
 				if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err == nil {
@@ -471,7 +482,7 @@ func TestRemovalClassifiesGitFilesByPointerContent(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), "no preserved parent gitlink") {
+			if err == nil || (!strings.Contains(err.Error(), "no preserved parent gitlink") && !strings.Contains(err.Error(), "Git rev-parse")) {
 				t.Fatalf("unrelated nested repository accepted: %v", err)
 			}
 			f.assertChildren(t, false)

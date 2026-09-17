@@ -100,7 +100,7 @@ func removalPathIdentity(path string) (os.FileInfo, error) {
 }
 
 func removalGitOutput(ctx context.Context, repo string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", repo}, args...)...).Output()
+	out, err := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "-C", repo}, args...)...).Output()
 	if err != nil {
 		return "", fmt.Errorf("inspect %s: git %s: %w", repo, strings.Join(args, " "), err)
 	}
