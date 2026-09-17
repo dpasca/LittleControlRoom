@@ -228,7 +228,7 @@ func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
 			case "dirty parent":
 				writeTestFile(t, filepath.Join(f.path, "README.md"), "changed", 0600)
 			}
-			if kind == "unrelated repo" || kind == "bare repo" {
+			if kind == "unrelated repo" || kind == "bare repo with objects" {
 				if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err != nil {
 					t.Fatal(err)
 				}
