@@ -95,9 +95,14 @@ LCR session parity:
   embedded transcript. Older artifacts without snapshots continue through a
   labeled summary fallback. It is still not a provider-native persistent model
   thread with branching or user-controlled compaction.
-- The model picker now offers curated coding choices for the configured
-  provider plus a custom-model escape hatch. It still does not discover provider
-  models or validate provider credentials.
+- The model picker fetches the configured provider's `/models` list on opening
+  and on Ctrl+R. Successful discovery determines availability and order; built-in
+  metadata supplies friendly names. Discovery failures show a warning alongside
+  curated fallback choices. Configured models remain selectable even if unlisted,
+  and typing an exact model ID provides a custom-model escape hatch. New provider
+  IDs do not require an application update; names, reasoning controls, and pricing
+  metadata may still need updates because model-list APIs do not supply all of them.
+  DeepSeek V4.1 Flash uses `deepseek-flash` (a rolling provider alias).
 - `web_search` is off by default. Exa-backed search needs an Exa API key;
   Google-backed search needs a Programmable Search API key and search engine
   ID; SearXNG-backed search needs a base URL; browser-backed search needs

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,53 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestSettingsLCAgentModelPickerRefreshesProviderList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Error("refresh lost the configured API key")
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-flash"},{"id":"future-release"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("DEEPSEEK_BASE_URL", server.URL)
+	m := Model{
+		settingsFields: newSettingsFields(config.EditableSettings{LCAgentProvider: "deepseek", DeepSeekAPIKey: "test-key"}),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepModel,
+			Provider:       "deepseek",
+			APIKeyProvider: "deepseek",
+			APIKeyInput:    newSettingsLCAgentModelPickerAPIKeyInput("deepseek", "test-key"),
+			FilterInput:    newSettingsLCAgentModelPickerFilterInput(),
+			Err:            "previous discovery failed",
+		},
+	}
+	next, cmd := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = next.(Model)
+	if cmd == nil || !m.settingsLCAgentModelPicker.Loading {
+		t.Fatal("refresh must schedule an asynchronous model-list request")
+	}
+	if _, duplicate := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyCtrlR}); duplicate != nil {
+		t.Fatal("refresh must ignore repeat activation while loading")
+	}
+	msg := cmd().(settingsLCAgentModelListMsg)
+	next, _ = m.applySettingsLCAgentModelListMsg(msg)
+	m = next.(Model)
+	if m.settingsLCAgentModelPicker.Loading || m.settingsLCAgentModelPicker.Err != "" || len(m.settingsLCAgentModelPicker.Models) != 2 {
+		t.Fatalf("refresh did not replace fallback state: %#v", m.settingsLCAgentModelPicker)
+	}
+	if view := ansi.Strip(m.renderSettingsLCAgentModelPickerContent(100, 30)); !strings.Contains(view, "Live provider model list") || !strings.Contains(view, "Ctrl+R") {
+		t.Fatalf("missing discovery status or refresh hint: %s", view)
+	}
+	// Unknown releases stay selectable through the normal picker flow.
+	m.settingsLCAgentModelPicker.Selected = settingsLCAgentModelPickerSelection(m.settingsLCAgentModelPicker.Models, m.settingsLCAgentModelPicker.Rows, "future-release")
+	next, _ = m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	state := next.(Model).settingsLCAgentModelPicker
+	if state.PendingModel != "future-release" || state.Step != settingsLCAgentModelPickerStepReasoning {
+		t.Fatalf("future release was not selectable: %#v", state)
+	}
+}
 
 func TestSettingsLCAgentModelListConfigUsesUtilityProvider(t *testing.T) {
 	settings := config.EditableSettings{

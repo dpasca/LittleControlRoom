@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/lcagent"
 	"lcroom/internal/lcagent/modeladapter"
 	lcrmodel "lcroom/internal/model"
+	"lcroom/internal/modelcatalog"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/todocapture"
 )
@@ -913,7 +914,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 	case "deepseek":
 		return []ModelOption{
 			option(modeladapter.DefaultDeepSeekModel, "Balanced: DeepSeek V4 Pro", "Direct DeepSeek coding route.", lcagentDefaultReasoningEffort(provider, modeladapter.DefaultDeepSeekModel), defaultModel == modeladapter.DefaultDeepSeekModel),
-			option("deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost direct DeepSeek exploration route.", lcagentDefaultReasoningEffort(provider, "deepseek-v4-flash"), defaultModel == "deepseek-v4-flash"),
+			option(modelcatalog.DeepSeekLatestFlashModel, "DeepSeek V4.1 Flash", "Direct DeepSeek Flash route (rolling alias).", lcagentDefaultReasoningEffort(provider, modelcatalog.DeepSeekLatestFlashModel), defaultModel == modelcatalog.DeepSeekLatestFlashModel),
 		}
 	case "moonshot":
 		return []ModelOption{
@@ -1092,35 +1093,30 @@ func lcagentMoonshotReasoningEffortOptions() []ReasoningEffortOption {
 }
 
 func mergeLCAgentModelOptions(curated, discovered []ModelOption) []ModelOption {
-	merged := append([]ModelOption(nil), curated...)
-	index := map[string]int{}
-	for i, option := range merged {
+	// Discovery determines availability and ordering. The built-in catalog only
+	// supplies friendly metadata; unlisted recommendations must not masquerade
+	// as currently available models. The caller preserves a configured custom ID.
+	metadata := map[string]ModelOption{}
+	for _, option := range curated {
 		key := strings.ToLower(strings.TrimSpace(option.Model))
 		if key != "" {
-			index[key] = i
+			metadata[key] = option
 		}
 	}
+	merged := make([]ModelOption, 0, len(discovered))
 	for _, option := range discovered {
 		key := strings.ToLower(strings.TrimSpace(option.Model))
 		if key == "" {
 			continue
 		}
-		if existingIndex, ok := index[key]; ok {
-			existing := merged[existingIndex]
-			if strings.TrimSpace(existing.Description) == "" {
-				existing.Description = "Verified by provider model list."
-			} else if !strings.Contains(strings.ToLower(existing.Description), "verified") {
-				existing.Description = strings.TrimSpace(existing.Description) + " Verified by provider model list."
+		if hint, ok := metadata[key]; ok {
+			if strings.TrimSpace(option.DisplayName) == "" || strings.EqualFold(option.DisplayName, option.Model) {
+				option.DisplayName = hint.DisplayName
 			}
-			if strings.TrimSpace(existing.DisplayName) == strings.TrimSpace(existing.Model) && strings.TrimSpace(option.DisplayName) != "" {
-				existing.DisplayName = strings.TrimSpace(option.DisplayName)
-			}
-			existing.IsDefault = existing.IsDefault || option.IsDefault
-			merged[existingIndex] = existing
-			continue
+			option.Description = strings.TrimSpace(option.Description + " " + hint.Description + " Verified by provider model list.")
+			option.IsDefault = option.IsDefault || hint.IsDefault
 		}
 		merged = append(merged, option)
-		index[key] = len(merged) - 1
 	}
 	return merged
 }

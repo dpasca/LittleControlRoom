@@ -432,6 +432,8 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	case "esc":
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
 		return m, nil
+	case "ctrl+r":
+		return m.startSettingsLCAgentModelPickerModelList()
 	case "left", "h":
 		if state.ProviderLocked {
 			m.status = "Choose the Chat provider from the Chat provider row."
@@ -1068,6 +1070,7 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	actions := []string{
 		renderDialogAction("Type", "filter", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Ctrl+R", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
 	}
 	if state == nil || !state.ProviderLocked {
 		actions = append(actions, renderDialogAction("Left", "connection", navigateActionKeyStyle, navigateActionTextStyle))
@@ -1090,6 +1093,8 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 		lines = append(lines, detailWarningStyle.Render("Warning: full provider model list unavailable."))
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, max(18, width), "Showing curated fallback models only. Check the shared API key, base URL, env file, or process environment before choosing.")...)
 		lines = append(lines, detailMutedStyle.Render("Provider check: "+truncateText(state.Err, max(18, width-16))))
+	} else {
+		lines = append(lines, detailMutedStyle.Render("Live provider model list. Type an exact model ID to use a custom model."))
 	}
 	lines = append(lines, commandPaletteRowStyle.Render("Filter: "+state.FilterInput.View()), "")
 

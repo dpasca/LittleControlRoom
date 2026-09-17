@@ -13,6 +13,7 @@ func TestIsKnownAcceptsProviderOwnModels(t *testing.T) {
 		{ProviderOpenAI, "gpt-5.6-2026-05-01"},
 		{ProviderDeepSeek, DeepSeekProModel},
 		{ProviderDeepSeek, DeepSeekFlashModel},
+		{ProviderDeepSeek, DeepSeekLatestFlashModel},
 		{ProviderMoonshot, MoonshotModel},
 		{ProviderMoonshot, "kimi-k3-turbo"},
 		{ProviderXiaomi, XiaomiProModel},
@@ -95,6 +96,7 @@ func TestNormalizeStripsQualifiedPrefixes(t *testing.T) {
 func TestNormalizeForRequestCanonicalizesKnownModels(t *testing.T) {
 	cases := map[[2]string]string{
 		{ProviderDeepSeek, "DeepSeek/DeepSeek-V4-Pro"}: DeepSeekProModel,
+		{ProviderDeepSeek, "DeepSeek/DeepSeek-Flash"}:  DeepSeekLatestFlashModel,
 		{ProviderOpenAI, "OPENAI/GPT-5.6"}:             OpenAIDefaultModel,
 		{ProviderMoonshot, "MoonshotAI/KIMI-K3"}:       "kimi-k3",
 		{ProviderXiaomi, "XIAOMI/MIMO-V2.5-PRO"}:       XiaomiProModel,

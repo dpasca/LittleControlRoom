@@ -16,14 +16,15 @@ import "strings"
 // constant cannot be mistaken for its sibling: config and modeladapter both
 // used to export DefaultDeepSeekModel with *different* values (flash vs pro).
 const (
-	OpenAIDefaultModel    = "gpt-5.6"
-	OpenAIUtilityModel    = "gpt-5.6-luna"
-	DeepSeekProModel      = "deepseek-v4-pro"
-	DeepSeekFlashModel    = "deepseek-v4-flash"
-	MoonshotModel         = "kimi-k2.7-code"
-	XiaomiProModel        = "mimo-v2.5-pro"
-	XiaomiUtilityModel    = "mimo-v2.5"
-	OpenRouterViaDeepSeek = "deepseek/deepseek-v4-pro"
+	OpenAIDefaultModel       = "gpt-5.6"
+	OpenAIUtilityModel       = "gpt-5.6-luna"
+	DeepSeekProModel         = "deepseek-v4-pro"
+	DeepSeekFlashModel       = "deepseek-v4-flash"
+	DeepSeekLatestFlashModel = "deepseek-flash"
+	MoonshotModel            = "kimi-k2.7-code"
+	XiaomiProModel           = "mimo-v2.5-pro"
+	XiaomiUtilityModel       = "mimo-v2.5"
+	OpenRouterViaDeepSeek    = "deepseek/deepseek-v4-pro"
 )
 
 // Provider identifiers, canonical lowercase form.
@@ -120,7 +121,7 @@ func IsKnown(provider, model string) bool {
 		}
 		return false
 	case ProviderDeepSeek:
-		return normalized == DeepSeekProModel || normalized == DeepSeekFlashModel
+		return normalized == DeepSeekProModel || normalized == DeepSeekFlashModel || normalized == DeepSeekLatestFlashModel
 	case ProviderMoonshot:
 		return normalized == MoonshotModel || normalized == "kimi-k2.6" ||
 			normalized == "kimi-k3" || strings.HasPrefix(normalized, "kimi-k3-")
@@ -153,7 +154,7 @@ func Accepted(provider string) []string {
 		return []string{OpenAIDefaultModel, "gpt-5.6-sol", "gpt-5.6-terra", OpenAIUtilityModel,
 			"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
 	case ProviderDeepSeek:
-		return []string{DeepSeekProModel, DeepSeekFlashModel}
+		return []string{DeepSeekProModel, DeepSeekLatestFlashModel, DeepSeekFlashModel}
 	case ProviderMoonshot:
 		return []string{MoonshotModel, "kimi-k2.6", "kimi-k3"}
 	case ProviderXiaomi:
