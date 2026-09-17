@@ -23,6 +23,21 @@ func run(t *testing.T, path string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func TestUnbornHeadDoesNotHideBrokenRef(t *testing.T) {
+	path := t.TempDir()
+	run(t, path, "init", "-b", "master")
+	head, err := repositoryHead(context.Background(), path)
+	if err != nil || head != "unborn:refs/heads/master" {
+		t.Fatalf("unborn HEAD: %q %v", head, err)
+	}
+	if err := os.WriteFile(filepath.Join(path, ".git", "refs", "heads", "master"), []byte("broken ref\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if head, err := repositoryHead(context.Background(), path); err == nil {
+		t.Fatalf("broken ref accepted as %q", head)
+	}
+}
+
 func TestRecoveryResumesBetweenPromotionRenames(t *testing.T) {
 	for _, stage := range []string{"copy moved", "original promoted"} {
 		t.Run(stage, func(t *testing.T) {

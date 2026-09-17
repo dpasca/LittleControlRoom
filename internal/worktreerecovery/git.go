@@ -58,6 +58,25 @@ func resolved(path string) (string, error) {
 	return filepath.EvalSymlinks(p)
 }
 
+// An unborn HEAD is valid for an initialized repository. Keep its symbolic
+// branch identity, while refusing missing objects behind an existing ref.
+func repositoryHead(ctx context.Context, path string) (string, error) {
+	head, err := git(ctx, path, "rev-parse", "--verify", "HEAD")
+	if err == nil {
+		return head, nil
+	}
+	branch, symbolicErr := git(ctx, path, "symbolic-ref", "-q", "HEAD")
+	if symbolicErr != nil {
+		return "", err
+	}
+	_, refErr := git(ctx, path, "show-ref", "--verify", "--quiet", branch)
+	var exit *exec.ExitError
+	if errors.As(refErr, &exit) && exit.ExitCode() == 1 {
+		return "unborn:" + branch, nil
+	}
+	return "", err
+}
+
 // Inspect collects every repository and every blocking reason. It does not
 // infer ownership from cache names or ignore rules, and never uses the network.
 func (j *Journal) inspect(ctx context.Context) error {
@@ -166,7 +185,7 @@ func (j *Journal) inspect(ctx context.Context) error {
 		if err != nil {
 			problems = append(problems, err)
 		}
-		r.Head, err = git(ctx, p, "rev-parse", "HEAD")
+		r.Head, err = repositoryHead(ctx, p)
 		if err != nil {
 			problems = append(problems, err)
 		}
@@ -518,7 +537,7 @@ func (j *Journal) verifyGit(ctx context.Context) error {
 		if refs != r.Refs {
 			return fmt.Errorf("refs mismatch: %s", p)
 		}
-		head, err := git(ctx, p, "rev-parse", "HEAD")
+		head, err := repositoryHead(ctx, p)
 		if err != nil {
 			return err
 		}
