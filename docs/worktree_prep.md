@@ -117,6 +117,12 @@ LCR checks the entire object inventory against objects reachable from currently 
 
 Before deletion, LCR records the clone HEAD and refs in the removal receipt and rechecks the complete filesystem snapshot for changes. The same verification applies to the separately confirmed retained-folder cleanup. Repositories with local work must be preserved or published before retrying; force removal does not bypass these checks.
 
+Codex's curated plugin snapshot is a disposable cache with a different provenance contract: `HEAD`, its single shallow boundary, `refs/codex/curated-sync`, and its direct-commit `FETCH_HEAD` record must agree, and the recorded source must be `https://github.com/openai/plugins`. Only branch refs at that same commit are allowed alongside the sync ref, and every stored Git object must belong to the fetched snapshot. The other checkout, ownership, and revalidation checks above still apply. Such a cache is removed without contacting GitHub or preserving a backup; it does not need an `origin` remote or a currently advertised upstream tip. Additional local work or missing provenance still blocks deletion. A `.tmp` or `dist` name by itself never grants permission to discard a repository.
+
+Ignored empty Git initializations are also removable without an upstream: they must have an unborn symbolic `HEAD`, no refs or object files, and pass the same ownership and clean-checkout checks. Staged files, dangling objects, and unfinished object/pack files prevent them from being treated as empty. Removal receipts identify both empty repositories and disposable Codex snapshots explicitly.
+
+If merge-back succeeds but its selected cleanup fails, the UI reports the successful merge and incomplete cleanup separately, records the cleanup cause in `/errors`, and closes the merge confirmation instead of offering to repeat the completed merge.
+
 ## Git Lock Handling
 
 Before write-side worktree operations, LCR checks for existing `index.lock` files. Merge-back checks the root and source checkouts and their populated submodules, including nested submodules; an unrelated sibling submodule worktree's private index lock does not block the merge. Both merge-back and its post-merge submodule sync wait up to three seconds for relevant locks to clear automatically. After the preflight wait, merge-back rechecks branch and dirty state so another Git writer's changes cannot invalidate the earlier clean-checkout checks. The wait runs in the background action and respects cancellation.

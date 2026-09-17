@@ -2222,12 +2222,14 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			msg.refresh = invalidateProjectStructure(rootPath)
 		}
 		status := worktreeMergeStatusText(result)
+		msg.mergeSucceeded = true
 		if (confirm.MarkTodoDone && confirm.HasLinkedTodo) || confirm.RemoveNow {
 			finalized, err := m.finalizeMergedWorktreeWithTimeout(projectPath, service.FinalizeMergedWorktreeOptions{
 				MarkLinkedTodoDone: confirm.MarkTodoDone && confirm.HasLinkedTodo,
 				RemoveWorktree:     confirm.RemoveNow,
 			})
 			if err != nil {
+				msg.status = worktreeFinalizeStatus(status, finalized)
 				msg.err = fmt.Errorf("%s; cleanup stopped and the worktree was kept when possible: %w", status, err)
 				return msg
 			}

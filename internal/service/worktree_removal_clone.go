@@ -13,14 +13,16 @@ import (
 
 // Ignored clones are disposable only when their entire object inventory is
 // reachable from refs currently advertised by an upstream outside the removal
-// tree. Remote-tracking refs alone are not proof: they can contain local work.
+// tree, or belong entirely to a recorded, disposable Codex plugin snapshot.
+// Remote-tracking refs alone are not proof: they can contain local work.
 // This also covers bare package caches and clones borrowing from those caches.
 type removalClone struct {
-	Path     string
-	Head     string
-	Refs     string
-	Upstream string
-	Entries  []residualWorktreeEntry `json:"-"`
+	Path            string
+	Head            string
+	Refs            string
+	Upstream        string
+	Entries         []residualWorktreeEntry `json:"-"`
+	DisposableCache string                  `json:",omitempty"`
 }
 
 func cloneGitOutput(ctx context.Context, repo, input string, args ...string) (string, error) {
@@ -128,17 +130,33 @@ func inspectRemovalClone(ctx context.Context, plan worktreeRemovalPlan, path str
 			}
 		}
 	}
-	clone.Head, err = cloneGitOutput(ctx, path, "", "rev-parse", "--verify", "HEAD")
+	clone.Refs, err = cloneGitOutput(ctx, path, "", "for-each-ref", "--format=%(objectname) %(refname)")
 	if err != nil {
 		return clone, err
 	}
-	clone.Refs, err = cloneGitOutput(ctx, path, "", "for-each-ref", "--format=%(objectname) %(refname)")
+	clone.Head, err = cloneGitOutput(ctx, path, "", "rev-parse", "--verify", "HEAD")
 	if err != nil {
+		if clone.Refs == "" && removalCloneIsEmpty(ctx, path, metadata, clone.Entries) {
+			clone.DisposableCache = "empty-repository"
+			return clone, nil
+		}
 		return clone, err
 	}
 	if _, err := cloneGitOutput(ctx, path, "", "fsck", "--connectivity-only", "--no-dangling"); err != nil {
 		return clone, fmt.Errorf("repository integrity could not be verified: %w", err)
 	}
+	// Codex fetches its curated plugin snapshot by SHA without configuring an
+	// origin. Its dedicated sync ref and fetch record identify cache contents;
+	// requiring a live branch tip would strand these caches whenever it advances.
+	if upstream, ok := removalCodexPluginCacheSource(path, clone); ok {
+		if err := verifyRemovalCloneObjects(ctx, path, []string{clone.Head}); err != nil {
+			return clone, err
+		}
+		clone.Upstream = upstream
+		clone.DisposableCache = "codex-curated-plugins"
+		return clone, nil
+	}
+
 	sourceRepo, upstream, err := removalCloneUpstream(ctx, plan, path)
 	if err != nil {
 		return clone, err
@@ -180,17 +198,79 @@ func inspectRemovalClone(ctx context.Context, plan worktreeRemovalPlan, path str
 	if len(tips) == 0 {
 		return clone, fmt.Errorf("no upstream ref can establish object recoverability")
 	}
+	if err := verifyRemovalCloneObjects(ctx, path, tips); err != nil {
+		return clone, err
+	}
+	return clone, nil
+}
+
+// An ignored, clean Git initialization with no refs or object files contains
+// no repository history to preserve. Incomplete packs and loose objects count
+// as data even when Git cannot enumerate them; never discard those as empty.
+func removalCloneIsEmpty(ctx context.Context, path, metadata string, entries []residualWorktreeEntry) bool {
+	if _, err := cloneGitOutput(ctx, path, "", "symbolic-ref", "-q", "HEAD"); err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.Info.IsDir() {
+			continue
+		}
+		if removalPathWithin(entry.Path, filepath.Join(metadata, "objects")) || removalPathWithin(entry.Path, filepath.Join(metadata, "refs")) {
+			return false
+		}
+	}
+	return true
+}
+
+// Recognize Codex's generated cache by Git provenance, never by a .tmp/dist
+// directory name alone. All other clone checks (clean index, independent object
+// store, no locks/custom hooks, ignored by the parent, snapshot revalidation)
+// still apply. Local commits, stashes, tags and unreachable objects are retained.
+func removalCodexPluginCacheSource(path string, clone removalClone) (string, bool) {
+	const source = "https://github.com/openai/plugins"
+	shallow, err := os.ReadFile(filepath.Join(path, ".git", "shallow"))
+	if err != nil || strings.TrimSpace(string(shallow)) != clone.Head {
+		return "", false
+	}
+	fetched, err := os.ReadFile(filepath.Join(path, ".git", "FETCH_HEAD"))
+	if err != nil || strings.TrimSpace(string(fetched)) != clone.Head+"\t\t'"+clone.Head+"' of "+source {
+		return "", false
+	}
+	synced := false
+	for _, ref := range strings.Split(clone.Refs, "\n") {
+		fields := strings.Fields(ref)
+		if len(fields) != 2 || fields[0] != clone.Head {
+			return "", false
+		}
+		if fields[1] == "refs/codex/curated-sync" {
+			synced = true
+		} else if !strings.HasPrefix(fields[1], "refs/heads/") {
+			return "", false
+		}
+	}
+	return source, synced
+}
+
+func verifyRemovalCloneObjects(ctx context.Context, path string, tips []string) error {
+	objects, err := cloneGitOutput(ctx, path, "", "cat-file", "--batch-all-objects", "--batch-check=%(objectname)")
+	if err != nil {
+		return err
+	}
+	inventory := make(map[string]bool)
+	for _, object := range strings.Fields(objects) {
+		inventory[object] = true
+	}
 	reachable, err := cloneGitOutput(ctx, path, strings.Join(tips, "\n")+"\n", "rev-list", "--objects", "--no-object-names", "--stdin")
 	if err != nil {
-		return clone, err
+		return err
 	}
 	for _, object := range strings.Fields(reachable) {
 		delete(inventory, object)
 	}
 	if len(inventory) != 0 {
-		return clone, fmt.Errorf("%d Git objects are not verifiably recoverable from upstream (including possible local commits, stashes or reflog history)", len(inventory))
+		return fmt.Errorf("%d Git objects are not verifiably recoverable from upstream (including possible local commits, stashes or reflog history)", len(inventory))
 	}
-	return clone, nil
+	return nil
 }
 
 // Follow an in-tree package cache's origin until the source survives cleanup.

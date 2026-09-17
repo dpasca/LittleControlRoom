@@ -201,7 +201,7 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 }
 
 func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
-	for _, kind := range []string{"dirty child", "untracked child", "unrelated repo", "metadata symlink", "untracked parent", "dirty parent", "bare repo"} {
+	for _, kind := range []string{"dirty child", "untracked child", "unrelated repo", "metadata symlink", "untracked parent", "dirty parent", "bare repo with objects"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			f := newAssetResidueFixture(t)
@@ -212,8 +212,12 @@ func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
 				writeTestFile(t, filepath.Join(f.path, f.assets[0], "source.txt"), "untracked", 0600)
 			case "unrelated repo":
 				initGitRepo(t, filepath.Join(f.path, "_artifacts", "unrelated"))
-			case "bare repo":
-				runGit(t, f.path, "git", "init", "--bare", filepath.Join(f.path, "_artifacts", "objects.git"))
+			case "bare repo with objects":
+				bare := filepath.Join(f.path, "_artifacts", "objects.git")
+				runGit(t, f.path, "git", "init", "--bare", bare)
+				// Empty initializations are disposable, but an unreferenced object
+				// still represents data that must survive force and retained cleanup.
+				runGit(t, f.path, "git", "--git-dir", bare, "hash-object", "-w", filepath.Join(f.other, "README.md"))
 			case "metadata symlink":
 				if err := os.Symlink(filepath.Join(f.other, ".git"), filepath.Join(f.path, "_artifacts", ".git")); err != nil {
 					t.Fatal(err)

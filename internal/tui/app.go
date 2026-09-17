@@ -597,6 +597,7 @@ type worktreeActionMsg struct {
 	postMergeTodoText      string
 	postMergeTodoPath      string
 	closedEmbeddedSession  bool
+	mergeSucceeded         bool
 	err                    error
 }
 
@@ -2906,6 +2907,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.err != nil {
+			if msg.mergeSucceeded {
+				m.appendErrorLogEntry("Merge succeeded; cleanup incomplete", msg.err, msg.projectPath)
+				m.worktreeMergeConfirm = nil
+				m.worktreePostMerge = nil
+				m.worktreeRemoveConfirm = nil
+				m.err = nil
+				m.status = appendWorktreeStatusClause(msg.status, "Cleanup incomplete (use /errors).")
+				return m, m.refreshProjectStatusPathsCmd(msg.projectPath, msg.selectPath)
+			}
 			refreshCmd := tea.Cmd(nil)
 			if shouldRefreshWorktreeMergeFamilyAfterError(msg.err) {
 				refreshCmd = m.refreshProjectStatusPathsCmd(msg.projectPath, msg.selectPath)
