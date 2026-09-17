@@ -18,6 +18,7 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	golang.org/x/mod v0.29.0
+	golang.org/x/sys v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.46.1
 	mvdan.cc/sh/v3 v3.13.1
@@ -42,7 +43,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.3.8 // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
