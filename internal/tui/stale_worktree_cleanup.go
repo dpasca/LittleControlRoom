@@ -27,6 +27,8 @@ type staleWorktreeCleanupDialogState struct {
 	PurgeConfirm    bool
 	RecoveryMessage string
 	ProgressMessage string
+	StartedAt       time.Time
+	ProgressAt      time.Time
 	Context         context.Context
 	Cancel          context.CancelFunc
 	CancelRequested bool
@@ -228,6 +230,7 @@ func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupReval
 	}
 
 	dialog.ProgressMessage = ""
+	dialog.ProgressAt = m.currentTime()
 	dialog.Finalizing = true
 	m.setPendingGitSummary(msg.candidate.ProjectPath, "Removing stale worktree...")
 	m.setPendingGitSummary(msg.candidate.RootProjectPath, "Removing stale worktree...")
@@ -425,9 +428,13 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		return m, nil
 	}
 	if dialog.Removing {
-		if msg.String() == "esc" {
-			dialog.CancelRequested = true
+		if msg.String() == "b" || msg.String() == "B" {
 			dialog.Backgrounded = true
+			m.status = "Worktree cleanup continues in background; /clean reopens progress or abort controls"
+			return m, nil
+		}
+		if msg.String() == "esc" && !dialog.CancelRequested {
+			dialog.CancelRequested = true
 			if dialog.Cancel != nil {
 				dialog.Cancel()
 			}
@@ -507,6 +514,8 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			dialog.QueueIndex = 0
 			dialog.Finished = false
 			dialog.Removing = true
+			dialog.StartedAt = m.currentTime()
+			dialog.ProgressAt = dialog.StartedAt
 			dialog.CancelRequested = false
 			dialog.ErrorMessage = ""
 			m.resetStaleWorktreeCleanupContext()
@@ -567,6 +576,8 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		}
 		m.resetStaleWorktreeCleanupContext()
 		dialog.Removing = true
+		dialog.StartedAt = m.currentTime()
+		dialog.ProgressAt = dialog.StartedAt
 		dialog.QueueIndex = 0
 		dialog.Results = nil
 		dialog.ErrorMessage = ""
@@ -763,7 +774,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 		return renderStaleWorktreeCleanupResults(dialog, width, bodyH)
 	}
 	if dialog.Removing {
-		return renderStaleWorktreeCleanupProgress(dialog, width, m.spinnerFrame)
+		return clampDialogContent(renderStaleWorktreeCleanupProgressAt(dialog, width, m.spinnerFrame, m.currentTime()), max(12, bodyH-4), 4, detailMutedStyle.Render("… path clipped to fit terminal …"))
 	}
 
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
@@ -841,6 +852,10 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 }
 
 func renderStaleWorktreeCleanupProgress(dialog *staleWorktreeCleanupDialogState, width, spinnerFrame int) string {
+	return renderStaleWorktreeCleanupProgressAt(dialog, width, spinnerFrame, time.Now())
+}
+
+func renderStaleWorktreeCleanupProgressAt(dialog *staleWorktreeCleanupDialogState, width, spinnerFrame int, now time.Time) string {
 	current := dialog.QueueIndex + 1
 	if current > len(dialog.Queue) {
 		current = len(dialog.Queue)
@@ -863,7 +878,13 @@ func renderStaleWorktreeCleanupProgress(dialog *staleWorktreeCleanupDialogState,
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
 		"Each checkout is rechecked for merge, cleanliness, assessment, activity, runtime, and engineer state. An idle managed session closes only after those checks pass.")...)
-	lines = append(lines, "", renderDialogAction("Esc", "cancel and close", cancelActionKeyStyle, cancelActionTextStyle))
+	if !dialog.StartedAt.IsZero() {
+		lines = append(lines, detailField("Time", cleanupJobTiming(now, dialog.StartedAt, dialog.ProgressAt)))
+		if now.Sub(dialog.ProgressAt) >= 15*time.Second {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "The current filesystem or Git operation is still running. You can hide this panel and keep working.")...)
+		}
+	}
+	lines = append(lines, "", cleanupJobControls(dialog.CancelRequested))
 	if dialog.CancelRequested {
 		lines = append(lines, detailWarningStyle.Render("Stopping cleanup; waiting for the current operation to settle."))
 	}
@@ -978,4 +999,21 @@ func staleWorktreeCleanupDetailLineCount(dialog *staleWorktreeCleanupDialogState
 	}
 	selected := max(0, min(dialog.Selected, len(dialog.Results)-1))
 	return len(staleWorktreeCleanupDetailLines(dialog.Results[selected], width))
+}
+
+func (m Model) renderFooterWorktreeCleanupSegment() string {
+	d := m.staleWorktreeCleanup
+	if d == nil || !d.Backgrounded {
+		return ""
+	}
+	if d.Removing {
+		if d.CancelRequested {
+			return renderFooterAlert("Worktree cleanup stopping · /clean")
+		}
+		return renderFooterStatus(fmt.Sprintf("Worktree cleanup %d/%d · /clean", min(d.QueueIndex+1, len(d.Queue)), len(d.Queue)))
+	}
+	if d.Finished {
+		return renderFooterStatus("Worktree cleanup report · /clean")
+	}
+	return ""
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
@@ -100,7 +99,7 @@ func (j *Journal) PreserveRegistration(ctx context.Context, from string) error {
 		}
 		break
 	}
-	if expected == nil || !reflect.DeepEqual(files, expected) {
+	if expected == nil || !equalInventories(files, expected) {
 		return fmt.Errorf("worktree registration changed since preservation: %s; original metadata retained", from)
 	}
 	j.MetadataMoves = append(j.MetadataMoves, MetadataMove{Original: from, Destination: dst, Files: files})
@@ -720,7 +719,7 @@ func (j *Journal) promoteOriginal(ctx context.Context) error {
 		return fmt.Errorf("original recovery gained or lost files")
 	}
 	for rel, f := range actual {
-		if !reflect.DeepEqual(f, j.Sources[0].Files[rel]) && !reflect.DeepEqual(f, j.VerifiedFiles["tree"][rel]) {
+		if !equalFile(f, j.Sources[0].Files[rel]) && !equalFile(f, j.VerifiedFiles["tree"][rel]) {
 			return fmt.Errorf("original recovery changed at %s; both copies retained", filepath.Join(tree, rel))
 		}
 	}
@@ -876,7 +875,7 @@ func validateSubset(ctx context.Context, path string, expected map[string]File) 
 		return err
 	}
 	for p, f := range actual {
-		if !reflect.DeepEqual(f, expected[p]) {
+		if !equalFile(f, expected[p]) {
 			return fmt.Errorf("unexpected entry in interrupted operation: %s", filepath.Join(path, p))
 		}
 	}

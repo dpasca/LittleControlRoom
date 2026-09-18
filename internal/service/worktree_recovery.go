@@ -561,6 +561,9 @@ func inspectRecoveryConsumersWithProgress(ctx context.Context, path, recoveryBas
 // process safeguards. Git removes exact registrations after atomic relocation;
 // it never gets a chance to recursively delete a newly recreated original path.
 func (s *Service) recoverAndRemove(ctx context.Context, root, path string) (bool, error) {
+	ctx = worktreerecovery.WithProgress(ctx, func(p worktreerecovery.Progress) {
+		s.publishWorktreeRemovalProgress(path, fmt.Sprintf("%s · %d entries · %.1f MiB processed\n%s", p.Stage, p.Entries, float64(p.Bytes)/(1024*1024), p.Path))
+	})
 	for p := s.recoveryBase(); p != filepath.Dir(p); p = filepath.Dir(p) {
 		if appfs.IsManagedInternalPath(p, []string{appfs.InternalWorkspaceRoot(appfs.DefaultDataDir())}) {
 			return true, fmt.Errorf("recovery storage must be outside temporary task workspaces")

@@ -554,9 +554,8 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 		detailField("Verified reclaimed", formatCodexCleanupBytes(reclaimed)),
 	}
 	if !dialog.GroupStartedAt.IsZero() {
-		elapsed := time.Duration(max(0, int(now.Sub(dialog.GroupStartedAt)/time.Second))) * time.Second
 		waiting := time.Duration(max(0, int(now.Sub(p.UpdatedAt)/time.Second))) * time.Second
-		lines = append(lines, detailField("Time", fmt.Sprintf("%s elapsed · %s since last update", elapsed, waiting)))
+		lines = append(lines, detailField("Time", cleanupJobTiming(now, dialog.GroupStartedAt, p.UpdatedAt)))
 		if waiting >= 15*time.Second {
 			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Still waiting for Codex or storage verification; Esc stops remaining work.")...)
 		}
@@ -564,14 +563,13 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 	lines = append(lines, "")
 	if dialog.CancelRequested {
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "The active delete request is being canceled. LCR will still verify what was already removed, and no queued project group will start afterward.")...)
-		lines = append(lines, "", renderDialogAction("b", "hide to background", navigateActionKeyStyle, navigateActionTextStyle))
+		lines = append(lines, "", cleanupJobControls(true))
 		return strings.Join(lines, "\n")
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "Deletion is permanent. It is running off the UI path while LCR waits for app-server and verifies that thread rows and rollout files are gone.")...)
 	lines = append(lines,
 		"",
-		renderDialogAction("b", "hide to background", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
-			renderDialogAction("Esc", "abort remaining", cancelActionKeyStyle, cancelActionTextStyle),
+		cleanupJobControls(false),
 	)
 	return strings.Join(lines, "\n")
 }

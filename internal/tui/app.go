@@ -3187,12 +3187,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			detail := strings.TrimSpace(msg.Payload["detail"])
 			// Late events must not recreate a completed action's pending state.
 			if detail != "" && m.pendingGitSummary(msg.ProjectPath) != "" {
-				m.setPendingGitSummary(msg.ProjectPath, detail)
+				m.setPendingGitSummary(msg.ProjectPath, firstNonEmptyErrorLine(detail))
 				if normalizeProjectPath(msg.ProjectPath) == m.currentSelectedProjectPath() {
-					m.status = detail
+					m.status = firstNonEmptyErrorLine(detail)
 				}
 				if m.staleWorktreeCleanupFinalizing(msg.ProjectPath) {
 					m.staleWorktreeCleanup.ProgressMessage = detail
+					m.staleWorktreeCleanup.ProgressAt = m.currentTime()
 				}
 			}
 			return m, batchCmds(cmds...)

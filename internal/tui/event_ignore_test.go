@@ -930,10 +930,10 @@ func TestWorktreeRemovalProgressDoesNotReloadProjectsOrReviveFinishedAction(t *t
 	candidate := service.StaleWorktreeCleanupCandidate{ProjectPath: path}
 	m := Model{staleWorktreeCleanup: &staleWorktreeCleanupDialogState{Removing: true, Finalizing: true, Queue: []service.StaleWorktreeCleanupCandidate{candidate}}}
 	m.setPendingGitSummary(path, worktreeRemovePendingSummary)
-	event := busMsg(events.Event{Type: events.WorktreeRemovalProgress, ProjectPath: path, Payload: map[string]string{"detail": "Checking external consumers: 123 entries"}})
+	event := busMsg(events.Event{Type: events.WorktreeRemovalProgress, ProjectPath: path, Payload: map[string]string{"detail": "Reading and verifying files: 123 entries\n/tmp/recovery/large-file"}})
 	updated, _ := m.Update(event)
 	m = updated.(Model)
-	if got := m.pendingGitSummary(path); got != event.Payload["detail"] {
+	if got := m.pendingGitSummary(path); got != firstNonEmptyErrorLine(event.Payload["detail"]) {
 		t.Fatalf("progress = %q", got)
 	}
 	if m.staleWorktreeCleanup.ProgressMessage != event.Payload["detail"] {

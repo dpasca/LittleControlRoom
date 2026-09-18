@@ -9,6 +9,14 @@ bypass recovery verification or nested ownership checks.
 
 ## User flow
 
+While removal runs, the panel shows the current stage, file path, processed
+entries/bytes, elapsed time, and time since the last update. **B** hides the job
+to the background; `/clean` reopens the same running job or its completed report.
+The footer keeps its status visible. **Esc** aborts remaining work and keeps the
+stopping panel visible; **B** can hide that too. These controls and timing text
+are shared with `/codex-gc`. Background execution lasts for the current LCR
+process; interrupted operations can subsequently resume through their journals.
+
 The cleanup report distinguishes removal, removal with recovery retained, and
 blocked removal. A retained recovery shows its directory, journal phase, and
 last recorded allocated bytes. Opening the report or audit reads the saved
@@ -58,7 +66,10 @@ copy-on-write clones avoid rewriting file contents; other filesystems use normal
 copies. These are never hard links to mutable source files.
 File hashes, ownership, executable modes, regular-file
 modification times, symlink targets, and extended attributes are compared by
-reading the copy back. Special files and unsupported metadata stop preservation.
+reading the copy back. On macOS, `com.apple.provenance` is recorded but excluded
+from portable equality checks because the OS assigns it independently to copied
+files. Other attributes, including quarantine and user attributes, remain checked.
+This also applies when resuming older recovery inventories. Special files and unsupported metadata stop preservation.
 
 Copied Git pointers, `commondir`, in-tree local origins, `core.worktree`,
 alternates, and absolute internal symlinks are repaired with recorded edits.
@@ -70,7 +81,11 @@ borrowed objects), refs and HEAD, then runs full `git fsck`. Within one operatio
 that Git result is reused only after every copied byte and the store layout
 have been rechecked against their verified inventories. Loading a journal for
 another operation always starts fresh. Original data is
-rehashed before relocation. This is a file/store recovery, not a refs-only bundle.
+checked again before relocation. During a single sequential removal on APFS,
+unchanged file hashes are cached by device, inode, size, modification time, and
+change time. Every inventory still checks metadata; changed files are reread.
+This cache is discarded after the operation, is never saved in the journal, and
+is disabled on other filesystems. This is a file/store recovery, not a refs-only bundle.
 
 The source directory moves atomically to the journal's `QuarantinePath`.
 Only exact, validated Git administrative registrations are relocated; there is
