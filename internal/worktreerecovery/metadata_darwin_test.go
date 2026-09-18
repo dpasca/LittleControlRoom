@@ -4,11 +4,13 @@ package worktreerecovery
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRecoveryBlocksUnsupportedMacMetadata(t *testing.T) {
@@ -77,5 +79,107 @@ func TestRecoveryPreservesHarmlessMacFlags(t *testing.T) {
 	}
 	if err := j.Verify(ctx); err == nil {
 		t.Fatal("flag change bypassed verification")
+	}
+}
+
+func TestLegacyProvenanceMismatchResumesCopy(t *testing.T) {
+	root, path, base, _ := fixture(t)
+	ctx := context.Background()
+	j, err := Prepare(ctx, base, root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a journal created before OS-assigned provenance was distinguished
+	// from portable metadata. Do not try to forge the protected OS attribute.
+	file := j.Sources[0].Files["source"]
+	if file.Xattrs == nil {
+		file.Xattrs = map[string][]byte{}
+	}
+	file.Xattrs["com.apple.provenance"] = []byte("old source provenance")
+	j.Sources[0].Files["source"] = file
+	j.Phase = "copying"
+	j.Verified = time.Time{}
+	if err := j.save(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Prepare(ctx, base, root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Relocate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Complete(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Other metadata and contents are still verification inputs.
+	copy := j.VerifiedFiles["tree"]["source"]
+	changed := copy
+	changed.Digest = "different"
+	if equalFile(copy, changed) {
+		t.Fatal("ignored content change")
+	}
+	changed = copy
+	changed.Xattrs = map[string][]byte{"user.recovery-test": []byte("new")}
+	if equalFile(copy, changed) {
+		t.Fatal("ignored user attribute change")
+	}
+}
+
+func TestDigestReuseDetectsEditsWithRestoredModificationTime(t *testing.T) {
+	root := t.TempDir()
+	if !canCacheFileDigest(root) {
+		t.Skip("requires APFS")
+	}
+	path := filepath.Join(root, "file")
+	if err := os.WriteFile(path, []byte("before"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithProgress(context.Background(), nil)
+	first, err := snapshot(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := ctx.Value(progressKey{}).(*progressReporter)
+	if len(p.hashes) != 1 {
+		t.Fatal("digest not cached")
+	}
+	if err := verifyTree(ctx, root, first); err != nil {
+		t.Fatal(err)
+	}
+	// Equal size and restored mtime must not make a write invisible.
+	if err := os.WriteFile(path, []byte("after!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Unix(0, first["file"].Modified)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyTree(ctx, root, first); err == nil {
+		t.Fatal("cached digest hid a write")
+	}
+}
+
+func BenchmarkRepeatedRecoveryVerification(b *testing.B) {
+	root := b.TempDir()
+	path := filepath.Join(root, "large-file")
+	if !canCacheFileDigest(root) {
+		b.Skip("requires APFS")
+	}
+	if err := os.WriteFile(path, make([]byte, 16*1024*1024), 0600); err != nil {
+		b.Fatal(err)
+	}
+	for _, cached := range []bool{false, true} {
+		b.Run(fmt.Sprint(cached), func(b *testing.B) {
+			ctx := context.Background()
+			if cached {
+				ctx = WithProgress(ctx, nil)
+			}
+			for n := 0; n < b.N; n++ {
+				if _, err := snapshotEntries(ctx, root); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

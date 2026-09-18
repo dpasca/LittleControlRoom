@@ -42,6 +42,7 @@ type Repair struct {
 }
 
 func git(ctx context.Context, path string, args ...string) (string, error) {
+	reportProgress(ctx, "Checking Git: "+args[0], path, 1, 0)
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-optional-locks", "--no-replace-objects", "-c", "core.fsmonitor=false", "-C", path}, args...)...)
 	// Verification must never consult the caller's object/index overrides or
 	// lazily fetch missing objects from a promisor remote.
@@ -90,6 +91,7 @@ func repositoryHead(ctx context.Context, path string) (string, error) {
 func (j *Journal) inspect(ctx context.Context) error {
 	var problems []error
 	paths := []string{j.Original}
+	reportProgress(ctx, "Finding nested repositories", j.Original, 0, 0)
 	err := filepath.WalkDir(j.Original, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			problems = append(problems, err)
@@ -98,6 +100,7 @@ func (j *Journal) inspect(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		reportProgress(ctx, "Finding nested repositories", p, 1, 0)
 		if p == j.Original {
 			return nil
 		}

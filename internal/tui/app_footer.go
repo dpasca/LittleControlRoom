@@ -103,7 +103,7 @@ func (m Model) renderFooter(width int) string {
 	integritySegment := m.renderFooterRepositoryIntegritySegment()
 	modelHealthSegment := m.renderFooterModelHealthSegment()
 	codexCleanupSegment := m.renderFooterCodexCleanupSegment()
-	supplementSegments := footerSupplementSegments(codexCleanupSegment, filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, modelHealthSegment, assessmentSegment, usageSegment)
+	supplementSegments := footerSupplementSegments(m.renderFooterWorktreeCleanupSegment(), codexCleanupSegment, filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, modelHealthSegment, assessmentSegment, usageSegment)
 	if m.busySessionReplacement != nil {
 		return m.renderModalFooter(width, "New session: Tab or arrows choose, Enter confirm, Esc keep current", supplementSegments...)
 	}

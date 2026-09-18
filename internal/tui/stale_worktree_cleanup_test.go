@@ -426,9 +426,11 @@ func TestStaleWorktreeCleanupEscapeDuringRevalidation(t *testing.T) {
 	ctx := m.staleWorktreeCleanup.Context
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
-	if cmd != nil || m.staleWorktreeCleanupVisible() || ctx.Err() != context.Canceled {
-		t.Fatalf("Escape did not immediately cancel and release modal: %#v", m.staleWorktreeCleanup)
+	if cmd != nil || !m.staleWorktreeCleanupVisible() || ctx.Err() != context.Canceled {
+		t.Fatalf("Escape did not immediately cancel and retain progress: %#v", m.staleWorktreeCleanup)
 	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = updated.(Model)
 	if got := m.renderStaleWorktreeCleanupOverlay("dashboard", 120, 36); got != "dashboard" {
 		t.Fatalf("hidden cleanup still overlays dashboard: %q", got)
 	}
@@ -543,5 +545,51 @@ func TestStaleWorktreeCleanupConsumerScanCancellationIsSkipped(t *testing.T) {
 	}
 	if len(m.errorLogEntries) != 0 || !m.staleWorktreeCleanup.Finished {
 		t.Fatal("read-only cancellation logged as failure")
+	}
+}
+
+func TestWorktreeCleanupBackgroundReopenAndAbort(t *testing.T) {
+	now := time.Now()
+	d := &staleWorktreeCleanupDialogState{Removing: true, StartedAt: now.Add(-time.Minute), ProgressAt: now, Queue: []service.StaleWorktreeCleanupCandidate{{ProjectPath: "/task", Branch: "task"}}}
+	m := Model{staleWorktreeCleanup: d}
+	m.resetStaleWorktreeCleanupContext()
+	updated, cmd := m.updateStaleWorktreeCleanupMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	m = updated.(Model)
+	if cmd != nil || m.staleWorktreeCleanupVisible() || d.Context.Err() != nil || d.CancelRequested {
+		t.Fatal("hiding canceled cleanup")
+	}
+	if !strings.Contains(m.renderFooterWorktreeCleanupSegment(), "/clean") {
+		t.Fatal("background job missing from footer")
+	}
+	updated, cmd = m.openStaleWorktreeCleanup()
+	m = updated.(Model)
+	if cmd != nil || m.staleWorktreeCleanup != d || !m.staleWorktreeCleanupVisible() {
+		t.Fatal("reopen replaced running job")
+	}
+	updated, _ = m.updateStaleWorktreeCleanupMode(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if !d.CancelRequested || d.Context.Err() == nil || !m.staleWorktreeCleanupVisible() {
+		t.Fatal("abort did not retain visible progress")
+	}
+	text := renderStaleWorktreeCleanupProgressAt(d, 80, 0, now)
+	if !strings.Contains(text, "1m0s elapsed") || !strings.Contains(text, "hide to background") {
+		t.Fatalf("missing job controls: %s", text)
+	}
+}
+
+func TestWorktreeCleanupCompletesInBackground(t *testing.T) {
+	candidate := staleWorktreeCleanupTestCandidate("/tmp/background", "background", time.Now())
+	d := &staleWorktreeCleanupDialogState{Removing: true, Backgrounded: true, Queue: []service.StaleWorktreeCleanupCandidate{candidate}}
+	m := Model{staleWorktreeCleanup: d}
+	m.resetStaleWorktreeCleanupContext()
+	updated, _ := m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: d.Context, result: staleWorktreeCleanupResult{Candidate: candidate}})
+	m = updated.(Model)
+	if !d.Finished || m.staleWorktreeCleanupVisible() || !strings.Contains(m.renderFooterWorktreeCleanupSegment(), "report") {
+		t.Fatalf("background completion lost report or reopened panel: %#v", d)
+	}
+	updated, cmd := m.openStaleWorktreeCleanup()
+	m = updated.(Model)
+	if cmd != nil || m.staleWorktreeCleanup != d || !m.staleWorktreeCleanupVisible() || len(d.Results) != 1 {
+		t.Fatal("completed report did not reopen")
 	}
 }

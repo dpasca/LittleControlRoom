@@ -5,8 +5,6 @@ package worktreerecovery
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +49,7 @@ func snapshotEntries(ctx context.Context, root string) (map[string]File, error) 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		reportProgress(ctx, "Reading and verifying files", path, 1, 0)
 		i, err := os.Lstat(path)
 		if err != nil {
 			return err
@@ -67,20 +66,11 @@ func snapshotEntries(ctx context.Context, root string) (map[string]File, error) 
 		f.UID, f.GID = stat.Uid, stat.Gid
 		switch {
 		case i.Mode().IsRegular():
-			h := sha256.New()
-			in, err := os.Open(path)
+			digest, err := fileDigest(ctx, path, &stat)
 			if err != nil {
 				return err
 			}
-			_, err = io.Copy(h, in)
-			closeErr := in.Close()
-			if err != nil {
-				return err
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-			f.Size, f.Digest = i.Size(), hex.EncodeToString(h.Sum(nil))
+			f.Size, f.Digest = i.Size(), digest
 			f.Modified = i.ModTime().UnixNano()
 		case i.Mode()&os.ModeSymlink != 0:
 			f.Link, err = os.Readlink(path)
@@ -153,6 +143,7 @@ func copyTree(ctx context.Context, from, to string) error {
 			return err
 		}
 		dst := filepath.Join(to, rel)
+		reportProgress(ctx, "Copying recovery files", path, 1, 0)
 		i, err := os.Lstat(path)
 		if err != nil {
 			return err
@@ -166,7 +157,7 @@ func copyTree(ctx context.Context, from, to string) error {
 		case i.IsDir():
 			err = os.Mkdir(dst, 0700)
 		case i.Mode().IsRegular():
-			err = copyFile(path, dst)
+			err = copyFileContext(ctx, path, dst)
 		case i.Mode()&os.ModeSymlink != 0:
 			var link string
 			link, err = os.Readlink(path)
@@ -188,6 +179,9 @@ func copyTree(ctx context.Context, from, to string) error {
 			return err
 		}
 		for name, value := range attrs {
+			if systemManagedXattr(name) {
+				continue
+			}
 			if existing, ok := destinationAttrs[name]; ok && bytes.Equal(existing, value) {
 				continue
 			}
@@ -224,12 +218,17 @@ func copyTree(ctx context.Context, from, to string) error {
 	})
 }
 
-func copyFile(from, to string) error {
+func copyFile(from, to string) error { return copyFileContext(context.Background(), from, to) }
+
+func copyFileContext(ctx context.Context, from, to string) error {
 	cloned, err := cloneFile(from, to)
 	if err != nil {
 		return err
 	}
 	if cloned {
+		if info, err := os.Stat(to); err == nil {
+			reportProgress(ctx, "Copying recovery files", from, 0, info.Size())
+		}
 		f, err := os.Open(to)
 		if err != nil {
 			return err
@@ -245,7 +244,7 @@ func copyFile(from, to string) error {
 		in.Close()
 		return err
 	}
-	_, err = io.Copy(out, in)
+	_, err = io.Copy(out, progressReader{ctx: ctx, reader: in, stage: "Copying recovery files", path: from})
 	return errors.Join(err, in.Close(), out.Sync(), out.Close())
 }
 
@@ -274,10 +273,10 @@ func verifyTrees(ctx context.Context, paths []string, inventories []map[string]F
 }
 
 func compareInventory(path string, got, want map[string]File) error {
-	if !reflect.DeepEqual(got, want) {
+	if !equalInventories(got, want) {
 		var changes []error
 		for rel, expected := range want {
-			if !reflect.DeepEqual(got[rel], expected) {
+			if actual, ok := got[rel]; !ok || !equalFile(actual, expected) {
 				changes = append(changes, fmt.Errorf("contents or metadata changed: %s", filepath.Join(path, rel)))
 			}
 		}
@@ -334,6 +333,7 @@ func syncTree(ctx context.Context, root string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		reportProgress(ctx, "Syncing recovery to disk", p, 1, 0)
 		if d.IsDir() {
 			dirs = append(dirs, p)
 			return nil
@@ -417,6 +417,9 @@ func applyRepair(path string, data []byte, symlink bool) error {
 			return err
 		}
 		for name, value := range attrs {
+			if systemManagedXattr(name) {
+				continue
+			}
 			if err := unix.Lsetxattr(path, name, value, 0); err != nil {
 				return err
 			}
@@ -436,4 +439,35 @@ func applyRepair(path string, data []byte, symlink bool) error {
 	}
 	_, err = f.Write(data)
 	return errors.Join(err, f.Sync(), f.Close(), os.Chtimes(path, time.Unix(0, info.ModTime().UnixNano()), info.ModTime()))
+}
+
+// Provenance is assigned by the destination OS, not portable user metadata.
+// Keep it in manifests for diagnostics, but normalize legacy inventories too.
+func equalFile(a, b File) bool {
+	normalize := func(f File) File {
+		attrs := make(map[string][]byte)
+		for k, v := range f.Xattrs {
+			if !systemManagedXattr(k) {
+				attrs[k] = v
+			}
+		}
+		f.Xattrs = nil
+		if len(attrs) > 0 {
+			f.Xattrs = attrs
+		}
+		return f
+	}
+	return reflect.DeepEqual(normalize(a), normalize(b))
+}
+func equalInventories(a, b map[string]File) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for path, f := range a {
+		other, ok := b[path]
+		if !ok || !equalFile(f, other) {
+			return false
+		}
+	}
+	return true
 }

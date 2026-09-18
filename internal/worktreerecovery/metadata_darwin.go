@@ -27,6 +27,7 @@ func checkPlatformMetadata(ctx context.Context, paths ...string) error {
 }
 
 func checkPlatformMetadataBatch(ctx context.Context, paths []string) error {
+	reportProgress(ctx, "Checking macOS metadata", paths[0], int64(len(paths)), 0)
 	for _, flags := range []string{"-ldeB", "-lAeRB"} {
 		cmd := exec.CommandContext(ctx, "/bin/ls", append([]string{flags}, paths...)...)
 		out, err := cmd.Output()
@@ -71,4 +72,11 @@ func copyFileFlags(path string, stat *unix.Stat_t) error {
 		return fmt.Errorf("preserve filesystem flags at %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func systemManagedXattr(name string) bool { return name == "com.apple.provenance" }
+
+func canCacheFileDigest(path string) bool {
+	var st unix.Statfs_t
+	return unix.Statfs(path, &st) == nil && unix.ByteSliceToString(st.Fstypename[:]) == "apfs"
 }
