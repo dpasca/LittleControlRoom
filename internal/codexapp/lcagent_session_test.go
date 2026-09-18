@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/lcagent/modeladapter"
@@ -649,9 +651,12 @@ func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
 	if !snapshot.Running || snapshot.Command != "pwd; sleep 30" || snapshot.CWD != frontend {
 		t.Fatalf("runtime snapshot = %#v", snapshot)
 	}
-	transcript := session.Snapshot().Transcript
-	if !strings.Contains(transcript, "LCAgent starting managed process: pwd; sleep 30 in frontend") ||
-		!strings.Contains(transcript, "Started managed process") ||
+	view := session.Snapshot()
+	if len(view.Entries) != 1 || view.Entries[0].DisplayText != "pwd; sleep 30: running" {
+		t.Fatalf("start should have one compact receipt: %#v", view.Entries)
+	}
+	transcript := view.Transcript
+	if !strings.Contains(transcript, "Started managed process") ||
 		!strings.Contains(transcript, "pwd; sleep 30") {
 		t.Fatalf("transcript missing managed process status:\n%s", transcript)
 	}
@@ -733,8 +738,11 @@ func TestLCAgentProcessRequestStartsSiblingProjectRuntime(t *testing.T) {
 		t.Fatalf("sibling snapshots = %+v, want one running export", siblingSnapshots)
 	}
 	transcript := session.Snapshot().Transcript
-	if !strings.Contains(transcript, "for ../game") || !strings.Contains(transcript, "project "+siblingCanon) {
+	if !strings.Contains(transcript, "project "+siblingCanon) {
 		t.Fatalf("transcript missing sibling project status:\n%s", transcript)
+	}
+	if display := session.Snapshot().Entries[0].DisplayText; display != "promo-export: running · game" {
+		t.Fatalf("sibling process summary = %q", display)
 	}
 }
 
@@ -983,11 +991,9 @@ printf '%s\n' '{"type":"turn_complete"}'
 		t.Fatalf("runtime snapshot = %#v", runtimeSnapshot)
 	}
 	for _, want := range []string{
-		"LCAgent stopping managed process",
 		"No managed process is running for this workspace.",
 		"LCAgent requested command approval",
 		"LCAgent approval decision sent: printf managed-ready; sleep 30",
-		"LCAgent starting managed process: printf managed-ready; sleep 30 in frontend",
 		"Started managed process",
 	} {
 		if !strings.Contains(snapshot.Transcript, want) {
@@ -3282,4 +3288,41 @@ func effortValues(options []ReasoningEffortOption) []string {
 		out = append(out, strings.TrimSpace(option.ReasoningEffort))
 	}
 	return out
+}
+
+func TestLCAgentManagedProcessReceiptsPreserveSessionStatus(t *testing.T) {
+	for _, status := range []string{"LCAgent run complete", "Waiting for your answer", "LCAgent running"} {
+		for _, exitCode := range []int{0, 1} {
+			session := &lcagentSession{status: status}
+			session.appendManagedProcessExit(projectrun.Snapshot{
+				Name: "make-test", Command: "make test", ProjectPath: "/workspace/project",
+				ID: "rt_2", PID: 72687, PGID: 72687, ExitCodeKnown: true, ExitCode: exitCode,
+				RecentOutput: []string{"full diagnostic output"},
+			})
+			snapshot := session.Snapshot()
+			if snapshot.Status != status {
+				t.Fatalf("process exit replaced session status: %q", snapshot.Status)
+			}
+			entry := snapshot.Entries[0]
+			wantKind := TranscriptStatus
+			if exitCode != 0 {
+				wantKind = TranscriptError
+			}
+			if entry.Kind != wantKind || entry.DisplayText != fmt.Sprintf("make-test: exited %d", exitCode) {
+				t.Fatalf("receipt = %#v", entry)
+			}
+			if !strings.Contains(entry.Text, "full diagnostic output") || !strings.Contains(entry.Text, "pid 72687") {
+				t.Fatalf("raw receipt lost process diagnostics: %q", entry.Text)
+			}
+		}
+	}
+}
+
+func TestLCAgentManagedProcessSummaryBoundsUnicodeLabels(t *testing.T) {
+	text := lcagentManagedProcessSummary(projectrun.Snapshot{
+		Command: strings.Repeat("検証", 100) + "\ncommand", LastError: "launch failed\n" + strings.Repeat("detail ", 100),
+	})
+	if strings.Contains(text, "\n") || !utf8.ValidString(text) || len([]rune(text)) > 200 || !strings.Contains(text, "launch failed") {
+		t.Fatalf("invalid compact process summary: %q", text)
+	}
 }

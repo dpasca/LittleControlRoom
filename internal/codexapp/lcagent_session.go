@@ -2649,13 +2649,10 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 		manager:          s.runtimeManager,
 		projectPath:      s.projectPath,
 		stdin:            s.stdin,
-		appendAsync:      s.appendAsync,
+		appendAsync:      s.appendDisplayAsync,
 		watchProcessExit: s.watchManagedProcessExit,
 	}
 	s.status = lcagentProcessRequestStatus(request.Action)
-	if text := lcagentProcessRequestText(request.Action, request.Command, request.CWD, request.ProjectPath); text != "" {
-		s.appendEntryLocked(TranscriptStatus, text)
-	}
 	s.touchLocked()
 	s.mu.Unlock()
 
@@ -2779,8 +2776,10 @@ func (s *lcagentSession) appendManagedProcessExit(snapshot projectrun.Snapshot) 
 		s.mu.Unlock()
 		return
 	}
-	s.status = text
+	// A background process may finish after the turn, or during a new one.
+	// Its receipt must not replace the session's current lifecycle status.
 	s.appendEntryLocked(kind, text)
+	s.entries[len(s.entries)-1].DisplayText = lcagentManagedProcessSummary(snapshot)
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify()
@@ -3132,17 +3131,21 @@ func (s *lcagentSession) effectiveAutoLocked() string {
 	return lcagentAutoLevel(s.auto)
 }
 
-func (s *lcagentSession) appendAsync(kind TranscriptKind, text string) {
-	text = strings.TrimSpace(text)
-	if text == "" {
+func (s *lcagentSession) appendDisplayAsync(kind TranscriptKind, text, displayText string) {
+	if strings.TrimSpace(text) == "" {
 		return
 	}
 	s.mu.Lock()
 	s.appendEntryLocked(kind, text)
+	s.entries[len(s.entries)-1].DisplayText = displayText
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify()
 	}
+}
+
+func (s *lcagentSession) appendAsync(kind TranscriptKind, text string) {
+	s.appendDisplayAsync(kind, text, "")
 }
 
 func (s *lcagentSession) appendEntryLocked(kind TranscriptKind, text string) {
@@ -3903,13 +3906,14 @@ func rawJSONInt(raw json.RawMessage) int {
 
 func lcagentCondenseStatusText(text string, limit int) string {
 	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
-	if limit <= 0 || len(text) <= limit {
+	runes := []rune(text)
+	if limit <= 0 || len(runes) <= limit {
 		return text
 	}
 	if limit <= 16 {
-		return text[:limit]
+		return string(runes[:limit])
 	}
-	return strings.TrimSpace(text[:limit-13]) + "...[truncated]"
+	return strings.TrimSpace(string(runes[:limit-13])) + "...[truncated]"
 }
 
 func lcagentToolCallText(tool string, raw json.RawMessage) string {

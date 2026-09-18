@@ -29,7 +29,7 @@ type lcagentProcessBridge struct {
 	manager          *projectrun.Manager
 	projectPath      string
 	stdin            io.Writer
-	appendAsync      func(TranscriptKind, string)
+	appendAsync      func(TranscriptKind, string, string)
 	watchProcessExit func(projectrun.Snapshot)
 }
 
@@ -53,7 +53,27 @@ func (b lcagentProcessBridge) handle(request lcagentManagedProcessRequest) {
 		return
 	}
 	if result.Success {
-		b.append(TranscriptStatus, result.Output)
+		summary := "Managed process updated"
+		switch request.Action {
+		case "start":
+			summary = "Managed process started"
+			if process := result.ManagedProcess; process != nil {
+				summary = lcagentManagedProcessSummary(projectrun.Snapshot{
+					Name: process.Name, Command: process.Command, ID: process.ProcessID,
+					Running: process.Running, ExitCode: process.ExitCode, ExitCodeKnown: process.ExitCodeKnown,
+				})
+			}
+		case "list":
+			summary = fmt.Sprintf("%d managed processes", len(result.ManagedProcesses))
+		case "stop":
+			summary = result.Output
+		}
+		if project := strings.TrimSpace(request.ProjectPath); project != "" {
+			summary += " · " + lcagentCondenseStatusText(filepath.Base(project), 40)
+		}
+		if b.appendAsync != nil {
+			b.appendAsync(TranscriptStatus, result.Output, summary)
+		}
 	} else {
 		b.append(TranscriptError, firstNonEmpty(result.Error, "LCAgent managed process request failed"))
 	}
@@ -182,7 +202,7 @@ func (b lcagentProcessBridge) append(kind TranscriptKind, text string) {
 	if b.appendAsync == nil || strings.TrimSpace(text) == "" {
 		return
 	}
-	b.appendAsync(kind, text)
+	b.appendAsync(kind, text, "")
 }
 
 func lcagentProcessRequestStatus(action string) string {
@@ -198,27 +218,19 @@ func lcagentProcessRequestStatus(action string) string {
 	}
 }
 
-func lcagentProcessRequestText(action, command, cwd, projectPath string) string {
-	switch strings.TrimSpace(action) {
-	case "start":
-		message := "LCAgent starting managed process"
-		if command = strings.TrimSpace(command); command != "" {
-			message += ": " + command
-		}
-		if projectPath = strings.TrimSpace(projectPath); projectPath != "" {
-			message += " for " + projectPath
-		}
-		if cwd = strings.TrimSpace(cwd); cwd != "" {
-			message += " in " + cwd
-		}
-		return message
-	case "list":
-		return "LCAgent listing managed processes"
-	case "stop":
-		return "LCAgent stopping managed process"
-	default:
-		return ""
+// Keep human-facing notices separate from the full tool response and process evidence.
+func lcagentManagedProcessSummary(snapshot projectrun.Snapshot) string {
+	label := lcagentCondenseStatusText(firstNonEmpty(snapshot.Name, snapshot.Command, snapshot.ID, "Managed process"), 60)
+	state := "stopped"
+	if snapshot.Running {
+		state = "running"
+	} else if snapshot.ExitCodeKnown {
+		state = fmt.Sprintf("exited %d", snapshot.ExitCode)
 	}
+	if strings.TrimSpace(snapshot.LastError) != "" {
+		state += ": " + lcagentCondenseStatusText(snapshot.LastError, 120)
+	}
+	return label + ": " + state
 }
 
 func lcagentManagedProcessResult(prefix string, snapshot projectrun.Snapshot, success bool) tools.ToolResult {
