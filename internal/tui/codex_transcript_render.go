@@ -303,6 +303,9 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	case codexapp.TranscriptError:
 		return renderCodexMessageBlockForProject("Error", codexErrorBlockText(entry, text, blockMode), lipgloss.Color("203"), lipgloss.Color("252"), width, options.projectPath)
 	case codexapp.TranscriptStatus:
+		if !blockMode.full() && strings.TrimSpace(entry.DisplayText) != "" {
+			text = sanitizeCodexRenderedText(entry.DisplayText)
+		}
 		return renderCodexStatusBlock(text, width)
 	case codexapp.TranscriptSystem:
 		return renderCodexMessageBlockForProject("System", text, lipgloss.Color("244"), lipgloss.Color("246"), width, options.projectPath)

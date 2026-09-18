@@ -825,6 +825,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		segments = append(segments, composerStatus)
 	}
 	if status != "" {
+		// Reserve most of the line for input actions, even for verbose provider statuses.
+		statusWidth := min(48, max(0, width/3))
+		status = ansi.Truncate(status, statusWidth, "…")
 		segments = append(segments, status)
 	}
 	segments = append(segments, renderFooterActionList(actions...))
@@ -1015,7 +1018,7 @@ var (
 const codexBusyGradientLoopFrames = 25.0
 
 func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerFrame int) string {
-	status := codexFooterStatus(snapshot, now)
+	status := singleLineStatusText(codexFooterStatus(snapshot, now))
 	switch {
 	case status == "Working", status == "Working elsewhere", strings.HasPrefix(status, "Working "):
 		return renderCodexAnimatedBusyFooterStatus(status, spinnerFrame)

@@ -4872,3 +4872,40 @@ func TestRenderCodexBannerPromotesLinksAndBlocks(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderManagedProcessStatusUsesExpandableSummary(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind:        codexapp.TranscriptStatus,
+			Text:        "Managed process finished: exited 0; make test; project /workspace/project; pid 72687; recent diagnostic-output",
+			DisplayText: "make-test: exited 0",
+		}},
+	}
+	compact := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 80))
+	if !strings.Contains(compact, "make-test: exited 0") || strings.Contains(compact, "diagnostic-output") || strings.Contains(compact, "72687") {
+		t.Fatalf("compact process receipt = %q", compact)
+	}
+	full := ansi.Strip((Model{codexDenseBlockMode: codexDenseBlockFull}).renderCodexTranscriptEntries(snapshot, 80))
+	if !strings.Contains(full, "diagnostic-output") || !strings.Contains(full, "72687") {
+		t.Fatalf("expanded process receipt lost diagnostics: %q", full)
+	}
+}
+
+func TestRenderCodexFooterKeepsActionsWithLongStatus(t *testing.T) {
+	for _, width := range []int{60, 80, 120, 180} {
+		rendered := ansi.Strip((Model{}).renderCodexFooter(codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   strings.Repeat("Long status ", 50) + "\nsecond line",
+		}, width))
+		if strings.Contains(rendered, "\n") || lipgloss.Width(rendered) > width {
+			t.Fatalf("footer exceeds one line at width %d: %q", width, rendered)
+		}
+		for _, action := range []string{"Enter send", "ctrl+c close"} {
+			if !strings.Contains(rendered, action) {
+				t.Fatalf("footer lost %q at width %d: %q", action, width, rendered)
+			}
+		}
+	}
+}
