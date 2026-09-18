@@ -7,7 +7,7 @@ import (
 
 // Both cleanup tools expose the same running-job controls and timing language.
 func cleanupJobControls(stopping bool) string {
-	hide := renderDialogAction("B", "hide to background", navigateActionKeyStyle, navigateActionTextStyle)
+	hide := renderDialogAction("b", "hide to background", navigateActionKeyStyle, navigateActionTextStyle)
 	if stopping {
 		return hide
 	}
