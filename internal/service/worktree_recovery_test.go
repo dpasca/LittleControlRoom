@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,5 +344,85 @@ func TestRecoveryConsumerScanRetainsExternalRootSymlink(t *testing.T) {
 	err := inspectRecoveryConsumers(context.Background(), target, filepath.Join(t.TempDir(), "recoveries"), []string{external})
 	if err == nil || !strings.Contains(err.Error(), "external symbolic-link consumer") {
 		t.Fatalf("resolving a root hid an external reference: %v", err)
+	}
+}
+
+func TestRecoveryConsumerScopeChecksMetadataWithoutWalkingBuilds(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	project := filepath.Join(base, "project")
+	alias := filepath.Join(base, "alias")
+	recoveries := filepath.Join(base, "recoveries")
+	writeTestFile(t, filepath.Join(project, "build", "info", "alternates"), target, 0600)
+	writeTestFile(t, filepath.Join(project, ".git", "objects", "ab", "commondir"), target, 0600)
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := recoveryConsumerMetadataRoots(context.Background(), target, recoveries, []string{project, alias, target, filepath.Join(base, "missing")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectRecoveryConsumers(context.Background(), target, recoveries, roots); err != nil {
+		t.Fatalf("working files or object payloads were scanned: %v", err)
+	}
+	writeTestFile(t, filepath.Join(project, ".git", "objects", "info", "alternates"), target, 0600)
+	if err := inspectRecoveryConsumers(context.Background(), target, recoveries, roots); err == nil || !strings.Contains(err.Error(), "external object consumer") {
+		t.Fatalf("real alternate not detected: %v", err)
+	}
+}
+
+func TestRecoveryConsumerScopeFollowsExternalGitCommonDirectory(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "target")
+	project := filepath.Join(base, "project")
+	common := filepath.Join(base, "separate-common")
+	admin := filepath.Join(common, "worktrees", "project")
+	writeTestFile(t, filepath.Join(project, ".git"), "gitdir: "+admin, 0600)
+	writeTestFile(t, filepath.Join(admin, "commondir"), "../..", 0600)
+	writeTestFile(t, filepath.Join(common, "objects", "info", "alternates"), target, 0600)
+	roots, err := recoveryConsumerMetadataRoots(context.Background(), target, filepath.Join(base, "recoveries"), []string{project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectRecoveryConsumers(context.Background(), target, filepath.Join(base, "recoveries"), roots); err == nil || !strings.Contains(err.Error(), "external object consumer") {
+		t.Fatalf("external shared metadata not inspected: %v", err)
+	}
+}
+
+func BenchmarkRecoveryConsumerScope(b *testing.B) {
+	base := b.TempDir()
+	project := filepath.Join(base, "project")
+	build := filepath.Join(project, "build")
+	if err := os.MkdirAll(build, 0700); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0700); err != nil {
+		b.Fatal(err)
+	}
+	for n := 0; n < 4000; n++ {
+		if err := os.WriteFile(filepath.Join(build, fmt.Sprintf("artifact-%d", n)), nil, 0600); err != nil {
+			b.Fatal(err)
+		}
+	}
+	target, recoveries := filepath.Join(base, "target"), filepath.Join(base, "recoveries")
+	for _, scope := range []string{"parent-tree", "git-metadata"} {
+		b.Run(scope, func(b *testing.B) {
+			for n := 0; n < b.N; n++ {
+				roots := []string{base}
+				if scope == "git-metadata" {
+					var err error
+					roots, err = recoveryConsumerMetadataRoots(context.Background(), target, recoveries, []string{project})
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := inspectRecoveryConsumers(context.Background(), target, recoveries, roots); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

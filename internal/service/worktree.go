@@ -916,7 +916,7 @@ func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string
 			return result, err
 		}
 		result.WorktreeRemoved = true
-		result.Recovery, _ = s.ReviewWorktreeRecovery(ctx, projectPath)
+		result.Recovery, _ = s.WorktreeRecoveryStatus(ctx, projectPath)
 	}
 	return result, nil
 }
@@ -954,7 +954,7 @@ func (s *Service) FinalizeWorktreeRemoval(ctx context.Context, projectPath strin
 		return result, err
 	}
 	result.WorktreeRemoved = true
-	result.Recovery, _ = s.ReviewWorktreeRecovery(ctx, projectPath)
+	result.Recovery, _ = s.WorktreeRecoveryStatus(ctx, projectPath)
 	return result, nil
 }
 

@@ -50,13 +50,31 @@ func (s *Service) ListWorktreeRecoveries(ctx context.Context) ([]WorktreeRecover
 		if j.Phase == "purged" {
 			continue
 		}
-		bytes, err := worktreerecovery.Storage(dir)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, WorktreeRecovery{ProjectPath: j.Original, RootPath: j.Root, Location: dir, Phase: j.Phase, RetainedBytes: bytes, Verified: !j.Verified.IsZero()})
+		results = append(results, recoveryStatus(j))
 	}
 	return results, nil
+}
+
+// WorktreeRecoveryStatus reads the durable receipt. Listing or reporting a
+// completed action must not rehash the entire recovery. Review, restore, purge,
+// and resumed removal still independently verify it before acting.
+func (s *Service) WorktreeRecoveryStatus(ctx context.Context, path string) (*WorktreeRecovery, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	j, err := worktreerecovery.Load(worktreerecovery.Location(s.recoveryBase(), path))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r := recoveryStatus(j)
+	return &r, nil
+}
+
+func recoveryStatus(j *worktreerecovery.Journal) WorktreeRecovery {
+	return WorktreeRecovery{ProjectPath: j.Original, RootPath: j.Root, Location: j.Directory, Phase: j.Phase, RetainedBytes: j.RetainedBytes, Verified: !j.Verified.IsZero() && j.Phase != "purged"}
 }
 
 func (s *Service) recoveryResumeCandidate(ctx context.Context, path string) (StaleWorktreeCleanupCandidate, bool, error) {
@@ -245,23 +263,152 @@ func recoveryConsumerRoots(roots []string) []string {
 	return result
 }
 
-// Inspect known external consumers over the repository family and configured
-// project roots. Unknown repositories outside this scope cannot be discovered
-// by Git (alternates have no reverse index).
+// Inspect Git metadata of known projects and sibling repositories. Searching
+// every working file under their parent directories made each approved removal
+// depend on unrelated build caches and cloud folders. Git alternates have no
+// reverse index; unknown repositories outside this inventory remain outside
+// the scope of this check.
 func (s *Service) checkRecoveryConsumers(ctx context.Context, path string) error {
-	roots := []string{filepath.Dir(path)}
+	var candidates []string
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		candidates = append(candidates, filepath.Join(filepath.Dir(path), entry.Name()))
+	}
 	projects, err := s.store.ListProjects(ctx, true)
 	if err != nil {
 		return err
 	}
 	for _, p := range projects {
 		if p.PresentOnDisk {
-			roots = append(roots, p.Path)
+			candidates = append(candidates, p.Path)
 		}
+	}
+	s.publishWorktreeRemovalProgress(path, "Checking external consumers: locating Git metadata...")
+	roots, err := recoveryConsumerMetadataRoots(ctx, path, s.recoveryBase(), candidates)
+	if err != nil {
+		return err
 	}
 	return inspectRecoveryConsumersWithProgress(ctx, path, s.recoveryBase(), roots, func(current string, entries int64) {
 		s.publishWorktreeRemovalProgress(path, fmt.Sprintf("Checking external consumers: %d entries · %s", entries, current))
 	})
+}
+
+func recoveryConsumerMetadataRoots(ctx context.Context, path, recoveryBase string, candidates []string) ([]string, error) {
+	path, recoveryBase = recoveryConsumerPath(path), recoveryConsumerPath(recoveryBase)
+	var roots, metadata []string
+	seen := map[string]bool{}
+	outside := func(p string) bool {
+		return !removalPathWithin(p, path) && !removalPathWithin(p, recoveryBase)
+	}
+	readPointer := func(p, prefix string) (string, error) {
+		data, err := os.ReadFile(p)
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		value := strings.TrimSpace(string(data))
+		if !strings.HasPrefix(value, prefix) || value == prefix {
+			return "", nil
+		}
+		value = strings.TrimPrefix(value, prefix)
+		if !filepath.IsAbs(value) {
+			value = filepath.Join(filepath.Dir(p), value)
+		}
+		return recoveryConsumerPath(value), nil
+	}
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, recoveryConsumerContextError(err)
+		}
+		// Keep a leaf alias visible even when its target is the removal tree.
+		candidate = filepath.Join(recoveryConsumerPath(filepath.Dir(candidate)), filepath.Base(candidate))
+		if seen[candidate] || !outside(candidate) {
+			continue
+		}
+		seen[candidate] = true
+		info, err := os.Lstat(candidate)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target := recoveryConsumerPath(candidate)
+			if removalPathWithin(target, path) {
+				roots = append(roots, candidate)
+			}
+			candidate = target
+			if !outside(candidate) {
+				continue
+			}
+		}
+		if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		marker := filepath.Join(candidate, ".git")
+		gitInfo, err := os.Stat(marker)
+		switch {
+		case err == nil && gitInfo.IsDir():
+			roots = append(roots, marker)
+			metadata = append(metadata, recoveryConsumerPath(marker))
+		case err == nil && gitInfo.Mode().IsRegular():
+			roots = append(roots, marker)
+			target, err := readPointer(marker, "gitdir: ")
+			if err != nil {
+				return nil, err
+			}
+			if target != "" {
+				metadata = append(metadata, target)
+			}
+		case err != nil && !os.IsNotExist(err):
+			return nil, err
+		default:
+			// Bare repositories have no .git marker.
+			if _, err := os.Stat(filepath.Join(candidate, "HEAD")); os.IsNotExist(err) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+			if objects, err := os.Stat(filepath.Join(candidate, "objects")); err == nil && objects.IsDir() {
+				metadata = append(metadata, candidate)
+			} else if err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
+	}
+	seen = map[string]bool{}
+	for n := 0; n < len(metadata); n++ {
+		if err := ctx.Err(); err != nil {
+			return nil, recoveryConsumerContextError(err)
+		}
+		gitDir := metadata[n]
+		if seen[gitDir] || !outside(gitDir) {
+			continue
+		}
+		seen[gitDir] = true
+		roots = append(roots, gitDir)
+		common, err := readPointer(filepath.Join(gitDir, "commondir"), "")
+		if err != nil {
+			return nil, err
+		}
+		if common != "" {
+			metadata = append(metadata, common)
+		}
+	}
+	return roots, nil
+}
+
+func recoveryConsumerContextError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return &WorktreeConsumerScanCanceledError{}
+	}
+	return err
 }
 
 func inspectRecoveryConsumers(ctx context.Context, path, recoveryBase string, roots []string) error {
@@ -338,6 +485,11 @@ func inspectRecoveryConsumersWithProgress(ctx context.Context, path, recoveryBas
 				return nil
 			}
 			if d.IsDir() {
+				// Loose objects and packs contain data, not reverse dependency
+				// metadata. Keep objects/info (including alternates) in scope.
+				if filepath.Base(filepath.Dir(p)) == "objects" && d.Name() != "info" {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if d.Name() == ".git" || d.Name() == "commondir" {

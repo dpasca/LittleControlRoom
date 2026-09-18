@@ -3,6 +3,7 @@
 package worktreerecovery
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,6 +37,11 @@ func snapshot(ctx context.Context, root string) (map[string]File, error) {
 	if err := checkPlatformMetadata(ctx, root); err != nil {
 		return nil, err
 	}
+	return snapshotEntries(ctx, root)
+}
+
+// Callers batching roots check platform metadata once before reading entries.
+func snapshotEntries(ctx context.Context, root string) (map[string]File, error) {
 	files := map[string]File{}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -158,18 +164,7 @@ func copyTree(ctx context.Context, from, to string) error {
 		case i.IsDir():
 			err = os.Mkdir(dst, 0700)
 		case i.Mode().IsRegular():
-			var in, out *os.File
-			in, err = os.Open(path)
-			if err != nil {
-				return err
-			}
-			out, err = os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-			if err != nil {
-				in.Close()
-				return err
-			}
-			_, err = io.Copy(out, in)
-			err = errors.Join(err, in.Close(), out.Sync(), out.Close())
+			err = copyFile(path, dst)
 		case i.Mode()&os.ModeSymlink != 0:
 			var link string
 			link, err = os.Readlink(path)
@@ -186,7 +181,14 @@ func copyTree(ctx context.Context, from, to string) error {
 		if err != nil {
 			return err
 		}
+		destinationAttrs, err := readXattrs(dst)
+		if err != nil {
+			return err
+		}
 		for name, value := range attrs {
+			if existing, ok := destinationAttrs[name]; ok && bytes.Equal(existing, value) {
+				continue
+			}
 			if err := unix.Lsetxattr(dst, name, value, 0); err != nil {
 				return fmt.Errorf("preserve xattr %s on %s: %w", name, dst, err)
 			}
@@ -217,11 +219,56 @@ func copyTree(ctx context.Context, from, to string) error {
 	})
 }
 
+func copyFile(from, to string) error {
+	cloned, err := cloneFile(from, to)
+	if err != nil {
+		return err
+	}
+	if cloned {
+		f, err := os.Open(to)
+		if err != nil {
+			return err
+		}
+		return errors.Join(f.Sync(), f.Close())
+	}
+	in, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		in.Close()
+		return err
+	}
+	_, err = io.Copy(out, in)
+	return errors.Join(err, in.Close(), out.Sync(), out.Close())
+}
+
 func verifyTree(ctx context.Context, path string, want map[string]File) error {
 	got, err := snapshot(ctx, path)
 	if err != nil {
 		return err
 	}
+	return compareInventory(path, got, want)
+}
+
+func verifyTrees(ctx context.Context, paths []string, inventories []map[string]File) error {
+	if err := checkPlatformMetadata(ctx, paths...); err != nil {
+		return err
+	}
+	for n, path := range paths {
+		got, err := snapshotEntries(ctx, path)
+		if err != nil {
+			return err
+		}
+		if err := compareInventory(path, got, inventories[n]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func compareInventory(path string, got, want map[string]File) error {
 	if !reflect.DeepEqual(got, want) {
 		var changes []error
 		for rel, expected := range want {

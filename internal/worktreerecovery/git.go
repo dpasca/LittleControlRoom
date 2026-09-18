@@ -26,6 +26,14 @@ type Source struct {
 	Files    map[string]File
 }
 
+// StoreMapping joins separately preserved metadata entries into a Git common
+// directory. Other worktrees and unrelated submodules stay in the live repo.
+type StoreMapping struct {
+	Original string
+	Copy     string
+	Entries  []string
+}
+
 type Repair struct {
 	Symlink bool
 	Path    string
@@ -175,8 +183,12 @@ func (j *Journal) inspect(ctx context.Context) error {
 			problems = append(problems, fmt.Errorf("repository metadata does not match directory: %s", p))
 			continue
 		}
-		j.addSource(r.Common)
-		j.addSource(r.GitDir)
+		if err := j.addCommonSources(r.Common); err != nil {
+			problems = append(problems, err)
+		}
+		if r.GitDir != r.Common {
+			j.addSource(r.GitDir)
+		}
 		r.Objects, err = git(ctx, p, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)")
 		if err != nil {
 			problems = append(problems, err)
@@ -243,15 +255,15 @@ func (j *Journal) inspect(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if strings.HasSuffix(d.Name(), ".lock") {
-				problems = append(problems, fmt.Errorf("active or stale lock requires review: %s", p))
-			}
 			metadata := n > 0
 			for _, r := range j.Repositories {
 				if within(p, r.GitDir) || within(p, r.Common) {
 					metadata = true
 					break
 				}
+			}
+			if metadata && strings.HasSuffix(d.Name(), ".lock") {
+				problems = append(problems, fmt.Errorf("active or stale Git lock requires review: %s", p))
 			}
 			if metadata && d.Type()&os.ModeSymlink != 0 {
 				problems = append(problems, fmt.Errorf("Git metadata symlink requires review: %s", p))
@@ -269,7 +281,9 @@ func (j *Journal) inspect(ctx context.Context) error {
 		sort.Slice(rest, func(a, b int) bool { return len(rest[a].Original) < len(rest[b].Original) })
 		j.Sources = j.Sources[:1]
 		for _, source := range rest {
-			j.addSource(source.Original)
+			if !j.hasSource(source.Original) {
+				j.Sources = append(j.Sources, source)
+			}
 		}
 	}
 	for _, source := range j.Sources {
@@ -287,11 +301,72 @@ func (j *Journal) inspect(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (j *Journal) addSource(path string) {
+func (j *Journal) hasSource(path string) bool {
 	for _, s := range j.Sources {
 		if within(path, s.Original) {
-			return
+			return true
 		}
+	}
+	return false
+}
+
+func (j *Journal) addCommonSources(path string) error {
+	if j.hasSource(path) {
+		return nil
+	}
+	for _, mapping := range j.StoreMappings {
+		if mapping.Original == path {
+			return nil
+		}
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	mapping := StoreMapping{Original: path, Copy: fmt.Sprintf("git-stores/%d", len(j.StoreMappings))}
+	for _, entry := range entries {
+		// These containers belong to other checkouts. Required private admins
+		// and submodule stores are added explicitly by repository inspection.
+		if entry.Name() == "worktrees" || entry.Name() == "modules" {
+			continue
+		}
+		mapping.Entries = append(mapping.Entries, entry.Name())
+		original := filepath.Join(path, entry.Name())
+		if !j.hasSource(original) {
+			j.Sources = append(j.Sources, Source{Original: original, Copy: filepath.Join(mapping.Copy, entry.Name())})
+		}
+	}
+	j.StoreMappings = append(j.StoreMappings, mapping)
+	return nil
+}
+
+func (j *Journal) checkStoreMappings(original bool) error {
+	for _, mapping := range j.StoreMappings {
+		path := filepath.Join(j.Directory, mapping.Copy)
+		if original {
+			path = mapping.Original
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+		var names []string
+		for _, entry := range entries {
+			if original && (entry.Name() == "worktrees" || entry.Name() == "modules") {
+				continue
+			}
+			names = append(names, entry.Name())
+		}
+		if strings.Join(names, "\x00") != strings.Join(mapping.Entries, "\x00") {
+			return fmt.Errorf("Git store entries changed since inspection: %s", path)
+		}
+	}
+	return nil
+}
+
+func (j *Journal) addSource(path string) {
+	if j.hasSource(path) {
+		return
 	}
 	// Keep prior mappings stable; a parent discovered later must not duplicate
 	// a child store already selected. Repository common stores precede alternates.
@@ -303,6 +378,11 @@ func (j *Journal) mapped(path string) (string, error) {
 		if within(path, s.Original) {
 			rel, _ := filepath.Rel(s.Original, path)
 			return filepath.Join(j.Directory, s.Copy, rel), nil
+		}
+	}
+	for _, mapping := range j.StoreMappings {
+		if path == mapping.Original {
+			return filepath.Join(j.Directory, mapping.Copy), nil
 		}
 	}
 	return "", fmt.Errorf("dependency outside preserved closure: %s", path)

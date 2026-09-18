@@ -8,6 +8,6 @@ import (
 )
 
 // Linux POSIX ACLs are included in the xattr inventory.
-func checkPlatformMetadata(ctx context.Context, path string) error { return ctx.Err() }
+func checkPlatformMetadata(ctx context.Context, paths ...string) error { return ctx.Err() }
 
 func checkFileFlags(path string, stat *unix.Stat_t) error { return nil }

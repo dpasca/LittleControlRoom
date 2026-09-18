@@ -28,6 +28,7 @@ type Journal struct {
 	Device         uint64
 	Inode          uint64
 	Sources        []Source
+	StoreMappings  []StoreMapping `json:",omitempty"`
 	Repositories   []Repository
 	ObjectStores   []string
 	Repairs        []Repair
@@ -36,6 +37,9 @@ type Journal struct {
 	// VerifiedFiles describe the repaired, independently usable recovery.
 	VerifiedFiles map[string]map[string]File
 	MetadataMoves []MetadataMove
+	// Reuse a successful Git check only after Verify has rehashed every byte
+	// against the same verified inventory. Never persisted across operations.
+	gitVerifiedDirectory string
 }
 
 type MetadataMove struct {
@@ -167,6 +171,11 @@ func Load(directory string) (*Journal, error) {
 			return nil, fmt.Errorf("unsafe recovery mapping")
 		}
 	}
+	for _, mapping := range j.StoreMappings {
+		if !filepath.IsAbs(mapping.Original) || filepath.IsAbs(mapping.Copy) || !within(filepath.Join(directory, mapping.Copy), filepath.Join(directory, "git-stores")) || mapping.Copy == "git-stores" {
+			return nil, fmt.Errorf("unsafe Git store mapping")
+		}
+	}
 	for _, r := range j.Repairs {
 		if !within(r.Path, directory) || r.Path == directory {
 			return nil, fmt.Errorf("unsafe repair path")
@@ -263,6 +272,7 @@ func (j *Journal) prepareCopies(ctx context.Context) error {
 		j.Repositories = nil
 		j.ObjectStores = nil
 		j.Sources = nil
+		j.StoreMappings = nil
 		err := j.inspect(ctx)
 		if saveErr := j.save(); saveErr != nil {
 			return saveErr
@@ -270,8 +280,11 @@ func (j *Journal) prepareCopies(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if err := checkPlatformMetadata(ctx, j.sourcePaths(true)...); err != nil {
+			return err
+		}
 		for n := range j.Sources {
-			files, err := snapshot(ctx, j.Sources[n].Original)
+			files, err := snapshotEntries(ctx, j.Sources[n].Original)
 			if err != nil {
 				return err
 			}
@@ -326,9 +339,9 @@ func (j *Journal) prepareCopies(ctx context.Context) error {
 		if err := copyTree(ctx, s.Original, dst); err != nil {
 			return err
 		}
-		if err := verifyTree(ctx, dst, s.Files); err != nil {
-			return err
-		}
+	}
+	if err := j.verifySourceCopies(ctx, false); err != nil {
+		return err
 	}
 	if err := j.repair(ctx); err != nil {
 		return err
@@ -336,15 +349,19 @@ func (j *Journal) prepareCopies(ctx context.Context) error {
 	if err := j.verifyGit(ctx); err != nil {
 		return err
 	}
+	j.gitVerifiedDirectory = j.Directory
 	if err := j.CheckSources(ctx); err != nil {
 		return err
 	}
 	j.VerifiedFiles = map[string]map[string]File{}
+	if err := checkPlatformMetadata(ctx, j.sourcePaths(false)...); err != nil {
+		return err
+	}
 	for _, s := range j.Sources {
 		if err := syncTree(ctx, filepath.Join(j.Directory, s.Copy)); err != nil {
 			return err
 		}
-		files, err := snapshot(ctx, filepath.Join(j.Directory, s.Copy))
+		files, err := snapshotEntries(ctx, filepath.Join(j.Directory, s.Copy))
 		if err != nil {
 			return err
 		}
@@ -364,12 +381,42 @@ func (j *Journal) CheckSources(ctx context.Context) error {
 	if err := j.checkOriginalIdentity(); err != nil {
 		return err
 	}
-	for _, s := range j.Sources {
-		if err := verifyTree(ctx, s.Original, s.Files); err != nil {
-			return err
-		}
+	if err := j.checkStoreMappings(true); err != nil {
+		return err
 	}
-	return nil
+	var inventories []map[string]File
+	for _, s := range j.Sources {
+		inventories = append(inventories, s.Files)
+	}
+	return verifyTrees(ctx, j.sourcePaths(true), inventories)
+}
+
+func (j *Journal) sourcePaths(original bool) []string {
+	paths := make([]string, 0, len(j.Sources))
+	for _, s := range j.Sources {
+		path := filepath.Join(j.Directory, s.Copy)
+		if original {
+			path = s.Original
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func (j *Journal) verifySourceCopies(ctx context.Context, repaired bool) error {
+	var inventories []map[string]File
+	for _, s := range j.Sources {
+		files := s.Files
+		if repaired {
+			var ok bool
+			files, ok = j.VerifiedFiles[s.Copy]
+			if !ok {
+				return fmt.Errorf("missing verification inventory")
+			}
+		}
+		inventories = append(inventories, files)
+	}
+	return verifyTrees(ctx, j.sourcePaths(false), inventories)
 }
 
 func (j *Journal) checkOriginalIdentity() error {
@@ -397,14 +444,11 @@ func (j *Journal) Verify(ctx context.Context) error {
 	if j.Verified.IsZero() || len(j.VerifiedFiles) == 0 {
 		return fmt.Errorf("incomplete recovery at %s (phase %s); source retained; inspect manifest before restarting", j.Directory, j.Phase)
 	}
-	for _, s := range j.Sources {
-		files, ok := j.VerifiedFiles[s.Copy]
-		if !ok {
-			return fmt.Errorf("missing verification inventory")
-		}
-		if err := verifyTree(ctx, filepath.Join(j.Directory, s.Copy), files); err != nil {
-			return err
-		}
+	if err := j.checkStoreMappings(false); err != nil {
+		return err
+	}
+	if err := j.verifySourceCopies(ctx, true); err != nil {
+		return err
 	}
 	for _, move := range j.MetadataMoves {
 		if _, err := os.Lstat(move.Destination); err == nil {
@@ -415,7 +459,14 @@ func (j *Journal) Verify(ctx context.Context) error {
 			return err
 		}
 	}
-	return j.verifyGit(ctx)
+	if j.gitVerifiedDirectory == j.Directory {
+		return nil
+	}
+	if err := j.verifyGit(ctx); err != nil {
+		return err
+	}
+	j.gitVerifiedDirectory = j.Directory
+	return nil
 }
 
 // VerifyResume also accepts the journaled promotion boundary, where the
@@ -425,6 +476,8 @@ func (j *Journal) VerifyResume(ctx context.Context) error {
 	if j.Phase != "promoting" {
 		return j.Verify(ctx)
 	}
+	var paths []string
+	var inventories []map[string]File
 	for _, source := range j.Sources {
 		path := filepath.Join(j.Directory, source.Copy)
 		if source.Copy == "tree" {
@@ -435,11 +488,10 @@ func (j *Journal) VerifyResume(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := verifyTree(ctx, path, j.VerifiedFiles[source.Copy]); err != nil {
-			return err
-		}
+		paths = append(paths, path)
+		inventories = append(inventories, j.VerifiedFiles[source.Copy])
 	}
-	return nil
+	return verifyTrees(ctx, paths, inventories)
 }
 
 // Relocate is the only source-directory mutation. A same-filesystem rename
@@ -740,6 +792,7 @@ func (j *Journal) Purge(ctx context.Context, confirmation string) error {
 		}
 	}
 	j.Sources = nil
+	j.StoreMappings = nil
 	j.Repositories = nil
 	j.ObjectStores = nil
 	j.Repairs = nil

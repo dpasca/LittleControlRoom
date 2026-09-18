@@ -19,7 +19,7 @@ func TestCleanupRecoveryActionsRequireSeparatePurgeConfirmation(t *testing.T) {
 		t.Fatal("permanent deletion did not stop for confirmation")
 	}
 	rendered := renderStaleWorktreeCleanupResults(d, 100, 50)
-	for _, want := range []string{"removed with recovery retained", "8192 bytes allocated", "/durable/recovery", "Review", "Restore", "Permanently delete", "cannot be undone"} {
+	for _, want := range []string{"removed with recovery retained", "8192 bytes at last check", "/durable/recovery", "Review", "Restore", "Permanently delete", "cannot be undone"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q: %s", want, rendered)
 		}

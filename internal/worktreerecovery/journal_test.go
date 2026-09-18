@@ -428,3 +428,109 @@ func TestExtendedAttributesAndAllocatedStorage(t *testing.T) {
 		t.Fatalf("bytes=%d err=%v", bytes, err)
 	}
 }
+
+func TestRecoveryKeepsWorkingLockfilesAndOmitsUnrelatedGitStores(t *testing.T) {
+	root, path, base, _ := fixture(t)
+	ctx := context.Background()
+	other := filepath.Join(filepath.Dir(root), "other-task")
+	run(t, root, "worktree", "add", "-b", "other-task", other)
+	otherAdmin := run(t, other, "rev-parse", "--absolute-git-dir")
+	if err := os.WriteFile(filepath.Join(otherAdmin, "index.lock"), []byte("another checkout is busy"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(root, ".git", "modules", "unused")
+	if err := os.MkdirAll(unrelated, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(unrelated, "index.lock"), []byte("unrelated metadata"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"uv.lock", "build/playwright/cleanup.lock", "build/runtime/.lock", "dependency/tool.py.lock"} {
+		p := filepath.Join(path, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(rel), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err := Prepare(ctx, base, root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range j.Sources {
+		if within(otherAdmin, source.Original) || within(unrelated, source.Original) {
+			t.Fatalf("copied unrelated Git metadata: %s", source.Original)
+		}
+	}
+	// Activity in a different worktree must not invalidate this preservation.
+	if err := os.WriteFile(filepath.Join(otherAdmin, "index.lock"), []byte("still busy"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Relocate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Complete(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Load(j.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(filepath.Dir(root), "restored")
+	if err := j.Restore(ctx, destination); err != nil {
+		t.Fatalf("recovery depends on live primary: %v", err)
+	}
+	for _, rel := range []string{"uv.lock", "build/playwright/cleanup.lock", "build/runtime/.lock", "dependency/tool.py.lock"} {
+		data, err := os.ReadFile(filepath.Join(destination, "tree", rel))
+		if err != nil || string(data) != rel {
+			t.Fatalf("lockfile %s lost: %q %v", rel, data, err)
+		}
+	}
+	run(t, filepath.Join(destination, "tree"), "fsck", "--full")
+}
+
+func TestRecoveryRejectsAddedCommonMetadata(t *testing.T) {
+	root, path, base, _ := fixture(t)
+	ctx := context.Background()
+	j, err := Prepare(ctx, base, root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	common, err := j.mapped(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(common, "unexpected"), []byte("new metadata"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Verify(ctx); err == nil {
+		t.Fatal("new metadata bypassed repeated Git verification")
+	}
+}
+
+func TestCopyFileHasIndependentContents(t *testing.T) {
+	base := t.TempDir()
+	from, to := filepath.Join(base, "source"), filepath.Join(base, "copy")
+	if err := os.WriteFile(from, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(from, to); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(from, []byte("changed source"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(to); err != nil || string(data) != "original" {
+		t.Fatalf("source write changed copy: %q %v", data, err)
+	}
+	if err := os.WriteFile(to, []byte("changed copy"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(from); err != nil || string(data) != "changed source" {
+		t.Fatalf("copy write changed source: %q %v", data, err)
+	}
+}

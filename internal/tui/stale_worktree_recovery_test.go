@@ -177,3 +177,11 @@ func TestCleanupFullDetailsScrollToEndInSmallTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupReportShowsConcreteRecoveryBlocker(t *testing.T) {
+	cause := fmt.Errorf("active or stale Git lock requires review: /tmp/task/.git/index.lock\nsecond blocker")
+	err := fmt.Errorf("linked TODO done: worktree cleanup blocked; recovery /tmp/recovery: %w", cause)
+	if got := staleWorktreeCleanupFailureSummary(err); got != "Blocked: active or stale Git lock requires review: /tmp/task/.git/index.lock" {
+		t.Fatalf("report hides the blocker: %q", got)
+	}
+}

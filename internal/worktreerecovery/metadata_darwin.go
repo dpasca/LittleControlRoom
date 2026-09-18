@@ -15,12 +15,23 @@ import (
 // native ACL API, reject them explicitly rather than verifying a lossy copy.
 // -B escapes newlines in names, and -l gives directory entries a mode prefix;
 // only ACL records have a numeric ordinal followed by a colon.
-func checkPlatformMetadata(ctx context.Context, path string) error {
+func checkPlatformMetadata(ctx context.Context, paths ...string) error {
+	for len(paths) > 0 {
+		n := min(len(paths), 128)
+		if err := checkPlatformMetadataBatch(ctx, paths[:n]); err != nil {
+			return err
+		}
+		paths = paths[n:]
+	}
+	return ctx.Err()
+}
+
+func checkPlatformMetadataBatch(ctx context.Context, paths []string) error {
 	for _, flags := range []string{"-ldeB", "-lAeRB"} {
-		cmd := exec.CommandContext(ctx, "/bin/ls", flags, path)
+		cmd := exec.CommandContext(ctx, "/bin/ls", append([]string{flags}, paths...)...)
 		out, err := cmd.Output()
 		if err != nil {
-			return fmt.Errorf("cannot inspect macOS ACLs at %s: %w", path, err)
+			return fmt.Errorf("cannot inspect macOS ACLs at %s: %w", strings.Join(paths, ", "), err)
 		}
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
@@ -28,7 +39,7 @@ func checkPlatformMetadata(ctx context.Context, path string) error {
 				continue
 			}
 			if _, err := strconv.ParseUint(strings.TrimSuffix(fields[0], ":"), 10, 64); err == nil {
-				return fmt.Errorf("extended ACL requires preservation review: %s (%s)", path, strings.TrimSpace(line))
+				return fmt.Errorf("extended ACL requires preservation review: %s (%s)", strings.Join(paths, ", "), strings.TrimSpace(line))
 			}
 		}
 	}

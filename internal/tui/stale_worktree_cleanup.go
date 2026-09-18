@@ -285,7 +285,7 @@ func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCl
 			})
 		}
 		if result.Finalize.Recovery == nil {
-			result.Finalize.Recovery, _ = svc.ReviewWorktreeRecovery(ctx, candidate.ProjectPath)
+			result.Finalize.Recovery, _ = svc.WorktreeRecoveryStatus(ctx, candidate.ProjectPath)
 		}
 
 		var inUse *service.WorktreeProcessesInUseError
@@ -930,7 +930,7 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 	}
 	result := dialog.Results[selected]
 	if r := result.Finalize.Recovery; r != nil {
-		lines = append(lines, detailField("Recovery", r.Location), detailField("Retained", fmt.Sprintf("%d bytes allocated · %s", r.RetainedBytes, r.Phase)))
+		lines = append(lines, detailField("Recovery", r.Location), detailField("Retained", fmt.Sprintf("%d bytes at last check · %s", r.RetainedBytes, r.Phase)))
 		if r.Phase != "purged" {
 			lines = append(lines, renderDialogAction("V", "Review", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("O", "Restore", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("P", "Permanently delete", cancelActionKeyStyle, cancelActionTextStyle))
 		}

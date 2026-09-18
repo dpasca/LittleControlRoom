@@ -11,7 +11,9 @@ bypass recovery verification or nested ownership checks.
 
 The cleanup report distinguishes removal, removal with recovery retained, and
 blocked removal. A retained recovery shows its directory, journal phase, and
-current allocated bytes. These bytes come from filesystem block counts,
+last recorded allocated bytes. Opening the report or audit reads the saved
+receipt; it does not rescan or reverify every retained recovery. Review refreshes
+the displayed measurement. These bytes come from filesystem block counts,
 deduplicated by device/inode, and include the manifest and temporary copies
 when an operation is incomplete. They are not a logical-size estimate or a
 promise about space freed elsewhere on the volume.
@@ -46,18 +48,28 @@ treat the recovery as private repository data.
 
 Preservation copies all working files, including untracked/ignored nested data,
 and the Git common/administrative stores required by the selected repositories.
+External common stores retain their objects, refs, and configuration, but omit
+unrelated worktree administrations and submodule stores. Required administrations
+and submodule stores are inventoried separately. Repositories inside the removal
+tree retain their complete metadata, including unreachable and borrowed objects.
 Alternate object stores are followed transitively. Overlapping source roots are
-collapsed before copying. File hashes, ownership, executable modes, regular-file
+collapsed before copying. On supported macOS filesystems, independent
+copy-on-write clones avoid rewriting file contents; other filesystems use normal
+copies. These are never hard links to mutable source files.
+File hashes, ownership, executable modes, regular-file
 modification times, symlink targets, and extended attributes are compared by
 reading the copy back. Special files and unsupported metadata stop preservation.
 
 Copied Git pointers, `commondir`, in-tree local origins, `core.worktree`,
 alternates, and absolute internal symlinks are repaired with recorded edits.
-Copied registrations for unrelated checkouts receive inert local backpointers,
-so a restored shared store cannot target those live working directories.
+Legacy recoveries that copied unrelated registrations retain their recorded
+inert local backpointers, so a restored store cannot target those live checkouts.
 Verification runs with caller Git overrides removed, fsmonitor disabled, and
 lazy fetching disabled. It compares every object ID (including unreachable and
-borrowed objects), refs and HEAD, then runs full `git fsck`. Original data is
+borrowed objects), refs and HEAD, then runs full `git fsck`. Within one operation,
+that Git result is reused only after every copied byte and the store layout
+have been rechecked against their verified inventories. Loading a journal for
+another operation always starts fresh. Original data is
 rehashed before relocation. This is a file/store recovery, not a refs-only bundle.
 
 The source directory moves atomically to the journal's `QuarantinePath`.
@@ -82,19 +94,24 @@ retained and blocks further work; it is not silently accepted or overwritten.
 - Atomic relocation currently requires the recovery area and source worktree on
   the same filesystem. Cross-filesystem relocation stops with both the source
   and verified copy retained.
-- External-consumer checks cover Git linked-worktree registrations, the selected
-  repository's containing directory, and LCR's known on-disk projects. Git has
+- External-consumer checks cover Git linked-worktree registrations, Git metadata
+  in sibling repositories and LCR's known on-disk projects, and direct sibling
+  symlink aliases. They follow external Git/common-directory pointers and inspect
+  alternates, without traversing unrelated working files or object payloads. Git has
   no global reverse index of alternates. Arbitrary unregistered repositories
   elsewhere on disk cannot be proven absent; this implementation does not claim
-  a machine-wide dependency audit. Known outside consumers block removal rather
+  a machine-wide dependency audit. Unregistered nested repositories and arbitrary
+  symlinks in other working trees are outside this inventory. Known outside consumers block removal rather
   than having their metadata silently rewritten.
 - Metadata symlinks, quoted alternates, special files, unreadable dependencies,
-  ownership that cannot be reproduced, and active/stale locks require review.
+  ownership that cannot be reproduced, and active/stale Git metadata locks require
+  review. Ordinary working files such as `uv.lock`, application lockfiles, and
+  build lockfiles are preserved normally; active owners still block removal.
   Invalid shared submodule metadata also blocks removal; the preservation path
   does not silently rewrite a live primary submodule's `core.worktree` setting.
   macOS filesystem flags and extended ACLs are explicitly blocked because listxattr does not include
   them; Linux ACL xattrs participate in the normal copy/verification path.
-- The recovery includes a full copy of required shared Git stores. It avoids
+- The recovery includes all objects in required shared Git stores. It avoids
   overlapping source copies within an operation, but does not deduplicate objects
   across separate recovery operations or optimize the primary store to a minimal
   object pack.

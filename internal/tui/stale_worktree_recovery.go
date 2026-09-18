@@ -42,7 +42,10 @@ func staleWorktreeCleanupFailureSummary(err error) string {
 	if errors.As(err, &nested) {
 		return "Nested repository may contain work that isn't backed up."
 	}
-	return "Cleanup could not finish. Ask Engineer to investigate and repair."
+	if cause := firstNonEmptyErrorLine(errorLogRootCause(err)); cause != "" {
+		return "Blocked: " + cause
+	}
+	return "Cleanup could not finish. Press D for details."
 }
 
 func (m Model) askStaleWorktreeCleanupEngineer(result staleWorktreeCleanupResult) (tea.Model, tea.Cmd) {
