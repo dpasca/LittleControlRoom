@@ -10,10 +10,10 @@ bypass recovery verification or nested ownership checks.
 ## User flow
 
 While removal runs, the panel shows the current stage, file path, processed
-entries/bytes, elapsed time, and time since the last update. **B** hides the job
+entries/bytes, elapsed time, and time since the last update. **b** hides the job
 to the background; `/clean` reopens the same running job or its completed report.
 The footer keeps its status visible. **Esc** aborts remaining work and keeps the
-stopping panel visible; **B** can hide that too. These controls and timing text
+stopping panel visible; **b** can hide that too. These controls and timing text
 are shared with `/codex-gc`. Background execution lasts for the current LCR
 process; interrupted operations can subsequently resume through their journals.
 
@@ -26,18 +26,18 @@ deduplicated by device/inode, and include the manifest and temporary copies
 when an operation is incomplete. They are not a logical-size estimate or a
 promise about space freed elsewhere on the volume.
 
-- **V — Review** re-verifies the recovery and opens its directory.
-- **O — Restore** makes an independent workspace at `<old-path>.restored/tree`,
+- **v — Review** re-verifies the recovery and opens its directory.
+- **o — Restore** makes an independent workspace at `<old-path>.restored/tree`,
   with its own copied dependency stores. Existing destinations are refused.
   It does not overwrite live shared Git metadata or register a new LCR project.
-- **P — Permanently delete** opens a separate confirmation. Only **Y** starts
+- **p — Permanently delete** opens a separate confirmation. Only **y** starts
   deletion; Escape cancels. Incomplete removals cannot be purged. A small
   idempotency tombstone remains after recovery data has been deleted.
-- **R — Retry** resumes remaining operations with fresh checks. An interrupted
+- **r — Retry** resumes remaining operations with fresh checks. An interrupted
   relocation uses its durable journal; it does not merge or complete a TODO
   again. Completed TODO state, branches, and conversation history are retained.
 
-After restarting LCR, `/clean` offers **V — review retained recoveries** from
+After restarting LCR, `/clean` offers **v — review retained recoveries** from
 the audit. Interrupted removal operations also become retry candidates when
 their journal and project state allow safe resumption. Backup corruption and
 incomplete evidence are reported as blockers; they are never a deletion fallback.

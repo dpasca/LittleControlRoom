@@ -758,7 +758,7 @@ func (m Model) renderStaleWorktreeCleanupOverlay(body string, bodyW, bodyH int) 
 func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDialogState, width, bodyH int) string {
 	lines := []string{commandPaletteTitleStyle.Render("Clean stale worktrees")}
 	if len(dialog.Audit.Recoveries) > 0 {
-		lines = append(lines, renderDialogAction("V", "review retained recoveries", navigateActionKeyStyle, navigateActionTextStyle))
+		lines = append(lines, renderDialogAction("v", "review retained recoveries", navigateActionKeyStyle, navigateActionTextStyle))
 	}
 	if dialog.Loading {
 		lines = append(lines,
@@ -785,7 +785,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 			detailDangerStyle.Render("Audit failed"),
 		)
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, dialog.ErrorMessage)...)
-		lines = append(lines, "", renderDialogAction("R", "retry", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle))
+		lines = append(lines, "", renderDialogAction("r", "retry", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle))
 		return strings.Join(lines, "\n")
 	}
 
@@ -800,7 +800,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 		lines = append(lines,
 			detailMutedStyle.Render("No worktrees are currently eligible for stale cleanup."),
 			"",
-			renderDialogAction("R", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+			renderDialogAction("r", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 		)
 		return strings.Join(lines, "\n")
 	}
@@ -845,7 +845,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 		"",
 		renderDialogAction("Space", "toggle", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Enter", "remove selected", commitActionKeyStyle, commitActionTextStyle)+"   "+
-			renderDialogAction("R", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
+			renderDialogAction("r", "audit again", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	)
 	return clampDialogContent(strings.Join(lines, "\n"), max(12, bodyH-4), 5, detailMutedStyle.Render("… details clipped to fit terminal …"))
@@ -932,7 +932,7 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 				detail += "; linked TODO done"
 			}
 			if result.Err != nil {
-				detail += "; follow-up failed (D details)"
+				detail += "; follow-up failed (d details)"
 			}
 		case result.SkippedReason != "":
 			marker, detail = "-", "skipped: "+result.SkippedReason
@@ -953,7 +953,7 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 	if r := result.Finalize.Recovery; r != nil {
 		lines = append(lines, detailField("Recovery", r.Location), detailField("Retained", fmt.Sprintf("%d bytes at last check · %s", r.RetainedBytes, r.Phase)))
 		if r.Phase != "purged" {
-			lines = append(lines, renderDialogAction("V", "Review", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("O", "Restore", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("P", "Permanently delete", cancelActionKeyStyle, cancelActionTextStyle))
+			lines = append(lines, renderDialogAction("v", "Review", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("o", "Restore", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("p", "Permanently delete", cancelActionKeyStyle, cancelActionTextStyle))
 		}
 	}
 	if dialog.RecoveryBusy {
@@ -963,7 +963,7 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, dialog.RecoveryMessage)...)
 	}
 	if dialog.PurgeConfirm {
-		lines = append(lines, detailDangerStyle.Render("Permanently delete this recovery? This cannot be undone."), detailWarningStyle.Render("Y confirms permanent deletion · Esc cancels"))
+		lines = append(lines, detailDangerStyle.Render("Permanently delete this recovery? This cannot be undone."), detailWarningStyle.Render("y confirms permanent deletion · Esc cancels"))
 	}
 	if dialog.ShowDetails {
 		details := staleWorktreeCleanupDetailLines(result, width)
@@ -976,10 +976,10 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 	}
 	lines = append(lines, "")
 	if result.Err != nil && !result.Finalize.WorktreeRemoved {
-		lines = append(lines, renderDialogAction("E", "Ask Engineer", commitActionKeyStyle, commitActionTextStyle))
+		lines = append(lines, renderDialogAction("e", "Ask Engineer", commitActionKeyStyle, commitActionTextStyle))
 	}
-	lines = append(lines, renderDialogAction("R", "retry remaining / audit again", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("D", "details", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Enter/Esc", "close report", navigateActionKeyStyle, navigateActionTextStyle))
+	lines = append(lines, renderDialogAction("r", "retry remaining / audit again", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("d", "details", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Enter/Esc", "close report", navigateActionKeyStyle, navigateActionTextStyle))
 	return strings.Join(lines, "\n")
 }
 

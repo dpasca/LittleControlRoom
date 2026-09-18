@@ -232,11 +232,11 @@ func (m Model) renderFooter(width int) string {
 		case m.staleWorktreeCleanup.Loading:
 			return m.renderModalFooter(width, "Stale worktrees: auditing only, Esc close", supplementSegments...)
 		case m.staleWorktreeCleanup.Removing:
-			return m.renderModalFooter(width, "Stale worktrees: removal in progress, Esc cancel and close", supplementSegments...)
+			return m.renderModalFooter(width, "Stale worktrees: b hide to background, Esc abort remaining", supplementSegments...)
 		case m.staleWorktreeCleanup.Finished:
-			return m.renderModalFooter(width, "Stale worktree report: ↑↓ select, E engineer, D details, R retry, Esc close", supplementSegments...)
+			return m.renderModalFooter(width, "Stale worktree report: ↑↓ select, e engineer, d details, r retry, Esc close", supplementSegments...)
 		default:
-			return m.renderModalFooter(width, "Stale worktrees: ↑↓ inspect, Space toggle, Enter remove, R refresh, Esc cancel", supplementSegments...)
+			return m.renderModalFooter(width, "Stale worktrees: ↑↓ inspect, Space toggle, Enter remove, r refresh, Esc cancel", supplementSegments...)
 		}
 	}
 	if m.codexCleanupVisible() {

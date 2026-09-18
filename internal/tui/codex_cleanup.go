@@ -103,7 +103,7 @@ func (m Model) openCodexCleanup() (tea.Model, tea.Cmd) {
 		case dialog.Deleting && dialog.CancelRequested:
 			m.status = "Codex cleanup is stopping; waiting for post-delete verification"
 		case dialog.Deleting:
-			m.status = fmt.Sprintf("Codex cleanup %d/%d in progress; B hides it, Esc aborts", dialog.QueueIndex+1, len(dialog.Queue))
+			m.status = fmt.Sprintf("Codex cleanup %d/%d in progress; b hides it, Esc aborts", dialog.QueueIndex+1, len(dialog.Queue))
 		case dialog.Finished && dialog.Aborted:
 			m.status = "Codex cleanup aborted; report open"
 		case dialog.Finished:
