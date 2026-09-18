@@ -935,6 +935,10 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 	if row := embeddedSidebarContextRow(snapshot, width); row != "" {
 		rows = append(rows, row)
 	}
+	if snapshot.TokenUsage != nil && snapshot.TokenUsage.CompactionTokenBudget > 0 {
+		value := "~" + uistyle.FormatTokenCount(snapshot.TokenUsage.CompactionTokenBudget)
+		rows = append(rows, embeddedSidebarFieldRow("Compact at", value, detailValueStyle, width))
+	}
 	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Tokens", tokens, detailValueStyle, width))
 	}
@@ -1522,8 +1526,12 @@ func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {
 	if used == 0 {
 		return ""
 	}
+	estimatePrefix := ""
+	if snapshot.TokenUsage.ContextTokensEstimated {
+		estimatePrefix = "~"
+	}
 	if snapshot.TokenUsage.ModelContextWindow <= 0 {
-		value := fmt.Sprintf("%s used", uistyle.FormatTokenCount(used))
+		value := fmt.Sprintf("%s%s used", estimatePrefix, uistyle.FormatTokenCount(used))
 		return embeddedSidebarFieldRow("Context", value, detailValueStyle, width)
 	}
 	usedPercent := int(float64(used)*100/float64(snapshot.TokenUsage.ModelContextWindow) + 0.5)
@@ -1539,7 +1547,7 @@ func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {
 	} else if usedPercent >= 70 {
 		style = detailWarningStyle
 	}
-	value := fmt.Sprintf("%d%% of %s", usedPercent, uistyle.FormatTokenCount(snapshot.TokenUsage.ModelContextWindow))
+	value := fmt.Sprintf("%s%d%% of %s", estimatePrefix, usedPercent, uistyle.FormatTokenCount(snapshot.TokenUsage.ModelContextWindow))
 	return embeddedSidebarFieldRow("Context", value, style, width)
 }
 

@@ -265,6 +265,13 @@ func mergeReplayTokenUsage(total, next *threadTokenUsage) *threadTokenUsage {
 		out = &threadTokenUsage{}
 	}
 	out.Last = next.Last
+	if next.ContextTokens > 0 {
+		out.ContextTokens = next.ContextTokens
+		out.ContextTokensEstimated = next.ContextTokensEstimated
+	}
+	if next.CompactionTokenBudget > 0 {
+		out.CompactionTokenBudget = next.CompactionTokenBudget
+	}
 	out.Total.CachedInputTokens += next.Total.CachedInputTokens
 	out.Total.InputTokens += next.Total.InputTokens
 	out.Total.OutputTokens += next.Total.OutputTokens
@@ -483,6 +490,9 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.reasoningEffort = firstNonEmpty(rawJSONString(event["reasoning_effort"]), replay.reasoningEffort)
 		case "model_request_started", "model_request_progress":
 			replay.upsertEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelRequestText(event))
+		case "context_usage":
+			replay.model = firstNonEmpty(rawJSONString(event["model"]), replay.model)
+			replay.tokenUsage = applyLCAgentContextUsageEvent(replay.tokenUsage, event)
 		case "model_response":
 			modelName := rawJSONString(event["model"])
 			if modelName != "" {

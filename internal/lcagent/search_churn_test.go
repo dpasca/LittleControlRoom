@@ -76,7 +76,7 @@ func TestSearchConvergenceSurvivesLoopCompaction(t *testing.T) {
 			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
-			"message": map[string]any{"role": "assistant", "tool_calls": calls},
+			"message": map[string]any{"role": "assistant", "content": strings.Repeat("Search evidence to retain. ", 2000), "tool_calls": calls},
 		}}})
 	}))
 	defer server.Close()
@@ -102,7 +102,7 @@ func TestSearchConvergenceSurvivesLoopCompaction(t *testing.T) {
 		modeladapter.OpenRouterConfig{APIKey: "test-key", BaseURL: server.URL, Model: "test-model", MaxTurns: 160},
 		modeladapter.OpenRouterConfig{}, modeladapter.OpenRouterConfig{},
 		"deepseek", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, limits,
-		openRouterContextOptions{LoopCompactionCharThreshold: 20000, LoopCompactionTranscriptChars: 2000}, false, true, false)
+		openRouterContextOptions{LoopCompactionTokenBudget: 40000, LoopCompactionCharThreshold: 160000, LoopCompactionTranscriptChars: 2000}, false, true, false)
 	if err != nil {
 		t.Fatalf("runChatLoop: %v\n%s", err, stream.String())
 	}

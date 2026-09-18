@@ -138,8 +138,8 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
-	if snapshot.TokenUsage.ModelContextWindow != 212_500 {
-		t.Fatalf("TokenUsage.ModelContextWindow = %d, want LCAgent default hosted-window compaction token budget", snapshot.TokenUsage.ModelContextWindow)
+	if snapshot.TokenUsage.ModelContextWindow != 0 || snapshot.TokenUsage.CompactionTokenBudget != 212_500 {
+		t.Fatalf("TokenUsage = %+v, want unknown capacity and 212500 compaction budget", snapshot.TokenUsage)
 	}
 	for _, want := range []string{"please run the fake agent", "I logged in", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
@@ -1265,8 +1265,8 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 200 || snapshot.TokenUsage.Last.OutputTokens != 50 || snapshot.TokenUsage.Last.CachedInputTokens != 75 || snapshot.TokenUsage.Total.TotalTokens != 250 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
-	if snapshot.TokenUsage.ModelContextWindow != 212_500 {
-		t.Fatalf("TokenUsage.ModelContextWindow = %d, want LCAgent default hosted-window compaction token budget", snapshot.TokenUsage.ModelContextWindow)
+	if snapshot.TokenUsage.ModelContextWindow != 0 || snapshot.TokenUsage.CompactionTokenBudget != 212_500 {
+		t.Fatalf("TokenUsage = %+v, want unknown capacity and 212500 compaction budget", snapshot.TokenUsage)
 	}
 	for _, want := range []string{
 		"Loaded LCAgent thread " + sessionID + " from disk. Sending a prompt starts a continuing run from canonical thread state.",
@@ -3324,5 +3324,55 @@ func TestLCAgentManagedProcessSummaryBoundsUnicodeLabels(t *testing.T) {
 	})
 	if strings.Contains(text, "\n") || !utf8.ValidString(text) || len([]rune(text)) > 200 || !strings.Contains(text, "launch failed") {
 		t.Fatalf("invalid compact process summary: %q", text)
+	}
+}
+
+func TestLCAgentContextCapacityAndBudgetFollowModelChanges(t *testing.T) {
+	s := &lcagentSession{modelProvider: "deepseek", model: "deepseek-flash"}
+	usage := &threadTokenUsage{}
+	s.applyContextWindowToTokenUsageLocked(usage)
+	snapshot := exportedTokenUsageSnapshot(usage)
+	if snapshot.ModelContextWindow != 1_000_000 || snapshot.CompactionTokenBudget != 700_000 {
+		t.Fatalf("Flash usage = %+v, want 1M capacity and 700k budget", snapshot)
+	}
+	s.model = "future-model"
+	s.applyContextWindowToTokenUsageLocked(usage)
+	snapshot = exportedTokenUsageSnapshot(usage)
+	if snapshot.ModelContextWindow != 0 || snapshot.CompactionTokenBudget != 212_500 {
+		t.Fatalf("unknown model usage = %+v, want capacity cleared and fallback budget", snapshot)
+	}
+}
+
+func TestLCAgentContextUsageLiveAndReplayIgnoreVisionUsage(t *testing.T) {
+	events := []string{
+		`{"type":"model_response","model":"deepseek-flash","usage":{"prompt_tokens":100000,"completion_tokens":2000,"prompt_cache_hit_tokens":90000,"completion_tokens_details":{"reasoning_tokens":1900}}}`,
+		`{"type":"context_usage","context_tokens":105000,"context_source":"provider+estimate","compaction_token_budget":700000}`,
+		`{"type":"image_analysis_result","model":"vision-model","usage":{"prompt_tokens":100,"completion_tokens":10},"verdict":"pass"}`,
+	}
+	s := &lcagentSession{model: "deepseek-flash", modelProvider: "deepseek"}
+	for _, event := range events {
+		s.handleEvent([]byte(event))
+	}
+	path := filepath.Join(t.TempDir(), "trace.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(events, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, usage := range []*threadTokenUsage{s.tokenUsage, replay.tokenUsage} {
+		snapshot := exportedTokenUsageSnapshot(usage)
+		if snapshot.EstimatedContextTokens() != 105000 || !snapshot.ContextTokensEstimated {
+			t.Fatalf("context counter replaced by vision usage: %+v", snapshot)
+		}
+		if snapshot.Total.InputTokens != 100100 || snapshot.Total.CachedInputTokens != 90000 {
+			t.Fatalf("context estimate altered cumulative billing: %+v", snapshot)
+		}
+	}
+	// Compaction lowers occupancy without resetting cumulative usage.
+	s.handleEvent([]byte(`{"type":"context_usage","context_tokens":30000,"context_source":"estimate","compaction_token_budget":700000}`))
+	if s.tokenUsage.ContextTokens != 30000 || s.tokenUsage.Total.InputTokens != 100100 {
+		t.Fatalf("compaction occupancy/billing = %+v", s.tokenUsage)
 	}
 }

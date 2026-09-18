@@ -2607,7 +2607,7 @@ func TestRunExecOpenRouterCompactsLargeToolHistoryBeforeNextRequest(t *testing.T
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
-		"--model", "deepseek/test-model-32k",
+		"--model", "deepseek/test-model-64k",
 		"--max-turns", "3",
 		"read the big file",
 	}, &stdout, &stderr)
@@ -2727,7 +2727,7 @@ func TestRunExecOpenRouterCompactionKeepsCurrentPromptAfterResume(t *testing.T) 
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
-		"--model", "deepseek/test-model-32k",
+		"--model", "deepseek/test-model-64k",
 		"--continue-from", threadID,
 		"--max-turns", "3",
 		currentPrompt,
@@ -4747,5 +4747,81 @@ func TestOpenRouterReasoningEffortForProviderIsModelAwareForMoonshot(t *testing.
 		if got := openRouterReasoningEffortForProvider(tt.provider, tt.model, tt.effort); got != tt.want {
 			t.Fatalf("openRouterReasoningEffortForProvider(%q, %q, %q) = %q, want %q", tt.provider, tt.model, tt.effort, got, tt.want)
 		}
+	}
+}
+
+func TestRunExecQualityPhaseCompletionPreservesContext(t *testing.T) {
+	isolateSkillHomes(t)
+	// Long enough for the former forced compaction to discard evidence, but
+	// comfortably below the ordinary context budget.
+	evidence := strings.Repeat("inspected evidence ", 1000)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []modeladapter.Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests <= 2 {
+			status := "in_progress"
+			if requests == 2 {
+				status = "verified"
+			}
+			args, _ := json.Marshal(map[string]any{
+				"artifact_type": "library",
+				"phases":        []map[string]any{{"name": "inspect", "status": status, "evidence": []string{"inspection recorded"}}},
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"model": "deepseek-flash",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant", "content": evidence,
+						"tool_calls": []any{map[string]any{
+							"id": fmt.Sprintf("plan_%d", requests), "type": "function",
+							"function": map[string]any{"name": "update_quality_plan", "arguments": string(args)},
+						}},
+					},
+				}},
+			})
+			return
+		}
+		foundEvidence, foundCompletedPlan := false, false
+		for _, msg := range body.Messages {
+			if msg.Role == "assistant" && msg.Content == evidence {
+				foundEvidence = true
+			}
+			if msg.Role == "tool" && msg.ToolCallID == "plan_2" {
+				var result tools.ToolResult
+				if err := json.Unmarshal([]byte(msg.Content), &result); err == nil && result.Success {
+					foundCompletedPlan = true
+				}
+			}
+		}
+		if !foundEvidence || !foundCompletedPlan {
+			t.Errorf("context after phase completion: evidence=%v, successful plan tool result=%v", foundEvidence, foundCompletedPlan)
+		}
+		_, _ = w.Write([]byte(`{"model":"deepseek-flash","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Inspection complete."}}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec", "--cwd", t.TempDir(), "--data-dir", t.TempDir(),
+		"--provider", "openrouter", "--model", "deepseek/deepseek-flash",
+		"--auto", "off", "--output", "stream-json", "--max-turns", "5",
+		"Inspect and record the quality plan.",
+	}, &stdout, &stderr)
+	if code != 0 || requests != 3 {
+		t.Fatalf("code=%d requests=%d stderr=%s stdout=%s", code, requests, stderr.String(), stdout.String())
+	}
+	if strings.Contains(stdout.String(), `"type":"context_compacted"`) {
+		t.Fatalf("phase completion forced unnecessary compaction: %s", stdout.String())
 	}
 }

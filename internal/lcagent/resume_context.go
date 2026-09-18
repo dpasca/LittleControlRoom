@@ -53,6 +53,7 @@ type resumeContext struct {
 	ExactFromAncestor  bool
 	ThreadContextMode  string
 	FromThreadState    bool
+	TokenCounter       contextTokenCounter
 }
 
 type resumeVerificationCheck struct {
@@ -306,6 +307,7 @@ func hydrateResumeContextFromThreadState(dataDir string, ctx *resumeContext, wor
 	ctx.ExactMessageCount = stateCtx.ExactMessageCount
 	ctx.ExactChars = stateCtx.ExactChars
 	ctx.ThreadContextMode = stateCtx.ThreadContextMode
+	ctx.TokenCounter = stateCtx.TokenCounter
 	ctx.FromThreadState = true
 }
 
@@ -325,7 +327,10 @@ func resumeContextFromThreadState(state *threadState) (*resumeContext, error) {
 		return nil, fmt.Errorf("LCAgent thread %s has no canonical model context", state.ThreadID)
 	}
 	mode := firstResumeNonEmpty(strings.TrimSpace(state.ContextMode), threadContextModeExact)
+	var counter contextTokenCounter
+	_ = json.Unmarshal(state.TokenAccounting, &counter)
 	ctx := &resumeContext{
+		TokenCounter:      counter,
 		SourceSessionID:   strings.TrimSpace(state.ThreadID),
 		ThreadID:          strings.TrimSpace(state.ThreadID),
 		LastRunID:         strings.TrimSpace(state.LastRunID),

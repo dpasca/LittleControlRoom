@@ -411,9 +411,12 @@ type TokenUsageSnapshot struct {
 	Last               TokenUsageBreakdown
 	Total              TokenUsageBreakdown
 	ModelContextWindow int64
-	// ContextTokens is the provider-reported current context occupancy when it
-	// differs from the generic input-plus-visible-output estimate.
-	ContextTokens int64
+	// CompactionTokenBudget is the approximate harness threshold, separate from capacity.
+	CompactionTokenBudget int64
+	// ContextTokens is current occupancy reported by a provider or harness when
+	// it differs from the generic input-plus-visible-output estimate.
+	ContextTokens          int64
+	ContextTokensEstimated bool
 }
 
 type TokenUsageBreakdown struct {

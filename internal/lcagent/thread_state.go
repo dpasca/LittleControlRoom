@@ -1,6 +1,7 @@
 package lcagent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ type threadStateStore struct {
 	RunID           string
 	CreatedAt       time.Time
 	ActiveObjective string
+	TokenCounter    *contextTokenCounter
 }
 
 func newThreadStateStore(dataDir, threadID, projectPath, runID string, createdAt time.Time) *threadStateStore {
@@ -151,7 +153,9 @@ func (s *threadStateStore) store() *agentcontext.Store[modeladapter.Message, mod
 	if s == nil {
 		return nil
 	}
+	accounting, _ := json.Marshal(s.TokenCounter)
 	return &agentcontext.Store[modeladapter.Message, modeladapter.ToolCall]{
+		TokenAccounting: accounting,
 		DataDir:         strings.TrimSpace(s.DataDir),
 		Namespace:       lcagentContextNamespace,
 		ThreadID:        strings.TrimSpace(s.ThreadID),

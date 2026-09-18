@@ -22,23 +22,24 @@ const (
 )
 
 type State[M any, C any] struct {
-	Version          int       `json:"version"`
-	ThreadID         string    `json:"thread_id"`
-	ProjectPath      string    `json:"project_path"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	LastRunID        string    `json:"last_run_id,omitempty"`
-	Status           string    `json:"status"`
-	ContextMode      string    `json:"context_mode"`
-	ActiveObjective  string    `json:"active_objective,omitempty"`
-	LastStablePoint  string    `json:"last_stable_point,omitempty"`
-	Summary          string    `json:"summary,omitempty"`
-	SummaryCount     int       `json:"summary_count,omitempty"`
-	Messages         []M       `json:"messages,omitempty"`
-	MessageCount     int       `json:"message_count"`
-	ApproxChars      int       `json:"approx_chars"`
-	PendingToolCalls []C       `json:"pending_tool_calls,omitempty"`
-	PendingReason    string    `json:"pending_reason,omitempty"`
+	Version          int             `json:"version"`
+	ThreadID         string          `json:"thread_id"`
+	ProjectPath      string          `json:"project_path"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	LastRunID        string          `json:"last_run_id,omitempty"`
+	Status           string          `json:"status"`
+	ContextMode      string          `json:"context_mode"`
+	ActiveObjective  string          `json:"active_objective,omitempty"`
+	LastStablePoint  string          `json:"last_stable_point,omitempty"`
+	Summary          string          `json:"summary,omitempty"`
+	SummaryCount     int             `json:"summary_count,omitempty"`
+	Messages         []M             `json:"messages,omitempty"`
+	MessageCount     int             `json:"message_count"`
+	ApproxChars      int             `json:"approx_chars"`
+	PendingToolCalls []C             `json:"pending_tool_calls,omitempty"`
+	PendingReason    string          `json:"pending_reason,omitempty"`
+	TokenAccounting  json.RawMessage `json:"token_accounting,omitempty"`
 }
 
 type Info struct {
@@ -58,6 +59,7 @@ type Store[M any, C any] struct {
 	RunID           string
 	CreatedAt       time.Time
 	ActiveObjective string
+	TokenAccounting json.RawMessage
 
 	ApproxChars   func([]M) int
 	CloneMessages func([]M) []M
@@ -108,6 +110,7 @@ func (s *Store[M, C]) write(status, source string, messages []M, compacted bool,
 	}
 	contextMode := ContextModeForCompacted(compacted)
 	state := State[M, C]{
+		TokenAccounting:  s.TokenAccounting,
 		Version:          StateVersion,
 		ThreadID:         strings.TrimSpace(s.ThreadID),
 		ProjectPath:      strings.TrimSpace(s.ProjectPath),

@@ -1229,3 +1229,32 @@ func TestDiffEscReturnsToEmbeddedEngineerWithoutPrompt(t *testing.T) {
 		t.Fatalf("status = %q, want back-to-session status", got.status)
 	}
 }
+
+func TestEmbeddedSidebarSeparatesCapacityAndCompaction(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/context-budget")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.TokenUsage = &codexapp.TokenUsageSnapshot{
+		Last:                  codexapp.TokenUsageBreakdown{InputTokens: 160_000},
+		ModelContextWindow:    1_000_000,
+		CompactionTokenBudget: 700_000,
+	}
+	rendered := ansi.Strip(strings.Join(embeddedSidebarSessionRows(snapshot, 46, false, time.Now()), "\n"))
+	for _, want := range []string{"16% of 1.0M", "Compact at", "~700k"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidebar missing %q: %s", want, rendered)
+		}
+	}
+	snapshot.TokenUsage.ContextTokens = 210_000
+	snapshot.TokenUsage.ContextTokensEstimated = true
+	rendered = ansi.Strip(embeddedSidebarContextRow(snapshot, 46))
+	if !strings.Contains(rendered, "~21% of 1.0M") {
+		t.Fatalf("estimated current context must override last-request usage: %s", rendered)
+	}
+	snapshot.TokenUsage.ContextTokens = 0
+	snapshot.TokenUsage.ContextTokensEstimated = false
+	snapshot.TokenUsage.ModelContextWindow = 0
+	rendered = ansi.Strip(embeddedSidebarContextRow(snapshot, 46))
+	if !strings.Contains(rendered, "160k used") || strings.Contains(rendered, "%") {
+		t.Fatalf("unknown capacity must show usage only: %s", rendered)
+	}
+}

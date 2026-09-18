@@ -572,9 +572,12 @@ type threadTokenUsageUpdatedNotification struct {
 }
 
 type threadTokenUsage struct {
-	Last               tokenUsageBreakdown `json:"last"`
-	Total              tokenUsageBreakdown `json:"total"`
-	ModelContextWindow *int64              `json:"modelContextWindow"`
+	Last                   tokenUsageBreakdown `json:"last"`
+	Total                  tokenUsageBreakdown `json:"total"`
+	ModelContextWindow     *int64              `json:"modelContextWindow"`
+	CompactionTokenBudget  int64               `json:"compactionTokenBudget,omitempty"`
+	ContextTokens          int64               `json:"contextTokens,omitempty"`
+	ContextTokensEstimated bool                `json:"contextTokensEstimated,omitempty"`
 }
 
 type tokenUsageBreakdown struct {

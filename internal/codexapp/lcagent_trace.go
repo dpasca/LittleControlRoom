@@ -848,8 +848,10 @@ func lcagentContextCompactedText(event map[string]json.RawMessage) string {
 	if originalChars > 0 && compactedChars > 0 {
 		details = append(details, fmt.Sprintf("%d -> %d chars", originalChars, compactedChars))
 	}
-	if threshold := rawJSONInt(event["threshold"]); threshold > 0 {
-		details = append(details, fmt.Sprintf("threshold %d", threshold))
+	if budget := rawJSONInt(event["threshold_tokens"]); budget > 0 {
+		details = append(details, fmt.Sprintf("budget ~%d tokens", budget))
+	} else if threshold := rawJSONInt(event["threshold"]); threshold > 0 {
+		details = append(details, fmt.Sprintf("threshold %d chars", threshold))
 	}
 	if len(details) > 0 {
 		text += ": " + strings.Join(details, "; ")

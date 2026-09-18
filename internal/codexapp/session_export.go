@@ -132,8 +132,11 @@ func exportedTokenUsageSnapshot(in *threadTokenUsage) *TokenUsageSnapshot {
 		return nil
 	}
 	out := &TokenUsageSnapshot{
-		Last:  exportedTokenUsageBreakdown(in.Last),
-		Total: exportedTokenUsageBreakdown(in.Total),
+		Last:                   exportedTokenUsageBreakdown(in.Last),
+		CompactionTokenBudget:  in.CompactionTokenBudget,
+		ContextTokens:          in.ContextTokens,
+		ContextTokensEstimated: in.ContextTokensEstimated,
+		Total:                  exportedTokenUsageBreakdown(in.Total),
 	}
 	if in.ModelContextWindow != nil && *in.ModelContextWindow > 0 {
 		out.ModelContextWindow = *in.ModelContextWindow

@@ -2114,6 +2114,14 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			s.upsertEntryLocked(lcagentModelRequestItemID(event), TranscriptStatus, text)
 			s.mu.Unlock()
 		}
+	case "context_usage":
+		s.mu.Lock()
+		if model := rawJSONString(event["model"]); model != "" {
+			s.model = model
+		}
+		s.tokenUsage = applyLCAgentContextUsageEvent(s.tokenUsage, event)
+		s.touchLocked()
+		s.mu.Unlock()
 	case "model_response":
 		modelName := rawJSONString(event["model"])
 		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
@@ -3322,8 +3330,10 @@ func (s *lcagentSession) applyContextWindowToTokenUsageLocked(tokenUsage *thread
 	}
 	provider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), s.provider)
 	model := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))
-	if budget := lcagent.ContextCompactionApproxTokenBudgetForModel(s.contextProfile, provider, model); budget > 0 {
-		tokenUsage.ModelContextWindow = &budget
+	tokenUsage.CompactionTokenBudget = lcagent.ContextCompactionApproxTokenBudgetForModel(s.contextProfile, provider, model)
+	tokenUsage.ModelContextWindow = nil
+	if window := lcagent.ModelContextWindowTokens(provider, model); window > 0 {
+		tokenUsage.ModelContextWindow = &window
 	}
 }
 
@@ -4459,4 +4469,21 @@ func lcagentFilesTouchedText(raw json.RawMessage) string {
 		return "Files touched"
 	}
 	return "Files touched:\n" + strings.Join(files, "\n")
+}
+
+// Context occupancy is separate from cumulative billing and utility-model usage.
+func applyLCAgentContextUsageEvent(usage *threadTokenUsage, event map[string]json.RawMessage) *threadTokenUsage {
+	tokens := rawJSONInt(event["context_tokens"])
+	if tokens <= 0 {
+		return usage
+	}
+	if usage == nil {
+		usage = &threadTokenUsage{}
+	}
+	usage.ContextTokens = int64(tokens)
+	usage.ContextTokensEstimated = rawJSONString(event["context_source"]) != "provider"
+	if budget := rawJSONInt(event["compaction_token_budget"]); budget > 0 {
+		usage.CompactionTokenBudget = int64(budget)
+	}
+	return usage
 }

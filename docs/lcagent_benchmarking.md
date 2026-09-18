@@ -173,20 +173,47 @@ file-inspection budgets so a capable model can read larger contiguous ranges
 after outline/search has identified central files. Treat it as a benchmark
 variable, not as a free apples-to-apples replacement for balanced runs.
 
-Use `--context-profile large` when the model and provider have enough context
-window to justify delaying loop compaction. This keeps the default harness
-conservative while allowing large-window benchmark lanes to preserve more raw
-tool evidence before the harness summarizes the transcript. It is especially
-useful when measuring whether a model can reduce duplicate reads once earlier
-tool outputs remain available in context longer.
+LCAgent derives the loop-compaction budget from the selected model: 85% of
+its context window below 1M, or 70% for windows of 1M and above (700k for 1M,
+1.4M for 2M), with no global token ceiling. Lower existing
+model-specific caps, such as GPT-5.6's 256k budget, still apply. This is an
+operational policy, not a measured quality boundary. DeepSeek's rolling
+`deepseek-flash` alias uses the same 1M window as the V4 family.
 
-For known model windows, LCAgent now derives the live-context packing threshold
-from the selected model: about 80% of smaller windows, sliding down to about 50%
-for 1M-token-class windows. The compacted continuation target scales with that
-threshold so very large models keep more evidence without trying to spend the
-whole window. Unknown/custom models fall back to the profile defaults: balanced
-compacts around 200k characters and keeps about 50k characters of transcript
-evidence; large compacts around 600k and keeps about 240k characters.
+Compaction checks the complete next request against that token budget, including
+transient harness instructions and tool schemas; completing a quality-plan phase
+does not force it. Provider-reported input usage anchors the count for messages
+and schemas already seen by that provider. Cached input is included once, and
+reported output includes reasoning rather than silently subtracting it.
+
+Added or changed messages, retained reasoning, and schemas without a provider
+measurement use a conservative UTF-8 byte budget (one token per serialized byte,
+plus framing). Images reserve an estimated 16k tokens each until measured. This
+fallback deliberately favors early compaction over underestimated context; it is
+not an exact tokenizer. Changed content adds to the old baseline without guessing
+how many tokens removed content saved. A new provider response refreshes the
+baseline, compaction resets it, and canonical checkpoints preserve it for resume.
+Model changes never reuse another model's measurement.
+
+The packed transcript targets 30% of the working budget using that conservative
+fallback. If the full packed request still cannot fit, the harness stops with an
+explicit error instead of sending it. The 15%/30% headroom remains reserved by
+the working-budget policy; this does not change provider output-token defaults.
+
+The sidebar shows known model capacity separately from the approximate “Compact
+at” threshold. Current occupancy comes from the same accounting as the request
+guard, is marked with `~` when estimated, and updates after tool results and
+compaction. Independent vision usage contributes to cumulative billing without
+replacing conversation occupancy. `context_usage` trace events preserve these
+values for replay. Unknown capacity is shown as tokens used, without presenting a
+fallback as a model specification.
+
+Unknown named hosted models retain a 250k assumed window for budgeting (212.5k
+compaction threshold). Unknown local models and unnamed models use profile
+fallbacks: balanced uses a 50k-token working budget; `--context-profile large` uses 150k. These
+budgets retain the prior profile defaults converted at four characters per
+token, but request accounting no longer uses that conversion. Profiles also
+control per-message retention limits.
 
 Summarize the resulting session artifact:
 

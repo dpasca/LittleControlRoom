@@ -1090,21 +1090,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		observeReadLedgerMessages(readLedger, messages)
 		messages = append(messages, modeladapter.Message{Role: "user", Content: runner.Prompt})
-		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
-			if err := writer.Write(session.Event{
-				"type":             "context_compacted",
-				"session_id":       runner.SessionID,
-				"turn":             0,
-				"threshold":        contextOptions.LoopCompactionCharThreshold,
-				"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
-				"reason":           "continuation_compaction",
-				"stats":            compaction,
-			}); err != nil {
-				return err
-			}
-			messages = compactedMessages
-			contextCompacted = true
-		}
+
 	} else {
 		messages = []modeladapter.Message{
 			{Role: "system", Content: systemPrompt},
@@ -1126,13 +1112,26 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.ReadOnly = readOnlyTools
 	toolOptions.TodoCaptureMode = runner.TodoCaptureMode
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
+	counter := &contextTokenCounter{}
+	if resumeContext != nil {
+		*counter = resumeContext.TokenCounter
+	}
+	if threadStore != nil {
+		threadStore.TokenCounter = counter
+	}
+	writeContextSnapshot := func(source string, snapshot []modeladapter.Message, compacted bool) error {
+		if err := writeContextTokenUsage(writer, runner.SessionID, client.Model(), counter.Estimate(client.Model(), snapshot, toolsDef), contextOptions); err != nil {
+			return err
+		}
+		return writeModelContextSnapshot(writer, threadStore, runner.SessionID, source, snapshot, compacted)
+	}
+
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0
 	lastPassedVerificationFileTouchEvents := 0
 	deferNextSynthesis := false
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	progressTracker := newOpenRouterLoopProgressTracker(messages, runner)
-	lastQualityPlanCompletedPrefix := runner.QualityPlanCompletedPrefix()
 	// Count actual searches outside model context so compaction cannot restart
 	// the exploration allowance. A new steered objective gets a fresh count.
 	webSearchCalls := 0
@@ -1162,20 +1161,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				messages = append(messages, modeladapter.Message{Role: "user", Content: steerMsg})
 			}
 		default:
-		}
-		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
-			if err := writer.Write(session.Event{
-				"type":             "context_compacted",
-				"session_id":       runner.SessionID,
-				"turn":             turn + 1,
-				"threshold":        contextOptions.LoopCompactionCharThreshold,
-				"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
-				"stats":            compaction,
-			}); err != nil {
-				return err
-			}
-			messages = compactedMessages
-			contextCompacted = true
 		}
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{
 			ToolProfile: string(toolProfile), WebSearchCalls: webSearchCalls,
@@ -1230,11 +1215,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				return err
 			}
 		}
-		if threadStore != nil {
-			if err := threadStore.MarkInFlight("model_request", messages, contextCompacted); err != nil {
-				return err
-			}
-		}
 		var completion modeladapter.Completion
 		requestClient := client
 		requestPhase := "tool_loop"
@@ -1245,6 +1225,48 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			requestClient = finalClient
 			requestPhase = "synthesis"
 			requestOptions = openRouterFinalCompletionOptions(cfg)
+		}
+		requestCounter := counter
+		requestContextOptions := contextOptions
+		requestHistory := messages
+		var requestTail []modeladapter.Message
+		if synthesisRequest {
+			requestCounter = &contextTokenCounter{}
+			requestContextOptions = contextOptionsForModel(contextOptions, provider, requestClient.Model())
+			requestHistory, requestTail = requestMessages, nil
+		} else {
+			requestTail = requestMessages[len(messages):]
+		}
+		var compaction finalHandoffCompactionStats
+		var compacted bool
+		requestMessages, compaction, compacted, err = prepareContextRequest(requestCounter, requestClient.Model(), requestHistory, requestTail, requestTools, readLedger, requestContextOptions)
+		if err != nil {
+			return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, err)
+		}
+		if compacted {
+			if !synthesisRequest {
+				messages = requestMessages[:len(requestMessages)-len(requestTail)]
+				contextCompacted = true
+			}
+			budget, _ := contextInputBudget(requestContextOptions)
+			reason := "context_budget"
+			if turn == 0 && resumeContext != nil {
+				reason = "continuation_compaction"
+			}
+			if err := writer.Write(session.Event{
+				"type": "context_compacted", "session_id": runner.SessionID, "turn": turn + 1,
+				"reason": reason, "threshold_tokens": budget, "stats": compaction,
+			}); err != nil {
+				return err
+			}
+		}
+		if err := writeContextTokenUsage(writer, runner.SessionID, requestClient.Model(), requestCounter.Estimate(requestClient.Model(), requestMessages, requestTools), requestContextOptions); err != nil {
+			return err
+		}
+		if threadStore != nil {
+			if err := threadStore.MarkInFlight("model_request", messages, contextCompacted); err != nil {
+				return err
+			}
 		}
 		completion, err = completeProviderWithRetriesValidated(ctx, writer, runner.SessionID, providerLabel, requestPhase, turn+1, requestClient.Model(), validateVisibleCompletion(providerLabel), func() (modeladapter.Completion, error) {
 			return requestClient.CompleteWithOptions(ctx, requestMessages, requestTools, requestOptions)
@@ -1259,6 +1281,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 		msg.Content = sanitizedContent
 		ensureToolCallIDs(msg.ToolCalls, turn+1)
+		completion.Message = msg
+		requestCounter.Observe(requestClient.Model(), requestMessages, requestTools, completion)
+		measuredMessages := append(append([]modeladapter.Message(nil), requestMessages...), msg)
+		if err := writeContextTokenUsage(writer, runner.SessionID, requestClient.Model(), requestCounter.Estimate(requestClient.Model(), measuredMessages, requestTools), requestContextOptions); err != nil {
+			return err
+		}
+
 		if checkpointReason != "" {
 			var report *progressCheckpointReport
 			messages, report, err = acceptProgressCheckpoint(writer, runner.SessionID, messages, msg)
@@ -1286,7 +1315,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					return err
 				}
 			}
-			if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "progress_checkpoint", messages, contextCompacted); err != nil {
+			if err := writeContextSnapshot("progress_checkpoint", messages, contextCompacted); err != nil {
 				return err
 			}
 			continue
@@ -1379,7 +1408,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			if err := runner.Final(final); err != nil {
 				return err
 			}
-			if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "assistant_message", messages, contextCompacted); err != nil {
+			if err := writeContextSnapshot("assistant_message", messages, contextCompacted); err != nil {
 				return err
 			}
 			return nil
@@ -1401,7 +1430,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		var pendingVerificationFeedback []script.VerificationFeedback
 		var pendingPatchFeedback []script.PatchFeedback
 		var pendingImageMessages []modeladapter.Message
-		qualityPhaseCompactionPending := false
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
 			if err != nil {
@@ -1492,7 +1520,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				if err := runner.Final(final); err != nil {
 					return err
 				}
-				if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_response", snapshotMessages, contextCompacted); err != nil {
+				if err := writeContextSnapshot("final_response", snapshotMessages, contextCompacted); err != nil {
 					return err
 				}
 				return nil
@@ -1508,13 +1536,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			}
 			if call.Function.Name == "read_file" {
 				readLedger.ObserveReadResult(result)
-			}
-			if call.Function.Name == "update_quality_plan" && result.Success {
-				completedPrefix := runner.QualityPlanCompletedPrefix()
-				if completedPrefix > lastQualityPlanCompletedPrefix {
-					lastQualityPlanCompletedPrefix = completedPrefix
-					qualityPhaseCompactionPending = true
-				}
 			}
 			resultJSON, marshalErr := json.Marshal(result)
 			if marshalErr != nil {
@@ -1580,17 +1601,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 			deferNextSynthesis = true
 		}
-		if qualityPhaseCompactionPending {
-			compactedMessages, compacted, err := forceOpenRouterLoopCompaction(writer, runner.SessionID, turn+1, "quality_phase_completed", messages, readLedger, contextOptions)
-			if err != nil {
-				return err
-			}
-			if compacted {
-				messages = compactedMessages
-				contextCompacted = true
-			}
-		}
-		if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "tool_result", messages, contextCompacted); err != nil {
+		if err := writeContextSnapshot("tool_result", messages, contextCompacted); err != nil {
 			return err
 		}
 	}
@@ -1683,30 +1694,6 @@ func shouldBounceFinalAudit(audit script.FinalResponseAudit, feedbackCount int) 
 		return true
 	}
 	return feedbackCount == 0
-}
-
-func forceOpenRouterLoopCompaction(writer *session.Writer, sessionID string, turn int, reason string, messages []modeladapter.Message, readLedger *readLedger, contextOptions openRouterContextOptions) ([]modeladapter.Message, bool, error) {
-	contextOptions = contextOptions.withDefaults()
-	forcedOptions := contextOptions
-	forcedOptions.LoopCompactionCharThreshold = 1
-	compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, forcedOptions)
-	if !compacted {
-		return messages, false, nil
-	}
-	if writer != nil {
-		if err := writer.Write(session.Event{
-			"type":             "context_compacted",
-			"session_id":       sessionID,
-			"turn":             turn,
-			"threshold":        forcedOptions.LoopCompactionCharThreshold,
-			"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
-			"reason":           strings.TrimSpace(reason),
-			"stats":            compaction,
-		}); err != nil {
-			return nil, false, err
-		}
-	}
-	return compactedMessages, true, nil
 }
 
 func shouldDeferSynthesisForUnverifiedChanges(guidance openRouterProgressGuidance, fileTouchEvents int, lastPassedVerificationFileTouchEvents int) bool {
@@ -1842,7 +1829,17 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 	}); err != nil {
 		return err
 	}
+	finalCounter := &contextTokenCounter{}
+	finalContextOptions := contextOptionsForModel(contextOptions, providerLabel, finalClient.Model())
+	compactedMessages, _, _, prepareErr := prepareContextRequest(finalCounter, finalClient.Model(), compactedMessages, nil, nil, readLedger, finalContextOptions)
+	if prepareErr != nil {
+		return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, maxTurns, filesChanged, verification, prepareErr.Error())
+	}
+	if err := writeContextTokenUsage(writer, runner.SessionID, finalClient.Model(), finalCounter.Estimate(finalClient.Model(), compactedMessages, nil), finalContextOptions); err != nil {
+		return err
+	}
 	if threadStore != nil {
+		threadStore.TokenCounter = finalCounter
 		if err := threadStore.MarkInFlight("final_handoff_request", compactedMessages, true); err != nil {
 			return err
 		}
@@ -1878,6 +1875,12 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 		return err
 	}
 	snapshotMessages := appendAssistantContentForContextSnapshot(compactedMessages, sanitizedContent)
+	completion.Message = snapshotMessages[len(snapshotMessages)-1]
+	finalCounter.Observe(finalClient.Model(), compactedMessages, nil, completion)
+	if err := writeContextTokenUsage(writer, runner.SessionID, finalClient.Model(), finalCounter.Estimate(finalClient.Model(), snapshotMessages, nil), finalContextOptions); err != nil {
+		return err
+	}
+
 	if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_handoff", snapshotMessages, true); err != nil {
 		return err
 	}

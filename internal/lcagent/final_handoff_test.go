@@ -79,26 +79,26 @@ func TestOpenRouterContextProfileBudgets(t *testing.T) {
 
 func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
 	deepseek := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "deepseek", "deepseek-v4-pro")
-	if deepseek.ModelContextWindowTokens != 1_000_000 || deepseek.LoopCompactionTokenBudget != 500_000 || deepseek.LoopCompactionUtilizationPercent != 50 {
-		t.Fatalf("deepseek context budget = %+v, want 1M window with 50%% / 500000 token threshold", deepseek)
+	if deepseek.ModelContextWindowTokens != 1_000_000 || deepseek.LoopCompactionTokenBudget != 700_000 || deepseek.LoopCompactionUtilizationPercent != 70 {
+		t.Fatalf("deepseek context budget = %+v, want 1M window with 70%% / 700000 token threshold", deepseek)
 	}
-	if deepseek.LoopCompactionCharThreshold != 2_000_000 || deepseek.LoopCompactionTranscriptChars != 600_000 {
-		t.Fatalf("deepseek char budgets = threshold %d transcript %d, want 2000000/600000", deepseek.LoopCompactionCharThreshold, deepseek.LoopCompactionTranscriptChars)
+	if deepseek.LoopCompactionCharThreshold != 2_800_000 || deepseek.LoopCompactionTranscriptChars != 840_000 {
+		t.Fatalf("deepseek char budgets = threshold %d transcript %d, want 2800000/840000", deepseek.LoopCompactionCharThreshold, deepseek.LoopCompactionTranscriptChars)
 	}
 	compat := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "deepseek", "deepseek-chat")
-	if compat.ModelContextWindowTokens != 1_000_000 || compat.LoopCompactionTokenBudget != 500_000 {
-		t.Fatalf("deepseek compatibility context budget = %+v, want 1M window with 500000 token threshold", compat)
+	if compat.ModelContextWindowTokens != 1_000_000 || compat.LoopCompactionTokenBudget != 700_000 {
+		t.Fatalf("deepseek compatibility context budget = %+v, want 1M window with 700000 token threshold", compat)
 	}
 
 	mimo := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "xiaomi", "mimo-v2.5-pro")
-	if mimo.ModelContextWindowTokens != 1_000_000 || mimo.LoopCompactionTokenBudget != 500_000 || mimo.LoopCompactionUtilizationPercent != 50 {
-		t.Fatalf("mimo context budget = %+v, want 1M window with 50%% / 500000 token threshold", mimo)
+	if mimo.ModelContextWindowTokens != 1_000_000 || mimo.LoopCompactionTokenBudget != 700_000 || mimo.LoopCompactionUtilizationPercent != 70 {
+		t.Fatalf("mimo context budget = %+v, want 1M window with 70%% / 700000 token threshold", mimo)
 	}
-	if mimo.LoopCompactionCharThreshold != 2_000_000 || mimo.LoopCompactionTranscriptChars != 600_000 {
-		t.Fatalf("mimo char budgets = threshold %d transcript %d, want 2000000/600000", mimo.LoopCompactionCharThreshold, mimo.LoopCompactionTranscriptChars)
+	if mimo.LoopCompactionCharThreshold != 2_800_000 || mimo.LoopCompactionTranscriptChars != 840_000 {
+		t.Fatalf("mimo char budgets = threshold %d transcript %d, want 2800000/840000", mimo.LoopCompactionCharThreshold, mimo.LoopCompactionTranscriptChars)
 	}
-	if got := ContextCompactionApproxTokenBudgetForModel("large", "xiaomi", "mimo-v2.5-pro"); got != 500_000 {
-		t.Fatalf("mimo approx token budget = %d, want 500000", got)
+	if got := ContextCompactionApproxTokenBudgetForModel("large", "xiaomi", "mimo-v2.5-pro"); got != 700_000 {
+		t.Fatalf("mimo approx token budget = %d, want 700000", got)
 	}
 
 	sol := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openai", "gpt-5.6")
@@ -111,11 +111,11 @@ func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
 	}
 
 	kimi := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "moonshot", "kimi-k3")
-	if kimi.ModelContextWindowTokens != 1_000_000 || kimi.LoopCompactionTokenBudget != 500_000 || kimi.LoopCompactionUtilizationPercent != 50 {
-		t.Fatalf("kimi-k3 context budget = %+v, want 1M window with 50%% / 500000 token threshold", kimi)
+	if kimi.ModelContextWindowTokens != 1_000_000 || kimi.LoopCompactionTokenBudget != 700_000 || kimi.LoopCompactionUtilizationPercent != 70 {
+		t.Fatalf("kimi-k3 context budget = %+v, want 1M window with 70%% / 700000 token threshold", kimi)
 	}
-	if got := ContextCompactionApproxTokenBudgetForModel("balanced", "moonshot", "moonshotai/kimi-k3"); got != 500_000 {
-		t.Fatalf("kimi-k3 approx token budget = %d, want 500000", got)
+	if got := ContextCompactionApproxTokenBudgetForModel("balanced", "moonshot", "moonshotai/kimi-k3"); got != 700_000 {
+		t.Fatalf("kimi-k3 approx token budget = %d, want 700000", got)
 	}
 
 	unknown := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openrouter", "custom-model")
@@ -132,6 +132,34 @@ func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
 	}
 	if got := ContextCompactionApproxTokenBudgetForModel("large", "mlx", "custom-local-model"); got != 150_000 {
 		t.Fatalf("unknown mlx model approx token budget = %d, want 150000 profile fallback", got)
+	}
+}
+
+func TestContextCapacityAndCompactionBudget(t *testing.T) {
+	for _, tt := range []struct {
+		provider, model string
+		window, budget  int64
+	}{
+		{"deepseek", "deepseek-flash", 1_000_000, 700_000},
+		{"deepseek", "deepseek/deepseek-flash", 1_000_000, 700_000},
+		{"openrouter", "deepseek/deepseek-flash", 1_000_000, 700_000},
+		{"deepseek", " DeepSeek-Flash ", 1_000_000, 700_000},
+		{"openrouter", "custom-2m", 2_000_000, 1_400_000},
+		{"openrouter", "custom-999k", 999_000, 849_150},
+		{"openrouter", "custom-1000k", 1_000_000, 700_000},
+		{"openrouter", "custom-400k", 400_000, 340_000},
+		{"openai", "gpt-5.6", 1_050_000, 256_000},
+		{"deepseek", "future-model", 0, 212_500},
+		{"ollama", "custom-model", 0, 50_000},
+	} {
+		t.Run(tt.provider+"/"+tt.model, func(t *testing.T) {
+			if got := ModelContextWindowTokens(tt.provider, tt.model); got != tt.window {
+				t.Fatalf("window = %d, want %d", got, tt.window)
+			}
+			if got := ContextCompactionApproxTokenBudgetForModel("balanced", tt.provider, tt.model); got != tt.budget {
+				t.Fatalf("budget = %d, want %d", got, tt.budget)
+			}
+		})
 	}
 }
 

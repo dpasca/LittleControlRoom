@@ -634,13 +634,6 @@ func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResu
 	return tools.ToolResult{Success: true}
 }
 
-func (r *Runner) QualityPlanCompletedPrefix() int {
-	if r == nil || r.qualityPlan == nil {
-		return 0
-	}
-	return qualityPlanCompletedPrefix(r.qualityPlan.Phases)
-}
-
 func firstOutOfOrderQualityPlanPhase(phases []QualityPlanPhase) (QualityPlanPhase, bool) {
 	stage := 0 // verified/skipped prefix, then at most one active phase, then planned tail.
 	for _, phase := range phases {

@@ -49,7 +49,7 @@ func runImageHarness(t *testing.T, runner script.Runner, provider, url, visionMo
 	return runChatLoop(context.Background(), runner.Session, runner, nil, "", resume,
 		modeladapter.OpenRouterConfig{APIKey: "test-key", BaseURL: url, Model: "test-model", MaxTurns: 10},
 		modeladapter.OpenRouterConfig{}, modeladapter.OpenRouterConfig{Model: visionModel}, provider, "off", "main", script.DefaultSearchRefineMinBytes,
-		tools.FileProfileBalanced, runner.Files.Limits, openRouterContextOptions{}, true, false, false)
+		tools.FileProfileBalanced, runner.Files.Limits, openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, provider, "test-model"), true, false, false)
 }
 
 // Inspect actual wire content, including tool ordering, rather than decoding it
