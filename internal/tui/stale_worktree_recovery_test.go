@@ -145,13 +145,13 @@ func TestCleanupReportSummaryNavigationAndFullDetails(t *testing.T) {
 	}
 }
 
-func TestCleanupRetrySkipsActiveRepairEngineer(t *testing.T) {
+func TestCleanupConfirmedRetryAllowsActiveRepairEngineer(t *testing.T) {
 	r := cleanupRecoveryTestResult()
 	m := Model{openAgentTasks: []model.AgentTask{{ID: "repair", Status: model.AgentTaskStatusActive, OriginWorktreePath: r.Candidate.ProjectPath, Capabilities: []string{"worktree.cleanup.recover"}}}, staleWorktreeCleanup: &staleWorktreeCleanupDialogState{Removing: true, Queue: []service.StaleWorktreeCleanupCandidate{r.Candidate}}}
 	updated, _ := m.applyStaleWorktreeCleanupRevalidate(staleWorktreeCleanupRevalidateMsg{candidate: r.Candidate})
 	m = updated.(Model)
-	if m.staleWorktreeCleanup.Finalizing || len(m.staleWorktreeCleanup.Results) != 1 || !strings.Contains(m.staleWorktreeCleanup.Results[0].SkippedReason, "repair engineer") {
-		t.Fatal("retry could remove worktree while repair is active")
+	if !m.staleWorktreeCleanup.Finalizing || len(m.staleWorktreeCleanup.Results) != 0 {
+		t.Fatal("confirmed deletion was vetoed by an active engineer")
 	}
 }
 

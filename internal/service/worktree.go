@@ -878,12 +878,8 @@ func (s *Service) readRootRepoStatusWithSubmoduleRepair(ctx context.Context, roo
 	return status, nil
 }
 
-// FinalizeMergedWorktree applies the user-selected cleanup after a successful
-// merge (or for a worktree that was already merged). When both actions are
-// requested, the linked TODO is resolved first and the worktree is only removed
-// if completion succeeds or the TODO is confirmed absent. Keeping the checkout
-// on other failures preserves a durable path for retrying TODO completion
-// instead of silently orphaning it in the root project's open list.
+// FinalizeMergedWorktree applies the selected post-merge actions. Confirmed
+// removal uses the same direct deletion path as manual removal.
 func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string, options FinalizeMergedWorktreeOptions) (FinalizeMergedWorktreeResult, error) {
 	if s == nil || s.store == nil {
 		return FinalizeMergedWorktreeResult{}, fmt.Errorf("service unavailable")
@@ -896,37 +892,20 @@ func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string
 		return FinalizeMergedWorktreeResult{}, fmt.Errorf("force remove requires worktree removal")
 	}
 
-	result := FinalizeMergedWorktreeResult{}
-	if options.MarkLinkedTodoDone {
-		var err error
-		result, err = s.completeLinkedTodoForWorktree(ctx, projectPath, true)
-		if err != nil {
-			return result, err
-		}
-	}
-
 	if options.RemoveWorktree {
-		if err := s.RemoveWorktree(ctx, projectPath, options.ForceRemove); err != nil {
-			if result.LinkedTodoMarkedDone || result.LinkedTodoAlreadyDone {
-				return result, fmt.Errorf("linked TODO was completed, but removing the worktree failed: %w", err)
-			}
-			if result.LinkedTodoMissing {
-				return result, fmt.Errorf("linked TODO no longer exists, but removing the worktree failed: %w", err)
-			}
-			return result, err
-		}
-		result.WorktreeRemoved = true
-		result.Recovery, _ = s.WorktreeRecoveryStatus(ctx, projectPath)
+		return s.FinalizeWorktreeRemoval(ctx, projectPath, FinalizeWorktreeRemovalOptions{MarkLinkedTodoDone: options.MarkLinkedTodoDone, ForceRemove: options.ForceRemove})
 	}
-	return result, nil
+	if options.MarkLinkedTodoDone {
+		return s.completeLinkedTodoForWorktree(ctx, projectPath, true)
+	}
+	return FinalizeMergedWorktreeResult{}, nil
 }
 
 // FinalizeWorktreeRemoval applies the explicit choices from the worktree
 // removal confirmation. Unlike merge finalization, TODO completion is allowed
 // for an unmerged checkout: deleting the checkout can represent closing or
 // abandoning that task, while Git keeps the branch ref available for recovery.
-// The TODO is still completed before removal so a failed update leaves the
-// checkout available for retry.
+// TODO updates are reported separately; a failed update does not veto deletion.
 func (s *Service) FinalizeWorktreeRemoval(ctx context.Context, projectPath string, options FinalizeWorktreeRemovalOptions) (FinalizeMergedWorktreeResult, error) {
 	if s == nil || s.store == nil {
 		return FinalizeMergedWorktreeResult{}, fmt.Errorf("service unavailable")
@@ -937,24 +916,20 @@ func (s *Service) FinalizeWorktreeRemoval(ctx context.Context, projectPath strin
 	}
 
 	result := FinalizeMergedWorktreeResult{}
+	var todoErr error
 	if options.MarkLinkedTodoDone {
-		var err error
-		result, err = s.completeLinkedTodoForWorktree(ctx, projectPath, false)
-		if err != nil {
-			return result, err
-		}
+		result, todoErr = s.completeLinkedTodoForWorktree(ctx, projectPath, false)
 	}
 	if err := s.RemoveWorktree(ctx, projectPath, options.ForceRemove); err != nil {
 		if result.LinkedTodoMarkedDone || result.LinkedTodoAlreadyDone {
-			return result, fmt.Errorf("linked TODO was completed, but removing the worktree failed: %w", err)
+			err = fmt.Errorf("linked TODO was completed, but deleting the worktree failed: %w", err)
 		}
-		if result.LinkedTodoMissing {
-			return result, fmt.Errorf("linked TODO no longer exists, but removing the worktree failed: %w", err)
-		}
-		return result, err
+		return result, errors.Join(todoErr, err)
 	}
 	result.WorktreeRemoved = true
-	result.Recovery, _ = s.WorktreeRecoveryStatus(ctx, projectPath)
+	if todoErr != nil {
+		return result, fmt.Errorf("worktree deleted, but linked TODO completion failed: %w", todoErr)
+	}
 	return result, nil
 }
 
@@ -1282,301 +1257,12 @@ func summarizeConflictedPaths(paths []string, limit int) []string {
 }
 
 func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force bool) error {
-	return s.removeWorktree(ctx, projectPath, force, false)
+	return s.deleteWorktree(ctx, projectPath)
 }
 
-// CleanupRetainedWorktree is the explicit, reviewed disk-cleanup action. It
-// allows verified ignored output, but never dirty children or untracked source.
+// CleanupRetainedWorktree deletes the explicitly selected leftover directory.
 func (s *Service) CleanupRetainedWorktree(ctx context.Context, projectPath string) error {
-	return s.removeWorktree(ctx, projectPath, false, true)
-}
-
-func (s *Service) removeWorktree(ctx context.Context, projectPath string, force, cleanupRetained bool) (resultErr error) {
-	if s == nil || s.store == nil {
-		return fmt.Errorf("service unavailable")
-	}
-	unlockMutation, err := s.lockMutation(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlockMutation()
-
-	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
-	if !filepath.IsAbs(projectPath) || projectPath == string(filepath.Separator) {
-		return fmt.Errorf("an absolute linked worktree path is required")
-	}
-	rootPath, kind, presentOnDisk, err := s.removeWorktreeTarget(ctx, projectPath)
-	if err != nil {
-		return err
-	}
-	if kind != model.WorktreeKindLinked {
-		return fmt.Errorf("only linked worktrees can be removed from Little Control Room")
-	}
-	if strings.TrimSpace(rootPath) == "" {
-		return fmt.Errorf("worktree root is unavailable for %s", projectPath)
-	}
-	unlockGitWrite, err := s.lockGitWrite(ctx, rootPath)
-	if err != nil {
-		return err
-	}
-	defer unlockGitWrite()
-	removalStarted := false
-	defer func() {
-		if resultErr == nil {
-			return
-		}
-		failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		registration, err := linkedWorktreeRegistrationWithReader(failureCtx, rootPath, kind, projectPath, s.gitWorktreeListReader)
-		orphaned := err == nil && (registration == linkedWorktreeRegistrationAbsent || registration == linkedWorktreeRegistrationPrunable)
-		if orphaned || removalStarted {
-			if _, err := os.Lstat(projectPath); !os.IsNotExist(err) {
-				resultErr = s.recordRetainedRemoval(failureCtx, projectPath, resultErr, orphaned)
-			}
-		}
-	}()
-	registration, registrationErr := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
-	if registrationErr != nil {
-		registration = linkedWorktreeRegistrationUnknown
-	}
-	// Capture provenance before pruning or removing any administrative record.
-	summary := s.residualWorktreeSummary(ctx, projectPath)
-	expectedCommit := ""
-	if registration == linkedWorktreeRegistrationLive {
-		expectedCommit, err = gitCommitHash(ctx, projectPath, "HEAD")
-		if err != nil {
-			return err
-		}
-		branch, err := removalGitOutput(ctx, projectPath, "rev-parse", "--abbrev-ref", "HEAD")
-		if err != nil {
-			return err
-		}
-		if branch == "HEAD" {
-			branch = ""
-		}
-		summary.RepoBranch = branch
-	} else {
-		expectedCommit = s.retainedRemovalCommit(ctx, projectPath, rootPath, summary)
-		if registration == linkedWorktreeRegistrationPrunable {
-			if worktrees, err := scanner.ListGitWorktrees(ctx, rootPath); err == nil {
-				for _, worktree := range worktrees {
-					if samePath(worktree.Path, projectPath) && worktree.Head != "" {
-						expectedCommit = worktree.Head
-						summary.RepoBranch = worktree.Branch
-					}
-				}
-			}
-		}
-	}
-	if err := s.saveRemovalReceipt(ctx, worktreeRemovalPlan{RootPath: rootPath, Path: projectPath, Commit: expectedCommit, Branch: summary.RepoBranch}); err != nil {
-		return fmt.Errorf("preserve worktree removal provenance: %w", err)
-	}
-	recovered := false
-	if _, statErr := os.Lstat(filepath.Join(s.recoveryBase(), recoveryPathKey(projectPath))); statErr == nil {
-		if presentOnDisk && !force && s.gitRepoStatusReader != nil && registration == linkedWorktreeRegistrationLive {
-			status, statusErr := s.gitRepoStatusReader(ctx, projectPath)
-			if statusErr != nil {
-				return statusErr
-			}
-			if status.Dirty {
-				return fmt.Errorf("worktree is dirty; commit or discard changes before retrying cleanup")
-			}
-		}
-		recovered, err = s.recoverAndRemove(ctx, rootPath, projectPath)
-		if err != nil {
-			return err
-		}
-		presentOnDisk = false
-	} else if !os.IsNotExist(statErr) {
-		return fmt.Errorf("inspect worktree recovery before removal: %w", statErr)
-	}
-	missingCheckoutReconciled := false
-	if !recovered && registration == linkedWorktreeRegistrationPrunable {
-		// Git still remembers this path, but its checkout metadata is already
-		// gone. Pruning removes only Git's stale administrative record; the
-		// directory may now be an ancestor of an independently live nested
-		// worktree, so leave its contents untouched.
-		if err := checkPrunableWorktreeStores(ctx, rootPath); err != nil {
-			return err
-		}
-		if presentOnDisk {
-			if err := checkRemovalProcesses(ctx, projectPath); err != nil {
-				return err
-			}
-		}
-		if err := gitWorktreePrune(ctx, rootPath); err != nil {
-			return fmt.Errorf("prune missing worktree registration for %s: %w", projectPath, err)
-		}
-		afterPrune, inspectErr := linkedWorktreeRegistrationWithReader(ctx, rootPath, kind, projectPath, s.gitWorktreeListReader)
-		if inspectErr != nil {
-			return fmt.Errorf("verify pruned worktree registration for %s: %w", projectPath, inspectErr)
-		}
-		if afterPrune != linkedWorktreeRegistrationAbsent {
-			return fmt.Errorf("Git still registers the missing worktree %s after pruning", projectPath)
-		}
-		_, pathErr := os.Lstat(projectPath)
-		presentOnDisk = !os.IsNotExist(pathErr)
-		missingCheckoutReconciled = true
-	}
-	staleLinkedWorktree := registration == linkedWorktreeRegistrationAbsent || registration == linkedWorktreeRegistrationPrunable
-	var removalPlan *worktreeRemovalPlan
-	residualDirectoryRemoved := recovered
-	if presentOnDisk && staleLinkedWorktree {
-		summary := s.residualWorktreeSummary(ctx, projectPath)
-		inspection, inspectErr := s.inspectResidualWorktreeDirectory(ctx, rootPath, projectPath, summary, expectedCommit)
-		if inspectErr != nil {
-			return fmt.Errorf("inspect orphaned worktree directory before cleanup: %w", inspectErr)
-		}
-		if !inspection.Safe {
-			return fmt.Errorf("Git no longer tracks this worktree, but Little Control Room could not verify the remaining folder for safe cleanup: %s; Little Control Room left the folder untouched: %s", inspection.Reason, projectPath)
-		}
-		if inspection.Kind == ResidualWorktreeCleanupOwned {
-			inspection.Plan.Branch = summary.RepoBranch
-			removalPlan = &inspection.Plan
-			if !cleanupRetained {
-				return fmt.Errorf("owned nested worktrees or ignored output remain; use the explicit retained-folder cleanup after reviewing its size and contents")
-			}
-			if err := checkRemovalProcesses(ctx, projectPath); err != nil {
-				return err
-			}
-			if err := s.saveRemovalReceipt(ctx, inspection.Plan); err != nil {
-				return err
-			}
-			removalStarted = true
-			if err := removeOwnedChildren(ctx, inspection.Plan); err != nil {
-				return err
-			}
-		}
-		if err := removeInspectedResidualWorktreeDirectory(ctx, inspection, projectPath); err != nil {
-			return fmt.Errorf("remove verified worktree residue: %w", err)
-		}
-		presentOnDisk = false
-		residualDirectoryRemoved = true
-	}
-	allowSubmoduleForceFallback := false
-	if presentOnDisk && !residualDirectoryRemoved && !missingCheckoutReconciled && !force && s.gitRepoStatusReader != nil {
-		status, err := s.gitRepoStatusReader(ctx, projectPath)
-		if err != nil {
-			return fmt.Errorf("read git status before removing worktree: %w", err)
-		}
-		if status.Dirty {
-			return fmt.Errorf("worktree is dirty; commit or discard changes before removing it")
-		}
-		allowSubmoduleForceFallback = true
-	}
-	if presentOnDisk && !residualDirectoryRemoved && !missingCheckoutReconciled {
-		if err := checkRemovalProcesses(ctx, projectPath); err != nil {
-			return err
-		}
-		recovered, err = s.recoverAndRemove(ctx, rootPath, projectPath)
-		if err != nil {
-			return err
-		}
-		if recovered {
-			residualDirectoryRemoved = true
-		}
-		if !recovered {
-			if _, err := worktreeprep.RepairRootSubmoduleWorktrees(ctx, rootPath); err != nil {
-				return err
-			}
-			plan, err := inspectRemovalPlan(ctx, rootPath, projectPath, expectedCommit, false)
-			if err != nil {
-				return err
-			}
-			removalPlan = &plan
-			plan.Branch = summary.RepoBranch
-			if err := checkRemovalProcesses(ctx, projectPath); err != nil {
-				return err
-			}
-			if err := s.saveRemovalReceipt(ctx, plan); err != nil {
-				return err
-			}
-			removalStarted = true
-			if err := removeOwnedChildren(ctx, plan); err != nil {
-				return err
-			}
-			if err := validateRemovalPlanDirectory(plan); err != nil {
-				return err
-			}
-			if err := validateRemovalClones(ctx, plan); err != nil {
-				return err
-			}
-			// Git interprets absent gitlink directories as deleted files. Empty
-			// placeholders represent uninitialized submodules and let the normal
-			// clean-checkout removal retain Git's concurrent-change protection.
-			for _, child := range plan.Children {
-				if err := os.Mkdir(child.Path, 0o755); err != nil {
-					return fmt.Errorf("restore empty submodule placeholder: %w", err)
-				}
-			}
-		}
-	}
-	if !residualDirectoryRemoved && !missingCheckoutReconciled {
-		removalStarted = true
-		removeErr := gitWorktreeRemove(ctx, rootPath, projectPath, force)
-		if removeErr != nil && allowSubmoduleForceFallback && isGitWorktreeSubmoduleRemoveError(removeErr) {
-			removeErr = gitWorktreeRemove(ctx, rootPath, projectPath, true)
-		}
-		if removeErr != nil {
-			if err := s.finishSafeWorktreeRemovalAfterGitError(ctx, rootPath, kind, projectPath, expectedCommit, removeErr); err != nil {
-				return err
-			}
-		}
-	}
-	if !residualDirectoryRemoved && !missingCheckoutReconciled {
-		if err := worktreeprep.PruneSubmoduleWorktrees(ctx, rootPath); err != nil {
-			return fmt.Errorf("prune submodule worktrees after removing %s: %w", projectPath, err)
-		}
-	}
-	if err := s.verifyWorktreeRemoval(ctx, rootPath, kind, projectPath, expectedCommit, missingCheckoutReconciled); err != nil {
-		return err
-	}
-	if removalPlan != nil {
-		tree, err := readResidualGitTree(ctx, rootPath, removalPlan.Commit)
-		if err != nil {
-			return err
-		}
-		if err := verifyRemovalChildRegistrations(ctx, *removalPlan, tree, true); err != nil {
-			return err
-		}
-	}
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
-	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
-		unlockProjectState()
-		return fmt.Errorf("forget removed worktree: %w", err)
-	}
-	// Reconcile the persisted presence immediately so merged-and-removed worktrees
-	// do not linger as orphaned checkouts until a later scan happens to revisit them.
-	if err := s.store.SetProjectPresence(ctx, projectPath, false); err != nil {
-		unlockProjectState()
-		return fmt.Errorf("record removed worktree presence: %w", err)
-	}
-	if _, err := s.store.ClearTodoWorkForProjectPath(ctx, projectPath); err != nil {
-		unlockProjectState()
-		return fmt.Errorf("clear TODO work session for removed worktree: %w", err)
-	}
-	s.forgetProjectState(projectPath)
-	unlockProjectState()
-
-	now := time.Now()
-	if s.bus != nil {
-		s.bus.Publish(events.Event{
-			Type:        events.ActionApplied,
-			At:          now,
-			ProjectPath: projectPath,
-			Payload: map[string]string{
-				"action":    "remove_worktree",
-				"root_path": rootPath,
-			},
-		})
-	}
-	_ = s.store.AddEvent(ctx, model.StoredEvent{
-		At:          now,
-		ProjectPath: projectPath,
-		Type:        string(events.ActionApplied),
-		Payload:     "remove_worktree",
-	})
-	return nil
+	return s.deleteWorktree(ctx, projectPath)
 }
 
 // verifyWorktreeRemoval makes successful removal mean that Git has forgotten

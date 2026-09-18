@@ -83,23 +83,20 @@ func (s *Service) recoveryResumeCandidate(ctx context.Context, path string) (Sta
 		return StaleWorktreeCleanupCandidate{}, false, nil
 	}
 	if err != nil {
-		return StaleWorktreeCleanupCandidate{}, false, err
+		return StaleWorktreeCleanupCandidate{}, false, nil
 	}
 	if j.Phase != "relocating" && j.Phase != "relocated" && j.Phase != "discarding_duplicate" && j.Phase != "promoting" && j.Phase != "promoted" && j.Phase != "removed" {
 		return StaleWorktreeCleanupCandidate{}, false, nil
 	}
 	summary, err := s.store.GetProjectSummary(ctx, path, true)
 	if err != nil {
-		return StaleWorktreeCleanupCandidate{}, false, err
+		return StaleWorktreeCleanupCandidate{}, false, nil
 	}
 	if summary.Pinned {
 		return StaleWorktreeCleanupCandidate{}, false, fmt.Errorf("worktree is pinned")
 	}
 	if j.Phase == "removed" && !summary.PresentOnDisk {
 		return StaleWorktreeCleanupCandidate{}, false, nil
-	}
-	if err := j.VerifyResume(ctx); err != nil {
-		return StaleWorktreeCleanupCandidate{}, false, err
 	}
 	return StaleWorktreeCleanupCandidate{ProjectPath: path, RootProjectPath: j.Root, ProjectName: filepath.Base(path), RecoveryResume: true}, true, nil
 }

@@ -78,7 +78,7 @@ func TestStaleWorktreeAuditPreselectsEligibleAndExcludesLiveUnsafeSessions(t *te
 		t.Fatalf("dialog selection = %#v, live excluded = %d", got.staleWorktreeCleanup.Chosen, got.staleWorktreeCleanup.LiveExcluded)
 	}
 	rendered := ansi.Strip(got.renderStaleWorktreeCleanupOverlay("", 120, 36))
-	for _, want := range []string{"Clean stale worktrees", "[x] feature/idle", "idle Codex open", "Branches and AI conversation history are preserved"} {
+	for _, want := range []string{"Clean stale worktrees", "[x] feature/idle", "idle Codex open", "Branches and AI conversation history are kept"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("stale cleanup preview missing %q:\n%s", want, rendered)
 		}
@@ -343,17 +343,8 @@ func TestStaleWorktreeCleanupRechecksLiveStateAfterGitRevalidation(t *testing.T)
 
 	updated, cmd := m.applyStaleWorktreeCleanupRevalidate(staleWorktreeCleanupRevalidateMsg{candidate: candidate})
 	got := updated.(Model)
-	if !got.staleWorktreeCleanup.Finished || got.staleWorktreeCleanup.Removing {
-		t.Fatalf("cleanup did not finish after current live-state skip: %#v", got.staleWorktreeCleanup)
-	}
-	if len(got.staleWorktreeCleanup.Results) != 1 || !strings.Contains(got.staleWorktreeCleanup.Results[0].SkippedReason, "external") {
-		t.Fatalf("cleanup result = %#v, want external-runtime skip", got.staleWorktreeCleanup.Results)
-	}
-	if got.staleWorktreeCleanup.Results[0].Finalize.WorktreeRemoved {
-		t.Fatal("worktree was removed after a session became active")
-	}
-	if cmd == nil {
-		t.Fatal("finished cleanup should still invalidate the project list")
+	if got.staleWorktreeCleanup.Finished || !got.staleWorktreeCleanup.Finalizing || cmd == nil {
+		t.Fatal("approved deletion should proceed despite a new runtime")
 	}
 }
 
