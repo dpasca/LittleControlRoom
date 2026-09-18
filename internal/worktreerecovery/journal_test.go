@@ -2,6 +2,7 @@ package worktreerecovery
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -532,5 +533,108 @@ func TestCopyFileHasIndependentContents(t *testing.T) {
 	}
 	if data, err := os.ReadFile(from); err != nil || string(data) != "changed source" {
 		t.Fatalf("copy write changed source: %q %v", data, err)
+	}
+}
+
+func TestRecoveryResumesAfterDeviceRenumbering(t *testing.T) {
+	for _, stage := range []string{"verified", "relocated", "promoted"} {
+		t.Run(stage, func(t *testing.T) {
+			root, path, base, _ := fixture(t)
+			ctx := context.Background()
+			j, err := Prepare(ctx, base, root, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stage != "verified" {
+				if err := j.Relocate(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if stage == "promoted" {
+				if err := j.Complete(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			j.Device++
+			j.RecoveryDevice++
+			if err := j.save(); err != nil {
+				t.Fatal(err)
+			}
+			j, err = Load(j.Directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := j.Relocate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := j.Complete(ctx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestLegacyInspectionDeviceRetryRequiresNoPreservedData(t *testing.T) {
+	for _, artifact := range []bool{false, true} {
+		t.Run(fmt.Sprint(artifact), func(t *testing.T) {
+			root, path, base, _ := fixture(t)
+			ctx := context.Background()
+			lock := filepath.Join(path, "dependency", ".git", "index.lock")
+			if err := os.WriteFile(lock, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			j, err := Prepare(ctx, base, root, path)
+			if err == nil || j.Phase != "inspecting" {
+				t.Fatalf("expected inspection blocker: %v", err)
+			}
+			if err := os.Remove(lock); err != nil {
+				t.Fatal(err)
+			}
+			j.RecoveryDevice = 0
+			j.RecoveryInode = 0
+			j.Device++
+			if err := j.save(); err != nil {
+				t.Fatal(err)
+			}
+			if artifact {
+				if err := os.WriteFile(filepath.Join(j.Directory, "keep"), []byte("preserved"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			j, err = Prepare(ctx, base, root, path)
+			if artifact {
+				if err == nil {
+					t.Fatal("rebound a journal with preserved data")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := j.Relocate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := j.Complete(ctx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRecoveryDeviceRenumberingRequiresRecoveryAnchor(t *testing.T) {
+	root, path, base, _ := fixture(t)
+	ctx := context.Background()
+	j, err := Prepare(ctx, base, root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Device++
+	j.RecoveryDevice++
+	j.RecoveryInode++
+	if err := j.Relocate(ctx); err == nil {
+		t.Fatal("accepted replaced recovery anchor")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("original changed")
 	}
 }
