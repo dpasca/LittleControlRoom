@@ -34,6 +34,12 @@ type codexRetryErrorState struct {
 // masquerade as a retry and fold two different failures together.
 var codexReconnectAttemptPattern = regexp.MustCompile(`(?i)\breconnecting\b[^\d\n]{0,8}([0-9]+)\s*/\s*([0-9]+)`)
 
+// Codex also reports the incident without attempt counters while it waits for
+// connectivity, for example "Reconnecting... waiting for network". Only the
+// marker plus an ellipsis qualifies: a message such as "Reconnecting embedded
+// session failed" is a different, terminal report.
+var codexReconnectStatusPattern = regexp.MustCompile(`(?i)^\s*reconnecting\s*\.{2,}`)
+
 // summarizeCodexError converts a raw Codex diagnostic into a short line for the
 // transcript. The raw text stays the entry's Text so the full-block view and
 // exported transcripts keep the provider diagnostics intact.
@@ -55,6 +61,16 @@ func summarizeCodexError(raw string) codexErrorSummary {
 			Family:  family,
 			Attempt: attempt,
 			Total:   total,
+		}
+	}
+	if codexReconnectStatusPattern.MatchString(message) {
+		family := "reconnect"
+		if cause != "" {
+			family += "|" + cause
+		}
+		return codexErrorSummary{
+			Display: codexRetryDisplayText(cause, 0, 0),
+			Family:  family,
 		}
 	}
 	if len(fields) == 0 {
@@ -161,4 +177,12 @@ func humanizeCodexErrorInfoKey(key string) string {
 		out.WriteRune(unicode.ToLower(r))
 	}
 	return strings.Join(strings.Fields(out.String()), " ")
+}
+
+// isCodexReconnectIncident reports whether a provider error describes a
+// transient reconnection incident rather than a stopped session. Codex retries
+// these on its own and never reports the recovery, so they must not become the
+// session's terminal error.
+func isCodexReconnectIncident(message string) bool {
+	return strings.HasPrefix(summarizeCodexError(message).Family, "reconnect")
 }

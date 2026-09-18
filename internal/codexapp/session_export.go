@@ -562,10 +562,19 @@ func (s *appServerSession) appendSystemError(err error) {
 		return
 	}
 	message := err.Error()
+	// Reconnect incidents are transient provider activity: Codex keeps
+	// retrying on its own and never reports the recovery. Retaining the text
+	// as the session's terminal error would keep an idle session - and its
+	// worktree row - reported as stopped after the turn actually finished.
+	// Terminal failures still arrive through turn/completed or the
+	// transport-close paths.
+	terminal := !isCodexReconnectIncident(message)
 	s.mu.Lock()
 	s.touchLocked()
 	s.appendErrorEntryLocked(message)
-	s.lastError = message
+	if terminal {
+		s.lastError = message
+	}
 	s.lastSystemNotice = message
 	if label := compactCodexStatusLabel(message); label != "" {
 		s.status = label

@@ -175,3 +175,68 @@ func TestResumeRestoresOnlyLatestTurnFailure(t *testing.T) {
 		t.Fatalf("historical failure masked later success: %q", s.lastError)
 	}
 }
+
+func TestSummarizeCodexErrorRecognizesAttemptlessReconnectStatus(t *testing.T) {
+	raw := "Reconnecting... waiting for network"
+	summary := summarizeCodexError(raw)
+	if summary.Family != "reconnect" {
+		t.Fatalf("family = %q, want the reconnect incident", summary.Family)
+	}
+	if want := "Connection to Codex dropped. Retrying."; summary.Display != want {
+		t.Fatalf("display = %q, want %q", summary.Display, want)
+	}
+	if label := codexRetryStatusLabel(raw); label != "Codex reconnecting" {
+		t.Fatalf("status label = %q, want a compact reconnect label", label)
+	}
+	if got := summarizeCodexError("Reconnecting embedded session failed"); got.Family != "" {
+		t.Fatalf("terminal message folded as a retry incident: %#v", got)
+	}
+}
+
+func TestIdleReconnectIncidentDoesNotBecomeAStoppedSession(t *testing.T) {
+	s := &appServerSession{notify: func() {}}
+	s.handleNotification("error", json.RawMessage(`{"error":{"message":"Reconnecting... waiting for network"}}`))
+	if s.lastError != "" {
+		t.Fatalf("lastError = %q, want a transient incident kept out of the terminal error", s.lastError)
+	}
+	if s.status != "Codex reconnecting" {
+		t.Fatalf("status = %q, want the reconnect label", s.status)
+	}
+	if failure := StoppedSessionError(Snapshot{LastError: s.lastError}); failure != "" {
+		t.Fatalf("idle reconnect incident reported as stopped: %q", failure)
+	}
+	if len(s.entries) != 1 || s.entries[0].DisplayText != "Connection to Codex dropped. Retrying." {
+		t.Fatalf("reconnect incident missing from the transcript: %#v", s.entries)
+	}
+
+	plain := &appServerSession{notify: func() {}}
+	plain.handleNotification("error", json.RawMessage(`{"error":{"message":"Bad Request","codexErrorInfo":"other"}}`))
+	if plain.lastError == "" {
+		t.Fatal("a terminal provider error must still be retained")
+	}
+	if failure := StoppedSessionError(Snapshot{LastError: plain.lastError}); failure == "" {
+		t.Fatal("a terminal provider error must still report a stopped session")
+	}
+}
+
+func TestReconnectIncidentStillResolvesAndFailedTurnStillReports(t *testing.T) {
+	s := &appServerSession{notify: func() {}}
+	s.handleNotification("error", json.RawMessage(`{"error":{"message":"Reconnecting... waiting for network"}}`))
+	s.handleNotification("turn/completed", json.RawMessage(`{"turn":{"id":"turn-1","status":"completed"}}`))
+	if s.lastError != "" {
+		t.Fatalf("successful turn retained the reconnect incident: %q", s.lastError)
+	}
+	if len(s.entries) != 1 || s.entries[0].DisplayText != "Connection to Codex dropped. Recovered." {
+		t.Fatalf("recovery was not folded into the incident line: %#v", s.entries)
+	}
+
+	failed := &appServerSession{notify: func() {}}
+	failed.handleNotification("error", json.RawMessage(`{"error":{"message":"Reconnecting... waiting for network"}}`))
+	failed.handleNotification("turn/completed", json.RawMessage(`{"turn":{"id":"turn-2","status":"failed"}}`))
+	if failed.lastError == "" {
+		t.Fatal("a failed turn after a reconnect incident lost its terminal error")
+	}
+	if failure := StoppedSessionError(Snapshot{LastError: failed.lastError}); failure == "" {
+		t.Fatal("a failed turn after a reconnect incident must still report a stopped session")
+	}
+}
