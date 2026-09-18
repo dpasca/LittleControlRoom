@@ -47,8 +47,28 @@ func checkPlatformMetadataBatch(ctx context.Context, paths []string) error {
 }
 
 func checkFileFlags(path string, stat *unix.Stat_t) error {
-	if stat.Flags != 0 {
+	if stat.Flags & ^uint32(unix.UF_HIDDEN|unix.UF_NODUMP) != 0 {
 		return fmt.Errorf("filesystem flags require preservation review: %s (0x%x)", path, stat.Flags)
+	}
+	return nil
+}
+
+func preservedFileFlags(stat *unix.Stat_t) uint32 { return stat.Flags }
+
+func copyFileFlags(path string, stat *unix.Stat_t) error {
+	if err := checkFileFlags(path, stat); err != nil {
+		return err
+	}
+	var current unix.Stat_t
+	if err := unix.Lstat(path, &current); err != nil {
+		return err
+	}
+	if current.Flags == stat.Flags {
+		return nil
+	}
+	// -h changes the link itself, never a target outside the recovery.
+	if out, err := exec.Command("/usr/bin/chflags", "-h", strconv.FormatUint(uint64(stat.Flags), 8), path).CombinedOutput(); err != nil {
+		return fmt.Errorf("preserve filesystem flags at %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

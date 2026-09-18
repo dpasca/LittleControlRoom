@@ -21,6 +21,7 @@ import (
 )
 
 type File struct {
+	Flags    uint32 `json:",omitempty"`
 	UID      uint32
 	GID      uint32
 	Modified int64 `json:",omitempty"`
@@ -62,6 +63,7 @@ func snapshotEntries(ctx context.Context, root string) (map[string]File, error) 
 		if err := checkFileFlags(path, &stat); err != nil {
 			return err
 		}
+		f.Flags = preservedFileFlags(&stat)
 		f.UID, f.GID = stat.Uid, stat.Gid
 		switch {
 		case i.Mode().IsRegular():
@@ -214,6 +216,9 @@ func copyTree(ctx context.Context, from, to string) error {
 			if err := os.Chtimes(dst, i.ModTime(), i.ModTime()); err != nil {
 				return err
 			}
+		}
+		if err := copyFileFlags(dst, &sourceStat); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -401,6 +406,10 @@ func applyRepair(path string, data []byte, symlink bool) error {
 		if err != nil {
 			return err
 		}
+		var stat unix.Stat_t
+		if err := unix.Lstat(path, &stat); err != nil {
+			return err
+		}
 		if err := os.Remove(path); err != nil {
 			return err
 		}
@@ -411,6 +420,9 @@ func applyRepair(path string, data []byte, symlink bool) error {
 			if err := unix.Lsetxattr(path, name, value, 0); err != nil {
 				return err
 			}
+		}
+		if err := copyFileFlags(path, &stat); err != nil {
+			return err
 		}
 		return syncDir(filepath.Dir(path))
 	}

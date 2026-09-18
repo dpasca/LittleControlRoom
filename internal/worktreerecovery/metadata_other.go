@@ -11,3 +11,7 @@ import (
 func checkPlatformMetadata(ctx context.Context, paths ...string) error { return ctx.Err() }
 
 func checkFileFlags(path string, stat *unix.Stat_t) error { return nil }
+
+func preservedFileFlags(stat *unix.Stat_t) uint32 { return 0 }
+
+func copyFileFlags(path string, stat *unix.Stat_t) error { return nil }

@@ -75,7 +75,12 @@ rehashed before relocation. This is a file/store recovery, not a refs-only bundl
 The source directory moves atomically to the journal's `QuarantinePath`.
 Only exact, validated Git administrative registrations are relocated; there is
 no family-wide prune and no recursive Git removal against the old pathname.
-Recreated original paths block retries. The original files are then promoted to
+Recreated original paths block retries. New journals record both the checkout
+and recovery directory identities, allowing device-number changes after remount
+without mistaking the same directories for replacements. Legacy inspections
+with an unchanged checkout inode and only a manifest can restart inspection;
+copied or relocated legacy recoveries are never rebound by guessing.
+The original files are then promoted to
 the final `tree/` location, their recorded pointers are repaired, and the
 independently verified duplicate is discarded. Thus ordinary cleanup never
 recursively deletes the original files, including files held by a late writer.
@@ -109,8 +114,10 @@ retained and blocks further work; it is not silently accepted or overwritten.
   build lockfiles are preserved normally; active owners still block removal.
   Invalid shared submodule metadata also blocks removal; the preservation path
   does not silently rewrite a live primary submodule's `core.worktree` setting.
-  macOS filesystem flags and extended ACLs are explicitly blocked because listxattr does not include
-  them; Linux ACL xattrs participate in the normal copy/verification path.
+  macOS hidden and no-dump flags are preserved and verified, including on
+  repaired symbolic links. Other flags (including immutable/append-only flags)
+  and extended ACLs remain explicit blockers. Linux ACL xattrs participate in
+  the normal copy/verification path.
 - The recovery includes all objects in required shared Git stores. It avoids
   overlapping source copies within an operation, but does not deduplicate objects
   across separate recovery operations or optimize the primary store to a minimal

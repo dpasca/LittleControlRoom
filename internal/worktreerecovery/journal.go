@@ -27,6 +27,8 @@ type Journal struct {
 	Verified       time.Time
 	Device         uint64
 	Inode          uint64
+	RecoveryDevice uint64 `json:",omitempty"`
+	RecoveryInode  uint64 `json:",omitempty"`
 	Sources        []Source
 	StoreMappings  []StoreMapping `json:",omitempty"`
 	Repositories   []Repository
@@ -258,6 +260,9 @@ func Prepare(ctx context.Context, base, root, path string) (*Journal, error) {
 		return nil, err
 	}
 	j := &Journal{Version: 1, Directory: directory, QuarantinePath: filepath.Join(directory, "original"), DuplicatePath: filepath.Join(directory, "verified-tree"), Original: path, Root: root, Phase: "inspecting", Created: time.Now().UTC(), Device: uint64(st.Dev), Inode: st.Ino}
+	if err := j.recordRecoveryIdentity(); err != nil {
+		return j, err
+	}
 	if err := j.save(); err != nil {
 		return j, err
 	}
@@ -265,6 +270,9 @@ func Prepare(ctx context.Context, base, root, path string) (*Journal, error) {
 }
 
 func (j *Journal) prepareCopies(ctx context.Context) error {
+	if err := j.refreshLegacyInspectionIdentity(); err != nil {
+		return err
+	}
 	if err := j.checkOriginalIdentity(); err != nil {
 		return err
 	}
@@ -431,10 +439,66 @@ func (j *Journal) checkOriginalIdentity() error {
 	if err := unix.Lstat(p, &st); err != nil {
 		return err
 	}
-	if uint64(st.Dev) != j.Device || st.Ino != j.Inode {
+	if !j.matchesOriginalIdentity(&st) {
 		return fmt.Errorf("original worktree path was recreated; refusing removal: %s", p)
 	}
 	return nil
+}
+
+func (j *Journal) recordRecoveryIdentity() error {
+	var st unix.Stat_t
+	if err := unix.Lstat(j.Directory, &st); err != nil {
+		return err
+	}
+	j.RecoveryDevice, j.RecoveryInode = uint64(st.Dev), st.Ino
+	return nil
+}
+
+// Device numbers can change after a reboot/remount. The original directory and
+// its recovery must still have their recorded inodes on the same filesystem.
+// The durable recovery directory provides the second identity anchor; an inode
+// match alone on a different filesystem is never enough.
+func (j *Journal) matchesOriginalIdentity(st *unix.Stat_t) bool {
+	if st.Ino != j.Inode {
+		return false
+	}
+	if uint64(st.Dev) == j.Device {
+		return true
+	}
+	if j.RecoveryInode == 0 || j.RecoveryDevice != j.Device {
+		return false
+	}
+	var anchor unix.Stat_t
+	return unix.Lstat(j.Directory, &anchor) == nil && anchor.Ino == j.RecoveryInode && anchor.Dev == st.Dev
+}
+
+// Old failed inspections have no copied or relocated data to resume. Rebind
+// their device number only when the inode is unchanged and the manifest is the
+// sole recovery entry, then perform the entire inspection afresh. Never migrate
+// a copied, verified, or relocated legacy recovery by guessing its identity.
+func (j *Journal) refreshLegacyInspectionIdentity() error {
+	if j.RecoveryInode != 0 || j.Phase != "inspecting" || !j.Verified.IsZero() || len(j.MetadataMoves) != 0 || len(j.Repairs) != 0 {
+		return nil
+	}
+	var st unix.Stat_t
+	if err := unix.Lstat(j.Original, &st); err != nil {
+		return err
+	}
+	if st.Ino != j.Inode {
+		return nil
+	}
+	entries, err := os.ReadDir(j.Directory)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 1 || entries[0].Name() != "manifest.json" {
+		return nil
+	}
+	j.Device = uint64(st.Dev)
+	if err := j.recordRecoveryIdentity(); err != nil {
+		return err
+	}
+	return j.save()
 }
 
 func (j *Journal) Verify(ctx context.Context) error {
@@ -512,7 +576,7 @@ func (j *Journal) Relocate(ctx context.Context) error {
 		if err := unix.Lstat(quarantine, &st); err != nil {
 			return err
 		}
-		if uint64(st.Dev) != j.Device || st.Ino != j.Inode {
+		if !j.matchesOriginalIdentity(&st) {
 			return fmt.Errorf("relocated directory identity changed")
 		}
 		if j.Phase != "discarding_duplicate" {
@@ -612,12 +676,12 @@ func (j *Journal) promoteOriginal(ctx context.Context) error {
 	tree := filepath.Join(j.Directory, "tree")
 	duplicate := filepath.Join(j.Directory, "verified-tree")
 	var st unix.Stat_t
-	treeIsOriginal := unix.Lstat(tree, &st) == nil && uint64(st.Dev) == j.Device && st.Ino == j.Inode
+	treeIsOriginal := unix.Lstat(tree, &st) == nil && j.matchesOriginalIdentity(&st)
 	if !treeIsOriginal {
 		if err := unix.Lstat(original, &st); err != nil {
 			return err
 		}
-		if uint64(st.Dev) != j.Device || st.Ino != j.Inode {
+		if !j.matchesOriginalIdentity(&st) {
 			return fmt.Errorf("relocated directory identity changed")
 		}
 		if err := verifyTree(ctx, original, j.Sources[0].Files); err != nil {
