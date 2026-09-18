@@ -55,9 +55,9 @@ func TestRemovalWithCodexPluginCache(t *testing.T) {
 				_, err = f.svc.FinalizeMergedWorktree(ctx, f.path, FinalizeMergedWorktreeOptions{RemoveWorktree: true})
 			case "retained":
 				f.orphan(t, true)
-				err = f.svc.CleanupRetainedWorktree(ctx, f.path)
+				err = f.svc.archiveWorktree(ctx, f.path, false, true)
 			default:
-				err = f.svc.RemoveWorktree(ctx, f.path, mode == "force")
+				err = f.svc.ArchiveWorktree(ctx, f.path, mode == "force")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -122,7 +122,7 @@ func TestRemovalCodexCacheProtectsLocalWork(t *testing.T) {
 				t.Fatal(err)
 			}
 			reflog, _ := os.ReadFile(filepath.Join(cache, ".git", "logs", "HEAD"))
-			if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err != nil {
+			if err := f.svc.ArchiveWorktree(context.Background(), f.path, true); err != nil {
 				t.Fatal(err)
 			}
 			recovery, err := f.svc.ReviewWorktreeRecovery(context.Background(), f.path)
@@ -147,7 +147,7 @@ func TestRemovalCodexCacheProtectsLocalWork(t *testing.T) {
 	}
 }
 
-func TestRemovalWithEmptyNestedRepository(t *testing.T) {
+func TestArchiveWithEmptyNestedRepository(t *testing.T) {
 	for _, kind := range []string{"bare", "checkout", "incomplete object", "untracked file", "staged file", "dangling object"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
@@ -184,7 +184,7 @@ func TestRemovalWithEmptyNestedRepository(t *testing.T) {
 					}
 				}
 			}
-			_, err = f.svc.FinalizeMergedWorktree(context.Background(), f.path, FinalizeMergedWorktreeOptions{RemoveWorktree: true})
+			err = f.svc.ArchiveWorktree(context.Background(), f.path, false)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -33,10 +33,7 @@ const (
 	worktreePostMergeFocusRemove
 )
 
-// worktreeRemoveConfirm focus indices are computed dynamically via helper
-// functions because the force checkbox is only present when the worktree is
-// dirty or has an idle embedded session. See worktreeRemoveConfirmRemoveIndex /
-// KeepIndex / FocusCount.
+// Removal confirmation has one optional linked-TODO checkbox.
 
 const (
 	worktreeUpdatePendingSummary      = "Updating worktree from parent..."
@@ -47,8 +44,7 @@ const (
 	worktreeOrphanCleanupSummary      = "Verifying and clearing orphaned worktree..."
 	worktreeFinalizeRemoveSummary     = "Completing linked TODO and removing worktree..."
 	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
-	// Removal may inventory and verify large local recoveries. All removal
-	// entry points need the same budget as /clean, including TODO finalization.
+	// Large directory deletions run on workers with progress and cancellation.
 	tuiWorktreeRemoveTimeout   = 30 * time.Minute
 	tuiWorktreeFinalizeTimeout = tuiWorktreeRemoveTimeout
 	tuiWorktreeInspectTimeout  = 20 * time.Second
@@ -77,7 +73,7 @@ type worktreeRemoveConfirmState struct {
 	MergeStatus           model.WorktreeMergeStatus
 	LinkedTodoID          int64
 	Dirty                 bool
-	ForceRemove           bool
+	ActivityWarning       string
 	HasIdleSession        bool
 	IdleSessionProvider   codexapp.Provider
 	MarkTodoDone          bool
@@ -94,9 +90,6 @@ func worktreeRemoveConfirmOptionCount(confirm *worktreeRemoveConfirmState) int {
 		return 0
 	}
 	count := 0
-	if worktreeRemoveConfirmNeedsForce(confirm) {
-		count++ // "Force remove" checkbox
-	}
 	if confirm.LinkedTodoID > 0 {
 		count++ // "Mark linked TODO done" checkbox
 	}
@@ -112,9 +105,6 @@ func worktreeRemoveConfirmKeepIndex(confirm *worktreeRemoveConfirmState) int {
 }
 
 func worktreeRemoveConfirmTodoIndex(confirm *worktreeRemoveConfirmState) int {
-	if worktreeRemoveConfirmNeedsForce(confirm) {
-		return 1
-	}
 	return 0
 }
 
@@ -126,15 +116,7 @@ func worktreeRemoveConfirmReady(confirm *worktreeRemoveConfirmState) bool {
 	if confirm == nil {
 		return false
 	}
-	return !worktreeRemoveConfirmNeedsForce(confirm) || confirm.ForceRemove
-}
-
-func worktreeRemoveConfirmNeedsForce(confirm *worktreeRemoveConfirmState) bool {
-	return confirm != nil && (confirm.Dirty || confirm.HasIdleSession)
-}
-
-func worktreeRemoveConfirmGitForce(confirm *worktreeRemoveConfirmState) bool {
-	return confirm != nil && confirm.Dirty && confirm.ForceRemove
+	return true
 }
 
 func toggleWorktreeRemoveConfirmSelection(confirm *worktreeRemoveConfirmState) bool {
@@ -142,13 +124,6 @@ func toggleWorktreeRemoveConfirmSelection(confirm *worktreeRemoveConfirmState) b
 		return false
 	}
 	index := confirm.Selected
-	if worktreeRemoveConfirmNeedsForce(confirm) {
-		if index == 0 {
-			confirm.ForceRemove = !confirm.ForceRemove
-			return true
-		}
-		index--
-	}
 	if confirm.LinkedTodoID > 0 && index == 0 {
 		confirm.MarkTodoDone = !confirm.MarkTodoDone
 		return true
@@ -2531,26 +2506,16 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	idleSessionProvider := codexapp.Provider("")
+	activityWarning := ""
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		if embeddedSessionBlocksProviderSwitch(snapshot) {
-			m.showSessionBlockedAttentionDialog(
-				project,
-				"Remove blocked",
-				"Finish or close the active embedded agent session before removing this worktree.",
-				"retry the removal",
-				embeddedProvider(snapshot),
-			)
-			return nil
+			activityWarning = "An engineer is active here and may recreate files after deletion."
+		} else {
+			idleSessionProvider = embeddedProvider(snapshot)
 		}
-		idleSessionProvider = embeddedProvider(snapshot)
 	}
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
-		m.status = "Stop the runtime before removing this worktree"
-		return nil
-	}
-	if _, ok := m.pendingGitOperation(project.Path); ok {
-		m.status = "A git action is still in progress for this worktree"
-		return nil
+		activityWarning += " A runtime is running and may recreate files after deletion."
 	}
 	state := &worktreeRemoveConfirmState{
 		ProjectPath:         project.Path,
@@ -2561,6 +2526,7 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		MergeStatus:         project.WorktreeMergeStatus,
 		Dirty:               project.RepoDirty,
 		HasIdleSession:      idleSessionProvider != "",
+		ActivityWarning:     activityWarning,
 		IdleSessionProvider: idleSessionProvider,
 	}
 	if project.WorktreeOriginTodoID > 0 {
@@ -2607,17 +2573,6 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 			m.status = "Worktree removal canceled"
 			return m, nil
 		}
-		if !worktreeRemoveConfirmReady(confirm) {
-			m.status = worktreeRemoveConfirmForcePrompt(confirm)
-			return m, nil
-		}
-		if confirm.HasIdleSession {
-			if snapshot, ok := m.liveCodexSnapshot(confirm.ProjectPath); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
-				confirm.ForceRemove = false
-				m.status = "The embedded agent session became active; finish or close it before removing this worktree"
-				return m, nil
-			}
-		}
 		if confirm.ResidualCleanup {
 			if normalizeProjectPath(confirm.ProjectPath) != normalizeProjectPath(confirm.RootPath) {
 				m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeOrphanCleanupSummary, worktreeOrphanCleanupSummary)
@@ -2628,10 +2583,10 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 		}
 		if confirm.MarkTodoDone && confirm.LinkedTodoID > 0 {
 			m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeFinalizeRemoveSummary, worktreeFinalizeRemoveSummary)
-			return m, m.finalizeWorktreeRemovalCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
+			return m, m.finalizeWorktreeRemovalCmd(confirm.ProjectPath, confirm.RootPath, true, confirm.HasIdleSession)
 		}
 		m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
-		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, worktreeRemoveConfirmGitForce(confirm), confirm.HasIdleSession)
+		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, true, confirm.HasIdleSession)
 	}
 	return m, nil
 }
@@ -2643,15 +2598,7 @@ func (m Model) finalizeWorktreeRemovalCmd(projectPath, rootPath string, force, c
 		}
 	}
 	return func() tea.Msg {
-		closedSession, err := closeIdleEmbeddedSessionForWorktree(m.codexManager, projectPath, closeIdleSession)
-		if err != nil {
-			return worktreeActionMsg{
-				projectPath:            projectPath,
-				clearPendingGitSummary: true,
-				closedEmbeddedSession:  closedSession,
-				err:                    err,
-			}
-		}
+		closedSession, _ := closeIdleEmbeddedSessionForWorktree(m.codexManager, projectPath, closeIdleSession)
 		result, err := m.finalizeWorktreeRemovalWithTimeout(projectPath, service.FinalizeWorktreeRemovalOptions{
 			MarkLinkedTodoDone: true,
 			ForceRemove:        force,
@@ -2685,10 +2632,8 @@ func (m Model) removeWorktreeCmd(projectPath, rootPath string, force, closeIdleS
 		}
 	}
 	return func() tea.Msg {
-		closedSession, err := closeIdleEmbeddedSessionForWorktree(m.codexManager, projectPath, closeIdleSession)
-		if err == nil {
-			err = m.removeWorktreeWithTimeout(projectPath, force)
-		}
+		closedSession, _ := closeIdleEmbeddedSessionForWorktree(m.codexManager, projectPath, closeIdleSession)
+		err := m.removeWorktreeWithTimeout(projectPath, force)
 		return worktreeActionMsg{
 			projectPath:            projectPath,
 			removedProjectPath:     removedWorktreePath(err == nil, projectPath),
@@ -2711,7 +2656,7 @@ func closeIdleEmbeddedSessionForWorktree(manager *codexapp.Manager, projectPath 
 	}
 	snapshot := session.Snapshot()
 	if embeddedSessionBlocksProviderSwitch(snapshot) {
-		return false, fmt.Errorf("embedded %s turn became active; wait for it to finish before removing the worktree", embeddedProvider(snapshot).Label())
+		return false, nil // Explicit deletion may proceed; do not stop an active turn.
 	}
 	if err := manager.CloseProject(projectPath); err != nil {
 		// CloseProject removes the session from the manager before asking the
@@ -2720,17 +2665,6 @@ func closeIdleEmbeddedSessionForWorktree(manager *codexapp.Manager, projectPath 
 		return true, fmt.Errorf("close idle embedded %s session: %w", embeddedProvider(snapshot).Label(), err)
 	}
 	return true, nil
-}
-
-func worktreeRemoveConfirmForcePrompt(confirm *worktreeRemoveConfirmState) string {
-	switch {
-	case confirm != nil && confirm.Dirty && confirm.HasIdleSession:
-		return "Check \"Force remove\" to close the idle session and discard uncommitted changes"
-	case confirm != nil && confirm.HasIdleSession:
-		return "Check \"Force remove\" to close the idle session"
-	default:
-		return "Check \"Force remove\" to discard uncommitted changes"
-	}
 }
 
 func (m Model) cleanupResidualWorktreeDirectoriesCmd(rootPath string) tea.Cmd {
@@ -2766,7 +2700,7 @@ func (m Model) cleanupResidualWorktreeDirectoryCmd(projectPath, rootPath string)
 			projectPath:            projectPath,
 			removedProjectPath:     removedWorktreePath(err == nil, projectPath),
 			selectPath:             rootPath,
-			status:                 "Verified orphaned worktree residue cleared",
+			status:                 "Worktree directory deleted",
 			clearPendingGitSummary: true,
 			err:                    err,
 		}
@@ -2842,13 +2776,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if individualResidualCleanup {
 		removeLabel = "Clear"
 	}
-	if worktreeRemoveConfirmNeedsForce(confirm) && confirm.ForceRemove {
-		removeLabel = "Force Remove"
-	}
 	removeButton := renderDialogButton(removeLabel, confirm.Selected == worktreeRemoveConfirmRemoveIndex(confirm))
-	if worktreeRemoveConfirmNeedsForce(confirm) && !confirm.ForceRemove {
-		removeButton = disabledActionTextStyle.Render("[Remove blocked]")
-	}
 	if confirm.Busy {
 		removeButton = disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
 	}
@@ -2888,7 +2816,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 			}
 		}
 	}
-	if confirm.ResidualCleanup {
+	if confirm.ResidualCleanup && !individualResidualCleanup {
 		lines = append(lines, "")
 		lines = append(lines, detailWarningStyle.Render("Strict cleanup guard"))
 		cleanupCopy := "Little Control Room will re-check each orphaned folder. It clears a .DS_Store-only folder, or a partial Git removal only when its stale .git pointer belongs to this repository and every remaining project file and executable mode matches a preserved commit. Nested .DS_Store files and empty directories are allowed. Unverified folders are kept untouched."
@@ -2907,49 +2835,28 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 			cleanupCopy,
 		)...)
 	}
-	if (confirm.Dirty || confirm.HasIdleSession) && !confirm.Busy {
+	if !confirm.ResidualCleanup || individualResidualCleanup {
 		lines = append(lines, "")
-		forceTitle := "Uncommitted changes"
-		forceCopy := "This worktree has uncommitted changes that will be discarded if you force-remove it."
-		forceLabel := "Force remove (discard uncommitted changes)"
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, "Permanently deletes this directory and everything inside it, including uncommitted changes, ignored files, and nested repositories. No recovery archive is created. Git branches and conversation history are kept.")...)
 		if confirm.HasIdleSession {
-			providerLabel := confirm.IdleSessionProvider.Label()
-			forceTitle = "Open embedded session"
-			forceCopy = "The embedded " + providerLabel + " session is open, but no engineer turn is running. Force removal closes that idle session before deleting the checkout."
-			forceLabel = "Force remove (close idle " + providerLabel + " session)"
-			if confirm.Dirty {
-				forceTitle = "Open session and uncommitted changes"
-				forceCopy += " It also discards the worktree's uncommitted changes."
-				forceLabel = "Force remove (close session and discard changes)"
-			}
+			lines = append(lines, "The idle embedded session will close.")
 		}
-		lines = append(lines, detailWarningStyle.Render(forceTitle))
-		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, forceCopy)...)
-		lines = append(lines, "")
-		prefix := "[ ] "
-		style := detailMutedStyle
-		if confirm.ForceRemove {
-			prefix = "[x] "
-			style = detailWarningStyle
-		}
-		line := truncateText(prefix+forceLabel, panelInnerW)
-		if confirm.Selected == 0 {
-			lines = append(lines, dialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line))
-		} else {
-			lines = append(lines, style.Render(line))
+		if confirm.ActivityWarning != "" {
+			lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, confirm.ActivityWarning)...)
 		}
 	}
+
 	if confirm.LinkedTodoID > 0 && !confirm.Busy {
 		lines = append(lines, "")
 		lines = append(lines, detailValueStyle.Render("Linked TODO"))
 		todoCopy := "This checkout is already merged. Complete its originating TODO when removing it."
 		switch {
 		case confirm.MergeStatus == model.WorktreeMergeStatusUnknown && confirm.Dirty:
-			todoCopy = "This checkout has uncommitted changes, and its merge state is unknown. Mark its originating TODO done only if force-removing the checkout also closes the task."
+			todoCopy = "This checkout has uncommitted changes, and its merge state is unknown. Mark its originating TODO done only if deleting the checkout also closes the task."
 		case confirm.MergeStatus == model.WorktreeMergeStatusUnknown:
 			todoCopy = "Little Control Room could not confirm whether this checkout has commits to merge. Mark its originating TODO done only if removing the checkout also closes the task; the branch ref will remain available."
 		case confirm.Dirty:
-			todoCopy = "This checkout has uncommitted changes. Mark its originating TODO done only if force-removing the checkout also closes the task."
+			todoCopy = "This checkout has uncommitted changes. Mark its originating TODO done only if deleting the checkout also closes the task."
 		case confirm.MergeStatus == model.WorktreeMergeStatusNotMerged:
 			todoCopy = "This checkout still has commits to merge. Mark its originating TODO done if removing the checkout also closes the task; the branch ref will remain available."
 		case confirm.MergeStatus == model.WorktreeMergeStatusMergeInProgress:
@@ -2974,7 +2881,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if confirm.ResidualCleanup {
 		cleanupBoundary := "This cleanup never deletes branches, follows symlinks, or removes unverified files."
 		if individualResidualCleanup {
-			cleanupBoundary = "The branch is preserved. Any untracked, changed, unreadable, symlinked, or special entry blocks cleanup."
+			cleanupBoundary = "The branch is preserved. Everything inside this directory will be deleted; symlink targets outside it are kept."
 		}
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, cleanupBoundary)...)
 	} else {
@@ -3027,9 +2934,9 @@ func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch str
 		return "No pending integration", "This branch has no pending commits for its merge target.", detailValueStyle
 	case model.WorktreeMergeStatusMergeInProgress:
 		if targetBranch != "" {
-			return "Merge in progress", "This branch is merging into " + targetBranch + ". Finish or abort the root merge before removing the checkout.", detailWarningStyle
+			return "Merge in progress", "This branch is merging into " + targetBranch + ". Deletion keeps the primary checkout's merge state.", detailWarningStyle
 		}
-		return "Merge in progress", "This branch is mid-merge. Finish or abort the root merge before removing the checkout.", detailWarningStyle
+		return "Merge in progress", "This branch is mid-merge. Deletion keeps the primary checkout's merge state.", detailWarningStyle
 	case model.WorktreeMergeStatusNotMerged:
 		if targetBranch != "" {
 			return "Pending merge", "This branch still has commits to merge into " + targetBranch + ". You can still remove the checkout, but you may lose track of that work.", detailWarningStyle

@@ -265,8 +265,13 @@ func (j *Journal) inspect(ctx context.Context) error {
 					break
 				}
 			}
-			if metadata && strings.HasSuffix(d.Name(), ".lock") {
-				problems = append(problems, fmt.Errorf("active or stale Git lock requires review: %s", p))
+			// Internal metadata is archived byte-for-byte, including unfinished
+			// transaction files. A lock's existence does not prove a live writer.
+			// The removal service checks open files/cwds before preparation and
+			// relocation, and inventories detect changes during preservation.
+			// External shared metadata is still live: never waive its locks.
+			if metadata && strings.HasSuffix(d.Name(), ".lock") && !within(p, j.Original) {
+				problems = append(problems, fmt.Errorf("Git lock in shared metadata outside the removal tree requires review: %s", p))
 			}
 			if metadata && d.Type()&os.ModeSymlink != 0 {
 				problems = append(problems, fmt.Errorf("Git metadata symlink requires review: %s", p))

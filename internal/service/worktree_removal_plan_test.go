@@ -156,7 +156,7 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 					t.Fatal(err)
 				}
 				f.orphan(t, mode == "absent")
-				err = f.svc.RemoveWorktree(ctx, f.path, false)
+				err = f.svc.ArchiveWorktree(ctx, f.path, false)
 				var retained *RetainedWorktreeError
 				if !errors.As(err, &retained) || retained.Bytes < 3<<30 {
 					t.Fatalf("want sized retained result: %v", err)
@@ -169,7 +169,7 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 				if err != nil || inspection.Resolution != OrphanedWorktreeResolutionClearResidue || len(inspection.NestedWorktrees) != 4 {
 					t.Fatalf("cleanup inspection: %#v, %v", inspection, err)
 				}
-				if err := f.svc.CleanupRetainedWorktree(ctx, f.path); err != nil {
+				if err := f.svc.archiveWorktree(ctx, f.path, false, true); err != nil {
 					t.Fatal(err)
 				}
 			} else if mode == "merge" {
@@ -177,7 +177,7 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 				if err != nil || !result.WorktreeRemoved {
 					t.Fatalf("merge finalization: %#v, %v", result, err)
 				}
-			} else if err := f.svc.RemoveWorktree(ctx, f.path, mode == "force"); err != nil {
+			} else if err := f.svc.ArchiveWorktree(ctx, f.path, mode == "force"); err != nil {
 				t.Fatal(err)
 			}
 			f.assertChildren(t, true)
@@ -193,6 +193,12 @@ func TestAssetWorktreeRemovalModes(t *testing.T) {
 				if event.Type == "worktree_removal_started" && strings.Contains(event.Payload, "TheFractalX") && strings.Contains(event.Payload, f.commit) {
 					provenance = true
 				}
+			}
+			if mode == "merge" {
+				if recovery, err := f.svc.WorktreeRecoveryStatus(ctx, f.path); err != nil || recovery != nil {
+					t.Fatal("merge deletion created an archive")
+				}
+				return
 			}
 			if !provenance {
 				t.Fatal("missing durable parent/child receipt")
@@ -229,7 +235,7 @@ func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
 				writeTestFile(t, filepath.Join(f.path, "README.md"), "changed", 0600)
 			}
 			if kind == "unrelated repo" || kind == "bare repo with objects" {
-				if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err != nil {
+				if err := f.svc.ArchiveWorktree(context.Background(), f.path, true); err != nil {
 					t.Fatal(err)
 				}
 				r, err := f.svc.ReviewWorktreeRecovery(context.Background(), f.path)
@@ -239,13 +245,13 @@ func TestAssetWorktreeRemovalProtectsUncertainData(t *testing.T) {
 				return
 			}
 			if kind != "untracked parent" && kind != "dirty parent" {
-				if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err == nil {
+				if err := f.svc.ArchiveWorktree(context.Background(), f.path, true); err == nil {
 					t.Fatal("force bypassed nested safety")
 				}
 				f.assertChildren(t, false)
 			}
 			f.orphan(t, true)
-			if err := f.svc.CleanupRetainedWorktree(context.Background(), f.path); err == nil {
+			if err := f.svc.archiveWorktree(context.Background(), f.path, false, true); err == nil {
 				t.Fatal("unsafe cleanup accepted")
 			}
 			f.assertChildren(t, false)
@@ -262,7 +268,7 @@ func TestRetainedWorktreeRejectsActiveCWD(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	err := f.svc.CleanupRetainedWorktree(context.Background(), f.path)
+	err := f.svc.archiveWorktree(context.Background(), f.path, false, true)
 	if err == nil || !strings.Contains(err.Error(), "processes still use") {
 		t.Fatalf("active writer not blocked: %v", err)
 	}
@@ -309,7 +315,7 @@ func TestOwnedResidualPlanRejectsChangedAncestorAndNewOutput(t *testing.T) {
 func TestScanShowsOutputRecreatedAfterSuccessfulRemoval(t *testing.T) {
 	f := newAssetResidueFixture(t)
 	ctx := context.Background()
-	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(f.path, "_artifacts", "late.bin"), "late writer", 0600)
@@ -337,7 +343,7 @@ func TestRetainedCleanupPermissionFailureIsPersistedAndRetryable(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(artifacts, 0700) })
 	ctx := context.Background()
-	err := f.svc.CleanupRetainedWorktree(ctx, f.path)
+	err := f.svc.archiveWorktree(ctx, f.path, false, true)
 	var retained *RetainedWorktreeError
 	if !errors.As(err, &retained) {
 		t.Fatalf("want partial result: %v", err)
@@ -353,7 +359,7 @@ func TestRetainedCleanupPermissionFailureIsPersistedAndRetryable(t *testing.T) {
 	if err := os.Chmod(artifacts, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.CleanupRetainedWorktree(ctx, f.path); err != nil {
+	if err := f.svc.archiveWorktree(ctx, f.path, false, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
@@ -384,7 +390,7 @@ func TestChildRemovalRechecksLocksAfterPartialProgress(t *testing.T) {
 		t.Fatal("locked child lost", err)
 	}
 	runGit(t, child.Repository, "git", "worktree", "unlock", child.Path)
-	if err := f.svc.CleanupRetainedWorktree(ctx, f.path); err != nil {
+	if err := f.svc.archiveWorktree(ctx, f.path, false, true); err != nil {
 		t.Fatal(err)
 	}
 	f.assertChildren(t, true)
@@ -395,7 +401,7 @@ func TestRemovalRejectsRegisteredChildWithMissingPointer(t *testing.T) {
 	if err := os.Remove(filepath.Join(f.path, f.assets[0], ".git")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.RemoveWorktree(context.Background(), f.path, true); err == nil || !strings.Contains(err.Error(), "nested registration") {
+	if err := f.svc.ArchiveWorktree(context.Background(), f.path, true); err == nil || !strings.Contains(err.Error(), "nested registration") {
 		t.Fatalf("missing child pointer must block force: %v", err)
 	}
 	f.assertChildren(t, false)
@@ -411,13 +417,13 @@ func TestPrunableOuterCannotErasePrivateModuleStore(t *testing.T) {
 	writeTestFile(t, objects, "private objects must survive", 0600)
 	f.orphan(t, false)
 	result, err := f.svc.FinalizeMergedWorktree(context.Background(), f.path, FinalizeMergedWorktreeOptions{RemoveWorktree: true})
-	if err == nil || result.WorktreeRemoved || !strings.Contains(err.Error(), "private submodule object store") {
+	if err != nil || !result.WorktreeRemoved {
 		t.Fatalf("unexpected merge removal result: %#v %v", result, err)
 	}
 	if content, err := os.ReadFile(objects); err != nil || string(content) != "private objects must survive" {
 		t.Fatalf("private store changed: %q %v", content, err)
 	}
-	f.assertChildren(t, false)
+	f.assertChildren(t, true)
 }
 
 func TestRemovalProcessSummaries(t *testing.T) {
@@ -471,7 +477,7 @@ func TestRemovalClassifiesGitFilesByPointerContent(t *testing.T) {
 			cache := filepath.Join(f.path, "_artifacts", "uv-cache", "sdists-v9")
 			writeTestFile(t, filepath.Join(cache, ".git"), tc.content, 0600)
 			writeTestFile(t, filepath.Join(cache, ".gitignore"), "*\n", 0600)
-			err := f.svc.RemoveWorktree(context.Background(), f.path, false)
+			err := f.svc.ArchiveWorktree(context.Background(), f.path, false)
 			if tc.removable {
 				if err != nil {
 					t.Fatalf("ignored cache residue blocked removal: %v", err)

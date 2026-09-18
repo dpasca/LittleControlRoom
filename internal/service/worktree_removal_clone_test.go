@@ -48,11 +48,11 @@ func TestRemovalWithIgnoredPackageClones(t *testing.T) {
 			}
 			if mode == "retained" {
 				f.orphan(t, true)
-				err = f.svc.CleanupRetainedWorktree(ctx, f.path)
+				err = f.svc.archiveWorktree(ctx, f.path, false, true)
 			} else if mode == "merge" {
 				_, err = f.svc.FinalizeMergedWorktree(ctx, f.path, FinalizeMergedWorktreeOptions{RemoveWorktree: true})
 			} else {
-				err = f.svc.RemoveWorktree(ctx, f.path, mode == "force")
+				err = f.svc.ArchiveWorktree(ctx, f.path, mode == "force")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -74,6 +74,12 @@ func TestRemovalWithIgnoredPackageClones(t *testing.T) {
 					receipt = true
 				}
 			}
+			if mode == "merge" {
+				if recovery, err := f.svc.WorktreeRecoveryStatus(ctx, f.path); err != nil || recovery != nil {
+					t.Fatal("merge deletion created an archive")
+				}
+				return
+			}
 			if !receipt {
 				t.Fatal("clone refs missing from durable removal receipt")
 			}
@@ -81,7 +87,7 @@ func TestRemovalWithIgnoredPackageClones(t *testing.T) {
 	}
 }
 
-func TestRemovalPackageCloneProtection(t *testing.T) {
+func TestArchivePackageCloneProtection(t *testing.T) {
 	for _, kind := range []string{"dirty", "untracked", "ignored", "local commit", "stash", "reflog", "dangling blob", "local tag", "cache commit", "no remote", "unavailable remote", "advanced upstream", "origin cycle", "linked worktree", "metadata symlink", "lock", "assume unchanged", "not ignored", "local hook"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
@@ -146,8 +152,8 @@ func TestRemovalPackageCloneProtection(t *testing.T) {
 				writeTestFile(t, filepath.Join(checkout, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 0\n", 0700)
 			}
 			ctx := context.Background()
-			err := f.svc.RemoveWorktree(ctx, f.path, true)
-			blocked := kind == "linked worktree" || kind == "metadata symlink" || kind == "lock"
+			err := f.svc.ArchiveWorktree(ctx, f.path, true)
+			blocked := kind == "linked worktree" || kind == "metadata symlink"
 			if !blocked {
 				if err != nil {
 					t.Fatal(err)
@@ -164,7 +170,7 @@ func TestRemovalPackageCloneProtection(t *testing.T) {
 			}
 			f.assertChildren(t, false)
 			f.orphan(t, true)
-			if err := f.svc.CleanupRetainedWorktree(ctx, f.path); err == nil {
+			if err := f.svc.archiveWorktree(ctx, f.path, false, true); err == nil {
 				t.Fatal("retained cleanup discarded an unverified package repository")
 			}
 			if _, err := os.Stat(filepath.Join(checkout, ".git")); err != nil {

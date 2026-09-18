@@ -174,31 +174,12 @@ func (m Model) applyStaleWorktreeCleanupAudit(msg staleWorktreeCleanupAuditMsg) 
 	return m, nil
 }
 
+// The audit chooses candidates before approval. Once approved, deletion checks
+// the filesystem boundary itself; it does not re-run preservation eligibility.
 func (m Model) staleWorktreeCleanupRevalidateCmd(candidate service.StaleWorktreeCleanupCandidate) tea.Cmd {
 	parent := m.staleWorktreeCleanupContext()
-	svc := m.svc
-	now := m.currentTime()
 	return func() tea.Msg {
-		if svc == nil {
-			return staleWorktreeCleanupRevalidateMsg{ctx: parent,
-				candidate: candidate,
-				err:       fmt.Errorf("service unavailable"),
-			}
-		}
-
-		ctx, cancel := context.WithTimeout(parent, staleWorktreeCleanupTimeout)
-		defer cancel()
-		revalidated, reason, err := svc.RevalidateStaleWorktreeCleanupCandidate(ctx, candidate.ProjectPath, now)
-		if err != nil {
-			return staleWorktreeCleanupRevalidateMsg{ctx: parent,
-				candidate: candidate,
-				err:       timeoutActionError(err, staleWorktreeCleanupTimeout, "revalidating the stale worktree"),
-			}
-		}
-		if reason != "" {
-			return staleWorktreeCleanupRevalidateMsg{ctx: parent, candidate: candidate, reason: reason}
-		}
-		return staleWorktreeCleanupRevalidateMsg{ctx: parent, candidate: revalidated}
+		return staleWorktreeCleanupRevalidateMsg{ctx: parent, candidate: candidate, err: parent.Err()}
 	}
 }
 
@@ -220,15 +201,6 @@ func (m Model) applyStaleWorktreeCleanupRevalidate(msg staleWorktreeCleanupReval
 		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: msg.ctx, result: result})
 	}
 
-	// Re-read the current Model only after the slow Git revalidation returns.
-	// Pending actions, external runtimes, and embedded work may have appeared
-	// while that command was in flight; a snapshot captured before it began is
-	// no longer safe enough to authorize deletion.
-	if reason, _ := m.staleWorktreeCleanupLiveState(msg.candidate.ProjectPath, msg.candidate.RootProjectPath); reason != "" {
-		result.SkippedReason = reason
-		return m.applyStaleWorktreeCleanupRemove(staleWorktreeCleanupRemoveMsg{ctx: msg.ctx, result: result})
-	}
-
 	dialog.ProgressMessage = ""
 	dialog.ProgressAt = m.currentTime()
 	dialog.Finalizing = true
@@ -242,8 +214,6 @@ func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCl
 	parent := m.staleWorktreeCleanupContext()
 	svc := m.svc
 	manager := m.codexManager
-	runtimeManager := m.runtimeManager
-	now := m.currentTime()
 	return func() tea.Msg {
 		result := staleWorktreeCleanupResult{Candidate: candidate}
 		if err := parent.Err(); err != nil {
@@ -255,50 +225,16 @@ func (m Model) staleWorktreeCleanupFinalizeCmd(candidate service.StaleWorktreeCl
 			return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 		}
 
-		if staleWorktreeManagedRuntimeRunning(runtimeManager, candidate.ProjectPath) {
-			result.SkippedReason = "a managed runtime became active"
-			return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
-		}
-		if session, ok := managerSession(manager, candidate.ProjectPath); ok {
-			snapshot := session.Snapshot()
-			if reason := staleWorktreeCleanupSessionBlockReason(snapshot, now); reason != "" {
-				result.SkippedReason = reason
-				return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
-			}
-			if parent.Err() != nil {
-				result.SkippedReason = "cleanup canceled before removal"
-				return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
-			}
-			closed, closeErr := closeIdleEmbeddedSessionForWorktree(manager, candidate.ProjectPath, true)
-			result.ClosedSession = closed
-			if closeErr != nil {
-				result.Err = closeErr
-				return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
-			}
+		if _, ok := managerSession(manager, candidate.ProjectPath); ok {
+			result.ClosedSession, _ = closeIdleEmbeddedSessionForWorktree(manager, candidate.ProjectPath, true)
 		}
 
 		ctx, cancel := context.WithTimeout(parent, staleWorktreeCleanupTimeout)
 		defer cancel()
-		if candidate.RecoveryResume {
-			result.Finalize, result.Err = svc.FinalizeWorktreeRemoval(ctx, candidate.ProjectPath, service.FinalizeWorktreeRemovalOptions{})
-		} else {
-			result.Finalize, result.Err = svc.FinalizeMergedWorktree(ctx, candidate.ProjectPath, service.FinalizeMergedWorktreeOptions{
-				MarkLinkedTodoDone: candidate.LinkedTodoID > 0,
-				RemoveWorktree:     true,
-			})
-		}
-		if result.Finalize.Recovery == nil {
-			result.Finalize.Recovery, _ = svc.WorktreeRecoveryStatus(ctx, candidate.ProjectPath)
-		}
+		result.Finalize, result.Err = svc.FinalizeWorktreeRemoval(ctx, candidate.ProjectPath, service.FinalizeWorktreeRemovalOptions{
+			MarkLinkedTodoDone: candidate.LinkedTodoID > 0 && !candidate.RecoveryResume,
+		})
 
-		var inUse *service.WorktreeProcessesInUseError
-		if errors.As(result.Err, &inUse) {
-			result.SkippedReason = inUse.Error()
-			if result.Finalize.LinkedTodoMarkedDone || result.Finalize.LinkedTodoAlreadyDone {
-				result.SkippedReason = "linked TODO is done; " + result.SkippedReason
-			}
-			result.Err = nil
-		}
 		result.Err = timeoutActionError(result.Err, staleWorktreeCleanupTimeout, "removing the stale worktree")
 		return staleWorktreeCleanupRemoveMsg{ctx: parent, result: result}
 	}
@@ -780,6 +716,9 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width,
 		"Eligible worktrees are present, unpinned, merged into their recorded parent, conflict-free, clean, and unused for more than 24 hours. Recorded sessions must be assessed done with a completed turn; worktrees without a recorded session use Git activity for their age. Active turns, runtimes, and Git actions are excluded; idle managed sessions close immediately before removal.")...)
 	lines = append(lines, "")
+	if dialog.Audit.RecoveryWarning != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "Existing archive list unavailable: "+dialog.Audit.RecoveryWarning)...)
+	}
 	if dialog.ErrorMessage != "" {
 		lines = append(lines,
 			detailDangerStyle.Render("Audit failed"),
@@ -841,7 +780,7 @@ func (m Model) renderStaleWorktreeCleanupContent(dialog *staleWorktreeCleanupDia
 	}
 	lines = append(lines,
 		"",
-		detailMutedStyle.Render("Branches and AI conversation history are preserved. Uncertain nested data is automatically preserved and verified locally; recoveries remain until explicitly deleted."),
+		detailMutedStyle.Render("Permanently deletes selected directories and all their contents, including ignored files and nested repositories. No recovery archive is created. Branches and AI conversation history are kept."),
 		"",
 		renderDialogAction("Space", "toggle", navigateActionKeyStyle, navigateActionTextStyle)+"   "+
 			renderDialogAction("Enter", "remove selected", commitActionKeyStyle, commitActionTextStyle)+"   "+
@@ -877,7 +816,7 @@ func renderStaleWorktreeCleanupProgressAt(dialog *staleWorktreeCleanupDialogStat
 		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, dialog.ProgressMessage)...)
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width,
-		"Each checkout is rechecked for merge, cleanliness, assessment, activity, runtime, and engineer state. An idle managed session closes only after those checks pass.")...)
+		"Deleting approved worktree contents. Symlink targets and shared Git stores outside the selected directory are kept.")...)
 	if !dialog.StartedAt.IsZero() {
 		lines = append(lines, detailField("Time", cleanupJobTiming(now, dialog.StartedAt, dialog.ProgressAt)))
 		if now.Sub(dialog.ProgressAt) >= 15*time.Second {

@@ -304,12 +304,12 @@ func TestOfflinePreservationRestoreAndExplicitPurge(t *testing.T) {
 }
 
 func TestRecoveryRejectsMutationAndCorruption(t *testing.T) {
-	for _, kind := range []string{"source", "backup", "recreated", "active lock"} {
+	for _, kind := range []string{"source", "backup", "recreated", "shared metadata lock"} {
 		t.Run(kind, func(t *testing.T) {
 			root, path, base, _ := fixture(t)
 			ctx := context.Background()
-			if kind == "active lock" {
-				os.WriteFile(filepath.Join(path, "dependency", ".git", "index.lock"), nil, 0600)
+			if kind == "shared metadata lock" {
+				os.WriteFile(filepath.Join(root, ".git", "index.lock"), nil, 0600)
 				j, err := Prepare(ctx, base, root, path)
 				if err == nil || len(j.Blockers) == 0 {
 					t.Fatal("lock accepted")
@@ -579,7 +579,7 @@ func TestLegacyInspectionDeviceRetryRequiresNoPreservedData(t *testing.T) {
 		t.Run(fmt.Sprint(artifact), func(t *testing.T) {
 			root, path, base, _ := fixture(t)
 			ctx := context.Background()
-			lock := filepath.Join(path, "dependency", ".git", "index.lock")
+			lock := filepath.Join(root, ".git", "index.lock")
 			if err := os.WriteFile(lock, nil, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -636,5 +636,54 @@ func TestRecoveryDeviceRenumberingRequiresRecoveryAnchor(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal("original changed")
+	}
+}
+
+func TestRecoveryResumesInspectionAndPreservesNestedGitLock(t *testing.T) {
+	root, path, base, _ := fixture(t)
+	ctx := context.Background()
+	internal := filepath.Join(path, "dependency", ".git", "shallow.lock")
+	contents := []byte("unfinished transaction retained as data\n")
+	if err := os.WriteFile(internal, contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(root, ".git", "index.lock")
+	if err := os.WriteFile(shared, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	j, err := Prepare(ctx, base, root, path)
+	if err == nil || j.Phase != "inspecting" {
+		t.Fatalf("shared metadata lock not blocked: %v", err)
+	}
+	// Reproduce a journal left by the old unconditional internal-lock veto.
+	j.Blockers = []string{"active or stale Git lock requires review: " + internal}
+	if err := j.save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(shared); err != nil {
+		t.Fatal(err)
+	}
+	j, err = Prepare(ctx, base, root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(j.Blockers) != 0 {
+		t.Fatalf("stale blockers persisted: %v", j.Blockers)
+	}
+	if err := j.Relocate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Complete(ctx); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(filepath.Dir(root), "restored-with-lock")
+	if err := j.Restore(ctx, destination); err != nil {
+		t.Fatal(err)
+	}
+	for _, location := range []string{j.Directory, destination} {
+		got, err := os.ReadFile(filepath.Join(location, "tree", "dependency", ".git", "shallow.lock"))
+		if err != nil || string(got) != string(contents) {
+			t.Fatalf("lost transaction: %q %v", got, err)
+		}
 	}
 }

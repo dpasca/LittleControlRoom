@@ -966,7 +966,7 @@ func TestRemoveWorktreeRemovesTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
-func TestRemoveWorktreeFailsWhenGitRegistrationCannotBeVerifiedGone(t *testing.T) {
+func TestArchiveWorktreeFailsWhenGitRegistrationCannotBeVerifiedGone(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1012,7 +1012,7 @@ func TestRemoveWorktreeFailsWhenGitRegistrationCannotBeVerifiedGone(t *testing.T
 		}), nil
 	}
 
-	err = svc.RemoveWorktree(ctx, result.WorktreePath, false)
+	err = svc.ArchiveWorktree(ctx, result.WorktreePath, false)
 	if err == nil || !strings.Contains(err.Error(), "still registers") {
 		t.Fatalf("RemoveWorktree() error = %v, want failed Git-registration postcondition", err)
 	}
@@ -1025,7 +1025,7 @@ func TestRemoveWorktreeFailsWhenGitRegistrationCannotBeVerifiedGone(t *testing.T
 	}
 }
 
-func TestRemoveWorktreeFailsWhenUnverifiedFilesReappearAtRemovedPath(t *testing.T) {
+func TestArchiveWorktreeFailsWhenUnverifiedFilesReappearAtRemovedPath(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1074,7 +1074,7 @@ func TestRemoveWorktreeFailsWhenUnverifiedFilesReappearAtRemovedPath(t *testing.
 		return worktrees, err
 	}
 
-	err = svc.RemoveWorktree(ctx, result.WorktreePath, false)
+	err = svc.ArchiveWorktree(ctx, result.WorktreePath, false)
 	if err == nil || !strings.Contains(err.Error(), "could not verify the remaining folder") {
 		t.Fatalf("RemoveWorktree() error = %v, want failed filesystem postcondition", err)
 	}
@@ -1174,7 +1174,7 @@ func TestRemoveWorktreeRemovesMissingTrackedLinkedWorktree(t *testing.T) {
 	}
 }
 
-func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *testing.T) {
+func TestArchiveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1249,7 +1249,7 @@ func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *t
 		t.Fatalf("prunable occupied checkout state = %#v, want visible residue", detail.Summary)
 	}
 
-	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err == nil || !strings.Contains(err.Error(), "removal incomplete") {
+	if err := svc.ArchiveWorktree(ctx, result.WorktreePath, false); err == nil || !strings.Contains(err.Error(), "removal incomplete") {
 		t.Fatalf("RemoveWorktree() for occupied prunable checkout must report incomplete: %v", err)
 	}
 	if !projectIsGitRepo(nestedRepositoryPath) {
@@ -1299,7 +1299,7 @@ func TestRemoveWorktreePrunesMissingCheckoutWithoutDeletingNestedRepository(t *t
 	}
 }
 
-func TestRemoveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
+func TestArchiveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1347,14 +1347,14 @@ func TestRemoveWorktreeFinishesIgnoredDSStoreResidue(t *testing.T) {
 		t.Fatalf("ignored .DS_Store unexpectedly made worktree dirty: %#v", status)
 	}
 
-	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+	if err := svc.ArchiveWorktree(ctx, result.WorktreePath, false); err != nil {
 		t.Fatalf("RemoveWorktree() error = %v", err)
 	}
 	recovery, err := svc.ReviewWorktreeRecovery(ctx, result.WorktreePath)
 	if err != nil || recovery == nil || !recovery.Verified {
 		t.Fatalf("recovery lost across a parent path alias: %#v %v", recovery, err)
 	}
-	if err := svc.RemoveWorktree(ctx, result.WorktreePath, false); err != nil {
+	if err := svc.ArchiveWorktree(ctx, result.WorktreePath, false); err != nil {
 		t.Fatalf("retry through path alias: %v", err)
 	}
 	if _, err := os.Lstat(result.WorktreePath); !os.IsNotExist(err) {
@@ -1545,7 +1545,7 @@ func TestCleanupResidualWorktreeDirectoriesDeletesOnlyDSStoreOnlyFolders(t *test
 	}
 }
 
-func TestRemoveWorktreeRefusesUnregisteredFolderContainingProjectFiles(t *testing.T) {
+func TestArchiveWorktreeRefusesUnregisteredFolderContainingProjectFiles(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1581,7 +1581,7 @@ func TestRemoveWorktreeRefusesUnregisteredFolderContainingProjectFiles(t *testin
 	}
 
 	svc := New(config.Default(), st, events.NewBus(), nil)
-	err = svc.RemoveWorktree(ctx, orphanPath, true)
+	err = svc.ArchiveWorktree(ctx, orphanPath, true)
 	if err == nil || !strings.Contains(err.Error(), "left the folder untouched") {
 		t.Fatalf("RemoveWorktree() error = %v, want guarded refusal", err)
 	}

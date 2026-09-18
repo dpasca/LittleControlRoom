@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestRecoveryPreservesOwnedSubmodulePointerRepositories(t *testing.T) {
 	if ignored := gitOutput(t, f.path, "git", "ls-files", "--others", "--ignored", "--exclude-standard"); strings.TrimSpace(ignored) != "" {
 		t.Fatalf("fixture must exercise pointer-only discovery, got ignored files: %s", ignored)
 	}
-	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); err != nil {
 		t.Fatal(err)
 	}
 	r, err := f.svc.ReviewWorktreeRecovery(ctx, f.path)
@@ -49,7 +50,7 @@ func TestRecoveryBlocksInvalidSharedSubmoduleMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.RemoveWorktree(context.Background(), f.path, false); err == nil {
+	if err := f.svc.ArchiveWorktree(context.Background(), f.path, false); err == nil {
 		t.Fatal("invalid shared metadata was accepted")
 	}
 	after, err := os.ReadFile(sharedConfig)
@@ -68,7 +69,7 @@ func TestRecoveryRemovalOfflineRetryAndIndependentRestore(t *testing.T) {
 	runGit(t, cache, "git", "remote", "set-url", "origin", "https://127.0.0.1:1/offline")
 	writeTestFile(t, filepath.Join(checkout, "local"), "preserve ignored dependency edits", 0755)
 	branch := gitOutput(t, f.root, "git", "rev-parse", "refs/heads/task")
-	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); err != nil {
 		t.Fatal(err)
 	}
 	r, err := f.svc.ReviewWorktreeRecovery(ctx, f.path)
@@ -79,7 +80,7 @@ func TestRecoveryRemovalOfflineRetryAndIndependentRestore(t *testing.T) {
 	if err != nil || bytes != r.RetainedBytes {
 		t.Fatalf("inaccurate retained bytes: %d / %d, %v", bytes, r.RetainedBytes, err)
 	}
-	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := f.svc.ListWorktreeRecoveries(ctx)
@@ -126,7 +127,7 @@ func TestRecoveryStopsForExternalConsumerAndActiveWriter(t *testing.T) {
 				}
 				defer file.Close()
 			}
-			if err := f.svc.RemoveWorktree(context.Background(), f.path, false); err == nil {
+			if err := f.svc.ArchiveWorktree(context.Background(), f.path, false); err == nil {
 				t.Fatal("unsafe consumer/writer accepted")
 			}
 			if _, err := os.Stat(checkout); err != nil {
@@ -138,10 +139,10 @@ func TestRecoveryStopsForExternalConsumerAndActiveWriter(t *testing.T) {
 
 func TestRecoveryCollectsMultipleBlockers(t *testing.T) {
 	f := newRemovalFixture(t, nil)
-	_, cache, checkout := addRemovalPackageClone(t, f)
-	writeTestFile(t, filepath.Join(cache, "packed-refs.lock"), "", 0600)
-	writeTestFile(t, filepath.Join(checkout, ".git", "index.lock"), "", 0600)
-	err := f.svc.RemoveWorktree(context.Background(), f.path, false)
+	addRemovalPackageClone(t, f)
+	writeTestFile(t, filepath.Join(f.root, ".git", "packed-refs.lock"), "", 0600)
+	writeTestFile(t, filepath.Join(f.root, ".git", "index.lock"), "", 0600)
+	err := f.svc.ArchiveWorktree(context.Background(), f.path, false)
 	if err == nil || !strings.Contains(err.Error(), "packed-refs.lock") || !strings.Contains(err.Error(), "index.lock") {
 		t.Fatalf("not all blockers reported: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestRecoveryServiceResumesAfterRelocation(t *testing.T) {
 	if err != nil || reason != "" || !candidate.RecoveryResume {
 		t.Fatalf("retry lost operation: %#v %s %v", candidate, reason, err)
 	}
-	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); err != nil {
 		t.Fatal(err)
 	}
 	r, err := f.svc.ReviewWorktreeRecovery(ctx, f.path)
@@ -180,7 +181,7 @@ func TestRecoveryRefusesAnUnrelatedOuterPointerBeforeRelocation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.path, ".git"), pointer, 0600); err != nil {
 		t.Fatal(err)
 	}
-	err = f.svc.RemoveWorktree(context.Background(), f.path, true)
+	err = f.svc.ArchiveWorktree(context.Background(), f.path, true)
 	if err == nil || !strings.Contains(err.Error(), "another checkout") {
 		t.Fatalf("unrelated pointer accepted: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestRecoveryMissingManifestCannotFallThroughToDeletion(t *testing.T) {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	err := f.svc.RemoveWorktree(context.Background(), f.path, false)
+	err := f.svc.ArchiveWorktree(context.Background(), f.path, false)
 	if err == nil || !strings.Contains(err.Error(), "incomplete recovery journal") {
 		t.Fatalf("incomplete journal bypassed: %v", err)
 	}
@@ -313,7 +314,7 @@ func TestRecoveryRemovalIgnoresStaleMissingProjectAndPublishesProgress(t *testin
 	}
 	stream, unsubscribe := f.svc.bus.Subscribe(64)
 	defer unsubscribe()
-	if err := f.svc.RemoveWorktree(context.Background(), f.path, false); err != nil {
+	if err := f.svc.ArchiveWorktree(context.Background(), f.path, false); err != nil {
 		t.Fatalf("stale unrelated project blocked removal: %v", err)
 	}
 	if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
@@ -424,5 +425,59 @@ func BenchmarkRecoveryConsumerScope(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestRecoveryPreservesNestedGitLocksAfterWriterExits(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	ctx := context.Background()
+	nested := filepath.Join(f.path, "_artifacts", "nested-repository")
+	initGitRepo(t, nested)
+	locks := map[string]string{
+		"shallow.lock": "unfinished shallow transaction\n",
+		"index.lock":   "",
+		"config.lock":  "unfinished configuration transaction\n",
+	}
+	for rel, contents := range locks {
+		writeTestFile(t, filepath.Join(nested, ".git", rel), contents, 0600)
+	}
+	lock, err := os.OpenFile(filepath.Join(nested, ".git", "shallow.lock"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := exec.Command("sleep", "60")
+	writer.Dir = t.TempDir() // Open-file protection must work even outside the tree.
+	writer.ExtraFiles = []*os.File{lock}
+	if err := writer.Start(); err != nil {
+		lock.Close()
+		t.Fatal(err)
+	}
+	lock.Close()
+	t.Cleanup(func() { _ = writer.Process.Kill(); _ = writer.Wait() })
+	var inUse *WorktreeProcessesInUseError
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); !errors.As(err, &inUse) {
+		t.Fatalf("open Git lock did not block removal: %v", err)
+	}
+	if _, err := os.Stat(f.path); err != nil {
+		t.Fatal("active source moved")
+	}
+	_ = writer.Process.Kill()
+	_ = writer.Wait()
+	if err := f.svc.ArchiveWorktree(ctx, f.path, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.path); !os.IsNotExist(err) {
+		t.Fatalf("source still present: %v", err)
+	}
+	r, err := f.svc.ReviewWorktreeRecovery(ctx, f.path)
+	if err != nil || r == nil || !r.Verified {
+		t.Fatalf("recovery: %#v %v", r, err)
+	}
+	for rel, contents := range locks {
+		p := filepath.Join(r.Location, "tree", "_artifacts", "nested-repository", ".git", rel)
+		got, err := os.ReadFile(p)
+		if err != nil || string(got) != contents {
+			t.Fatalf("lock data lost: %s %q %v", rel, got, err)
+		}
 	}
 }

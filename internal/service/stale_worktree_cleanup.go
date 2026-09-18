@@ -27,6 +27,7 @@ type StaleWorktreeCleanupCandidate struct {
 
 type StaleWorktreeCleanupAudit struct {
 	Recoveries             []WorktreeRecovery
+	RecoveryWarning        string
 	AuditedAt              time.Time
 	ScannedLinkedWorktrees int
 	Candidates             []StaleWorktreeCleanupCandidate
@@ -123,7 +124,7 @@ func (s *Service) AuditStaleWorktreeCleanup(ctx context.Context, now time.Time) 
 	audit := StaleWorktreeCleanupAudit{AuditedAt: now}
 	audit.Recoveries, err = s.ListWorktreeRecoveries(ctx)
 	if err != nil {
-		return audit, err
+		audit.RecoveryWarning = err.Error()
 	}
 	for _, project := range projects {
 		if project.WorktreeKind != model.WorktreeKindLinked {

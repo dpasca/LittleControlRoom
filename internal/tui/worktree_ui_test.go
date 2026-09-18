@@ -2116,7 +2116,7 @@ func TestRemoveOnEmptyOrphanedWorktreeOpensTargetedCleanup(t *testing.T) {
 	rendered := ansi.Strip(got.renderWorktreeRemoveConfirmOverlay("body", 100, 28))
 	for _, want := range []string{
 		"Clear empty orphaned worktree",
-		"sole entry is one regular .DS_Store file",
+		"Permanently deletes this directory",
 		"[Clear]",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -2373,7 +2373,7 @@ func TestWorktreeMergeWithOpenSessionBlocksRemovalOnly(t *testing.T) {
 	}
 }
 
-func TestOpenWorktreeRemoveConfirmWithActiveSessionShowsAttentionDialog(t *testing.T) {
+func TestOpenWorktreeRemoveConfirmWithActiveSessionWarns(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -2424,24 +2424,13 @@ func TestOpenWorktreeRemoveConfirmWithActiveSessionShowsAttentionDialog(t *testi
 	if cmd != nil {
 		t.Fatalf("blocked removal should not schedule a command")
 	}
-	if m.worktreeRemoveConfirm != nil {
-		t.Fatalf("remove confirmation dialog should stay closed when the session warning modal is shown")
+	if m.worktreeRemoveConfirm == nil || m.worktreeRemoveConfirm.ActivityWarning == "" || m.attentionDialog != nil {
+		t.Fatal("active session should warn in the deletion confirmation, not block it")
 	}
-	if m.attentionDialog == nil {
-		t.Fatalf("blocked removal should show the attention dialog")
-	}
-	if m.attentionDialog.Title != "Remove blocked" {
-		t.Fatalf("attention dialog title = %q, want remove blocked", m.attentionDialog.Title)
-	}
-	if m.attentionDialog.PrimaryLabel != "Open Claude Code" {
-		t.Fatalf("attention dialog primary label = %q, want open action", m.attentionDialog.PrimaryLabel)
-	}
-	if m.status != "Finish or close the active embedded agent session before removing this worktree." {
-		t.Fatalf("status = %q, want removal block warning", m.status)
-	}
+
 }
 
-func TestOpenWorktreeRemoveConfirmWithIdleSessionOffersForceRemoval(t *testing.T) {
+func TestOpenWorktreeRemoveConfirmWithIdleSessionAllowsDeletion(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -2497,56 +2486,27 @@ func TestOpenWorktreeRemoveConfirmWithIdleSessionOffersForceRemoval(t *testing.T
 	if confirm == nil || !confirm.HasIdleSession || confirm.IdleSessionProvider != codexapp.ProviderClaudeCode {
 		t.Fatalf("idle-session removal confirmation = %#v", confirm)
 	}
-	if confirm.ForceRemove {
-		t.Fatal("force removal must be off by default")
+	if !worktreeRemoveConfirmReady(confirm) {
+		t.Fatal("deletion unexpectedly blocked")
 	}
-	if worktreeRemoveConfirmReady(confirm) {
-		t.Fatal("idle-session removal should remain blocked until force removal is enabled")
-	}
-
 	rendered := ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 100, 32))
-	for _, want := range []string{
-		"Open embedded session",
-		"no engineer turn is",
-		"running. Force removal closes that idle session",
-		"[ ] Force remove (close idle Claude Code session)",
-		"[Remove blocked]",
-	} {
+	for _, want := range []string{"Permanently deletes", "idle embedded session will close"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("idle-session removal confirmation missing %q in %q", want, rendered)
+			t.Fatalf("missing %q: %s", want, rendered)
 		}
 	}
-
+	if strings.Contains(rendered, "Force remove") {
+		t.Fatal("obsolete force checkbox")
+	}
 	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
 	updated, cmd := m.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(Model)
-	if cmd != nil {
-		t.Fatal("removal without the force switch should not schedule work")
-	}
-	if got.status != "Check \"Force remove\" to close the idle session" {
-		t.Fatalf("status = %q, want idle-session force guidance", got.status)
+	if cmd == nil || updated.(Model).worktreeRemoveConfirm != nil {
+		t.Fatal("confirmed deletion not scheduled")
 	}
 
-	confirm = got.worktreeRemoveConfirm
-	confirm.Selected = 0
-	updated, cmd = got.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeySpace})
-	got = updated.(Model)
-	if cmd != nil || !got.worktreeRemoveConfirm.ForceRemove {
-		t.Fatalf("force switch did not toggle: confirm=%#v cmd=%v", got.worktreeRemoveConfirm, cmd)
-	}
-	confirm = got.worktreeRemoveConfirm
-	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
-	updated, cmd = got.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got = updated.(Model)
-	if cmd == nil {
-		t.Fatal("confirmed idle-session force removal should schedule work")
-	}
-	if got.worktreeRemoveConfirm != nil {
-		t.Fatal("confirmed idle-session force removal should dismiss the dialog")
-	}
 }
 
-func TestWorktreeRemoveConfirmStopsWhenIdleSessionBecomesActive(t *testing.T) {
+func TestWorktreeRemoveConfirmAllowsDeletionWhenSessionBecomesActive(t *testing.T) {
 	projectPath := "/tmp/repo--became-active"
 	session := &fakeCodexSession{
 		projectPath: projectPath,
@@ -2567,8 +2527,7 @@ func TestWorktreeRemoveConfirmStopsWhenIdleSessionBecomesActive(t *testing.T) {
 		ProjectPath:         projectPath,
 		RootPath:            "/tmp/repo",
 		HasIdleSession:      true,
-		ForceRemove:         true,
-		Selected:            1,
+		Selected:            0,
 		IdleSessionProvider: codexapp.ProviderCodex,
 	}
 	m := Model{
@@ -2578,36 +2537,19 @@ func TestWorktreeRemoveConfirmStopsWhenIdleSessionBecomesActive(t *testing.T) {
 
 	updated, cmd := m.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatal("a session that became active should prevent removal from being scheduled")
-	}
-	if got.worktreeRemoveConfirm == nil || got.worktreeRemoveConfirm.ForceRemove {
-		t.Fatalf("active-session refusal should keep the dialog open and reset force removal: %#v", got.worktreeRemoveConfirm)
-	}
-	if got.status != "The embedded agent session became active; finish or close it before removing this worktree" {
-		t.Fatalf("status = %q, want active-session refusal", got.status)
+	if cmd == nil || got.worktreeRemoveConfirm != nil {
+		t.Fatal("explicit deletion blocked by active session")
 	}
 }
 
-func TestWorktreeRemoveConfirmOnlyForcesGitForAcknowledgedDirtyWork(t *testing.T) {
-	idleSession := &worktreeRemoveConfirmState{
-		HasIdleSession: true,
-		ForceRemove:    true,
-	}
-	if worktreeRemoveConfirmGitForce(idleSession) {
-		t.Fatal("idle-session override must not authorize Git to discard uncommitted changes")
-	}
-
-	dirtyWorktree := &worktreeRemoveConfirmState{
-		Dirty:       true,
-		ForceRemove: true,
-	}
-	if !worktreeRemoveConfirmGitForce(dirtyWorktree) {
-		t.Fatal("acknowledged dirty-worktree removal should force Git removal")
+func TestWorktreeRemoveConfirmAllowsDirtyContents(t *testing.T) {
+	confirm := &worktreeRemoveConfirmState{Dirty: true, HasIdleSession: true}
+	if !worktreeRemoveConfirmReady(confirm) || worktreeRemoveConfirmOptionCount(confirm) != 0 {
+		t.Fatal("explicit deletion must not require a force checkbox")
 	}
 }
 
-func TestCloseIdleEmbeddedSessionForWorktreeRefusesActiveTurn(t *testing.T) {
+func TestCloseIdleEmbeddedSessionForWorktreeLeavesActiveTurnRunning(t *testing.T) {
 	projectPath := "/tmp/repo--active"
 	session := &fakeCodexSession{
 		projectPath: projectPath,
@@ -2626,8 +2568,8 @@ func TestCloseIdleEmbeddedSessionForWorktreeRefusesActiveTurn(t *testing.T) {
 	}
 
 	closed, err := closeIdleEmbeddedSessionForWorktree(manager, projectPath, true)
-	if err == nil || closed {
-		t.Fatalf("active-session close = (%t, %v), want refusal", closed, err)
+	if err != nil || closed {
+		t.Fatalf("active-session close = (%t, %v), want active session left running", closed, err)
 	}
 	if _, ok := manager.Session(projectPath); !ok {
 		t.Fatal("active session should remain managed after force-removal refusal")

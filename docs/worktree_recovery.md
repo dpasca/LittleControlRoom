@@ -1,16 +1,30 @@
-# Verified worktree recovery
+# Worktree deletion and separate recovery archives
 
-The reviewed `/clean` action automatically preserves nested repositories and
-ignored working data when removing a live linked worktree. It does not contact
-upstreams, ask for credentials, or infer disposability from package/cache names.
-The existing primary-checkout, dirty-source, merge, activity, process, and
-owned-submodule safeguards still apply. An explicit force request does not
-bypass recovery verification or nested ownership checks.
+Confirmed worktree removal (manual deletion and `/clean`) permanently deletes the
+selected directory and everything inside it. Ignored files, uncommitted changes,
+nested repositories, stale locks, and open file handles do not require a backup
+or prevent deletion. The confirmation states this explicitly. No new recovery
+archive is created and an old failed recovery cannot veto deletion.
+
+Deletion is bounded by directory handles: symlinks are unlinked without following
+their targets, primary checkouts are refused, and mounted filesystems are rejected.
+Shared Git stores and configuration outside the checkout remain untouched. Only
+reciprocal linked-worktree registrations are removed; registrations containing
+additional shared stores are unregistered without recursively deleting those stores.
+An outside linked checkout that depends on Git storage inside the selected directory
+is a boundary blocker. Actual I/O failures and cancellation report partial deletion;
+retry addresses the same selected directory. Branches and conversation history remain.
+Processes can recreate files after deletion; manual confirmation warns about known
+active engineers/runtimes but does not require them to stop.
+
+`ArchiveWorktree` is a separate service operation for callers explicitly requesting
+preservation. The following sections document that archive format and management of
+existing recoveries. Archive verification is never a prerequisite for deletion.
 
 ## User flow
 
 While removal runs, the panel shows the current stage, file path, processed
-entries/bytes, elapsed time, and time since the last update. **b** hides the job
+entries, elapsed time, and time since the last update. **b** hides the job
 to the background; `/clean` reopens the same running job or its completed report.
 The footer keeps its status visible. **Esc** aborts remaining work and keeps the
 stopping panel visible; **b** can hide that too. These controls and timing text
@@ -33,14 +47,11 @@ promise about space freed elsewhere on the volume.
 - **p — Permanently delete** opens a separate confirmation. Only **y** starts
   deletion; Escape cancels. Incomplete removals cannot be purged. A small
   idempotency tombstone remains after recovery data has been deleted.
-- **r — Retry** resumes remaining operations with fresh checks. An interrupted
-  relocation uses its durable journal; it does not merge or complete a TODO
-  again. Completed TODO state, branches, and conversation history are retained.
+- **r — Retry** retries deletion of the selected worktree directory. Existing
+  archives remain separate; their verification does not gate deletion.
 
 After restarting LCR, `/clean` offers **v — review retained recoveries** from
-the audit. Interrupted removal operations also become retry candidates when
-their journal and project state allow safe resumption. Backup corruption and
-incomplete evidence are reported as blockers; they are never a deletion fallback.
+its audit. These legacy archives remain available until explicitly purged.
 
 ## Durable layout and verification
 
@@ -124,8 +135,14 @@ retained and blocks further work; it is not silently accepted or overwritten.
   symlinks in other working trees are outside this inventory. Known outside consumers block removal rather
   than having their metadata silently rewritten.
 - Metadata symlinks, quoted alternates, special files, unreadable dependencies,
-  ownership that cannot be reproduced, and active/stale Git metadata locks require
-  review. Ordinary working files such as `uv.lock`, application lockfiles, and
+  ownership that cannot be reproduced, and Git locks in shared metadata outside
+  the removal tree require review. Locks inside nested repositories are preserved
+  byte-for-byte with the repository, including unfinished transaction contents;
+  their existence alone does not block archiving. Open files and working directories
+  still block removal through process checks before preservation and relocation.
+  Changed inventories also block removal. Restored repositories retain these locks;
+  restoring a backup does not complete an interrupted Git transaction.
+  Ordinary working files such as `uv.lock`, application lockfiles, and
   build lockfiles are preserved normally; active owners still block removal.
   Invalid shared submodule metadata also blocks removal; the preservation path
   does not silently rewrite a live primary submodule's `core.worktree` setting.
