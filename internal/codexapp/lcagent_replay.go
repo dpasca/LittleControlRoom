@@ -181,9 +181,8 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 			combined.sessionID = replay.sessionID
 			combined.resumeIDs = append(combined.resumeIDs, replay.sessionID)
 		}
-		if replay.lastError != "" {
-			combined.lastError = replay.lastError
-		}
+		// The latest run owns current failure state; older errors remain in entries.
+		combined.lastError = replay.lastError
 		combined.browserActivity = replay.browserActivity
 		if replay.managedBrowserSessionKey != "" {
 			combined.managedBrowserSessionKey = replay.managedBrowserSessionKey
@@ -579,6 +578,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		case "context_compacted":
 			replay.appendEntry(TranscriptStatus, lcagentContextCompactedText(event))
 		case "turn_complete":
+			replay.lastError = ""
 			if text := lcagentTurnCompleteTraceText(event); text != "" {
 				replay.appendEntry(TranscriptStatus, text)
 			}

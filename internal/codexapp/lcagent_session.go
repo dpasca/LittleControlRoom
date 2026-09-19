@@ -2410,6 +2410,7 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			s.appendAsync(TranscriptStatus, text)
 		}
 		s.mu.Lock()
+		s.lastError = ""
 		s.status = "LCAgent run complete"
 		s.touchLocked()
 		s.mu.Unlock()
@@ -3080,6 +3081,7 @@ func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 		}
 		s.appendEntryLocked(TranscriptError, s.status)
 	} else if ok {
+		s.lastError = ""
 		s.status = "LCAgent run complete"
 	} else {
 		s.status = firstNonEmpty(processState, "LCAgent stopped")

@@ -1466,7 +1466,7 @@ func TestLCAgentSessionReplayUsesCanonicalThreadState(t *testing.T) {
 		{"type": "session_meta", "id": "lca_run_one", "thread_id": threadID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
 		{"type": "user_message", "session_id": "lca_run_one", "message": "first prompt", "timestamp": started.Add(time.Second).Format(time.RFC3339Nano)},
 		{"type": "assistant_message", "session_id": "lca_run_one", "message": "first answer", "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano)},
-		{"type": "turn_complete", "session_id": "lca_run_one", "summary": "first answer", "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano)},
+		{"type": "turn_aborted", "session_id": "lca_run_one", "reason": "earlier run failed", "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano)},
 	})
 	writeLCAgentReplayArtifact(t, dataDir, started.Add(4*time.Second), "lca_run_two", []map[string]any{
 		{"type": "session_meta", "id": "lca_run_two", "thread_id": threadID, "cwd": root, "started_at": started.Add(4 * time.Second).Format(time.RFC3339Nano)},
@@ -1510,6 +1510,12 @@ func TestLCAgentSessionReplayUsesCanonicalThreadState(t *testing.T) {
 	snapshot := session.Snapshot()
 	if snapshot.ThreadID != threadID {
 		t.Fatalf("ThreadID = %q, want canonical thread", snapshot.ThreadID)
+	}
+	if failure := StoppedSessionError(snapshot); failure != "" {
+		t.Fatalf("completed thread retained previous run error: %s", failure)
+	}
+	if !strings.Contains(snapshot.Transcript, "earlier run failed") {
+		t.Fatal("historical error missing from transcript")
 	}
 	for _, want := range []string{"first prompt", "first answer", "second prompt", "second answer"} {
 		if !strings.Contains(snapshot.Transcript, want) {
@@ -3381,5 +3387,46 @@ func TestLCAgentContextUsageLiveAndReplayIgnoreVisionUsage(t *testing.T) {
 	s.handleEvent([]byte(`{"type":"context_usage","context_tokens":30000,"context_source":"estimate","compaction_token_budget":700000}`))
 	if s.tokenUsage.ContextTokens != 30000 || s.tokenUsage.Total.InputTokens != 100100 {
 		t.Fatalf("compaction occupancy/billing = %+v", s.tokenUsage)
+	}
+}
+
+func TestLCAgentReplayCompletionClearsRecoveredError(t *testing.T) {
+	for _, completed := range []bool{false, true} {
+		t.Run(fmt.Sprint(completed), func(t *testing.T) {
+			started := time.Now()
+			events := []map[string]any{
+				{"type": "session_meta", "id": "lca_recovered", "cwd": t.TempDir()},
+				{"type": "permission_denied", "reason": "command denied"},
+			}
+			if completed {
+				events = append(events, map[string]any{"type": "turn_complete", "summary": "done"})
+			}
+			path := writeLCAgentReplayArtifact(t, t.TempDir(), started, "lca_recovered", events)
+			replay, err := parseLCAgentReplayFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := &lcagentSession{}
+			session.applyReplay(replay)
+			snapshot := session.Snapshot()
+			if got := StoppedSessionError(snapshot); (got == "") != completed {
+				t.Fatalf("completed=%v: stopped error = %q", completed, got)
+			}
+			if !strings.Contains(snapshot.Transcript, "command denied") {
+				t.Fatal("permission diagnostic missing from transcript")
+			}
+		})
+	}
+}
+
+func TestLCAgentCompletionClearsStoppedError(t *testing.T) {
+	session := &lcagentSession{}
+	session.handleEvent([]byte(`{"type":"turn_aborted","reason":"previous failure"}`))
+	if got := StoppedSessionError(session.Snapshot()); got == "" {
+		t.Fatal("aborted run should expose an error")
+	}
+	session.handleEvent([]byte(`{"type":"turn_complete","summary":"recovered"}`))
+	if got := StoppedSessionError(session.Snapshot()); got != "" {
+		t.Fatalf("completed run retained error: %s", got)
 	}
 }
