@@ -149,6 +149,12 @@ func TestContextCapacityAndCompactionBudget(t *testing.T) {
 		{"openrouter", "custom-1000k", 1_000_000, 700_000},
 		{"openrouter", "custom-400k", 400_000, 340_000},
 		{"openai", "gpt-5.6", 1_050_000, 256_000},
+		{"zai", "glm-5.3-flash", 1_000_000, 700_000},
+		{"zai", " GLM-5.3-Flash ", 1_000_000, 700_000},
+		{"zai", "glm-5.3", 1_000_000, 700_000},
+		{"zai", "glm-5.3-flashx", 1_000_000, 700_000},
+		{"openrouter", "z-ai/glm-5.3-flash", 1_000_000, 700_000},
+		{"zai", "glm-5.3-unknown", 0, 212_500},
 		{"deepseek", "future-model", 0, 212_500},
 		{"ollama", "custom-model", 0, 50_000},
 	} {
