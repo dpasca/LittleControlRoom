@@ -431,8 +431,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
-	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout; explicit flags override preset values")
-	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, ollama, or mlx")
+	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout; explicit flags override preset values")
+	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama, or mlx")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "interactive host mode for approvals and user-command requests: deny or ask")
@@ -444,10 +444,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
-	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&utilityReasoning, "utility-reasoning-effort", "", "optional reasoning effort for the utility model")
-	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "image input and QA provider: off, main (direct inspection), openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "image input and QA provider: off, main (direct inspection), openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&visionReasoning, "vision-reasoning-effort", "", "optional reasoning effort for the vision model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
@@ -629,6 +629,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			model = modeladapter.DefaultMoonshotModel
 		case "xiaomi":
 			model = modeladapter.DefaultXiaomiModel
+		case "zai":
+			model = modeladapter.DefaultZaiModel
 		case "ollama":
 			resolved, err := resolveOllamaModel(runCtx, envFile, requestTimeout)
 			if err != nil {
@@ -904,7 +906,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			return err
 		}
 		runErr = runner.Run(runCtx, actions)
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama", "mlx":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "zai", "ollama", "mlx":
 		providerCfg := modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
@@ -1618,6 +1620,8 @@ func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (
 		return modeladapter.NewMoonshotClient(cfg)
 	case "xiaomi":
 		return modeladapter.NewXiaomiClient(cfg)
+	case "zai":
+		return modeladapter.NewZaiClient(cfg)
 	case "ollama":
 		return modeladapter.NewOllamaClient(cfg)
 	case "mlx":
@@ -1675,6 +1679,9 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 	}
 	if strings.EqualFold(strings.TrimSpace(provider), "moonshot") {
 		return strings.TrimSpace(os.Getenv("MOONSHOT_FINAL_MODEL"))
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "zai") {
+		return strings.TrimSpace(os.Getenv("ZAI_FINAL_MODEL"))
 	}
 	if strings.EqualFold(strings.TrimSpace(provider), "ollama") {
 		return strings.TrimSpace(os.Getenv("OLLAMA_FINAL_MODEL"))
@@ -2226,6 +2233,11 @@ func openRouterReasoningEffortForProvider(provider, model, reasoningEffort strin
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "moonshot":
 		if !modeladapter.MoonshotSupportsReasoningEffort(model) {
+			return ""
+		}
+		return reasoningEffort
+	case "zai":
+		if !modeladapter.ZaiSupportsReasoningEffort(model) {
 			return ""
 		}
 		return reasoningEffort

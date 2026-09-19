@@ -39,6 +39,9 @@ type AppConfig struct {
 	XiaomiBaseURL             string
 	XiaomiAPIKey              string
 	XiaomiModel               string
+	ZaiBaseURL                string
+	ZaiAPIKey                 string
+	ZaiModel                  string
 	ProjectReasoningEffort    string
 	MLXBaseURL                string
 	MLXAPIKey                 string
@@ -134,6 +137,8 @@ const (
 	DefaultMoonshotModel       = "kimi-k2.7-code"
 	DefaultXiaomiModel         = "mimo-v2.5-pro"
 	DefaultXiaomiProModel      = "mimo-v2.5-pro"
+	DefaultZaiModel            = "glm-5.1"
+	DefaultZaiProModel         = "glm-5.3"
 	DefaultMobileListenAddress = "127.0.0.1:7777"
 )
 
@@ -151,6 +156,8 @@ func (c AppConfig) OpenAICompatibleBaseURL(backend AIBackend) string {
 		return backend.DefaultOpenAICompatibleBaseURL()
 	case AIBackendXiaomi:
 		return trimmedOrDefault(c.XiaomiBaseURL, backend.DefaultOpenAICompatibleBaseURL())
+	case AIBackendZai:
+		return trimmedOrDefault(c.ZaiBaseURL, backend.DefaultOpenAICompatibleBaseURL())
 	case AIBackendMLX:
 		return trimmedOrDefault(c.MLXBaseURL, backend.DefaultOpenAICompatibleBaseURL())
 	case AIBackendOllama:
@@ -170,6 +177,8 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 		return strings.TrimSpace(c.MoonshotAPIKey)
 	case AIBackendXiaomi:
 		return strings.TrimSpace(c.XiaomiAPIKey)
+	case AIBackendZai:
+		return strings.TrimSpace(c.ZaiAPIKey)
 	case AIBackendMLX:
 		return trimmedOrDefault(c.MLXAPIKey, backend.DefaultOpenAICompatibleAPIKey())
 	case AIBackendOllama:
@@ -191,6 +200,8 @@ func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 		return trimmedOrDefault(c.MoonshotModel, backend.DefaultProjectModel())
 	case AIBackendXiaomi:
 		return trimmedOrDefault(c.XiaomiModel, backend.DefaultProjectModel())
+	case AIBackendZai:
+		return trimmedOrDefault(c.ZaiModel, backend.DefaultProjectModel())
 	case AIBackendMLX:
 		return strings.TrimSpace(c.MLXModel)
 	case AIBackendOllama:
@@ -219,6 +230,9 @@ type fileConfig struct {
 	XiaomiBaseURL             *string                  `toml:"xiaomi_base_url"`
 	XiaomiAPIKey              *string                  `toml:"xiaomi_api_key"`
 	XiaomiModel               *string                  `toml:"xiaomi_model"`
+	ZaiBaseURL                *string                  `toml:"zai_base_url"`
+	ZaiAPIKey                 *string                  `toml:"zai_api_key"`
+	ZaiModel                  *string                  `toml:"zai_model"`
 	ProjectReasoningEffort    *string                  `toml:"project_reasoning_effort"`
 	MLXBaseURL                *string                  `toml:"mlx_base_url"`
 	MLXAPIKey                 *string                  `toml:"mlx_api_key"`
@@ -359,17 +373,17 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	claudeCodeHome := fs.String("claude-code-home", cfg.ClaudeCodeHome, "Path to Claude Code home directory")
 	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
-	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout")
-	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout")
+	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent permission level: off, low, or medium")
 	lcagentAdminWrite := fs.Bool("lcagent-admin-write", cfg.LCAgentAdminWrite, "Allow LCAgent write tools to edit absolute paths outside the workspace")
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
 	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large; known model windows adapt packing budgets and unknown hosted models assume a 250k window")
 	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
-	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement; blank with provider main uses the main model")
 	lcagentUtilityReasoning := fs.String("lcagent-utility-reasoning-effort", cfg.LCAgentUtilityReasoning, "Optional reasoning effort for the LCAgent utility model")
-	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	lcagentVisionModel := fs.String("lcagent-vision-model", cfg.LCAgentVisionModel, "LCAgent image-analysis model; blank with provider main uses the main model")
 	lcagentVisionReasoning := fs.String("lcagent-vision-reasoning-effort", cfg.LCAgentVisionReasoning, "Optional reasoning effort for the LCAgent vision model")
 	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, searxng, or browser")
@@ -666,6 +680,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.XiaomiBaseURL, fc.XiaomiBaseURL)
 	applyOptionalTrimmedString(&cfg.XiaomiAPIKey, fc.XiaomiAPIKey)
 	applyOptionalTrimmedString(&cfg.XiaomiModel, fc.XiaomiModel)
+	applyOptionalTrimmedString(&cfg.ZaiBaseURL, fc.ZaiBaseURL)
+	applyOptionalTrimmedString(&cfg.ZaiAPIKey, fc.ZaiAPIKey)
+	applyOptionalTrimmedString(&cfg.ZaiModel, fc.ZaiModel)
 	applyOptionalTrimmedString(&cfg.ProjectReasoningEffort, fc.ProjectReasoningEffort)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
@@ -1006,10 +1023,12 @@ func parseLCAgentRoutePreset(raw string) (string, error) {
 		return "cheap-scout", nil
 	case "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "mimo-2.5-pro", "xiaomi", "xiaomi-mimo":
 		return "mimo-2.5-pro-low", nil
-	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout":
+	case "glm", "glm-5", "glm51", "zai", "zai-glm":
+		return "glm-5.1", nil
+	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "glm-5.1", "cheap-scout":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-route-preset must be blank or one of: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, cheap-scout")
+		return "", fmt.Errorf("lcagent-route-preset must be blank or one of: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, cheap-scout")
 	}
 }
 
@@ -1021,8 +1040,10 @@ func parseLCAgentProvider(raw string) (string, error) {
 	switch value {
 	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
+	case "zai", "z-ai", "z.ai":
+		return "zai", nil
 	default:
-		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi, ollama")
+		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama")
 	}
 }
 
@@ -1076,8 +1097,10 @@ func parseLCAgentUtilityProvider(raw string) (string, error) {
 		return "main", nil
 	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
+	case "zai", "z-ai", "z.ai":
+		return "zai", nil
 	default:
-		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, ollama")
+		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama")
 	}
 }
 
@@ -1092,8 +1115,10 @@ func parseLCAgentVisionProvider(raw string) (string, error) {
 		return "main", nil
 	case "auto", "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
+	case "zai", "z-ai", "z.ai":
+		return "zai", nil
 	default:
-		return "", fmt.Errorf("lcagent-vision-provider must be one of: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, ollama")
+		return "", fmt.Errorf("lcagent-vision-provider must be one of: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama")
 	}
 }
 

@@ -456,6 +456,13 @@ func addOpenAICompatibleChatReasoning(body map[string]any, style, effort string)
 		} else {
 			body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
 		}
+	case "zai":
+		if strings.EqualFold(effort, "none") || strings.EqualFold(effort, "minimal") {
+			body["thinking"] = map[string]any{"type": "disabled"}
+			return
+		}
+		body["thinking"] = map[string]any{"type": "enabled"}
+		body["reasoning_effort"] = effort
 	}
 }
 

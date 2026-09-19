@@ -1504,7 +1504,7 @@ func printUsage(programName string) {
 	fmt.Println("  --apply")
 	fmt.Println("  --dry-run")
 	fmt.Println("Model eval flags:")
-	fmt.Println("  --backend <openai_api|ollama|mlx|openrouter|deepseek|moonshot|xiaomi>")
+	fmt.Println("  --backend <openai_api|ollama|mlx|openrouter|deepseek|moonshot|xiaomi|zai>")
 	fmt.Println("  --model <model-id>")
 	fmt.Println("  --base-url <url>")
 	fmt.Println("  --api-key <key>")

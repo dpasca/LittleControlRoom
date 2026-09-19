@@ -45,6 +45,7 @@ type Snapshot struct {
 	DeepSeek   Status
 	Moonshot   Status
 	Xiaomi     Status
+	Zai        Status
 	Codex      Status
 	OpenCode   Status
 	Claude     Status
@@ -61,6 +62,7 @@ func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
 		DeepSeek:   detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendDeepSeek),
 		Moonshot:   detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendMoonshot),
 		Xiaomi:     detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendXiaomi),
+		Zai:        detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendZai),
 		Codex:      detectCodex(ctx),
 		OpenCode:   detectOpenCode(ctx),
 		Claude:     detectClaudeCode(ctx),
@@ -73,7 +75,7 @@ func DetectStatus(ctx context.Context, cfg config.AppConfig, backend config.AIBa
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return detectOpenAIAPI(cfg)
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		return detectOpenAICompatibleCloud(ctx, cfg, backend)
 	case config.AIBackendCodex:
 		return detectCodex(ctx)
@@ -111,6 +113,8 @@ func (s Snapshot) StatusFor(backend config.AIBackend) Status {
 		return s.Moonshot
 	case config.AIBackendXiaomi:
 		return s.Xiaomi
+	case config.AIBackendZai:
+		return s.Zai
 	case config.AIBackendCodex:
 		return s.Codex
 	case config.AIBackendOpenCode:

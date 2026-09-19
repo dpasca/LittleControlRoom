@@ -79,6 +79,8 @@ func CheckLCAgentVisionAccess(ctx context.Context, req LaunchRequest) (LCAgentVi
 		MoonshotAPIKey:   req.LCAgentMoonshotAPIKey,
 		XiaomiAPIKey:     req.LCAgentXiaomiAPIKey,
 		XiaomiBaseURL:    req.LCAgentXiaomiBaseURL,
+		ZaiAPIKey:        req.LCAgentZaiAPIKey,
+		ZaiBaseURL:       req.LCAgentZaiBaseURL,
 		OllamaAPIKey:     req.LCAgentOllamaAPIKey,
 		OllamaBaseURL:    req.LCAgentOllamaBaseURL,
 		OllamaModel:      req.LCAgentOllamaModel,

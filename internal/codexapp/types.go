@@ -758,6 +758,8 @@ type LaunchRequest struct {
 	LCAgentMoonshotAPIKey      string
 	LCAgentXiaomiAPIKey        string
 	LCAgentXiaomiBaseURL       string
+	LCAgentZaiAPIKey           string
+	LCAgentZaiBaseURL          string
 	LCAgentOllamaAPIKey        string
 	LCAgentOllamaBaseURL       string
 	LCAgentOllamaModel         string

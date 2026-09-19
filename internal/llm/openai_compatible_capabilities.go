@@ -50,6 +50,14 @@ var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
 	},
 	{
+		// Z.ai documents response_format.type json_object but not json_schema,
+		// so the schema travels in the prompt. GLM reasoning control is the
+		// top-level thinking/reasoning_effort pair handled by the zai arm.
+		providerID:         "zai",
+		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
+		reasoningStyle:     "zai",
+	},
+	{
 		// MiMo's structured-output transport is JSON mode; the schema is
 		// supplied in the prompt instead of response_format.json_schema.
 		providerID:          "xiaomi",

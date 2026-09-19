@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseAIBackendAcceptsClaudeCode(t *testing.T) {
 	t.Parallel()
@@ -54,6 +57,7 @@ func TestParseAIBackendAcceptsSharedCloudAPIs(t *testing.T) {
 		{raw: "deepseek", want: AIBackendDeepSeek},
 		{raw: "moonshot", want: AIBackendMoonshot},
 		{raw: "xiaomi", want: AIBackendXiaomi},
+		{raw: "zai", want: AIBackendZai},
 	}
 	for _, tt := range tests {
 		got, err := ParseAIBackend(tt.raw)
@@ -117,6 +121,13 @@ func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
 	if got := cfg.OpenAICompatibleModel(AIBackendXiaomi); got != "mimo-v2.5-pro-preview" {
 		t.Fatalf("configured Xiaomi project model = %q", got)
 	}
+	if got := cfg.OpenAICompatibleModel(AIBackendZai); got != DefaultZaiModel {
+		t.Fatalf("default Z.ai project model = %q, want %q", got, DefaultZaiModel)
+	}
+	cfg.ZaiModel = "glm-5.3-flash"
+	if got := cfg.OpenAICompatibleModel(AIBackendZai); got != "glm-5.3-flash" {
+		t.Fatalf("configured Z.ai project model = %q", got)
+	}
 }
 
 func TestBackendDefaultBossModelsSplitFastAndPro(t *testing.T) {
@@ -133,6 +144,37 @@ func TestBackendDefaultBossModelsSplitFastAndPro(t *testing.T) {
 	}
 	if got := AIBackendXiaomi.DefaultBossUtilityModel(); got != DefaultXiaomiModel {
 		t.Fatalf("Xiaomi utility default = %q, want %q", got, DefaultXiaomiModel)
+	}
+	if got := AIBackendZai.DefaultBossHelmModel(); got != DefaultZaiProModel {
+		t.Fatalf("Z.ai helm default = %q, want %q", got, DefaultZaiProModel)
+	}
+	if got := AIBackendZai.DefaultBossUtilityModel(); got != DefaultZaiModel {
+		t.Fatalf("Z.ai utility default = %q, want %q", got, DefaultZaiModel)
+	}
+}
+
+func TestZaiProviderDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	if got, want := cfg.OpenAICompatibleBaseURL(AIBackendZai), "https://api.z.ai/api/paas/v4"; got != want {
+		t.Fatalf("Z.ai base URL = %q, want %q", got, want)
+	}
+	cfg.ZaiBaseURL = ZaiCodingPlanBaseURL
+	if got, want := cfg.OpenAICompatibleBaseURL(AIBackendZai), "https://api.z.ai/api/coding/paas/v4"; got != want {
+		t.Fatalf("configured Z.ai base URL = %q, want %q", got, want)
+	}
+	if got := cfg.OpenAICompatibleAPIKey(AIBackendZai); got != "" {
+		t.Fatalf("default Z.ai API key = %q, want empty", got)
+	}
+	if got := AIBackendZai.Label(); got != "Z.ai GLM" {
+		t.Fatalf("Z.ai label = %q, want Z.ai GLM", got)
+	}
+	if !AIBackendZai.UsesOpenAICompatibleAPI() || !AIBackendZai.UsesCloudAPIKey() {
+		t.Fatalf("Z.ai should use the OpenAI-compatible cloud path")
+	}
+	if hint := ZaiCodingPlanBaseURLHint(); !strings.Contains(hint, ZaiCodingPlanBaseURL) {
+		t.Fatalf("Z.ai coding-plan hint %q does not name %q", hint, ZaiCodingPlanBaseURL)
 	}
 }
 

@@ -898,6 +898,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.MoonshotModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldMoonshotModel))
 	settings.XiaomiBaseURL = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiBaseURL))
 	settings.XiaomiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiModel))
+	settings.ZaiBaseURL = strings.TrimSpace(baseline.ZaiBaseURL)
+	settings.ZaiAPIKey = strings.TrimSpace(baseline.ZaiAPIKey)
+	settings.ZaiModel = strings.TrimSpace(baseline.ZaiModel)
 	settings.ProjectReasoningEffort = strings.TrimSpace(m.settingsFieldValue(settingsFieldProjectReasoning))
 	lcagentRoutePreset := settings.LCAgentRoutePreset
 	lcagentProvider := settings.LCAgentProvider
@@ -1956,6 +1959,9 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.XiaomiBaseURL = m.settingsFieldValue(settingsFieldXiaomiBaseURL)
 	settings.XiaomiAPIKey = m.settingsFieldValue(settingsFieldXiaomiAPIKey)
 	settings.XiaomiModel = m.settingsFieldValue(settingsFieldXiaomiModel)
+	settings.ZaiBaseURL = strings.TrimSpace(m.currentSettingsBaseline().ZaiBaseURL)
+	settings.ZaiAPIKey = strings.TrimSpace(m.currentSettingsBaseline().ZaiAPIKey)
+	settings.ZaiModel = strings.TrimSpace(m.currentSettingsBaseline().ZaiModel)
 	settings.ProjectReasoningEffort = m.settingsFieldValue(settingsFieldProjectReasoning)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)

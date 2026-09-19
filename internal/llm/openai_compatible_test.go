@@ -541,6 +541,21 @@ func TestOpenAICompatibleProviderModelProfileMapsDeepSeekToJSONMode(t *testing.T
 	}
 }
 
+func TestOpenAICompatibleProviderModelProfileMapsZaiToJSONMode(t *testing.T) {
+	t.Parallel()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("zai", "glm-5.1", OpenAICompatibleResponsesRunnerOptions{})
+	if opts.ChatResponseFormat != OpenAICompatibleChatResponseFormatJSONObject {
+		t.Fatalf("Z.ai chat response format = %q, want %q", opts.ChatResponseFormat, OpenAICompatibleChatResponseFormatJSONObject)
+	}
+	if opts.ReasoningStyle != "zai" {
+		t.Fatalf("Z.ai reasoning style = %q, want zai", opts.ReasoningStyle)
+	}
+	if opts.AuthHeader != OpenAICompatibleAuthHeaderBearer {
+		t.Fatalf("Z.ai auth header = %q, want bearer", opts.AuthHeader)
+	}
+}
+
 func TestOpenAICompatibleResponsesRunnerRequiresOpenRouterStructuredOutputParameters(t *testing.T) {
 	t.Parallel()
 
@@ -703,6 +718,77 @@ func TestOpenAICompatibleChatCompletionsSendsXiaomiReasoning(t *testing.T) {
 	}
 	if _, ok := gotBody["reasoning"]; ok {
 		t.Fatalf("xiaomi request should not use OpenAI reasoning field: %#v", gotBody["reasoning"])
+	}
+}
+
+func TestOpenAICompatibleChatCompletionsSendsZaiReasoning(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"glm-5.3","choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions("test-key", server.URL, time.Second, nil, OpenAICompatibleChatResponseFormatJSONObject, OpenAICompatibleAuthHeaderBearer, "zai")
+	_, err := client.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model:           "glm-5.3",
+		SystemText:      "system",
+		UserText:        "user",
+		SchemaName:      "zai_reasoning",
+		Schema:          map[string]any{"type": "object"},
+		ReasoningEffort: "high",
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("thinking = %#v, want enabled", gotBody["thinking"])
+	}
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want top-level high", gotBody["reasoning_effort"])
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("zai request should not use the OpenAI reasoning field: %#v", gotBody["reasoning"])
+	}
+}
+
+func TestOpenAICompatibleChatCompletionsDisablesZaiThinkingForNone(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions("test-key", server.URL, time.Second, nil, OpenAICompatibleChatResponseFormatJSONObject, OpenAICompatibleAuthHeaderBearer, "zai")
+	_, err := client.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model:           "glm-5.1",
+		SystemText:      "system",
+		UserText:        "user",
+		SchemaName:      "zai_none",
+		Schema:          map[string]any{"type": "object"},
+		ReasoningEffort: "none",
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("thinking = %#v, want disabled for effort none", gotBody["thinking"])
+	}
+	if _, ok := gotBody["reasoning_effort"]; ok {
+		t.Fatalf("nothing-effort zai request should omit reasoning_effort: %#v", gotBody["reasoning_effort"])
 	}
 }
 

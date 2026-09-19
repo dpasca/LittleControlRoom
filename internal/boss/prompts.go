@@ -70,7 +70,7 @@ func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return "Chat is not connected yet. Configure an OpenAI API key in /setup, then reopen Chat."
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		return "Chat is not connected yet. Configure a " + backend.Label() + " API key in /setup, then reopen Chat."
 	case config.AIBackendMLX:
 		return "Chat is not connected yet. Choose MLX in /setup and confirm the local endpoint/model."
@@ -79,7 +79,7 @@ func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	case config.AIBackendDisabled:
 		return "Chat is disabled. Use /setup to enable a chat backend."
 	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return "Chat currently uses direct API inference, not embedded work sessions. Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, MLX, or Ollama for Chat while keeping project reports on your preferred backend."
+		return "Chat currently uses direct API inference, not embedded work sessions. Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, Xiaomi, Z.ai, MLX, or Ollama for Chat while keeping project reports on your preferred backend."
 	default:
 		return "Chat is not connected yet. Chat supports direct API chat through OpenAI API, OpenRouter, DeepSeek, Moonshot, MLX, or Ollama."
 	}

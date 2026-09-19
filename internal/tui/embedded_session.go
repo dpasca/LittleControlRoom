@@ -1075,6 +1075,8 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		LCAgentMoonshotAPIKey:      m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:        m.xiaomiAPIKey(),
 		LCAgentXiaomiBaseURL:       m.xiaomiBaseURL(),
+		LCAgentZaiAPIKey:           m.zaiAPIKey(),
+		LCAgentZaiBaseURL:          m.zaiBaseURL(),
 		LCAgentOllamaAPIKey:        m.ollamaAPIKey(),
 		LCAgentOllamaBaseURL:       m.ollamaBaseURL(),
 		LCAgentOllamaModel:         m.ollamaModel(),
@@ -1243,6 +1245,8 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		strings.TrimSpace(previous.MoonshotAPIKey) != strings.TrimSpace(saved.MoonshotAPIKey) ||
 		strings.TrimSpace(previous.XiaomiAPIKey) != strings.TrimSpace(saved.XiaomiAPIKey) ||
 		strings.TrimSpace(previous.XiaomiBaseURL) != strings.TrimSpace(saved.XiaomiBaseURL) ||
+		strings.TrimSpace(previous.ZaiAPIKey) != strings.TrimSpace(saved.ZaiAPIKey) ||
+		strings.TrimSpace(previous.ZaiBaseURL) != strings.TrimSpace(saved.ZaiBaseURL) ||
 		strings.TrimSpace(previous.LCAgentRoutePreset) != strings.TrimSpace(saved.LCAgentRoutePreset) ||
 		strings.TrimSpace(previous.LCAgentProvider) != strings.TrimSpace(saved.LCAgentProvider) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
@@ -1287,6 +1291,8 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentMoonshotAPIKey:      strings.TrimSpace(settings.MoonshotAPIKey),
 		LCAgentXiaomiAPIKey:        strings.TrimSpace(settings.XiaomiAPIKey),
 		LCAgentXiaomiBaseURL:       strings.TrimSpace(settings.XiaomiBaseURL),
+		LCAgentZaiAPIKey:           strings.TrimSpace(settings.ZaiAPIKey),
+		LCAgentZaiBaseURL:          strings.TrimSpace(settings.ZaiBaseURL),
 		LCAgentOllamaAPIKey:        strings.TrimSpace(settings.OllamaAPIKey),
 		LCAgentOllamaBaseURL:       strings.TrimSpace(settings.OllamaBaseURL),
 		LCAgentOllamaModel:         strings.TrimSpace(settings.OllamaModel),
@@ -1430,6 +1436,14 @@ func (m Model) xiaomiAPIKey() string {
 
 func (m Model) xiaomiBaseURL() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().XiaomiBaseURL)
+}
+
+func (m Model) zaiAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().ZaiAPIKey)
+}
+
+func (m Model) zaiBaseURL() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().ZaiBaseURL)
 }
 
 func (m Model) ollamaAPIKey() string {

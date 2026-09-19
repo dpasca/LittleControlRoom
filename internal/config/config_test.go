@@ -296,6 +296,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"xiaomi_base_url = \"https://token-plan-sgp.xiaomimimo.com/v1\"\n" +
 		"xiaomi_api_key = \"xm-live-example\"\n" +
 		"xiaomi_model = \"mimo-v2.5-pro\"\n" +
+		"zai_base_url = \"https://api.z.ai/api/coding/paas/v4\"\n" +
+		"zai_api_key = \"zai-live-example\"\n" +
+		"zai_model = \"glm-5.1\"\n" +
 		"project_reasoning_effort = \"high\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
@@ -375,6 +378,15 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.XiaomiModel, "mimo-v2.5-pro"; got != want {
 		t.Fatalf("xiaomi model = %q, want %q", got, want)
+	}
+	if got, want := cfg.ZaiAPIKey, "zai-live-example"; got != want {
+		t.Fatalf("zai api key = %q, want %q", got, want)
+	}
+	if got, want := cfg.ZaiBaseURL, "https://api.z.ai/api/coding/paas/v4"; got != want {
+		t.Fatalf("zai base url = %q, want %q", got, want)
+	}
+	if got, want := cfg.ZaiModel, "glm-5.1"; got != want {
+		t.Fatalf("zai model = %q, want %q", got, want)
 	}
 	if got, want := cfg.ProjectReasoningEffort, "high"; got != want {
 		t.Fatalf("project reasoning effort = %q, want %q", got, want)

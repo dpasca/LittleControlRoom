@@ -207,6 +207,8 @@ func (m Model) fallbackPrelaunchEmbeddedModelOptions(ctx context.Context, provid
 			MoonshotAPIKey:   strings.TrimSpace(settings.MoonshotAPIKey),
 			XiaomiAPIKey:     strings.TrimSpace(settings.XiaomiAPIKey),
 			XiaomiBaseURL:    strings.TrimSpace(settings.XiaomiBaseURL),
+			ZaiAPIKey:        strings.TrimSpace(settings.ZaiAPIKey),
+			ZaiBaseURL:       strings.TrimSpace(settings.ZaiBaseURL),
 			OllamaAPIKey:     strings.TrimSpace(settings.OllamaAPIKey),
 			OllamaBaseURL:    strings.TrimSpace(settings.OllamaBaseURL),
 			OllamaModel:      strings.TrimSpace(settings.OllamaModel),

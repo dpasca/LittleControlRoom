@@ -1549,6 +1549,169 @@ func TestMoonshotClientUsesDirectEndpointShape(t *testing.T) {
 	}
 }
 
+func TestZaiClientUsesDirectEndpointShape(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer zai-key" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		if got := r.Header.Get("HTTP-Referer"); got != "" {
+			t.Fatalf("Z.ai request should not send OpenRouter referer header: %q", got)
+		}
+		var req struct {
+			Model               string   `json:"model"`
+			MaxCompletionTokens int      `json:"max_completion_tokens"`
+			MaxTokens           int      `json:"max_tokens"`
+			Temperature         *float64 `json:"temperature"`
+			Thinking            struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+			Tools []ToolDefinition `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Model != DefaultZaiModel {
+			t.Fatalf("model = %q, want qualified Z.ai model normalized to %q", req.Model, DefaultZaiModel)
+		}
+		if req.MaxTokens != 777 || req.MaxCompletionTokens != 0 {
+			t.Fatalf("token fields max_tokens=%d max_completion_tokens=%d", req.MaxTokens, req.MaxCompletionTokens)
+		}
+		if req.Temperature == nil {
+			t.Fatal("Z.ai request should keep the configured temperature")
+		}
+		if req.Thinking.Type != "disabled" {
+			t.Fatalf("thinking.type = %q, want disabled", req.Thinking.Type)
+		}
+		if len(req.Tools) == 0 {
+			t.Fatal("tools empty")
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"zai_resp",
+			"model":"glm-5.1",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{
+					"role":"assistant",
+					"reasoning_content":"internal reasoning to preserve",
+					"tool_calls":[{"id":"call_1","type":"function","function":{"name":"search","arguments":"{\"query\":\"needle\"}"}}]
+				}
+			}],
+			"usage":{"prompt_tokens":1000,"cached_tokens":250,"completion_tokens":20,"total_tokens":1020}
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewZaiClient(OpenRouterConfig{
+		APIKey:  "zai-key",
+		BaseURL: server.URL,
+		Model:   "z-ai/glm-5.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := client.CompleteWithOptions(context.Background(), []Message{{Role: "assistant", ReasoningContent: "keep me"}}, Tools(), CompletionOptions{
+		MaxCompletionTokens: 777,
+		DisableThinking:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.ID != "zai_resp" || completion.Model != "glm-5.1" {
+		t.Fatalf("completion identity = %q %q", completion.ID, completion.Model)
+	}
+	if completion.Message.ReasoningContent != "internal reasoning to preserve" {
+		t.Fatalf("ReasoningContent = %q", completion.Message.ReasoningContent)
+	}
+}
+
+func TestZaiClientReasoningEffortIsModelAware(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewZaiClient(OpenRouterConfig{
+		APIKey:  "zai-key",
+		BaseURL: server.URL,
+		Model:   DefaultZaiProModel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{ReasoningEffort: "high"}); err != nil {
+		t.Fatal(err)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" {
+		t.Fatalf("thinking = %#v, want enabled", gotBody["thinking"])
+	}
+	if gotBody["reasoning_effort"] != "high" {
+		t.Fatalf("reasoning_effort = %#v, want top-level high", gotBody["reasoning_effort"])
+	}
+
+	older, err := NewZaiClient(OpenRouterConfig{
+		APIKey:  "zai-key",
+		BaseURL: server.URL,
+		Model:   DefaultZaiModel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := older.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{ReasoningEffort: "high"}); err == nil {
+		t.Fatalf("GLM-5.1 should reject reasoning effort instead of sending an unsupported field")
+	}
+	if _, err := client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{DisableThinking: true}); err == nil {
+		t.Fatalf("GLM-5.3 forces thinking and should reject the disable request")
+	}
+}
+
+func TestZaiClientDefaultsFromEnv(t *testing.T) {
+	t.Setenv("ZAI_API_KEY", "")
+	t.Setenv("ZAI_BASE_URL", "")
+	if _, err := NewZaiClient(OpenRouterConfig{}); err == nil {
+		t.Fatal("NewZaiClient should require a ZAI_API_KEY")
+	}
+
+	var sawRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawRequest = true
+		var req struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Model != DefaultZaiModel {
+			t.Fatalf("model = %q, want %q", req.Model, DefaultZaiModel)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("ZAI_API_KEY", "test-zai-key")
+	t.Setenv("ZAI_BASE_URL", server.URL)
+	client, err := NewZaiClient(OpenRouterConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Model() != DefaultZaiModel {
+		t.Fatalf("client model = %q, want %q", client.Model(), DefaultZaiModel)
+	}
+	if _, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !sawRequest {
+		t.Fatal("ZAI_BASE_URL from the environment was not used")
+	}
+}
+
 func TestMoonshotClientK27OmitsDisableThinking(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

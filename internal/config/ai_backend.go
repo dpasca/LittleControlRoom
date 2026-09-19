@@ -20,6 +20,7 @@ const (
 	AIBackendMLX        AIBackend = "mlx"
 	AIBackendOllama     AIBackend = "ollama"
 	AIBackendXiaomi     AIBackend = "xiaomi"
+	AIBackendZai        AIBackend = "zai"
 )
 
 var selectableAIBackends = []AIBackend{
@@ -33,6 +34,7 @@ var selectableAIBackends = []AIBackend{
 	AIBackendDeepSeek,
 	AIBackendMoonshot,
 	AIBackendXiaomi,
+	AIBackendZai,
 	AIBackendDisabled,
 }
 
@@ -73,6 +75,8 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 		return AIBackendMoonshot, nil
 	case string(AIBackendXiaomi):
 		return AIBackendXiaomi, nil
+	case string(AIBackendZai):
+		return AIBackendZai, nil
 	case string(AIBackendCodex):
 		return AIBackendCodex, nil
 	case string(AIBackendOpenCode):
@@ -84,7 +88,7 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 	case string(AIBackendOllama):
 		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, xiaomi, codex, opencode, claude_code, mlx, or ollama")
+		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, xiaomi, zai, codex, opencode, claude_code, mlx, or ollama")
 	}
 }
 
@@ -114,12 +118,14 @@ func ParseBossChatBackend(raw string) (AIBackend, error) {
 		return AIBackendMoonshot, nil
 	case string(AIBackendXiaomi):
 		return AIBackendXiaomi, nil
+	case string(AIBackendZai):
+		return AIBackendZai, nil
 	case string(AIBackendMLX):
 		return AIBackendMLX, nil
 	case string(AIBackendOllama):
 		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, xiaomi, mlx, or ollama")
+		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, xiaomi, zai, mlx, or ollama")
 	}
 }
 
@@ -157,6 +163,8 @@ func (b AIBackend) Label() string {
 		return "Ollama"
 	case AIBackendXiaomi:
 		return "Xiaomi MiMo"
+	case AIBackendZai:
+		return "Z.ai GLM"
 	default:
 		return "Not configured"
 	}
@@ -204,6 +212,8 @@ func (b AIBackend) DefaultOpenAICompatibleBaseURL() string {
 		return "http://127.0.0.1:11434/v1"
 	case AIBackendXiaomi:
 		return "https://api.xiaomimimo.com/v1"
+	case AIBackendZai:
+		return "https://api.z.ai/api/paas/v4"
 	default:
 		return ""
 	}
@@ -232,6 +242,8 @@ func (b AIBackend) DefaultProjectModel() string {
 		return DefaultMoonshotModel
 	case AIBackendXiaomi:
 		return DefaultXiaomiModel
+	case AIBackendZai:
+		return DefaultZaiModel
 	default:
 		return ""
 	}
@@ -247,6 +259,8 @@ func (b AIBackend) DefaultBossHelmModel() string {
 		return DefaultMoonshotModel
 	case AIBackendXiaomi:
 		return DefaultXiaomiProModel
+	case AIBackendZai:
+		return DefaultZaiProModel
 	default:
 		return DefaultBossHelmModel
 	}
@@ -262,6 +276,8 @@ func (b AIBackend) DefaultBossUtilityModel() string {
 		return DefaultMoonshotModel
 	case AIBackendXiaomi:
 		return DefaultXiaomiModel
+	case AIBackendZai:
+		return DefaultZaiModel
 	default:
 		return DefaultBossUtilityModel
 	}
@@ -287,9 +303,18 @@ func XiaomiTokenPlanBaseURLHint() string {
 	return "Use the regional Token Plan base URL from Xiaomi subscription management, for example https://token-plan-sgp.xiaomimimo.com/v1."
 }
 
+// ZaiCodingPlanBaseURL is the dedicated GLM Coding Plan endpoint Z.ai documents
+// for coding tools. Subscription keys use it instead of the pay-as-you-go
+// OpenAI-compatible base URL; the key format is the same for both.
+const ZaiCodingPlanBaseURL = "https://api.z.ai/api/coding/paas/v4"
+
+func ZaiCodingPlanBaseURLHint() string {
+	return "GLM Coding Plan subscriptions use the dedicated coding endpoint " + ZaiCodingPlanBaseURL + "; pay-as-you-go Z.ai keys use https://api.z.ai/api/paas/v4."
+}
+
 func (b AIBackend) UsesOpenAICompatibleAPI() bool {
 	switch b {
-	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendMLX, AIBackendOllama, AIBackendXiaomi:
+	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendMLX, AIBackendOllama, AIBackendXiaomi, AIBackendZai:
 		return true
 	default:
 		return false
@@ -298,7 +323,7 @@ func (b AIBackend) UsesOpenAICompatibleAPI() bool {
 
 func (b AIBackend) UsesCloudAPIKey() bool {
 	switch b {
-	case AIBackendOpenAIAPI, AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendXiaomi:
+	case AIBackendOpenAIAPI, AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendXiaomi, AIBackendZai:
 		return true
 	default:
 		return false

@@ -125,8 +125,10 @@ func normalizeUtilityProvider(raw string) (string, error) {
 		return "main", nil
 	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
+	case "zai", "z-ai", "z.ai":
+		return "zai", nil
 	default:
-		return "", fmt.Errorf("utility provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, ollama")
+		return "", fmt.Errorf("utility provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama")
 	}
 }
 

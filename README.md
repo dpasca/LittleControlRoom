@@ -67,7 +67,7 @@ agent CLI, and the dashboard updates at that pace.
 **For the best experience, give it a cheap, fast API model instead.** Something
 like DeepSeek `deepseek-v4-flash` or OpenAI `gpt-5.6-luna` costs very little and
 makes the whole dashboard feel immediate. Available direct backends: OpenAI,
-OpenRouter, DeepSeek, Moonshot, Xiaomi — or MLX/Ollama if you want it fully local.
+OpenRouter, DeepSeek, Moonshot, Xiaomi, Z.ai — or MLX/Ollama if you want it fully local.
 
 <details>
 <summary>Manual download</summary>

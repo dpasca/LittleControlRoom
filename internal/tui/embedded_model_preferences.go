@@ -193,7 +193,7 @@ func formatLCAgentRecentModelID(provider, model string) string {
 
 func parseLCAgentRecentModelID(raw string) (string, string) {
 	raw = strings.TrimSpace(raw)
-	for _, provider := range []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama"} {
+	for _, provider := range []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi", "zai", "ollama"} {
 		prefix := provider + ":"
 		if strings.HasPrefix(strings.ToLower(raw), prefix) {
 			return provider, strings.TrimSpace(raw[len(prefix):])

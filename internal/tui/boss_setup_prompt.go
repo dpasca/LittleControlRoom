@@ -34,6 +34,8 @@ func (m Model) bossChatConfigured() bool {
 		return strings.TrimSpace(settings.MoonshotAPIKey) != ""
 	case config.AIBackendXiaomi:
 		return strings.TrimSpace(settings.XiaomiAPIKey) != ""
+	case config.AIBackendZai:
+		return strings.TrimSpace(settings.ZaiAPIKey) != ""
 	case config.AIBackendMLX:
 		return strings.TrimSpace(settings.MLXBaseURL) != "" || config.AIBackendMLX.DefaultOpenAICompatibleBaseURL() != ""
 	case config.AIBackendOllama:
@@ -75,6 +77,8 @@ func (m Model) bossSetupPromptReason() string {
 		return "Chat is set to DeepSeek, but needs a saved DeepSeek API key before it can start."
 	case settings.BossChatBackend == config.AIBackendMoonshot && strings.TrimSpace(settings.MoonshotAPIKey) == "":
 		return "Chat is set to Moonshot, but needs a saved Moonshot API key before it can start."
+	case settings.BossChatBackend == config.AIBackendZai && strings.TrimSpace(settings.ZaiAPIKey) == "":
+		return "Chat is set to Z.ai, but needs a saved Z.ai API key before it can start. Set zai_api_key or ZAI_API_KEY."
 	case settings.BossChatBackend == config.AIBackendXiaomi && strings.TrimSpace(settings.XiaomiAPIKey) == "":
 		return "Chat is set to Xiaomi, but needs a saved Xiaomi API key before it can start."
 	case settings.BossChatBackend == config.AIBackendUnset:

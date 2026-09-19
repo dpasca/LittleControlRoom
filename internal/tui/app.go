@@ -2827,6 +2827,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			LCAgentMoonshotAPIKey:      m.moonshotAPIKey(),
 			LCAgentXiaomiAPIKey:        m.xiaomiAPIKey(),
 			LCAgentXiaomiBaseURL:       m.xiaomiBaseURL(),
+			LCAgentZaiAPIKey:           m.zaiAPIKey(),
+			LCAgentZaiBaseURL:          m.zaiBaseURL(),
 			LCAgentOllamaAPIKey:        m.ollamaAPIKey(),
 			LCAgentOllamaBaseURL:       m.ollamaBaseURL(),
 			LCAgentOllamaModel:         m.ollamaModel(),

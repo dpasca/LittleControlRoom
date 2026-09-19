@@ -29,7 +29,7 @@ Mobile access, pairing, address modes, and the `/mobile` panel are documented in
 is false by default, a live channel's composer unlocks only when that setting is
 on, and pairing adds no TLS, so direct HTTP exposure should stay on a trusted LAN.
 
-`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or a direct API backend such as OpenAI, OpenRouter, DeepSeek, Moonshot, or Xiaomi. The TUI will open `/setup` automatically until you pick one.
+`lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or a direct API backend such as OpenAI, OpenRouter, DeepSeek, Moonshot, Xiaomi, or Z.ai. The TUI will open `/setup` automatically until you pick one.
 
 Official GitHub release builds perform a throttled stable-release check when the TUI starts. The check runs at most once every 24 hours and caches GitHub's ETag and latest release metadata under `~/.little-control-room/updates/`. When an update exists, the top bar shows bright `/update <version>` text. `/update` requires an explicit `Update & restart` confirmation before downloading anything. Installation verifies the GitHub SHA-256 digests and `checksums.txt`, verifies Apple Developer signatures on macOS, stages both `lcroom` and `lcagent`, replaces them with rollback protection, journals active embedded turns, releases the database runtime lease, and restarts the same command. Source builds and non-GitHub distributions skip automatic checks. `LCR_DISABLE_UPDATE_CHECKS=true` disables automatic checks while preserving explicit `/update` checks.
 
@@ -57,6 +57,9 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `openrouter_api_key`
 - `deepseek_api_key`
 - `moonshot_api_key`
+- `zai_base_url`
+- `zai_api_key`
+- `zai_model`
 - `project_reasoning_effort`
 - `include_paths`
 - `exclude_paths`
@@ -103,6 +106,7 @@ openai_api_key = "sk-your-openai-api-key"
 # openrouter_api_key = "sk-or-your-openrouter-key"
 # deepseek_api_key = "sk-your-deepseek-key"
 # moonshot_api_key = "sk-your-moonshot-key"
+# zai_api_key = "your-zai-api-key"  # GLM Coding Plan: also set zai_base_url = "https://api.z.ai/api/coding/paas/v4"
 
 include_paths = [
   "~/dev/repos",
@@ -124,7 +128,7 @@ engineer_todo_capture_mode = "explicit_only"
 # process environment variables; lcagent_env_file is an advanced fallback.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # lcagent_env_file = "~/path/to/openrouter.env"
-# lcagent_route_preset = "balanced" # optional: balanced, quality, mimo-2.5-pro-low/high/max, cheap-scout
+# lcagent_route_preset = "balanced" # optional: balanced, quality, mimo-2.5-pro-low/high/max, glm-5.1, cheap-scout
 # lcagent_provider = "openrouter"
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"

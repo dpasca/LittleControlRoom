@@ -63,7 +63,7 @@ func bossChatRelationshipSummary(settings config.EditableSettings) string {
 			return "Both use the shared OpenAI API connection."
 		}
 		return "Chat uses the shared OpenAI API connection; project reports stay separate."
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		if settings.AIBackend == settings.BossChatBackend {
 			return "Both use " + settings.BossChatBackend.Label() + "."
 		}
@@ -128,7 +128,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		} else {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
-			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, Xiaomi, MLX, Ollama, or Off when you want /chat configured."
+			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, Xiaomi, Z.ai, MLX, Ollama, or Off when you want /chat configured."
 		}
 	}
 	if backend == config.AIBackendDisabled {
@@ -145,7 +145,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 			detail = "Uses the shared OpenAI API connection; project reports stay separate."
 		}
 	}
-	if backend == config.AIBackendOpenRouter || backend == config.AIBackendDeepSeek || backend == config.AIBackendMoonshot || backend == config.AIBackendXiaomi {
+	if backend == config.AIBackendOpenRouter || backend == config.AIBackendDeepSeek || backend == config.AIBackendMoonshot || backend == config.AIBackendXiaomi || backend == config.AIBackendZai {
 		if !cloudBackendAPIKeySaved(settings, backend) {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
@@ -194,7 +194,7 @@ func (m Model) inferenceBackendStatus(backend config.AIBackend, settings config.
 		if strings.TrimSpace(status.Detail) == "" {
 			status.Detail = "Saved OpenAI API key ready."
 		}
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		if !cloudBackendAPIKeySaved(settings, backend) {
 			status.Ready = false
 			status.Detail = "No saved " + backend.Label() + " API key."
@@ -236,6 +236,8 @@ func cloudBackendAPIKeySaved(settings config.EditableSettings, backend config.AI
 		return strings.TrimSpace(settings.MoonshotAPIKey) != ""
 	case config.AIBackendXiaomi:
 		return strings.TrimSpace(settings.XiaomiAPIKey) != ""
+	case config.AIBackendZai:
+		return strings.TrimSpace(settings.ZaiAPIKey) != ""
 	default:
 		return false
 	}

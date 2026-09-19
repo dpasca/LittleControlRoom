@@ -38,6 +38,9 @@ type EditableSettings struct {
 	XiaomiBaseURL             string
 	XiaomiAPIKey              string
 	XiaomiModel               string
+	ZaiBaseURL                string
+	ZaiAPIKey                 string
+	ZaiModel                  string
 	ProjectReasoningEffort    string
 	MLXBaseURL                string
 	MLXAPIKey                 string
@@ -120,6 +123,9 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		XiaomiBaseURL:             cfg.XiaomiBaseURL,
 		XiaomiAPIKey:              cfg.XiaomiAPIKey,
 		XiaomiModel:               cfg.XiaomiModel,
+		ZaiBaseURL:                cfg.ZaiBaseURL,
+		ZaiAPIKey:                 cfg.ZaiAPIKey,
+		ZaiModel:                  cfg.ZaiModel,
 		ProjectReasoningEffort:    cfg.ProjectReasoningEffort,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
@@ -213,6 +219,8 @@ func (s EditableSettings) OpenAICompatibleModel(backend AIBackend) string {
 		return trimmedOrDefault(s.MoonshotModel, backend.DefaultProjectModel())
 	case AIBackendXiaomi:
 		return trimmedOrDefault(s.XiaomiModel, backend.DefaultProjectModel())
+	case AIBackendZai:
+		return trimmedOrDefault(s.ZaiModel, backend.DefaultProjectModel())
 	case AIBackendMLX:
 		return strings.TrimSpace(s.MLXModel)
 	case AIBackendOllama:
@@ -236,6 +244,8 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 		s.MoonshotModel = model
 	case AIBackendXiaomi:
 		s.XiaomiModel = model
+	case AIBackendZai:
+		s.ZaiModel = model
 	case AIBackendMLX:
 		s.MLXModel = model
 	case AIBackendOllama:
@@ -844,6 +854,15 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.XiaomiModel); value != "" {
 		lines = append(lines, fmt.Sprintf("xiaomi_model = %s", strconv.Quote(value)))
 	}
+	if value := strings.TrimSpace(settings.ZaiBaseURL); value != "" {
+		lines = append(lines, fmt.Sprintf("zai_base_url = %s", strconv.Quote(value)))
+	}
+	if settings.ZaiAPIKey != "" {
+		lines = append(lines, fmt.Sprintf("zai_api_key = %s", strconv.Quote(settings.ZaiAPIKey)))
+	}
+	if value := strings.TrimSpace(settings.ZaiModel); value != "" {
+		lines = append(lines, fmt.Sprintf("zai_model = %s", strconv.Quote(value)))
+	}
 	if value := strings.TrimSpace(settings.ProjectReasoningEffort); value != "" {
 		lines = append(lines, fmt.Sprintf("project_reasoning_effort = %s", strconv.Quote(value)))
 	}
@@ -875,6 +894,9 @@ func renderEditableSettings(settings EditableSettings) string {
 		strings.TrimSpace(settings.XiaomiBaseURL) != "" ||
 		strings.TrimSpace(settings.XiaomiAPIKey) != "" ||
 		strings.TrimSpace(settings.XiaomiModel) != "" ||
+		strings.TrimSpace(settings.ZaiBaseURL) != "" ||
+		strings.TrimSpace(settings.ZaiAPIKey) != "" ||
+		strings.TrimSpace(settings.ZaiModel) != "" ||
 		strings.TrimSpace(settings.ProjectReasoningEffort) != "" ||
 		strings.TrimSpace(settings.MLXBaseURL) != "" ||
 		strings.TrimSpace(settings.MLXAPIKey) != "" ||

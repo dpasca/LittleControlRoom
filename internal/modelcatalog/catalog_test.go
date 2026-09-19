@@ -18,6 +18,11 @@ func TestIsKnownAcceptsProviderOwnModels(t *testing.T) {
 		{ProviderMoonshot, "kimi-k3-turbo"},
 		{ProviderXiaomi, XiaomiProModel},
 		{ProviderXiaomi, XiaomiUtilityModel},
+		{ProviderZai, ZaiDefaultModel},
+		{ProviderZai, ZaiProModel},
+		{ProviderZai, ZaiFlashModel},
+		{ProviderZai, ZaiVisionModel},
+		{ProviderZai, "glm-4.6"},
 	}
 	for _, tc := range cases {
 		if !IsKnown(tc.provider, tc.model) {
@@ -85,6 +90,9 @@ func TestNormalizeStripsQualifiedPrefixes(t *testing.T) {
 		{ProviderOpenAI, "openai/gpt-5.6"}:              OpenAIDefaultModel,
 		{ProviderMoonshot, "moonshotai/kimi-k3"}:        "kimi-k3",
 		{ProviderXiaomi, "xiaomi/mimo-v2.5-pro"}:        XiaomiProModel,
+		{ProviderZai, "z-ai/glm-5.1"}:                   ZaiDefaultModel,
+		{ProviderZai, "z.ai/glm-5.1"}:                   ZaiDefaultModel,
+		{ProviderZai, "zai/glm-5.1"}:                    ZaiDefaultModel,
 	}
 	for input, want := range cases {
 		if got := Normalize(input[0], input[1]); got != want {
@@ -100,6 +108,7 @@ func TestNormalizeForRequestCanonicalizesKnownModels(t *testing.T) {
 		{ProviderOpenAI, "OPENAI/GPT-5.6"}:             OpenAIDefaultModel,
 		{ProviderMoonshot, "MoonshotAI/KIMI-K3"}:       "kimi-k3",
 		{ProviderXiaomi, "XIAOMI/MIMO-V2.5-PRO"}:       XiaomiProModel,
+		{ProviderZai, "Z.AI/GLM-5.3-FLASH"}:            ZaiFlashModel,
 	}
 	for input, want := range cases {
 		if got := NormalizeForRequest(input[0], input[1]); got != want {
@@ -130,5 +139,22 @@ func TestOpenAISupportsMaxReasoningEffort(t *testing.T) {
 		if OpenAISupportsMaxReasoningEffort(model) {
 			t.Fatalf("OpenAISupportsMaxReasoningEffort(%q) = true, want false", model)
 		}
+	}
+}
+
+func TestZaiModelsResolveToDirectProvider(t *testing.T) {
+	if got := ProviderForModel("z-ai/glm-5.1"); got != ProviderZai {
+		t.Fatalf("ProviderForModel(z-ai/glm-5.1) = %q, want %q", got, ProviderZai)
+	}
+	if got := ProviderForModel(ZaiProModel); got != ProviderZai {
+		t.Fatalf("ProviderForModel(%q) = %q, want %q", ZaiProModel, got, ProviderZai)
+	}
+	for _, model := range []string{"gpt-5.6", "kimi-k3", "mimo-v2.5-pro", "deepseek-v4-pro"} {
+		if IsKnown(ProviderZai, model) {
+			t.Fatalf("IsKnown(zai, %q) = true, want false", model)
+		}
+	}
+	if accepted := Accepted(ProviderZai); len(accepted) == 0 {
+		t.Fatalf("Accepted(zai) is empty, want the published GLM catalog")
 	}
 }

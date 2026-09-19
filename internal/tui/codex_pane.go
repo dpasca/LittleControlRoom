@@ -1485,6 +1485,12 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 		if strings.TrimSpace(req.LCAgentXiaomiBaseURL) == "" {
 			req.LCAgentXiaomiBaseURL = m.xiaomiBaseURL()
 		}
+		if strings.TrimSpace(req.LCAgentZaiAPIKey) == "" {
+			req.LCAgentZaiAPIKey = m.zaiAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentZaiBaseURL) == "" {
+			req.LCAgentZaiBaseURL = m.zaiBaseURL()
+		}
 		if strings.TrimSpace(req.LCAgentOllamaAPIKey) == "" {
 			req.LCAgentOllamaAPIKey = m.ollamaAPIKey()
 		}

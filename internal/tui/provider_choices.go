@@ -129,6 +129,12 @@ func (m Model) projectReportsProviderChoices(settings config.EditableSettings) [
 			Description: "Uses the saved Xiaomi API key and MiMo model IDs.",
 		},
 		{
+			Value:       config.AIBackendZai,
+			Label:       "Z.ai",
+			Summary:     "Writes project summaries and helper output through the direct Z.ai GLM API.",
+			Description: "Uses the saved Z.ai API key and GLM model IDs. Configure zai_api_key or ZAI_API_KEY first; the coding endpoint is selected with zai_base_url.",
+		},
+		{
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
 			Summary:     "Writes project summaries and helper output directly through the shared OpenAI API connection.",
@@ -187,6 +193,12 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 			Label:       "Xiaomi",
 			Summary:     "Lets /chat answer through the direct Xiaomi MiMo API.",
 			Description: "A saved Xiaomi API key is required. This reuses the same connection LCAgent can use directly.",
+		},
+		{
+			Value:       config.AIBackendZai,
+			Label:       "Z.ai",
+			Summary:     "Lets /chat answer through the direct Z.ai GLM API.",
+			Description: "A saved Z.ai API key is required. This reuses the same connection LCAgent can use directly; configure zai_api_key or ZAI_API_KEY first.",
 		},
 		{
 			Value:       config.AIBackendMLX,
@@ -264,6 +276,8 @@ func projectReportsProviderNextStep(backend config.AIBackend, status aibackend.S
 		return "Paste and save a DeepSeek API key."
 	case backend == config.AIBackendMoonshot:
 		return "Paste and save a Moonshot API key."
+	case backend == config.AIBackendZai:
+		return "Save zai_api_key in config.toml (or export ZAI_API_KEY), then save."
 	case !known:
 		return "Refresh availability, then save if this is the provider you want."
 	case !status.Installed && backend.RequiresCLIInstallHint():
@@ -309,6 +323,11 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 			return "Paste and save a Xiaomi API key."
 		}
 		return "Save to use Xiaomi for Chat."
+	case config.AIBackendZai:
+		if strings.TrimSpace(settings.ZaiAPIKey) == "" {
+			return "Save zai_api_key in config.toml (or export ZAI_API_KEY), then save."
+		}
+		return "Save to use Z.ai for Chat."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if choice.State == "ready" {
 			return "Save to use this local backend for Chat."

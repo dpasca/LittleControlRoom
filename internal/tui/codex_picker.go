@@ -646,6 +646,8 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		LCAgentMoonshotAPIKey:      m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:        m.xiaomiAPIKey(),
 		LCAgentXiaomiBaseURL:       m.xiaomiBaseURL(),
+		LCAgentZaiAPIKey:           m.zaiAPIKey(),
+		LCAgentZaiBaseURL:          m.zaiBaseURL(),
 		LCAgentOllamaAPIKey:        m.ollamaAPIKey(),
 		LCAgentOllamaBaseURL:       m.ollamaBaseURL(),
 		LCAgentOllamaModel:         m.ollamaModel(),

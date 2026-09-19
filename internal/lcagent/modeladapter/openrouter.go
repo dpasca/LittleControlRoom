@@ -31,6 +31,9 @@ const (
 	DefaultMoonshotModel      = modelcatalog.MoonshotModel
 	DefaultXiaomiModel        = modelcatalog.XiaomiProModel
 	DefaultXiaomiUtilityModel = modelcatalog.XiaomiUtilityModel
+	DefaultZaiModel           = modelcatalog.ZaiDefaultModel
+	DefaultZaiProModel        = modelcatalog.ZaiProModel
+	DefaultZaiUtilityModel    = modelcatalog.ZaiFlashModel
 	DefaultOllamaBaseURL      = "http://127.0.0.1:11434/v1"
 	DefaultOpenRouterMaxTurns = 160
 	DefaultChatTemperature    = 0.2
@@ -293,6 +296,25 @@ func NewXiaomiClient(cfg OpenRouterConfig) (*Client, error) {
 		AuthHeader:     "api-key",
 		MaxTokensField: "max_tokens",
 		ReasoningStyle: "deepseek",
+		ExtraHeaders:   map[string]string{},
+	})
+}
+
+// NewZaiClient connects LCAgent to Z.ai's OpenAI-compatible GLM chat endpoint.
+// Z.ai documents Bearer auth, response_format json_object, a top-level thinking
+// object, and reasoning_effort depth control (GLM-5.2+), so the profile keeps
+// the generic chat-completions shape and selects the zai reasoning arm. GLM
+// Coding Plan subscriptions point the same client at the dedicated
+// https://api.z.ai/api/coding/paas/v4 base URL instead.
+func NewZaiClient(cfg OpenRouterConfig) (*Client, error) {
+	return newChatCompletionsClient(cfg, chatProviderProfile{
+		Name:           "zai",
+		APIKeyEnv:      "ZAI_API_KEY",
+		BaseURLEnv:     "ZAI_BASE_URL",
+		DefaultBaseURL: "https://api.z.ai/api/paas/v4",
+		DefaultModel:   DefaultZaiModel,
+		MaxTokensField: "max_tokens",
+		ReasoningStyle: "zai",
 		ExtraHeaders:   map[string]string{},
 	})
 }
@@ -652,6 +674,27 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning effort option", c.providerLabel())
 		}
 		body["reasoning_effort"] = "none"
+	case "zai":
+		if opts.ReasoningMaxTokens > 0 {
+			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning max_tokens option", c.providerLabel())
+		}
+		effort := strings.TrimSpace(opts.ReasoningEffort)
+		if opts.DisableThinking && effort != "" {
+			return Completion{}, fmt.Errorf("%s thinking options are mutually exclusive: disabled and reasoning effort", c.providerLabel())
+		}
+		switch {
+		case opts.DisableThinking:
+			if !ZaiSupportsDisableThinking(c.model) {
+				return Completion{}, fmt.Errorf("%s model %s does not support disabling thinking", c.providerLabel(), c.model)
+			}
+			body["thinking"] = map[string]any{"type": "disabled"}
+		case effort != "":
+			if !ZaiSupportsReasoningEffort(c.model) {
+				return Completion{}, fmt.Errorf("%s model %s does not support lcagent reasoning effort option", c.providerLabel(), c.model)
+			}
+			body["thinking"] = map[string]any{"type": "enabled"}
+			body["reasoning_effort"] = effort
+		}
 	default:
 		reasoning := map[string]any{}
 		if opts.ReasoningMaxTokens > 0 {
@@ -853,6 +896,24 @@ func moonshotSupportsDisableThinking(model string) bool {
 func MoonshotSupportsReasoningEffort(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(NormalizeModelForProvider("moonshot", model)))
 	return model == "kimi-k3" || strings.HasPrefix(model, "kimi-k3-")
+}
+
+// ZaiSupportsReasoningEffort reports whether a Z.ai GLM model accepts the
+// top-level reasoning_effort parameter. Z.ai documents reasoning depth control
+// from GLM-5.2 onward (low/high/max, with xhigh mapping to max and
+// none/minimal skipping thinking); earlier GLM models reject the field.
+func ZaiSupportsReasoningEffort(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(NormalizeModelForProvider("zai", model)))
+	return strings.HasPrefix(model, "glm-5.2") || strings.HasPrefix(model, "glm-5.3") || strings.HasPrefix(model, "glm-6")
+}
+
+// ZaiSupportsDisableThinking reports whether a Z.ai GLM model accepts
+// thinking.type=disabled. GLM-5.3 always reasons and rejects the disable
+// request, and the GLM-4.7 generation forces thinking as well; other models
+// accept the documented disabled form.
+func ZaiSupportsDisableThinking(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(NormalizeModelForProvider("zai", model)))
+	return !strings.HasPrefix(model, "glm-5.3") && !strings.HasPrefix(model, "glm-4.7")
 }
 
 // OpenAISupportsMaxReasoningEffort reports whether an OpenAI model accepts the

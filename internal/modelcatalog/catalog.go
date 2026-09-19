@@ -24,6 +24,10 @@ const (
 	MoonshotModel            = "kimi-k2.7-code"
 	XiaomiProModel           = "mimo-v2.5-pro"
 	XiaomiUtilityModel       = "mimo-v2.5"
+	ZaiDefaultModel          = "glm-5.1"
+	ZaiProModel              = "glm-5.3"
+	ZaiFlashModel            = "glm-5.3-flash"
+	ZaiVisionModel           = "glm-5v-turbo"
 	OpenRouterViaDeepSeek    = "deepseek/deepseek-v4-pro"
 )
 
@@ -33,6 +37,7 @@ const (
 	ProviderDeepSeek   = "deepseek"
 	ProviderMoonshot   = "moonshot"
 	ProviderXiaomi     = "xiaomi"
+	ProviderZai        = "zai"
 	ProviderOpenRouter = "openrouter"
 	ProviderOllama     = "ollama"
 	ProviderMLX        = "mlx"
@@ -72,6 +77,8 @@ func Normalize(provider, model string) string {
 		return trimPrefix(trimPrefix(model, "moonshot/"), "moonshotai/")
 	case ProviderXiaomi:
 		return trimPrefix(model, "xiaomi/")
+	case ProviderZai:
+		return trimPrefix(trimPrefix(trimPrefix(model, "zai/"), "z-ai/"), "z.ai/")
 	default:
 		return model
 	}
@@ -85,7 +92,7 @@ func Normalize(provider, model string) string {
 func NormalizeForRequest(provider, model string) string {
 	normalized := Normalize(provider, model)
 	switch Canonical(provider) {
-	case ProviderOpenAI, ProviderDeepSeek, ProviderMoonshot, ProviderXiaomi:
+	case ProviderOpenAI, ProviderDeepSeek, ProviderMoonshot, ProviderXiaomi, ProviderZai:
 		if IsKnown(provider, normalized) {
 			return strings.ToLower(normalized)
 		}
@@ -128,6 +135,15 @@ func IsKnown(provider, model string) bool {
 	case ProviderXiaomi:
 		return normalized == XiaomiUtilityModel || normalized == XiaomiProModel ||
 			strings.HasPrefix(normalized, "mimo-v2.5-")
+	case ProviderZai:
+		// Z.ai serves the GLM family under a single naming scheme (glm-5.1,
+		// glm-5.3-flash, glm-5v-turbo, glm-4.6, ...); accept the published
+		// generations plus any later point release rather than pinning an
+		// exact list that goes stale on the next model drop.
+		return normalized == ZaiDefaultModel || normalized == ZaiProModel ||
+			normalized == ZaiFlashModel || normalized == ZaiVisionModel ||
+			normalized == "glm-4.6" ||
+			strings.HasPrefix(normalized, "glm-5") || strings.HasPrefix(normalized, "glm-4.")
 	default:
 		// Unknown provider: nothing to validate against, stay permissive.
 		return true
@@ -159,6 +175,8 @@ func Accepted(provider string) []string {
 		return []string{MoonshotModel, "kimi-k2.6", "kimi-k3"}
 	case ProviderXiaomi:
 		return []string{XiaomiProModel, XiaomiUtilityModel}
+	case ProviderZai:
+		return []string{ZaiDefaultModel, ZaiProModel, ZaiFlashModel, ZaiVisionModel}
 	default:
 		return nil
 	}
@@ -171,7 +189,7 @@ func ProviderForModel(model string) string {
 	if strings.TrimSpace(model) == "" {
 		return ""
 	}
-	for _, provider := range []string{ProviderOpenAI, ProviderDeepSeek, ProviderMoonshot, ProviderXiaomi} {
+	for _, provider := range []string{ProviderOpenAI, ProviderDeepSeek, ProviderMoonshot, ProviderXiaomi, ProviderZai} {
 		if IsKnown(provider, model) {
 			return provider
 		}
