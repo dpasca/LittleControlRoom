@@ -257,6 +257,14 @@ func knownModelContextWindowTokens(provider, model string) (int64, bool) {
 		if tokens, ok := modelContextWindowHint(name); ok {
 			return tokens, true
 		}
+		// Z.ai documents 1M context for these exact GLM-5.3 model IDs:
+		// https://docs.z.ai/guides/llm/glm-5.3
+		// https://docs.z.ai/guides/llm/glm-5.3-flash
+		modelID := name[strings.LastIndex(name, "/")+1:]
+		switch modelID {
+		case "glm-5.3", "glm-5.3-flash", "glm-5.3-flashx":
+			return 1000000, true
+		}
 		switch {
 		case strings.Contains(name, "mimo-v2.5-pro"):
 			return 1000000, true

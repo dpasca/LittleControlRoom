@@ -3335,6 +3335,13 @@ func TestLCAgentContextCapacityAndBudgetFollowModelChanges(t *testing.T) {
 	if snapshot.ModelContextWindow != 1_000_000 || snapshot.CompactionTokenBudget != 700_000 {
 		t.Fatalf("Flash usage = %+v, want 1M capacity and 700k budget", snapshot)
 	}
+	s.modelProvider = "zai"
+	s.model = "glm-5.3-flash"
+	s.applyContextWindowToTokenUsageLocked(usage)
+	snapshot = exportedTokenUsageSnapshot(usage)
+	if snapshot.ModelContextWindow != 1_000_000 || snapshot.CompactionTokenBudget != 700_000 {
+		t.Fatalf("GLM Flash usage = %+v, want 1M capacity and 700k budget", snapshot)
+	}
 	s.model = "future-model"
 	s.applyContextWindowToTokenUsageLocked(usage)
 	snapshot = exportedTokenUsageSnapshot(usage)
