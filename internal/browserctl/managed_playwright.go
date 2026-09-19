@@ -824,7 +824,28 @@ func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]
 			`revealAndVerifyInteractive();`,
 		)
 	} else {
-		lines = append(lines, `updateProcessVisibility();`)
+		// AXHidden can report success while NSRunningApplication remains hidden.
+		// Use AppKit's unhide (without activation) and verify the actual state
+		// before allowing a screenshot to reach Chromium's compositor.
+		// unhide's return value can be false even when the app becomes visible.
+		lines = append(lines,
+			`function unhideAndVerify() {`,
+			`  for (let attempt = 0; attempt < 4; attempt++) {`,
+			`    let state = currentApplicationState();`,
+			`    if (!state.application || state.terminated) {`,
+			`      throw new Error("managed browser process " + pid + " is not running");`,
+			`    }`,
+			`    state.application.unhide;`,
+			`    $.NSThread.sleepForTimeInterval(0.150);`,
+			`    state = currentApplicationState();`,
+			`    if (state.application && !state.terminated && !Boolean(state.application.hidden)) {`,
+			`      return;`,
+			`    }`,
+			`  }`,
+			`  throw new Error("managed browser process " + pid + " remained hidden after unhide");`,
+			`}`,
+			`unhideAndVerify();`,
+		)
 	}
 	return []string{"-l", "JavaScript", "-e", strings.Join(lines, "\n")}, nil
 }

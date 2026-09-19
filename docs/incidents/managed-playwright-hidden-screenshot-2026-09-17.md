@@ -62,3 +62,31 @@ an isolated database in this worktree's ignored `dist/` directory. A local
 its pinned wrapper were not replaced during verification.
 An isolated `make tui` session also launched in a real PTY, rendered the dashboard,
 and exited through the quit dialog.
+
+## September 20 follow-up: successful AX call left Chromium hidden
+
+LCAgent again timed out after fonts loaded when capturing a bare YouTube CDN
+image. The same failure reproduced through Codex's registered MCP tool with
+both viewport and full-page captures. The running helper contained the capture
+guard, and its screenshot lease remained present throughout the timeout.
+Reading `NSRunningApplication.hidden` during capture showed that Chromium was
+still hidden: setting `AXHidden` to false had returned successfully without
+actually unhiding the application.
+
+Calling `NSRunningApplication.unhide` during the next leased capture allowed
+the screenshot to finish, with `active` remaining false. Its boolean return
+was false even though the application became visible, so the capture path now
+calls native `unhide` and verifies the application's actual `hidden` state with
+bounded retries. A failure to unhide becomes an explicit preparation error.
+The interactive foreground-reveal path is unchanged.
+
+The patched guard passed `TestManagedScreenshotExistingSession` against this
+same browser, with the full-page capture performed through the registered MCP
+tool. After lease release, native state was hidden and inactive again. This
+check exercises the updated guard while the registered wrapper remains pinned
+to the running build; rebuilding and restarting is still needed for deployment.
+
+`make test`, `make scan`, and `make doctor` passed; scan and doctor used an
+isolated database under this worktree's ignored `dist/` directory. An isolated
+PTY-backed `make tui` rendered successfully and was stopped with SIGTERM.
+The updated binary is built at `dist/lcroom-screenshot-unhide`.

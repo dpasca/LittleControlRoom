@@ -621,6 +621,29 @@ func TestMacApplicationProcessVisibilityScriptAttemptsEarlyHideBeforeAXFallback(
 	}
 }
 
+func TestMacApplicationProcessScreenshotUnhideVerifiesNativeVisibility(t *testing.T) {
+	args, err := macApplicationProcessVisibilityScript(49916, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := strings.Join(args, "\n")
+	for _, want := range []string{
+		`state.application.unhide;`,
+		`!Boolean(state.application.hidden)`,
+		`remained hidden after unhide`,
+		`unhideAndVerify();`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("screenshot unhide missing %q:\n%s", want, script)
+		}
+	}
+	for _, forbidden := range []string{`activateWithOptions`, `AXFrontmost`, `Boolean(state.application.unhide)`} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("screenshot must verify visibility without activation or trusting unhide's return: %s", forbidden)
+		}
+	}
+}
+
 func TestSetMacApplicationProcessVisibleBoundsVerifiedReveal(t *testing.T) {
 	type invocation struct {
 		args    []string
