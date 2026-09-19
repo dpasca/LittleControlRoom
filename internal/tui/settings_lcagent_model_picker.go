@@ -83,7 +83,8 @@ func settingsFieldUsesProjectCloudModelPicker(index int) bool {
 	return index == settingsFieldOpenRouterModel ||
 		index == settingsFieldDeepSeekModel ||
 		index == settingsFieldMoonshotModel ||
-		index == settingsFieldXiaomiModel
+		index == settingsFieldXiaomiModel ||
+		index == settingsFieldZaiModel
 }
 
 func settingsFieldUsesBossCloudModelPicker(index int) bool {
@@ -320,6 +321,8 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 		MoonshotAPIKey:   settings.MoonshotAPIKey,
 		XiaomiAPIKey:     settings.XiaomiAPIKey,
 		XiaomiBaseURL:    settings.XiaomiBaseURL,
+		ZaiAPIKey:        settings.ZaiAPIKey,
+		ZaiBaseURL:       settings.ZaiBaseURL,
 		OllamaAPIKey:     settings.OllamaAPIKey,
 		OllamaBaseURL:    settings.OllamaBaseURL,
 		OllamaModel:      settings.OllamaModel,
@@ -1391,7 +1394,7 @@ func settingsLCAgentModelPickerProviderOptions(fieldIndex int) []settingsLCAgent
 		return settingsLCAgentUtilityProviderOptions()
 	case settingsFieldLCAgentVisionModel:
 		return settingsLCAgentVisionProviderOptions()
-	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
+	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel, settingsFieldZaiModel:
 		return settingsProjectCloudModelProviderOptions()
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return nil
@@ -1425,6 +1428,12 @@ func settingsProjectCloudModelProviderOptions() []settingsLCAgentProviderOption 
 			Label:       "Xiaomi",
 			Summary:     "Use direct Xiaomi MiMo for project reports and background summaries.",
 			Description: "Uses the shared Xiaomi API key and MiMo model IDs.",
+		},
+		{
+			Value:       "zai",
+			Label:       "Z.ai",
+			Summary:     "Use direct Z.ai GLM for project reports and background summaries.",
+			Description: "Uses the shared Z.ai API key, base URL, and GLM model IDs.",
 		},
 	}
 }
@@ -1515,7 +1524,7 @@ func settingsLCAgentModelPickerUsesReasoning(fieldIndex int) bool {
 
 func settingsLCAgentModelPickerRoleLabel(fieldIndex int) string {
 	switch fieldIndex {
-	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
+	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel, settingsFieldZaiModel:
 		return "Project reports model"
 	case settingsFieldBossChatModel:
 		return "Chat main model"
@@ -1726,6 +1735,8 @@ func settingsLCAgentModelPickerProviderLabel(provider string) string {
 		return "Moonshot"
 	case "xiaomi":
 		return "Xiaomi"
+	case "zai":
+		return "Z.ai"
 	case "ollama":
 		return "Ollama"
 	default:
@@ -1743,6 +1754,8 @@ func settingsProjectCloudModelFieldBackend(fieldIndex int) config.AIBackend {
 		return config.AIBackendMoonshot
 	case settingsFieldXiaomiModel:
 		return config.AIBackendXiaomi
+	case settingsFieldZaiModel:
+		return config.AIBackendZai
 	default:
 		return config.AIBackendUnset
 	}
@@ -1758,6 +1771,8 @@ func settingsProjectCloudModelFieldForBackend(backend config.AIBackend) int {
 		return settingsFieldMoonshotModel
 	case config.AIBackendXiaomi:
 		return settingsFieldXiaomiModel
+	case config.AIBackendZai:
+		return settingsFieldZaiModel
 	default:
 		return -1
 	}
@@ -1773,6 +1788,8 @@ func settingsProjectCloudModelRawValue(settings config.EditableSettings, backend
 		return strings.TrimSpace(settings.MoonshotModel)
 	case config.AIBackendXiaomi:
 		return strings.TrimSpace(settings.XiaomiModel)
+	case config.AIBackendZai:
+		return strings.TrimSpace(settings.ZaiModel)
 	default:
 		return ""
 	}
@@ -1790,6 +1807,8 @@ func settingsCloudModelProviderForBackend(backend config.AIBackend) string {
 		return "moonshot"
 	case config.AIBackendXiaomi:
 		return "xiaomi"
+	case config.AIBackendZai:
+		return "zai"
 	default:
 		return ""
 	}
@@ -1807,6 +1826,8 @@ func settingsCloudModelBackendForProvider(provider string) config.AIBackend {
 		return config.AIBackendMoonshot
 	case "xiaomi":
 		return config.AIBackendXiaomi
+	case "zai":
+		return config.AIBackendZai
 	default:
 		return config.AIBackendUnset
 	}
@@ -1839,6 +1860,8 @@ func settingsModelPickerAPIKeyField(provider string) int {
 		return settingsFieldMoonshotAPIKey
 	case "xiaomi":
 		return settingsFieldXiaomiAPIKey
+	case "zai":
+		return settingsFieldZaiAPIKey
 	case "ollama":
 		return settingsFieldOllamaAPIKey
 	default:
@@ -1850,6 +1873,8 @@ func settingsModelPickerBaseURLField(provider string) int {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xiaomi":
 		return settingsFieldXiaomiBaseURL
+	case "zai":
+		return settingsFieldZaiBaseURL
 	case "ollama":
 		return settingsFieldOllamaBaseURL
 	default:
@@ -1861,6 +1886,8 @@ func settingsModelPickerSavedBaseURL(settings config.EditableSettings, provider 
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xiaomi":
 		return strings.TrimSpace(settings.XiaomiBaseURL)
+	case "zai":
+		return strings.TrimSpace(settings.ZaiBaseURL)
 	case "ollama":
 		return strings.TrimSpace(settings.OllamaBaseURL)
 	default:
@@ -1872,6 +1899,8 @@ func settingsModelPickerBaseURLLabel(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xiaomi":
 		return "Xiaomi base URL"
+	case "zai":
+		return "Z.ai base URL"
 	case "ollama":
 		return "Ollama base URL"
 	default:
@@ -1883,6 +1912,8 @@ func settingsModelPickerBaseURLPlaceholder(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xiaomi":
 		return config.AIBackendXiaomi.DefaultOpenAICompatibleBaseURL()
+	case "zai":
+		return config.AIBackendZai.DefaultOpenAICompatibleBaseURL()
 	case "ollama":
 		return config.AIBackendOllama.DefaultOpenAICompatibleBaseURL()
 	default:

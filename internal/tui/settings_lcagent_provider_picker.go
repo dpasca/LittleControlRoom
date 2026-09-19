@@ -41,6 +41,12 @@ func settingsLCAgentProviderOptions() []settingsLCAgentProviderOption {
 			Description: "Uses the saved Xiaomi API key, with env file or process environment as an advanced fallback.",
 		},
 		{
+			Value:       "zai",
+			Label:       "Z.ai",
+			Summary:     "Use the direct Z.ai GLM route for LCAgent.",
+			Description: "Uses the saved Z.ai API key (or ZAI_API_KEY), plus the optional Z.ai base URL for GLM Coding Plan subscriptions.",
+		},
+		{
 			Value:       "ollama",
 			Label:       "Ollama",
 			Summary:     "Use a local Ollama OpenAI-compatible endpoint for LCAgent.",
@@ -92,6 +98,12 @@ func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 			Label:       "Xiaomi",
 			Summary:     "Use the direct Xiaomi MiMo route for utility work.",
 			Description: "Uses the saved Xiaomi API key. Leave Utility Model blank to use the standard Xiaomi LCAgent model default.",
+		},
+		{
+			Value:       "zai",
+			Label:       "Z.ai",
+			Summary:     "Use the direct Z.ai GLM route for utility work.",
+			Description: "Uses the saved Z.ai API key. Leave Utility Model blank to use the standard Z.ai LCAgent model default (GLM-5.3 Flash).",
 		},
 		{
 			Value:       "ollama",
@@ -151,6 +163,12 @@ func settingsLCAgentVisionProviderOptions() []settingsLCAgentProviderOption {
 			Label:       "Xiaomi",
 			Summary:     "Use direct Xiaomi MiMo for image analysis.",
 			Description: "Uses the saved Xiaomi API key. Choose a model that supports image input.",
+		},
+		{
+			Value:       "zai",
+			Label:       "Z.ai",
+			Summary:     "Use direct Z.ai GLM for image analysis.",
+			Description: "Uses the saved Z.ai API key. Choose a model that supports image input, for example glm-5v-turbo.",
 		},
 		{
 			Value:       "ollama",

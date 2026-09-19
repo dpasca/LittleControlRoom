@@ -680,6 +680,8 @@ func (m Model) setupConfigFieldIndexes() []int {
 			return []int{settingsFieldMoonshotAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
 		case config.AIBackendXiaomi:
 			return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
+		case config.AIBackendZai:
+			return []int{settingsFieldZaiBaseURL, settingsFieldZaiAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
 		case config.AIBackendMLX:
 			return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 		case config.AIBackendOllama:
@@ -699,6 +701,8 @@ func (m Model) setupConfigFieldIndexes() []int {
 		return []int{settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel}
 	case config.AIBackendXiaomi:
 		return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldXiaomiModel}
+	case config.AIBackendZai:
+		return []int{settingsFieldZaiBaseURL, settingsFieldZaiAPIKey, settingsFieldZaiModel}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
@@ -749,6 +753,9 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.XiaomiBaseURL = m.settingsFieldValue(settingsFieldXiaomiBaseURL)
 	settings.XiaomiAPIKey = m.settingsFieldValue(settingsFieldXiaomiAPIKey)
 	settings.XiaomiModel = m.settingsFieldValue(settingsFieldXiaomiModel)
+	settings.ZaiBaseURL = m.settingsFieldValue(settingsFieldZaiBaseURL)
+	settings.ZaiAPIKey = m.settingsFieldValue(settingsFieldZaiAPIKey)
+	settings.ZaiModel = m.settingsFieldValue(settingsFieldZaiModel)
 	settings.ProjectReasoningEffort = m.settingsFieldValue(settingsFieldProjectReasoning)
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)

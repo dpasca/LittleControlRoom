@@ -33,6 +33,9 @@ const (
 	settingsFieldXiaomiBaseURL
 	settingsFieldXiaomiAPIKey
 	settingsFieldXiaomiModel
+	settingsFieldZaiBaseURL
+	settingsFieldZaiAPIKey
+	settingsFieldZaiModel
 	settingsFieldProjectReasoning
 	settingsFieldBossChatBackend
 	settingsFieldBossChatModel
@@ -247,6 +250,8 @@ func settingsSections() []settingsSection {
 				settingsFieldMoonshotAPIKey,
 				settingsFieldXiaomiBaseURL,
 				settingsFieldXiaomiAPIKey,
+				settingsFieldZaiBaseURL,
+				settingsFieldZaiAPIKey,
 				settingsFieldLCAgentWebSearchBackend,
 				settingsFieldLCAgentWebSearchAPIKey,
 				settingsFieldLCAgentWebSearchEngineID,
@@ -898,9 +903,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.MoonshotModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldMoonshotModel))
 	settings.XiaomiBaseURL = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiBaseURL))
 	settings.XiaomiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiModel))
-	settings.ZaiBaseURL = strings.TrimSpace(baseline.ZaiBaseURL)
-	settings.ZaiAPIKey = strings.TrimSpace(baseline.ZaiAPIKey)
-	settings.ZaiModel = strings.TrimSpace(baseline.ZaiModel)
+	settings.ZaiBaseURL = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiBaseURL))
+	settings.ZaiAPIKey = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiAPIKey))
+	settings.ZaiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiModel))
 	settings.ProjectReasoningEffort = strings.TrimSpace(m.settingsFieldValue(settingsFieldProjectReasoning))
 	lcagentRoutePreset := settings.LCAgentRoutePreset
 	lcagentProvider := settings.LCAgentProvider
@@ -1205,6 +1210,19 @@ func (m Model) settingsFieldVisible(index int) bool {
 	case settingsFieldXiaomiModel:
 		return settings.AIBackend == config.AIBackendXiaomi ||
 			strings.TrimSpace(settings.XiaomiModel) != ""
+	case settingsFieldZaiBaseURL:
+		return settings.AIBackend == config.AIBackendZai ||
+			settings.BossChatBackend == config.AIBackendZai ||
+			settingsLCAgentCredentialFieldRelevant(settings, "zai") ||
+			strings.TrimSpace(settings.ZaiBaseURL) != ""
+	case settingsFieldZaiAPIKey:
+		return settings.AIBackend == config.AIBackendZai ||
+			settings.BossChatBackend == config.AIBackendZai ||
+			settingsLCAgentCredentialFieldRelevant(settings, "zai") ||
+			strings.TrimSpace(settings.ZaiAPIKey) != ""
+	case settingsFieldZaiModel:
+		return settings.AIBackend == config.AIBackendZai ||
+			strings.TrimSpace(settings.ZaiModel) != ""
 	case settingsFieldProjectReasoning:
 		return settingsProjectReasoningFieldRelevant(settings)
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
@@ -1250,6 +1268,7 @@ func settingsFieldIsSensitiveAPIKey(index int) bool {
 		settingsFieldDeepSeekAPIKey,
 		settingsFieldMoonshotAPIKey,
 		settingsFieldXiaomiAPIKey,
+		settingsFieldZaiAPIKey,
 		settingsFieldMLXAPIKey,
 		settingsFieldOllamaAPIKey,
 		settingsFieldLCAgentWebSearchAPIKey:
@@ -1272,6 +1291,8 @@ func (m Model) settingsSensitiveAPIKeyBaselineValue(index int) string {
 		return strings.TrimSpace(settings.MoonshotAPIKey)
 	case settingsFieldXiaomiAPIKey:
 		return strings.TrimSpace(settings.XiaomiAPIKey)
+	case settingsFieldZaiAPIKey:
+		return strings.TrimSpace(settings.ZaiAPIKey)
 	case settingsFieldMLXAPIKey:
 		return strings.TrimSpace(settings.MLXAPIKey)
 	case settingsFieldOllamaAPIKey:
@@ -1387,6 +1408,8 @@ func settingsProviderDetailField(backend config.AIBackend) int {
 		return settingsFieldMoonshotAPIKey
 	case config.AIBackendXiaomi:
 		return settingsFieldXiaomiBaseURL
+	case config.AIBackendZai:
+		return settingsFieldZaiBaseURL
 	case config.AIBackendMLX:
 		return settingsFieldMLXBaseURL
 	case config.AIBackendOllama:
@@ -1477,6 +1500,8 @@ func settingsProjectProviderConnectionFields(backend config.AIBackend) []int {
 		return []int{settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel}
 	case config.AIBackendXiaomi:
 		return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldXiaomiModel, settingsFieldProjectReasoning}
+	case config.AIBackendZai:
+		return []int{settingsFieldZaiBaseURL, settingsFieldZaiAPIKey, settingsFieldZaiModel, settingsFieldProjectReasoning}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
@@ -1510,6 +1535,8 @@ func settingsBossProviderConnectionFields(backend config.AIBackend) []int {
 		return []int{settingsFieldMoonshotAPIKey}
 	case config.AIBackendXiaomi:
 		return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey}
+	case config.AIBackendZai:
+		return []int{settingsFieldZaiBaseURL, settingsFieldZaiAPIKey}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
@@ -1542,6 +1569,10 @@ func appendSettingsLCAgentConnectionFields(fields []int, provider string) []int 
 		fields = appendUniqueSettingsField(fields, settingsFieldXiaomiBaseURL)
 		fields = appendUniqueSettingsField(fields, settingsFieldXiaomiAPIKey)
 		return fields
+	case "zai":
+		fields = appendUniqueSettingsField(fields, settingsFieldZaiBaseURL)
+		fields = appendUniqueSettingsField(fields, settingsFieldZaiAPIKey)
+		return fields
 	case "ollama":
 		fields = appendUniqueSettingsField(fields, settingsFieldOllamaBaseURL)
 		fields = appendUniqueSettingsField(fields, settingsFieldOllamaAPIKey)
@@ -1573,6 +1604,8 @@ func settingsLCAgentCredentialFieldForProvider(provider string) int {
 		return settingsFieldMoonshotAPIKey
 	case "xiaomi":
 		return settingsFieldXiaomiAPIKey
+	case "zai":
+		return settingsFieldZaiAPIKey
 	case "ollama":
 		return settingsFieldOllamaAPIKey
 	default:
@@ -1959,9 +1992,9 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.XiaomiBaseURL = m.settingsFieldValue(settingsFieldXiaomiBaseURL)
 	settings.XiaomiAPIKey = m.settingsFieldValue(settingsFieldXiaomiAPIKey)
 	settings.XiaomiModel = m.settingsFieldValue(settingsFieldXiaomiModel)
-	settings.ZaiBaseURL = strings.TrimSpace(m.currentSettingsBaseline().ZaiBaseURL)
-	settings.ZaiAPIKey = strings.TrimSpace(m.currentSettingsBaseline().ZaiAPIKey)
-	settings.ZaiModel = strings.TrimSpace(m.currentSettingsBaseline().ZaiModel)
+	settings.ZaiBaseURL = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiBaseURL))
+	settings.ZaiAPIKey = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiAPIKey))
+	settings.ZaiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiModel))
 	settings.ProjectReasoningEffort = m.settingsFieldValue(settingsFieldProjectReasoning)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
@@ -2554,6 +2587,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Shared MLX Connection"
 		case settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldXiaomiModel:
 			return "Shared Xiaomi Connection"
+		case settingsFieldZaiBaseURL, settingsFieldZaiAPIKey, settingsFieldZaiModel:
+			return "Shared Z.ai Connection"
 		case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 			return "Shared Ollama Connection"
 		}
@@ -2571,6 +2606,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Shared Moonshot Connection"
 		case settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey:
 			return "Shared Xiaomi Connection"
+		case settingsFieldZaiBaseURL, settingsFieldZaiAPIKey:
+			return "Shared Z.ai Connection"
 		case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 			return "Shared MLX Connection"
 		case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
@@ -2586,7 +2623,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Coding Route"
 		case settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
 			return "Main Model"
-		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey:
+		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldZaiBaseURL, settingsFieldZaiAPIKey:
 			return "Provider Credentials"
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
 			return "Utility Model"
@@ -2629,6 +2666,7 @@ func (m Model) renderProviderConnectionsStatus(width int) []string {
 	lines = append(lines, m.renderProviderConnectionLine("DeepSeek", settingsCloudConnectionState(settings, config.AIBackendDeepSeek), settingsProviderUsers(settings, config.AIBackendDeepSeek), width))
 	lines = append(lines, m.renderProviderConnectionLine("Moonshot", settingsCloudConnectionState(settings, config.AIBackendMoonshot), settingsProviderUsers(settings, config.AIBackendMoonshot), width))
 	lines = append(lines, m.renderProviderConnectionLine("Xiaomi MiMo", settingsCloudConnectionState(settings, config.AIBackendXiaomi), settingsProviderUsers(settings, config.AIBackendXiaomi), width))
+	lines = append(lines, m.renderProviderConnectionLine("Z.ai GLM", settingsCloudConnectionState(settings, config.AIBackendZai), settingsProviderUsers(settings, config.AIBackendZai), width))
 	lines = append(lines, m.renderProviderConnectionLine("MLX", settingsLocalConnectionState(settings, config.AIBackendMLX), settingsProviderUsers(settings, config.AIBackendMLX), width))
 	lines = append(lines, m.renderProviderConnectionLine("Ollama", settingsLocalConnectionState(settings, config.AIBackendOllama), settingsProviderUsers(settings, config.AIBackendOllama), width))
 
@@ -2697,6 +2735,8 @@ func settingsCloudConnectionState(settings config.EditableSettings, backend conf
 		relevant = relevant || settingsLCAgentCredentialFieldRelevant(settings, "moonshot")
 	case config.AIBackendXiaomi:
 		relevant = relevant || settingsLCAgentCredentialFieldRelevant(settings, "xiaomi")
+	case config.AIBackendZai:
+		relevant = relevant || settingsLCAgentCredentialFieldRelevant(settings, "zai")
 	}
 	if backend == config.AIBackendXiaomi &&
 		config.LooksLikeXiaomiTokenPlanAPIKey(settings.XiaomiAPIKey) &&
@@ -2753,6 +2793,9 @@ func settingsProviderUsers(settings config.EditableSettings, backend config.AIBa
 		users = append(users, "LCAgent")
 	}
 	if backend == config.AIBackendXiaomi && settingsLCAgentCredentialFieldRelevant(settings, "xiaomi") {
+		users = append(users, "LCAgent")
+	}
+	if backend == config.AIBackendZai && settingsLCAgentCredentialFieldRelevant(settings, "zai") {
 		users = append(users, "LCAgent")
 	}
 	return users
@@ -2901,7 +2944,7 @@ func settingsBossHelmOverviewModel(settings config.EditableSettings) string {
 		return modelName
 	}
 	switch settings.BossChatBackend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		return settings.BossChatBackend.DefaultBossHelmModel()
 	case config.AIBackendMLX, config.AIBackendOllama:
 		return strings.TrimSpace(settings.OpenAICompatibleModel(settings.BossChatBackend))
@@ -3018,6 +3061,8 @@ func lcagentProviderSavedAPIKey(settings config.EditableSettings, provider strin
 		return strings.TrimSpace(settings.MoonshotAPIKey)
 	case "xiaomi":
 		return strings.TrimSpace(settings.XiaomiAPIKey)
+	case "zai":
+		return strings.TrimSpace(settings.ZaiAPIKey)
 	case "ollama":
 		return strings.TrimSpace(settings.OllamaAPIKey)
 	default:
@@ -3037,6 +3082,8 @@ func lcagentProviderSavedKeyLabel(provider string) string {
 		return "Moonshot API key"
 	case "xiaomi":
 		return "Xiaomi API key"
+	case "zai":
+		return "Z.ai API key"
 	case "ollama":
 		return "Ollama API key"
 	default:
@@ -3050,6 +3097,8 @@ func lcagentProviderForRoutePreset(preset string) string {
 		return "openai"
 	case "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
 		return "xiaomi"
+	case "glm", "glm-5", "glm51", "glm-5.1", "zai", "zai-glm":
+		return "zai"
 	case "balanced", "cheap-scout", "cheap", "scout":
 		return "deepseek"
 	default:
@@ -3065,6 +3114,8 @@ func lcagentModelForRoutePreset(preset string) string {
 		return "deepseek-v4-pro"
 	case "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
 		return "mimo-v2.5-pro"
+	case "glm", "glm-5", "glm51", "glm-5.1", "zai", "zai-glm":
+		return config.DefaultZaiModel
 	case "cheap-scout", "cheap", "scout":
 		return "deepseek-v4-flash"
 	default:
@@ -3084,6 +3135,8 @@ func lcagentProviderAPIKeyName(provider string) string {
 		return "MOONSHOT_API_KEY"
 	case "xiaomi":
 		return "XIAOMI_API_KEY"
+	case "zai":
+		return "ZAI_API_KEY"
 	case "ollama":
 		return "OLLAMA_API_KEY"
 	default:
@@ -3101,6 +3154,8 @@ func lcagentDefaultModelForProvider(provider string) string {
 		return config.DefaultMoonshotModel
 	case "xiaomi":
 		return "mimo-v2.5-pro"
+	case "zai":
+		return config.DefaultZaiModel
 	case "ollama":
 		return "first local Ollama model"
 	default:
@@ -3112,6 +3167,8 @@ func lcagentDefaultUtilityModelForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xiaomi":
 		return "mimo-v2.5"
+	case "zai":
+		return modeladapter.DefaultZaiUtilityModel
 	case "ollama":
 		return "first local Ollama model"
 	default:
@@ -3149,6 +3206,9 @@ func settingsLCAgentUtilityDefaultLabelForProvider(settings config.EditableSetti
 		if strings.EqualFold(settingsLCAgentMainProvider(settings), "xiaomi") {
 			return "same provider utility default (" + mainProvider + " / " + lcagentDefaultUtilityModelForProvider("xiaomi") + ")"
 		}
+		if strings.EqualFold(settingsLCAgentMainProvider(settings), "zai") {
+			return "same provider utility default (" + mainProvider + " / " + lcagentDefaultUtilityModelForProvider("zai") + ")"
+		}
 		return "same as Main Model (" + mainProvider + " / " + settingsLCAgentMainModel(settings) + ")"
 	}
 	return lcagentDefaultUtilityModelForProvider(provider)
@@ -3159,7 +3219,7 @@ func settingsLCAgentUtilityProviderValue(raw string) string {
 	switch normalized {
 	case "", "main", "same", "same-as-main":
 		return "main"
-	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "zai", "ollama":
 		return normalized
 	default:
 		return normalized
@@ -3235,7 +3295,7 @@ func settingsLCAgentProviderForExplicitVisionModel(model string) string {
 	if model == "" {
 		return ""
 	}
-	for _, provider := range []string{"openai", "deepseek", "moonshot", "xiaomi"} {
+	for _, provider := range []string{"openai", "deepseek", "moonshot", "xiaomi", "zai"} {
 		normalized := modeladapter.NormalizeModelForProvider(provider, model)
 		if modeladapter.ModelIsKnownForProvider(provider, normalized) {
 			return provider
@@ -3261,7 +3321,7 @@ func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
 	}
 	switch settings.BossChatBackend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		return settings.BossChatBackend.DefaultBossHelmModel() + " from " + settings.BossChatBackend.Label()
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := settingsOpenAICompatibleModel(settings, settings.BossChatBackend); modelName != "" {
@@ -3278,7 +3338,7 @@ func settingsBossUtilityDefaultLabel(settings config.EditableSettings) string {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
 	}
 	switch settings.BossChatBackend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendZai:
 		return settings.BossChatBackend.DefaultBossUtilityModel() + " from " + settings.BossChatBackend.Label()
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := settingsOpenAICompatibleModel(settings, settings.BossChatBackend); modelName != "" {
@@ -3300,6 +3360,8 @@ func settingsOpenAICompatibleModel(settings config.EditableSettings, backend con
 		return strings.TrimSpace(settings.MoonshotModel)
 	case config.AIBackendXiaomi:
 		return strings.TrimSpace(settings.XiaomiModel)
+	case config.AIBackendZai:
+		return strings.TrimSpace(settings.ZaiModel)
 	case config.AIBackendMLX:
 		return strings.TrimSpace(settings.MLXModel)
 	case config.AIBackendOllama:
@@ -3598,6 +3660,8 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 		return "Default: " + config.DefaultMoonshotModel
 	case settingsFieldXiaomiModel:
 		return "Default: " + config.DefaultXiaomiModel
+	case settingsFieldZaiModel:
+		return "Default: " + config.DefaultZaiModel
 	case settingsFieldLCAgentModel:
 		return "Default: " + settingsLCAgentMainModel(settings)
 	case settingsFieldLCAgentUtilityModel:
@@ -3648,7 +3712,7 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 		} else {
 			action = "Next: paste a key here for the selected OpenAI API path, or go back and choose a local/off provider."
 		}
-	case settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiAPIKey:
+	case settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiAPIKey, settingsFieldZaiAPIKey:
 		if editHint, edited := m.settingsSensitiveAPIKeyEditHint(m.settingsSelected); edited {
 			action = editHint
 		} else if suffix := m.settingsSensitiveAPIKeyStableSuffix(m.settingsSelected); suffix != "" {
@@ -3820,6 +3884,30 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settings.XiaomiModel,
 			128,
 			"Default: "+config.DefaultXiaomiModel,
+			settingsSectionAI,
+		),
+		newSettingsFieldWithPlaceholder(
+			"Z.ai base URL",
+			"OpenAI-compatible Z.ai endpoint. Pay-as-you-go keys use the default https://api.z.ai/api/paas/v4; GLM Coding Plan subscriptions use https://api.z.ai/api/coding/paas/v4",
+			settings.ZaiBaseURL,
+			512,
+			"Default: "+config.AIBackendZai.DefaultOpenAICompatibleBaseURL(),
+			settingsSectionLCAgent,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"Z.ai API key",
+			"Shared by Project reports, Chat, and LCAgent when they use direct Z.ai GLM.",
+			settings.ZaiAPIKey,
+			512,
+			"Paste Z.ai API key",
+			settingsSectionLCAgent,
+		),
+		newSettingsFieldWithPlaceholder(
+			"Z.ai project model",
+			"Model ID used by Z.ai GLM for project reports, summaries, classification, commit messages, and TODO suggestions. Chat has separate model fields.",
+			settings.ZaiModel,
+			128,
+			"Default: "+config.DefaultZaiModel,
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -4264,6 +4352,9 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.XiaomiBaseURL = strings.TrimSpace(settings.XiaomiBaseURL)
 	settings.XiaomiAPIKey = strings.TrimSpace(settings.XiaomiAPIKey)
 	settings.XiaomiModel = strings.TrimSpace(settings.XiaomiModel)
+	settings.ZaiBaseURL = strings.TrimSpace(settings.ZaiBaseURL)
+	settings.ZaiAPIKey = strings.TrimSpace(settings.ZaiAPIKey)
+	settings.ZaiModel = strings.TrimSpace(settings.ZaiModel)
 	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
@@ -4431,6 +4522,20 @@ func (m Model) settingsFieldHint(index int) string {
 			return field.hint + " The selected Xiaomi path still needs a saved key."
 		}
 		return field.hint
+	case settingsFieldZaiBaseURL:
+		if url := strings.TrimSpace(field.input.Value()); url != "" {
+			return "Z.ai requests will use " + url + ". GLM Coding Plan subscriptions use " + config.ZaiCodingPlanBaseURL + "."
+		}
+		return "Blank uses " + config.AIBackendZai.DefaultOpenAICompatibleBaseURL() + ". GLM Coding Plan subscriptions use " + config.ZaiCodingPlanBaseURL + "."
+	case settingsFieldZaiAPIKey:
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for Z.ai-backed features.", "."); ok {
+			return hint
+		}
+		settings := m.settingsDraftForInferenceStatus()
+		if settings.AIBackend == config.AIBackendZai || settings.BossChatBackend == config.AIBackendZai || settingsLCAgentCredentialFieldRelevant(settings, "zai") {
+			return field.hint + " The selected Z.ai path still needs a saved key."
+		}
+		return field.hint
 	case settingsFieldOpenRouterModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			return "Project reports and background helpers will request OpenRouter model " + model + ". Chat model fields remain separate."
@@ -4551,6 +4656,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "The Main Model will call DeepSeek directly and use direct DeepSeek model IDs."
 		case "moonshot":
 			return "The Main Model will call Moonshot directly and use Kimi model IDs."
+		case "zai":
+			return "The Main Model will call Z.ai directly and use GLM model IDs."
 		case "xiaomi":
 			return "The Main Model will call Xiaomi directly and use MiMo model IDs."
 		case "ollama":
@@ -4586,6 +4693,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "The Utility Model will use direct OpenAI. Leave the model blank for the OpenAI Main Model default."
 		case "moonshot":
 			return "The Utility Model will use direct Moonshot/Kimi."
+		case "zai":
+			return "The Utility Model will use direct Z.ai GLM."
 		case "xiaomi":
 			return "The Utility Model will use direct Xiaomi MiMo."
 		case "ollama":
@@ -4616,6 +4725,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "analyze_image will use direct OpenAI. Pick a model that supports image input; press v to check the selected route."
 		case "moonshot":
 			return "analyze_image will use direct Moonshot/Kimi. Pick a model that supports image input; press v to check the selected route."
+		case "zai":
+			return "analyze_image will use direct Z.ai GLM. Pick a model that supports image input; press v to check the selected route."
 		case "xiaomi":
 			return "analyze_image will use direct Xiaomi MiMo. Pick a model that supports image input; press v to check the selected route."
 		case "ollama":

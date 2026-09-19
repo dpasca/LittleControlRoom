@@ -235,6 +235,10 @@ func (m Model) settingsFromCodexLCAgentProviderSetup(state *codexLCAgentProvider
 			settings.XiaomiBaseURL = value
 		case settingsFieldXiaomiAPIKey:
 			settings.XiaomiAPIKey = value
+		case settingsFieldZaiBaseURL:
+			settings.ZaiBaseURL = value
+		case settingsFieldZaiAPIKey:
+			settings.ZaiAPIKey = value
 		case settingsFieldOllamaBaseURL:
 			settings.OllamaBaseURL = value
 		case settingsFieldOllamaAPIKey:
