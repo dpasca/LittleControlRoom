@@ -102,10 +102,10 @@ func TestLCAgentManualCommandRendersDedicatedWarningDialog(t *testing.T) {
 		"Working directory: /tmp/YouClip2",
 		"./bin/yt-dlp -U",
 		"This dialog does not execute or approve the command.",
-		"C copy command",
-		"R I ran it — verify",
-		"S skip",
-		"O report another outcome",
+		"c copy command",
+		"r I ran it — verify",
+		"s skip",
+		"o report another outcome",
 		"Esc hide pane",
 	} {
 		if !strings.Contains(normalized, want) {
@@ -241,6 +241,12 @@ func TestCommandApprovalRunsThroughAgentAndBlocksRepeatedSubmission(t *testing.T
 	m, session := testManualCommandModel(t)
 	request := session.snapshot.PendingToolInput
 	request.ManualCommand.CanExecute = true
+	for _, key := range []rune{'A', 'C', 'R', 'S', 'O'} {
+		_, cmd := m.updateCodexManualCommandMode(request, request.ManualCommand, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if cmd != nil {
+			t.Fatalf("uppercase %c unexpectedly activated a lowercase binding", key)
+		}
+	}
 	content := ansi.Strip(m.renderCodexManualCommandDialogContent(session.snapshot, *request, *request.ManualCommand, 90))
 	if !strings.Contains(content, "approve and run once") || !strings.Contains(content, "Command approval required") {
 		t.Fatalf("approval UI: %s", content)

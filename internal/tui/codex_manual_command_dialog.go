@@ -45,7 +45,7 @@ func (m Model) renderCodexManualCommandDialogOverlay(body string, bodyW, bodyH i
 		content,
 		max(1, bodyH-2),
 		4,
-		detailMutedStyle.Render("... command details shortened to fit; press C to copy the full command ..."),
+		detailMutedStyle.Render("... command details shortened to fit; press c to copy the full command ..."),
 	)
 	panel := renderCodexManualCommandDialogPanel(panelW, panelInnerW, content)
 	left := max(0, (bodyW-lipgloss.Width(panel))/2)
@@ -115,9 +115,9 @@ func (m Model) renderCodexManualCommandDialogContent(
 		lines = append(lines, "", detailSectionStyle.Render("Report another outcome"), input.View(), "")
 		actions := []string{
 			renderDialogAction("Enter", "send outcome", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("Alt+Enter", "newline", pushActionKeyStyle, pushActionTextStyle),
+			renderDialogAction("alt+enter", "newline", pushActionKeyStyle, pushActionTextStyle),
 			renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
-			renderDialogAction("Alt+Up", "hide pane", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("alt+up", "hide pane", navigateActionKeyStyle, navigateActionTextStyle),
 		}
 		lines = append(lines, renderCodexElicitationActionLines(width, actions)...)
 		return strings.Join(lines, "\n")
@@ -133,10 +133,10 @@ func (m Model) renderCodexManualCommandDialogContent(
 		copyTextStyle = disabledActionTextStyle
 	}
 	actions := []string{
-		renderDialogAction("C", copyLabel, copyKeyStyle, copyTextStyle),
-		renderDialogAction("R", "I ran it — verify", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("S", "skip", cancelActionKeyStyle, cancelActionTextStyle),
-		renderDialogAction("O", "report another outcome", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("c", copyLabel, copyKeyStyle, copyTextStyle),
+		renderDialogAction("r", "I ran it — verify", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("s", "skip", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("o", "report another outcome", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "hide pane", navigateActionKeyStyle, navigateActionTextStyle),
 	}
 	if command.CanExecute {
@@ -144,7 +144,7 @@ func (m Model) renderCodexManualCommandDialogContent(
 		if m.codexManualCommandSubmitting == request.ID && m.codexCommandSubmitProject == m.codexVisibleProject {
 			label = "submitting..."
 		}
-		actions = append([]string{renderDialogAction("A", label, navigateActionKeyStyle, navigateActionTextStyle)}, actions...)
+		actions = append([]string{renderDialogAction("a", label, navigateActionKeyStyle, navigateActionTextStyle)}, actions...)
 	}
 	lines = append(lines, renderCodexElicitationActionLines(width, actions)...)
 	return strings.Join(lines, "\n")
@@ -222,7 +222,7 @@ func (m Model) updateCodexManualCommandMode(
 		return m, cmd
 	}
 
-	switch strings.ToLower(msg.String()) {
+	switch msg.String() {
 	case "a":
 		if command.CanExecute {
 			return m.submitCodexManualCommandAnswer(request, command, "Approve and run once", "Submitting command approval...")

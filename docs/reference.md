@@ -273,7 +273,7 @@ write or authorize other worktrees. Standalone runs can specify repeated
 
 Embedded LCAgent also exposes `request_user_command` through the interactive
 host channel. Its dialog shows the exact command, working directory, and reason.
-When hard guards permit execution, **A — approve and run once** executes that
+When hard guards permit execution, **a — approve and run once** executes that
 command inside LCR, captures output and exit status, and resumes the agent.
 Approval applies only to that invocation, permits its source edits, and leaves
 session autonomy and admin-write settings unchanged. Execution has a 60-second
