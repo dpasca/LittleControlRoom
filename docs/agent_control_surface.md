@@ -5,6 +5,11 @@ This is the write-side companion to the read-only
 bounded persisted state directly; controls queue typed operations for operator
 confirmation or delivery under an existing project collaboration approval.
 
+The proposed [visible engineer delegation plan](engineer_delegation_plan.md)
+builds on this surface with explicit worker models, durable caller identity,
+structured results and caller review. It is a future implementation plan, not
+an expansion of the current authorization contract.
+
 Little Control Room gives embedded Codex, OpenCode, Claude Code, and LCAgent
 sessions access to its typed control registry without publishing one tool per
 action. Codex, OpenCode, and Claude Code use MCP; LCAgent exposes the same
