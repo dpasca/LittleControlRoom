@@ -4825,3 +4825,30 @@ func TestRunExecQualityPhaseCompletionPreservesContext(t *testing.T) {
 		t.Fatalf("phase completion forced unnecessary compaction: %s", stdout.String())
 	}
 }
+
+func TestRunExecScriptedWithAuthorizedRepository(t *testing.T) {
+	isolateSkillHomes(t)
+	root, repo := t.TempDir(), t.TempDir()
+	target := filepath.Join(repo, "result.txt")
+	action := map[string]any{
+		"type": "tool_call", "tool": "create_file",
+		"args": map[string]any{"path": target, "content": "scoped edit\n"},
+	}
+	data, err := json.Marshal(action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(root, "script.jsonl")
+	if err := os.WriteFile(scriptPath, append(append(data, '\n'), []byte("{\"type\":\"final_response\",\"summary\":\"done\"}\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"exec", "--cwd", root, "--data-dir", t.TempDir(), "--auto", "low", "--writable-root", repo, "--output", "stream-json", "--script", scriptPath, "write scoped file"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d: %s\n%s", code, stderr.String(), stdout.String())
+	}
+	content, err := os.ReadFile(target)
+	if err != nil || string(content) != "scoped edit\n" {
+		t.Fatalf("content %q err %v\n%s", content, err, stdout.String())
+	}
+}

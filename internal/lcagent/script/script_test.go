@@ -2706,3 +2706,55 @@ func writeTestScreenshotPNG(t *testing.T, path string, blank bool) {
 		t.Fatal(err)
 	}
 }
+
+func TestUserCommandApprovalExecutesOnceWithRealResult(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := &fakeUserCommandBroker{response: UserCommandResponse{Status: UserCommandStatusApproved}}
+	runner := Runner{Command: tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}, UserCommands: broker}
+	args := requestUserCommandArgs{Command: "printf approved > result.txt; printf evidence; exit 7", Reason: "Validate one-time execution"}
+	result := runner.runUserCommandRequest(context.Background(), args)
+	if result.Success || result.ExitCode != 7 || !strings.Contains(result.Output, "evidence") || result.UserCommandStatus != UserCommandStatusExecuted {
+		t.Fatalf("execution result: %#v", result)
+	}
+	content, err := os.ReadFile(filepath.Join(w.Root, "result.txt"))
+	if err != nil || string(content) != "approved" {
+		t.Fatalf("content %q, err %v", content, err)
+	}
+	if runner.Command.Workspace.Auto != policy.AutonomyLow || runner.Command.Workspace.AdminWrite {
+		t.Fatal("approval changed session permissions")
+	}
+	denied := runner.Command.RunSpec(context.Background(), tools.CommandSpec{Command: args.Command, Shell: true})
+	if !denied.Denied {
+		t.Fatalf("approval leaked: %#v", denied)
+	}
+	if len(broker.requests) != 1 || !broker.requests[0].CanExecute {
+		t.Fatalf("requests: %#v", broker.requests)
+	}
+}
+
+func TestUserCommandApprovalPreservesHardGuardAndManualOutcomes(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{UserCommandStatusDeclined, UserCommandStatusCompleted, UserCommandStatusResponded} {
+		broker := &fakeUserCommandBroker{response: UserCommandResponse{Status: status}}
+		runner := Runner{Command: tools.CommandRunner{Workspace: w}, UserCommands: broker}
+		result := runner.runUserCommandRequest(context.Background(), requestUserCommandArgs{Command: "touch should-not-exist", Reason: "Test manual outcome"})
+		if !result.Success {
+			t.Fatalf("manual result: %#v", result)
+		}
+		if _, err := os.Stat(filepath.Join(w.Root, "should-not-exist")); !os.IsNotExist(err) {
+			t.Fatalf("manual outcome executed: %v", err)
+		}
+	}
+	broker := &fakeUserCommandBroker{response: UserCommandResponse{Status: UserCommandStatusApproved}}
+	runner := Runner{Command: tools.CommandRunner{Workspace: w}, UserCommands: broker}
+	result := runner.runUserCommandRequest(context.Background(), requestUserCommandArgs{Command: "rm -rf nonexistent", Reason: "Guard test"})
+	if !result.Denied || result.Success || broker.requests[0].CanExecute {
+		t.Fatalf("guard bypass: %#v", result)
+	}
+}

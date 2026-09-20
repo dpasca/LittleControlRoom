@@ -145,9 +145,10 @@ The guard is applied independently to:
 Targeted file and patch tools remain the expected way for LCAgent to remove or
 edit known files. In an embedded interactive run, `request_user_command` may
 pause and display an exact cleanup command for the operator to run manually.
-That path does not execute the command, grant LCAgent write authority, or alter
-the recursive-`rm` guard; the operator's response is recorded as a report and
-must not be treated as verification by itself.
+Commands permitted by hard guards can instead be approved for one execution
+inside LCR, including source edits, without changing session permissions.
+Recursive-`rm` commands remain manual-only; one-time approval never overrides
+that guard. A manually reported outcome is not verification by itself.
 
 ## Why DCG Is Not the Sole Codex Layer
 

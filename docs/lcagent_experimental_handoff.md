@@ -81,9 +81,11 @@ LCR session parity:
   `run_command` calls. `Allow once` reruns that command at medium autonomy;
   the `Medium` shortcut raises command autonomy to medium for the rest of the
   LCAgent run. It can also pause on `request_user_command` and use a dedicated
-  warning dialog to ask the operator to run an exact display-only command,
-  copy it, report that it ran, skip it, or describe another outcome, then
-  continue from that report without widening its own permissions. General
+  warning dialog to approve and execute an exact command once with captured
+  output and exit status, or copy it, report a manual run, skip it, or describe
+  another outcome. One-time execution preserves hard guards and does not change
+  session permissions. Affiliated tasks can edit and run builds in their exact
+  originating repository without global admin-write authority. General
   model-defined structured input, attachments,
   elicitation, and goal state are still not wired in the embedded pane.
 - Embedded `/review` now starts a read-only current-diff LCAgent review run

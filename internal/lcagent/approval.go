@@ -251,12 +251,17 @@ func (b *stdioApprovalBroker) RequestUserCommand(ctx context.Context, request sc
 	request.Command = strings.TrimSpace(request.Command)
 	request.CWD = firstNonEmptyString(strings.TrimSpace(request.CWD), b.cwd)
 	request.Reason = strings.TrimSpace(request.Reason)
+	prompt := "Run this command in your terminal, then report what happened."
+	if request.CanExecute {
+		prompt = "Review this command. Approve one execution here, or report a manual outcome."
+	}
 	if err := b.writer.Write(session.Event{
 		"type":            "user_command_request",
 		"session_id":      request.SessionID,
 		"id":              request.ID,
 		"question_id":     script.UserCommandQuestionID,
-		"question":        "Run this command in your terminal, then report what happened.",
+		"question":        prompt,
+		"can_execute":     request.CanExecute,
 		"command":         request.Command,
 		"cwd":             request.CWD,
 		"reason":          request.Reason,
@@ -311,6 +316,8 @@ func normalizeUserCommandResponse(answers map[string][]string) (script.UserComma
 	}
 	answer := strings.Join(cleaned, ", ")
 	switch {
+	case answer == script.UserCommandExecuteLabel:
+		return script.UserCommandResponse{Status: script.UserCommandStatusApproved}, nil
 	case strings.EqualFold(answer, script.UserCommandRanLabel):
 		return script.UserCommandResponse{Status: script.UserCommandStatusCompleted}, nil
 	case strings.EqualFold(answer, script.UserCommandDeclinedLabel):

@@ -15,6 +15,7 @@ type SystemPromptOptions struct {
 	WebSearchEnabled           bool
 	ManagedProcessesEnabled    bool
 	AdminWrite                 bool
+	WritableRoots              []string
 	BrowserAvailable           bool
 	VisionAnalysisEnabled      bool
 	NativeVisionEnabled        bool
@@ -49,6 +50,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	writePathLine := "Write tools such as create_file, replace_file, apply_patch, replace_text, and replace_lines are workspace-only: use workspace-relative paths or inside-workspace absolute paths. Outside writes require --admin-write."
 	if opts.AdminWrite {
 		writePathLine = "This run has LCAgent admin-write enabled: write tools may use absolute paths outside the workspace for explicit system/admin edits. Prefer workspace-relative project paths and mention absolute-path admin edits in final_response."
+	}
+	if len(opts.WritableRoots) > 0 {
+		writePathLine += " This task also has explicit write and managed-process access to these repository roots (use absolute paths): " + strings.Join(opts.WritableRoots, ", ") + ". Read their AGENTS.md instructions before editing. For start_process there, set project_path to the authorized root and cwd inside it."
 	}
 	lines := []string{
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
@@ -106,7 +110,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.UserCommandRequestsEnabled {
 		lines = append(lines,
 			"When a necessary command cannot run because the current workspace, admin-write, process scope, or hard command policy does not permit it, call request_user_command instead of ending the turn with instructions for the user to run later.",
-			"request_user_command never executes or approves the command. It pauses for the user to run the exact displayed command themselves and reports what they selected or typed. Prefer a recoverable command when practical, explain destructive effects plainly, and never ask the user to paste credentials or secrets.",
+			"request_user_command offers exact-command approval when hard guards permit execution. Approve and run once executes the displayed command and returns real output and exit status without changing session permissions. Manual outcomes remain available. Prefer short, separate validation steps; execution has a 60-second timeout. Never claim a mutation is interruption-safe just because a reverse command follows it; use reliable cleanup and verify restoration. Explain effects plainly and never ask the user to paste credentials or secrets.",
 			"A user report from request_user_command is not verification. After the user reports running it, inspect the resulting state when possible before claiming the operation succeeded.",
 		)
 	}
@@ -162,7 +166,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.ManagedProcessesEnabled {
 		lines = append(lines,
 			"For requests to start, launch, run, or keep a local app/server/watch process alive, call start_process first. Do not try a dev server or watcher with run_command before start_process.",
-			"Use start_process for long-running dev servers, watchers, video/export jobs, and work that should keep running after the tool returns or exceed run_command's maximum timeout of 60000 ms. Use project_path for sibling repos, reuse an already-running same command/cwd, replace_existing only for a fresh instance, and create_new only for intentional duplicates.",
+			"Use start_process for long-running dev servers, watchers, video/export jobs, and work that should keep running after the tool returns or exceed run_command's maximum timeout of 60000 ms. Use project_path for sibling repos or host-authorized repository roots, reuse an already-running same command/cwd, replace_existing only for a fresh instance, and create_new only for intentional duplicates.",
 			"When exporting/copying/deploying to an external local sync folder such as Dropbox, use start_process from the producing project, include the exact destination path, and verify afterward with read-only inspection.",
 			"After start_process, use list_processes for state, PID, URL/ports, and recent output; set purpose=verify for runtime liveness. Use stop_process only when asked or when cleaning up a temporary verification process you started.",
 			"For long-running deploy, publish, promote, upload, release, or store-rollout commands, prefer managed process support over bounded run_command when it may exceed timeout or must remain inspectable.",

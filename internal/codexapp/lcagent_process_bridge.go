@@ -28,6 +28,7 @@ type lcagentManagedProcessRequest struct {
 type lcagentProcessBridge struct {
 	manager          *projectrun.Manager
 	projectPath      string
+	writableRoots    []string
 	stdin            io.Writer
 	appendAsync      func(TranscriptKind, string, string)
 	watchProcessExit func(projectrun.Snapshot)
@@ -83,7 +84,37 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 	if b.manager == nil {
 		return tools.ToolResult{Success: false, Error: "runtime manager unavailable"}
 	}
-	projectPath, err := lcagentResolveManagedProcessProjectPath(b.projectPath, request.ProjectPath)
+	requestedProject := request.ProjectPath
+	// Tasks retain their staging workspace, but builds belong to the exact
+	// host-authorized repository. Never infer authority from the command text.
+	for _, root := range b.writableRoots {
+		candidate := requestedProject
+		if strings.TrimSpace(candidate) == "" {
+			candidate = request.CWD
+		}
+		if candidate == "" {
+			continue
+		}
+		canonicalRoot, rootErr := filepath.EvalSymlinks(root)
+		canonicalCandidate, candidateErr := filepath.EvalSymlinks(candidate)
+		if rootErr != nil || candidateErr != nil {
+			continue
+		}
+		rel, relErr := filepath.Rel(canonicalRoot, canonicalCandidate)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			b.projectPath = canonicalRoot
+			requestedProject = canonicalRoot
+			if filepath.IsAbs(request.CWD) {
+				canonicalCWD, err := filepath.EvalSymlinks(request.CWD)
+				if err != nil {
+					return tools.ToolResult{Success: false, Error: err.Error(), CWD: request.CWD}
+				}
+				request.CWD = canonicalCWD
+			}
+			break
+		}
+	}
+	projectPath, err := lcagentResolveManagedProcessProjectPath(b.projectPath, requestedProject)
 	if err != nil {
 		return tools.ToolResult{Success: false, Error: err.Error(), CWD: strings.TrimSpace(request.CWD)}
 	}

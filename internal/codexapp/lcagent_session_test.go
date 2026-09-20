@@ -99,6 +99,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		LCAgentProvider:         "deepseek",
 		LCAgentAuto:             "medium",
 		LCAgentAdminWrite:       true,
+		LCAgentWritableRoots:    []string{root},
 		LCAgentToolProfile:      "generous",
 		LCAgentContextProfile:   "large",
 		LCAgentRequestTimeout:   10 * time.Minute,
@@ -168,6 +169,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--lcr-todo-capture-mode", string(todocapture.ModeExplicit),
 		"--require-final-response-tool",
 		"--admin-write",
+		"--writable-root",
 		"--utility-provider", "deepseek",
 		"--utility-model", "test-model",
 		"--utility-reasoning-effort", "max",
@@ -3428,5 +3430,27 @@ func TestLCAgentCompletionClearsStoppedError(t *testing.T) {
 	session.handleEvent([]byte(`{"type":"turn_complete","summary":"recovered"}`))
 	if got := StoppedSessionError(session.Snapshot()); got != "" {
 		t.Fatalf("completed run retained error: %s", got)
+	}
+}
+
+func TestDelegatedTaskManagedProcessUsesAuthorizedRepository(t *testing.T) {
+	workspace, repo := t.TempDir(), t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	bridge := lcagentProcessBridge{manager: manager, projectPath: workspace, writableRoots: []string{repo}}
+	result := bridge.run(lcagentManagedProcessRequest{Action: "start", Command: "pwd", CWD: repo})
+	if !result.Success || result.ManagedProcess == nil {
+		t.Fatalf("result: %#v", result)
+	}
+	canonical, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ManagedProcess.ProjectPath != canonical {
+		t.Fatalf("wrong owner: %#v", result.ManagedProcess)
+	}
+	result = bridge.run(lcagentManagedProcessRequest{Action: "start", Command: "pwd", CWD: t.TempDir()})
+	if result.Success {
+		t.Fatalf("unaffiliated cwd accepted: %#v", result)
 	}
 }

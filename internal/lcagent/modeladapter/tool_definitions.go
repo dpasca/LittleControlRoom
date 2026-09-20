@@ -51,8 +51,8 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	if opts.WorkspaceOnlyReads {
 		inspectionPathDescription = "Workspace-relative path, or absolute path inside the workspace. Reads outside the workspace are denied for this run."
 	}
-	writePathDescription := "Workspace-relative path, or absolute path inside the workspace; outside requires --admin-write."
-	patchPathDescription := "Patch paths may be workspace-relative or inside-workspace absolute paths; outside requires --admin-write."
+	writePathDescription := "Workspace-relative path, or absolute path inside the workspace or a host-authorized writable root; other paths require --admin-write."
+	patchPathDescription := "Patch paths may be workspace-relative or absolute paths inside the workspace or a host-authorized writable root; other paths require --admin-write."
 	if opts.AdminWrite {
 		writePathDescription = "Workspace-relative path, or absolute path for explicit admin-write edits outside the workspace."
 		patchPathDescription = "Patch file paths may be workspace-relative or absolute because admin-write mode is enabled."
@@ -567,12 +567,12 @@ func userCommandToolDefinition() ToolDefinition {
 		Type: "function",
 		Function: FunctionSpec{
 			Name:        "request_user_command",
-			Description: "Pause and ask the user to run one exact terminal command that LCAgent cannot execute with its current permissions. This only displays the command and waits for the user's report; it never executes the command or expands LCAgent authority. Do not ask the user to paste credentials or secrets. After a reported run, verify the effect with inspection tools when possible.",
+			Description: "Request approval to run one exact terminal command, with captured output and exit status. Execution requires explicit Approve and run once, keeps session permissions unchanged, and respects hard command guards. Manual outcomes are also supported; after a reported manual run, verify the effect with inspection tools. Execution has a 60-second timeout; split lengthy workflows into bounded steps. Never request credentials or secrets.",
 			Parameters: map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
 				"properties": map[string]any{
-					"command": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000, "description": "Exact shell command for the user to copy and run."},
+					"command": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000, "description": "Exact shell command for one-time execution approval or manual use."},
 					"cwd":     map[string]any{"type": "string", "maxLength": 1200, "description": "Working directory for the displayed command. Use an absolute path outside the workspace or a workspace-relative path."},
 					"reason":  map[string]any{"type": "string", "minLength": 1, "maxLength": 1200, "description": "Why the command is necessary and why LCAgent cannot run it itself."},
 				},

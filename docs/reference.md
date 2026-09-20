@@ -264,18 +264,26 @@ require explicit `admin_scope=system` plus `lcagent_admin_write`.
 When a Low run asks for command approval, `a` approves once and `A` switches the
 current LCAgent run to Medium.
 
-Embedded LCAgent also exposes `request_user_command` through the same
-interactive host channel. When a necessary command is outside the workspace,
-requires unavailable admin authority, or remains behind a hard command guard,
-LCAgent can pause and show the exact command, working directory, and reason.
-The embedded pane presents this as an amber manual-action dialog rather than a
-generic structured questionnaire. The operator can copy the command, report
-that it ran, skip it, or type what happened; hiding the pane leaves the request
-pending. LCAgent then continues the same turn. This request never executes the
-command, raises the permission level, or bypasses recursive-`rm` and other
-command guards. A "Ran it" response is user-reported state rather than
-verification, so LCAgent should inspect the resulting state before claiming
-success when that is possible.
+Affiliated LCAgent tasks keep their isolated staging workspace and receive an
+additional writable root for the exact originating worktree (or originating
+project when no worktree is recorded). File tools use absolute paths there;
+managed builds belong to that repository. This does not enable global admin
+write or authorize other worktrees. Standalone runs can specify repeated
+`--writable-root /absolute/repository` flags.
+
+Embedded LCAgent also exposes `request_user_command` through the interactive
+host channel. Its dialog shows the exact command, working directory, and reason.
+When hard guards permit execution, **A — approve and run once** executes that
+command inside LCR, captures output and exit status, and resumes the agent.
+Approval applies only to that invocation, permits its source edits, and leaves
+session autonomy and admin-write settings unchanged. Execution has a 60-second
+timeout; lengthy validation should use separate bounded steps or managed builds.
+Recursive-`rm` and system-configuration guards still apply.
+
+Copy, report a manual run, skip, and custom outcomes remain available.
+Older helpers and commands blocked by hard guards show the manual-only dialog.
+A reported manual run remains user-reported state; LCAgent must inspect its
+effects before claiming verification. Hiding the pane leaves the request pending.
 
 `lcagent metrics <session.jsonl>...` summarizes trace artifacts and includes a
 `continuations` count plus a derived `trace_quality` block with verification

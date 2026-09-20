@@ -1410,6 +1410,11 @@ func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.
 }
 
 func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codexapp.LaunchRequest {
+	if task, ok := m.agentTaskForProjectPath(req.ProjectPath); ok {
+		if root := firstNonEmptyString(task.OriginWorktreePath, task.OriginProjectPath); root != "" {
+			req.LCAgentWritableRoots = []string{root}
+		}
+	}
 	// Launch preparation runs on Bubble Tea's Update path. Use the TUI-owned
 	// config snapshot here so a contended service lock cannot freeze input.
 	if strings.TrimSpace(req.AppDBPath) == "" {

@@ -331,3 +331,37 @@ func TestLowAutonomyShellDenialSuggestsArgvVerification(t *testing.T) {
 		}
 	}
 }
+
+func TestWritableRootsRemainScopedAndRejectSymlinkEscape(t *testing.T) {
+	w, err := NewWorkspace(t.TempDir(), AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := NewWorkspace(t.TempDir(), AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	w.WritableRoots = []string{repo.Root}
+	if _, err := w.Resolve(filepath.Join(repo.Root, "new", "file.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.ResolveCommandCWD(repo.Root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Resolve(filepath.Join(outside, "file.go")); !IsDenied(err) {
+		t.Fatalf("outside write: %v", err)
+	}
+	if _, err := w.ResolveCommandCWD(outside); !IsDenied(err) {
+		t.Fatalf("outside cwd: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo.Root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Resolve(filepath.Join(repo.Root, "escape", "file.go")); !IsDenied(err) {
+		t.Fatalf("symlink write: %v", err)
+	}
+	if _, err := w.ResolveCommandCWD(filepath.Join(repo.Root, "escape")); !IsDenied(err) {
+		t.Fatalf("symlink cwd: %v", err)
+	}
+}

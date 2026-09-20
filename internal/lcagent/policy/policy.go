@@ -33,6 +33,7 @@ func ParseAutonomy(value string) (Autonomy, error) {
 
 type Workspace struct {
 	Root               string
+	WritableRoots      []string
 	Auto               Autonomy
 	AdminWrite         bool
 	WorkspaceOnlyReads bool
@@ -96,6 +97,15 @@ func (w Workspace) Resolve(rel string) (string, error) {
 	if filepath.IsAbs(rel) {
 		clean := filepath.Clean(rel)
 		if !w.AdminWrite {
+			for _, root := range w.WritableRoots {
+				target, err := (Workspace{Root: root}).resolveWorkspaceTarget(clean, rel)
+				if err == nil {
+					return target, nil
+				}
+				if isUnder(root, clean) {
+					return "", err
+				}
+			}
 			target, err := w.resolveWorkspaceTarget(clean, rel)
 			if err == nil {
 				return target, nil
@@ -202,6 +212,17 @@ func (w Workspace) ResolveCommandCWD(cwd string) (string, error) {
 		target = filepath.Clean(filepath.Join(w.Root, target))
 	}
 	if w.Auto != AutonomyMedium {
+		if len(w.WritableRoots) > 0 {
+			canonicalTarget, err := filepath.EvalSymlinks(target)
+			if err != nil {
+				return "", err
+			}
+			for _, root := range w.WritableRoots {
+				if isUnder(root, canonicalTarget) {
+					return (Workspace{Root: root, Auto: w.Auto}).ResolveCommandCWD(canonicalTarget)
+				}
+			}
+		}
 		if !isUnder(w.Root, target) {
 			return "", Denied(fmt.Sprintf("run_command cwd is outside the workspace and requires approval: %s", cwd))
 		}
