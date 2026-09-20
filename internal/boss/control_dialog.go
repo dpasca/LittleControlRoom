@@ -179,6 +179,8 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				"",
 				renderBossControlDetail("Task", input.Title, width),
 				renderBossControlDetail("Kind", string(input.Kind), width),
+				renderBossControlDetail("Structured results", fmt.Sprintf("%t", input.StructuredResults), width),
+				renderBossControlDetail("Repository ownership", taskRepositoryWriteLabel(input.RepositoryWrite), width),
 				renderBossControlDetail("Provider", input.Provider.Label(), width),
 				renderBossControlDetail("Model / effort", engineerModelSelectionLabel(input.EngineerModelSelection), width),
 				renderBossControlDetail("Caps", capabilities, width),
@@ -548,4 +550,11 @@ func taskContinuationModelLabel(selection control.EngineerModelSelection) string
 		return "Keep the task's saved choice"
 	}
 	return engineerModelSelectionLabel(selection)
+}
+
+func taskRepositoryWriteLabel(enabled bool) string {
+	if enabled {
+		return "Exclusive managed writer; clean checkout required"
+	}
+	return "Existing task permissions (no write lease)"
 }

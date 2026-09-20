@@ -12,6 +12,8 @@ type CapabilityName string
 const (
 	CapabilityIntegrationsManage                 CapabilityName = "integrations.manage"
 	CapabilityEngineerSendPrompt                 CapabilityName = "engineer.send_prompt"
+	CapabilityAgentTaskSubmitResult              CapabilityName = "agent_task.submit_result"
+	CapabilityAgentTaskReviewResult              CapabilityName = "agent_task.review_result"
 	CapabilityAgentTaskCreate                    CapabilityName = "agent_task.create"
 	CapabilityAgentTaskContinue                  CapabilityName = "agent_task.continue"
 	CapabilityAgentTaskClose                     CapabilityName = "agent_task.close"
@@ -30,6 +32,8 @@ func CapabilityNameValues() []CapabilityName {
 	return []CapabilityName{
 		CapabilityIntegrationsManage,
 		CapabilityEngineerSendPrompt,
+		CapabilityAgentTaskSubmitResult,
+		CapabilityAgentTaskReviewResult,
 		CapabilityAgentTaskCreate,
 		CapabilityAgentTaskContinue,
 		CapabilityAgentTaskClose,
@@ -335,6 +339,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateIntegrationsManageInvocation(inv)
 	case CapabilityEngineerSendPrompt:
 		return validateEngineerSendPromptInvocation(inv)
+	case CapabilityAgentTaskSubmitResult, CapabilityAgentTaskReviewResult:
+		return validateAgentTaskResultInvocation(inv)
 	case CapabilityAgentTaskCreate:
 		return validateAgentTaskCreateInvocation(inv)
 	case CapabilityAgentTaskContinue:
@@ -459,6 +465,7 @@ func (s EngineerMessageState) Terminal() bool {
 }
 
 type EngineerMessage struct {
+	AgentTaskRevision int64 `json:"agent_task_revision,omitempty"`
 	EngineerModelSelection
 	ID                       string               `json:"id"`
 	OperationID              string               `json:"operation_id,omitempty"`

@@ -276,6 +276,25 @@ func (s *Store) initSchema(ctx context.Context) error {
 			FOREIGN KEY(category_id) REFERENCES project_categories(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_category_assignments_category ON category_assignments(category_id, resource_kind, resource_id);`,
+		`CREATE TABLE IF NOT EXISTS agent_task_result_handoffs (
+ task_id TEXT NOT NULL,
+ revision INTEGER NOT NULL,
+ repository_json TEXT NOT NULL,
+ PRIMARY KEY(task_id, revision),
+ FOREIGN KEY(task_id, revision) REFERENCES agent_task_results(task_id, revision) ON DELETE CASCADE
+ );`,
+		`CREATE TABLE IF NOT EXISTS agent_task_results (
+ task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL,
+ result_json TEXT NOT NULL,
+ review_json TEXT NOT NULL DEFAULT '{}',
+ PRIMARY KEY(task_id, revision)
+ );`,
+		`CREATE TABLE IF NOT EXISTS agent_task_repository_leases (
+ root TEXT PRIMARY KEY,
+ task_id TEXT NOT NULL UNIQUE REFERENCES agent_tasks(id) ON DELETE RESTRICT,
+ session_key TEXT NOT NULL
+ );`,
 		`CREATE TABLE IF NOT EXISTS agent_tasks (
 			id TEXT PRIMARY KEY,
 			parent_task_id TEXT NOT NULL DEFAULT '',
@@ -295,6 +314,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 			origin_session_key TEXT NOT NULL DEFAULT '',
 			model_selection_json TEXT NOT NULL DEFAULT '{}',
 			observed_model_json TEXT NOT NULL DEFAULT '{}',
+ repository_json TEXT NOT NULL DEFAULT '{}',
+ workflow_json TEXT NOT NULL DEFAULT '{}',
 			result_message_id TEXT NOT NULL DEFAULT '',
 			expires_at INTEGER,
 			result_ready_at INTEGER,
@@ -374,6 +395,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			operation_id TEXT NOT NULL DEFAULT '',
 			agent_task_id TEXT NOT NULL DEFAULT '',
+ agent_task_revision INTEGER NOT NULL DEFAULT 0,
 			project_path TEXT NOT NULL,
 			provider TEXT NOT NULL,
 			session_mode TEXT NOT NULL DEFAULT 'resume_or_new',
@@ -422,6 +444,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureEngineerMessagesRequestedTargetColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureEngineerMessagesRevisionColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureEngineerMessagesAgentTaskColumn(ctx); err != nil {
@@ -839,7 +864,7 @@ func (s *Store) ensureAgentTaskMetadataColumns(ctx context.Context) error {
 			return fmt.Errorf("add agent_tasks.capabilities column: %w", err)
 		}
 	}
-	for _, column := range []string{"model_selection_json", "observed_model_json"} {
+	for _, column := range []string{"model_selection_json", "observed_model_json", "repository_json", "workflow_json"} {
 		if _, ok := columns[column]; !ok {
 			if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN `+column+` TEXT NOT NULL DEFAULT '{}'`); err != nil {
 				return err
@@ -2316,4 +2341,37 @@ func (s *Store) writeSessionClassificationMigrationRow(ctx context.Context, tx *
 		WHERE session_id = ?
 	`, string(row.classification.Source), row.classification.RawSessionID, row.classification.ProjectPath, row.classification.SessionFile, row.classification.SessionFormat, row.classification.SnapshotHash, string(row.classification.Status), string(row.classification.Stage), string(row.classification.Category), row.classification.Summary, row.classification.Confidence, row.classification.Model, row.classification.ClassifierVersion, row.classification.LastError, row.classification.SourceUpdatedAt.Unix(), row.classification.CreatedAt.Unix(), stageStartedAt, row.classification.UpdatedAt.Unix(), completedAt, row.classification.SessionID)
 	return err
+}
+
+func (s *Store) ensureEngineerMessagesRevisionColumn(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(engineer_messages)`)
+	if err != nil {
+		return fmt.Errorf("check engineer_messages schema: %w", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return fmt.Errorf("scan engineer_messages schema: %w", err)
+		}
+		found = found || name == "agent_task_revision"
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read engineer_messages schema: %w", err)
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE engineer_messages ADD COLUMN agent_task_revision INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add engineer_messages.agent_task_revision column: %w", err)
+	}
+	return nil
 }

@@ -170,7 +170,9 @@ func agentTaskRecord(task model.AgentTask) map[string]any {
 		"provider":        task.Provider,
 		"session_id":      task.SessionID,
 		"workspace_path":  task.WorkspacePath,
+		"workflow":        map[string]any{"enabled": task.Workflow.Enabled, "run_id": task.Workflow.RunID, "phase": task.Workflow.Phase, "handoff": task.Workflow.Handoff, "caller_stopped": task.Workflow.CallerStopped},
 		"model_selection": task.ModelSelection,
+		"repository":      task.Repository,
 		"observed_model":  task.ObservedModel,
 		"origin": map[string]any{
 			"operation_id":        task.OriginOperationID,

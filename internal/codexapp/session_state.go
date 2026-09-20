@@ -36,6 +36,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	}
 	s := &appServerSession{
+		turnAdmission:             turnAdmissionForLaunch(req),
 		projectPath:               req.ProjectPath,
 		preset:                    req.Preset,
 		notify:                    notify,

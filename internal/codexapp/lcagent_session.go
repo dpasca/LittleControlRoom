@@ -47,6 +47,7 @@ type lcagentRunOptions struct {
 }
 
 type lcagentSession struct {
+	turnAdmission       func() (func(), error)
 	projectPath         string
 	dataDir             string
 	appDBPath           string
@@ -230,6 +231,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 	visionReasoning := lcagentReasoningEffortForProvider(resolvedVisionProvider, visionModel, req.LCAgentVisionReasoning)
 	session := &lcagentSession{
+		turnAdmission:            turnAdmissionForLaunch(req),
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
 		appDBPath:                strings.TrimSpace(req.AppDBPath),
@@ -392,12 +394,22 @@ func (s *lcagentSession) Submit(prompt string) error {
 }
 
 func (s *lcagentSession) SubmitInput(input Submission) error {
+
 	if input.Empty() {
 		return nil
 	}
+	unlockAdmission, admissionErr := beginManagedSubmission(s.turnAdmission, input)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
 	transcriptText := input.TranscriptText()
 	displayText := firstNonEmpty(input.TranscriptDisplayText(), transcriptText)
 	s.mu.Lock()
+	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil) {
+		s.mu.Unlock()
+		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
+	}
 	if s.busy && s.stdin != nil {
 		stdin := s.stdin
 		s.status = "Queued steer for LCAgent"

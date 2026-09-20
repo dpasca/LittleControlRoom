@@ -81,15 +81,16 @@ type StartResult struct {
 }
 
 type Manager struct {
-	mu          sync.Mutex
-	runtimes    map[string]*managedRuntime
-	nextID      int64
-	procGroups  processGroupReader
-	portReaders portReader
-	opLocks     keyedmutex.Locker
-	prepare     func(string, string) error
-	done        chan struct{}
-	doneOnce    sync.Once
+	startAdmission func(string, string) (func(), error)
+	mu             sync.Mutex
+	runtimes       map[string]*managedRuntime
+	nextID         int64
+	procGroups     processGroupReader
+	portReaders    portReader
+	opLocks        keyedmutex.Locker
+	prepare        func(string, string) error
+	done           chan struct{}
+	doneOnce       sync.Once
 }
 
 type managedRuntime struct {
@@ -219,6 +220,16 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	cwd, err := normalizeRuntimeCWD(projectPath, req.CWD)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	m.mu.Lock()
+	admission := m.startAdmission
+	m.mu.Unlock()
+	if admission != nil {
+		unlockAdmission, err := admission(projectPath, cwd)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		defer unlockAdmission()
 	}
 	runtimeKey := ""
 	runtimeID := ""
@@ -1167,4 +1178,11 @@ func WaitUntilRunning(ctx context.Context, manager *Manager, projectPath string)
 		case <-ticker.C:
 		}
 	}
+}
+
+// SetStartAdmission is configured before accepting process launches.
+func (m *Manager) SetStartAdmission(admission func(string, string) (func(), error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.startAdmission = admission
 }

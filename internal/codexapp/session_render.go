@@ -27,6 +27,8 @@ func launchRequestInitialInput(req LaunchRequest) Submission {
 	if input.Empty() {
 		input = Submission{Text: strings.TrimSpace(req.Prompt)}
 	}
+	input.RequireIdle = req.RequireLiveIdle
+	input.BeforeStart = req.SubmissionCheck
 	return normalizeSubmission(input)
 }
 

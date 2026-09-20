@@ -13,11 +13,21 @@ func (s *appServerSession) Submit(prompt string) error {
 }
 
 func (s *appServerSession) SubmitInput(input Submission) error {
+
 	input = normalizeSubmission(input)
 	if input.Empty() {
 		return nil
 	}
+	unlockAdmission, admissionErr := beginManagedSubmission(s.turnAdmission, input)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
 	s.mu.Lock()
+	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
+		s.mu.Unlock()
+		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
+	}
 	if s.imageReviewEnabled && len(input.Attachments) > 0 {
 		s.mu.Unlock()
 		return fmt.Errorf("image recovery is enabled: send workspace image paths as text for external review, or use /image-review off before attaching images")

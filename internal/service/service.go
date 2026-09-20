@@ -26,6 +26,7 @@ import (
 	"lcroom/internal/keyedmutex"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 	"lcroom/internal/sessionclassify"
 	"lcroom/internal/store"
@@ -63,13 +64,16 @@ type sessionClassifierRetryer interface {
 }
 
 type Service struct {
-	cfg           config.AppConfig
-	store         *store.Store
-	bus           *events.Bus
-	detectors     []detectors.Detector
-	classifier    SessionClassifier
-	todoSuggester *todoworktree.Manager
-	titleAssessor ScratchTaskTitleAssessor
+	repositoryMu        sync.Mutex
+	repositoryEngineers func() []codexapp.Snapshot
+	repositoryProcesses func() []projectrun.Snapshot
+	cfg                 config.AppConfig
+	store               *store.Store
+	bus                 *events.Bus
+	detectors           []detectors.Detector
+	classifier          SessionClassifier
+	todoSuggester       *todoworktree.Manager
+	titleAssessor       ScratchTaskTitleAssessor
 
 	backendDetector func(context.Context, config.AppConfig, config.AIBackend) aibackend.Status
 

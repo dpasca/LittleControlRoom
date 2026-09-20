@@ -215,6 +215,8 @@ func bossActionSchema() map[string]any {
 				"type":        "string",
 				"description": "For agent_task.continue or agent_task.close proposals, the exact task id. Otherwise empty.",
 			},
+			"structured_results": map[string]any{"type": "boolean", "description": "Opt into typed worker results and exact-caller review without another metadata confirmation."},
+			"repository_write":   map[string]any{"type": "boolean", "description": "For agent_task.create, request exclusive managed repository ownership with clean-baseline preflight."},
 			"task_title": map[string]any{
 				"type":        "string",
 				"description": "For agent_task.create proposals, a concise task title. Otherwise empty.",
@@ -456,6 +458,8 @@ func bossActionSchema() map[string]any {
 			"control_capability",
 			"request_id",
 			"task_id",
+			"repository_write",
+			"structured_results",
 			"task_title",
 			"task_kind",
 			"parent_task_id",

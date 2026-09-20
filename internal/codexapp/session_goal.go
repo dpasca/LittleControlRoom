@@ -101,6 +101,12 @@ func (s *appServerSession) ShowGoal() error {
 }
 
 func (s *appServerSession) SetGoal(objective string, tokenBudget *int64) error {
+	unlockAdmission, admissionErr := beginManagedTurn(s.turnAdmission)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
+
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		return fmt.Errorf("goal objective required")
@@ -232,6 +238,12 @@ func (s *appServerSession) PauseGoal() error {
 }
 
 func (s *appServerSession) ResumeGoal() error {
+	unlockAdmission, admissionErr := beginManagedTurn(s.turnAdmission)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()

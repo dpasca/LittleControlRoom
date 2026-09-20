@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const ConfirmationContract = "Every available control capability is proposed first. Execution requires operator confirmation unless an existing project-pair collaboration grant covers an exact-session engineer message. Other capabilities always require confirmation. Follow the proposal result: automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping."
+const ConfirmationContract = "Every available control capability is proposed first. Execution requires operator confirmation unless an existing project-pair collaboration grant covers an exact-session engineer message. Exact-worker result submission and exact-caller review on an opted-in structured task record bounded metadata immediately; they never launch work or commit. Other capabilities require confirmation. Follow the proposal result: automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping."
 
 // ListReport returns the transport-neutral progressive control catalog. MCP and
 // in-process agent hosts should expose this result rather than duplicating the

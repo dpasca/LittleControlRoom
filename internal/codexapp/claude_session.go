@@ -73,6 +73,7 @@ const (
 )
 
 type claudeCodeSession struct {
+	turnAdmission            func() (func(), error)
 	projectPath              string
 	preset                   codexcli.Preset
 	requestedPermissionMode  claudecli.PermissionMode
@@ -317,6 +318,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 
 	s := &claudeCodeSession{
+		turnAdmission:            turnAdmissionForLaunch(req),
 		projectPath:              req.ProjectPath,
 		preset:                   preset,
 		requestedPermissionMode:  requestedPermissionMode,
@@ -568,10 +570,16 @@ func (s *claudeCodeSession) continueInterruptedTurn(capturedStartedAt time.Time,
 }
 
 func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
+
 	input = normalizeSubmission(input)
 	if input.Empty() {
 		return nil
 	}
+	unlockAdmission, admissionErr := beginManagedSubmission(s.turnAdmission, input)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
 
 	displayText := strings.TrimSpace(input.TranscriptDisplayText())
 	if displayText == "" {
@@ -588,6 +596,10 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 
 	s.mu.Lock()
+	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
+		s.mu.Unlock()
+		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
+	}
 	if err := s.submissionStateErrorLocked(mode, compactCommand); err != nil {
 		s.mu.Unlock()
 		return err

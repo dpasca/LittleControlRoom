@@ -115,6 +115,9 @@ func agentTaskIsVisible(task model.AgentTask) bool {
 }
 
 func agentTaskProjectStatus(task model.AgentTask) model.ProjectStatus {
+	if task.Workflow.Enabled && (task.Workflow.Phase == "submitted" || task.Workflow.Phase == "awaiting_review") {
+		return model.StatusActive
+	}
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
 		return model.StatusPossiblyStuck
@@ -171,6 +174,9 @@ func agentTaskAttentionScore(task model.AgentTask) int {
 }
 
 func agentTaskClassificationType(task model.AgentTask) model.SessionCategory {
+	if task.Workflow.Enabled && (task.Workflow.Phase == "submitted" || task.Workflow.Phase == "awaiting_review") {
+		return model.SessionCategoryInProgress
+	}
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
 		return model.SessionCategoryWaitingForUser
@@ -192,6 +198,9 @@ func agentTaskLastActivity(task model.AgentTask) time.Time {
 }
 
 func agentTaskListStatus(task model.AgentTask) string {
+	if task.Workflow.Enabled && task.Workflow.Phase != "" {
+		return strings.ReplaceAll(task.Workflow.Phase, "_", " ")
+	}
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
 		return "review"
@@ -261,6 +270,29 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 			sessionValue = sourceStyleForTag(provider.SourceTag(), false).Render(provider.Label()) + " " + detailValueStyle.Render(shortID(sessionID))
 		}
 		lines = append(lines, detailField("Engineer", sessionValue))
+	}
+	if task.Workflow.Enabled {
+		lines = append(lines, detailField("Workflow", detailValueStyle.Render(fmt.Sprintf("run %d · %s", task.Workflow.RunID, agentTaskListStatus(task)))))
+		if result := task.Workflow.Result; result != nil {
+			lines = append(lines, renderWrappedDetailField("Worker claims", detailValueStyle, width, fmt.Sprintf("%s · %d criteria · %d checks · %d files", result.Outcome, len(result.Criteria), len(result.Checks), len(result.ChangedFiles))))
+		}
+		if review := task.Workflow.Review; review != nil {
+			lines = append(lines, renderWrappedDetailField("Caller review", detailValueStyle, width, review.Decision+": "+review.Summary))
+		}
+	}
+	if task.Repository.Write {
+		lines = append(lines, renderWrappedDetailField("Repository", detailValueStyle, width, task.Repository.Root))
+		owner := task.Repository.State
+		if owner == "held" {
+			owner = "owned by this task"
+		}
+		lines = append(lines, renderWrappedDetailField("Write ownership", detailValueStyle, width, owner))
+		if task.Repository.Error != "" {
+			lines = append(lines, renderWrappedDetailField("Repository issue", detailValueStyle, width, task.Repository.Error))
+		}
+		if task.Repository.Changes != "" {
+			lines = append(lines, renderWrappedDetailField("Changes to review", detailValueStyle, width, task.Repository.Changes))
+		}
 	}
 	if label := taskModelLabel(task.ModelSelection); label != "" {
 		lines = append(lines, renderWrappedDetailField("Requested model", detailValueStyle, width, label))
@@ -393,6 +425,19 @@ func agentTaskOriginSummary(task model.AgentTask) string {
 }
 
 func agentTaskResultLifecycleSummary(task model.AgentTask) string {
+	if task.Workflow.Enabled {
+		if review := task.Workflow.Review; review != nil {
+			return fmt.Sprintf("revision %d: %s by %s", review.Revision, review.Decision, review.Reviewer)
+		}
+		switch task.Workflow.Phase {
+		case "canceled":
+			return "stopped; any late claims are retained without automatic review"
+		case "unclassified":
+			return "worker stopped without a structured result; inspect its transcript"
+		case "submitted":
+			return "claims submitted; waiting for verified idle handoff"
+		}
+	}
 	switch {
 	case !task.ResultConsumedAt.IsZero():
 		consumer := strings.TrimSpace(task.ResultConsumedBy)
@@ -405,6 +450,9 @@ func agentTaskResultLifecycleSummary(task model.AgentTask) string {
 	case !task.ResultDeliveredAt.IsZero():
 		return "delivered to the originating session; awaiting acceptance"
 	case strings.TrimSpace(task.ResultMessageID) != "":
+		if task.Workflow.Enabled {
+			return "review queued; waiting for the original caller to be open and idle"
+		}
 		return "callback queued for the originating session"
 	case !task.ResultReadyAt.IsZero():
 		return "ready for review; no originating-session callback is available"

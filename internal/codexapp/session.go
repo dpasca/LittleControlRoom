@@ -61,6 +61,7 @@ func (e *ForceNewSessionReusedError) Error() string {
 }
 
 type appServerSession struct {
+	turnAdmission             func() (func(), error)
 	projectPath               string
 	preset                    codexcli.Preset
 	notify                    func()

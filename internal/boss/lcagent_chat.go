@@ -485,11 +485,20 @@ func bossActionFromControlInvocation(invocation control.Invocation) (bossAction,
 		action.ProjectPath, action.ProjectName = input.ProjectPath, input.ProjectName
 		action.EngineerProvider, action.SessionMode, action.Prompt = string(input.Provider), string(input.SessionMode), input.Prompt
 		action.TodoID, action.TodoLabel, action.TodoText, action.Reveal = input.TodoID, input.TodoLabel, input.TodoText, input.Reveal
+	case control.CapabilityAgentTaskReviewResult:
+		// Help Chat keeps the full validated invocation for host confirmation.
+		var input control.AgentTaskReviewResultInput
+		if err := json.Unmarshal(invocation.Args, &input); err != nil {
+			return action, err
+		}
+		action.TaskID, action.TaskSummary = input.TaskID, input.Summary
 	case control.CapabilityAgentTaskCreate:
 		var input control.AgentTaskCreateInput
 		if err := json.Unmarshal(invocation.Args, &input); err != nil {
 			return action, err
 		}
+		action.StructuredResults = input.StructuredResults
+		action.RepositoryWrite = input.RepositoryWrite
 		action.TaskTitle, action.TaskKind, action.ParentTaskID = input.Title, string(input.Kind), input.ParentTaskID
 		action.Prompt, action.EngineerProvider, action.Reveal = input.Prompt, string(input.Provider), input.Reveal
 		action.Capabilities, action.Resources = input.Capabilities, input.Resources

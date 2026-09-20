@@ -167,6 +167,8 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 		}
 	case control.CapabilityAgentTaskCreate:
 		payload = control.AgentTaskCreateInput{
+			StructuredResults:      action.StructuredResults,
+			RepositoryWrite:        action.RepositoryWrite,
 			EngineerModelSelection: action.EngineerModelSelection,
 			RequestID:              strings.TrimSpace(action.RequestID),
 			Title:                  strings.TrimSpace(action.TaskTitle),
@@ -398,6 +400,12 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			fmt.Sprintf("I will %s session and %s. Enter sends; Esc cancels.", mode, visibility),
 		)
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityAgentTaskReviewResult:
+		var input control.AgentTaskReviewResultInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Review task %s revision %d: %s\n\n%s\n\nEnter records this review; Esc cancels.", input.TaskID, input.Revision, input.Decision, input.Summary), nil
 	case control.CapabilityAgentTaskCreate:
 		var input control.AgentTaskCreateInput
 		if err := json.Unmarshal(inv.Args, &input); err != nil {
@@ -409,6 +417,8 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		}
 		lines := []string{
 			fmt.Sprintf("Create agent task %q and use %s?", input.Title, provider),
+			fmt.Sprintf("Exclusive repository write ownership: %t", input.RepositoryWrite),
+			fmt.Sprintf("Structured worker results and caller review: %t", input.StructuredResults),
 			"Model / effort: " + engineerModelSelectionLabel(input.EngineerModelSelection),
 			"",
 			strings.TrimSpace(input.Prompt),

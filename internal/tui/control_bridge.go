@@ -244,6 +244,8 @@ func (m Model) executeValidatedControlInvocation(normalized control.Invocation) 
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeAgentTaskContinueControlWithOutcome(normalized, input)
+	case control.CapabilityAgentTaskSubmitResult, control.CapabilityAgentTaskReviewResult:
+		return m.executeTaskResultControl(normalized)
 	case control.CapabilityAgentTaskClose:
 		var input control.AgentTaskCloseInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -1069,6 +1071,8 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			return msg
 		}
 		msg.task, msg.err = svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+			Workflow:           model.AgentTaskWorkflow{Enabled: input.StructuredResults},
+			Repository:         model.AgentTaskRepository{Write: input.RepositoryWrite},
 			ModelSelection:     taskModelChoice(provider, input.EngineerModelSelection),
 			Provider:           modelSessionSourceFromCodexProvider(provider),
 			ParentTaskID:       strings.TrimSpace(input.ParentTaskID),
@@ -1377,11 +1381,28 @@ func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.Agent
 			msg.status = "Control request failed: " + msg.err.Error()
 			return msg
 		}
+		if task.Workflow.Enabled && input.Status == control.AgentTaskCloseCompleted && task.Workflow.Phase != "completed" {
+			msg.err = errors.New("review the current result with agent_task.review_result before completing this task")
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		if task.Workflow.Enabled && input.Status != control.AgentTaskCloseCompleted {
+			if err := svc.Store().StopStructuredTask(parent, task, false); err != nil {
+				msg.err = err
+				return msg
+			}
+		}
 		if input.CloseSession && manager != nil && strings.TrimSpace(task.WorkspacePath) != "" {
 			_ = manager.CloseProject(task.WorkspacePath)
 		}
 		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
 		defer cancel()
+		if err := svc.ReleaseTaskRepository(ctx, input.TaskID); err != nil {
+			msg.err = err
+			msg.task, _ = svc.GetAgentTask(ctx, input.TaskID)
+			msg.status = "Control request failed: " + err.Error()
+			return msg
+		}
 		if input.Status != control.AgentTaskCloseWaiting {
 			consumedBy := agentTaskResultConsumer(ctx, svc, inv)
 			if _, err := svc.ConsumeAgentTaskResult(ctx, input.TaskID, consumedBy); err != nil {
@@ -2979,6 +3000,9 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string, options agentTas
 		"Title: " + strings.TrimSpace(task.Title),
 		"Kind: " + string(model.NormalizeAgentTaskKind(task.Kind)),
 	}
+	if task.Repository.Write {
+		lines = append(lines, "Repository write contract: edit only "+task.Repository.Root+". The task workspace is for staging artifacts. Do not commit, push, switch branches, or leave write-capable processes running. Return the changes to the caller for review; do not ask the operator to commit.")
+	}
 	if parent := strings.TrimSpace(task.ParentTaskID); parent != "" {
 		lines = append(lines, "Parent task: "+parent)
 	}
@@ -2996,7 +3020,9 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string, options agentTas
 			"Do not report that you are still paused merely because an earlier instruction said to wait for the user; this handoff is that user resume instruction.",
 		)
 	}
-	if !options.OmitReportContract {
+	if task.Workflow.Enabled {
+		lines = append(lines, "Structured result contract: use work.agent_task_get to read this task's current workflow.run_id. Before ending your turn, submit agent_task.submit_result for that run with a short summary, criterion outcomes, checks (command, cwd, outcome, exit code and bounded evidence), changes, risks and questions. End your turn after submission; the host waits for you to stop before caller review. Do not ask the operator to commit or relay your result. A stopped turn without submission is unclassified, not accepted work.")
+	} else if !options.OmitReportContract {
 		lines = append(lines, engineerReportContractPromptLines()...)
 	}
 	lines = append(lines, "", "User request:", strings.TrimSpace(prompt))

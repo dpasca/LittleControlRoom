@@ -1062,6 +1062,8 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 }
 
 type embeddedLaunchOptions struct {
+	requireLiveIdle          bool
+	submissionCheck          func() error
 	modelSelection           control.EngineerModelSelection
 	forceNew                 bool
 	prompt                   string
@@ -1080,6 +1082,8 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		ProjectPath:                p.Path,
 		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
 		RequireResumeID:            options.requireResumeID,
+		RequireLiveIdle:            options.requireLiveIdle,
+		SubmissionCheck:            options.submissionCheck,
 		ForceNew:                   options.forceNew,
 		Prompt:                     options.prompt,
 		ContinueInterruptedTurn:    options.continueInterruptedTurn,

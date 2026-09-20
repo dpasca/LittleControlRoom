@@ -35,6 +35,7 @@ const (
 )
 
 type openCodeSession struct {
+	turnAdmission            func() (func(), error)
 	projectPath              string
 	preset                   codexcli.Preset
 	notify                   func()
@@ -293,6 +294,7 @@ func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	ensureTodoCaptureSessionKey(&req)
 	policy := req.PlaywrightPolicy.Normalize()
 	s := &openCodeSession{
+		turnAdmission:            turnAdmissionForLaunch(req),
 		projectPath:              req.ProjectPath,
 		preset:                   req.Preset,
 		notify:                   notify,
@@ -465,12 +467,22 @@ func (s *openCodeSession) Submit(prompt string) error {
 }
 
 func (s *openCodeSession) SubmitInput(input Submission) error {
+
 	input = normalizeSubmission(input)
 	if input.Empty() {
 		return nil
 	}
+	unlockAdmission, admissionErr := beginManagedSubmission(s.turnAdmission, input)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
 
 	s.mu.Lock()
+	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
+		s.mu.Unlock()
+		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
+	}
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("opencode session is closed")

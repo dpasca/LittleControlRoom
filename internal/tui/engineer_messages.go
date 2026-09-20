@@ -224,6 +224,9 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 	}
 	targetSessionID := strings.TrimSpace(message.TargetSessionID)
 	snapshot, live := m.liveEmbeddedSnapshotForProject(project.Path, provider)
+	if !live && message.AgentTaskRevision > 0 {
+		return engineerMessageDisposition{project: project, wait: true}
+	}
 	if !live {
 		return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 	}
@@ -238,7 +241,7 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 		}
 	}
 	if embeddedSessionBlocksProviderSwitch(snapshot) {
-		if message.Model == "" && provider == codexapp.ProviderCodex && controlPromptCanSteerActiveEmbeddedSession(snapshot) {
+		if message.AgentTaskRevision == 0 && message.Model == "" && provider == codexapp.ProviderCodex && controlPromptCanSteerActiveEmbeddedSession(snapshot) {
 			return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 		}
 		return engineerMessageDisposition{project: project, wait: true, bindSessionID: targetSessionID}
@@ -328,6 +331,15 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 	}
 	provider := codexProviderFromControlProvider(message.Provider)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+		requireLiveIdle: message.AgentTaskRevision > 0,
+		submissionCheck: func() error {
+			if message.AgentTaskRevision == 0 {
+				return nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), engineerMessageStoreTimeout)
+			defer cancel()
+			return m.svc.Store().ValidateTaskReviewDelivery(ctx, message)
+		},
 		modelSelection:  message.EngineerModelSelection,
 		forceNew:        message.SessionMode == control.SessionModeNew,
 		prompt:          engineerMessageDeliveryPrompt(message),

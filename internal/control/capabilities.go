@@ -171,6 +171,8 @@ type EngineerSendPromptResult struct {
 }
 
 type AgentTaskCreateInput struct {
+	StructuredResults bool `json:"structured_results,omitempty"`
+	RepositoryWrite   bool `json:"repository_write,omitempty"`
 	EngineerModelSelection
 	RequestID    string        `json:"request_id,omitempty"`
 	Title        string        `json:"title"`
@@ -410,6 +412,10 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return IntegrationsManageCapability(), true
 	case CapabilityEngineerSendPrompt:
 		return capabilityWithCatalogMetadata(EngineerSendPromptCapability()), true
+	case CapabilityAgentTaskSubmitResult:
+		return AgentTaskResultCapability(false), true
+	case CapabilityAgentTaskReviewResult:
+		return AgentTaskResultCapability(true), true
 	case CapabilityAgentTaskCreate:
 		return capabilityWithCatalogMetadata(AgentTaskCreateCapability()), true
 	case CapabilityAgentTaskContinue:
@@ -1629,15 +1635,17 @@ func agentTaskCreateInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"model":            engineerModelProperty(),
-			"model_provider":   engineerModelProviderProperty(),
-			"reasoning_effort": engineerEffortProperty(),
-			"select_model":     engineerSelectModelProperty(),
-			"request_id":       map[string]any{"type": "string"},
-			"title":            map[string]any{"type": "string"},
-			"kind":             map[string]any{"type": "string", "enum": AgentTaskKindStrings(false)},
-			"parent_task_id":   map[string]any{"type": "string"},
-			"prompt":           map[string]any{"type": "string"},
+			"structured_results": map[string]any{"type": "boolean", "description": "Require a worker-bound structured result and exact-caller revision review. Authorizes only these task metadata submissions; corrections still require confirmed continuation."},
+			"repository_write":   map[string]any{"type": "boolean", "description": "Acquire exclusive managed write ownership of the exact affiliated checkout. Requires a clean initial baseline and idle managed writers. No automatic stash or commit."},
+			"model":              engineerModelProperty(),
+			"model_provider":     engineerModelProviderProperty(),
+			"reasoning_effort":   engineerEffortProperty(),
+			"select_model":       engineerSelectModelProperty(),
+			"request_id":         map[string]any{"type": "string"},
+			"title":              map[string]any{"type": "string"},
+			"kind":               map[string]any{"type": "string", "enum": AgentTaskKindStrings(false)},
+			"parent_task_id":     map[string]any{"type": "string"},
+			"prompt":             map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
 				"enum": ProviderStrings(false),

@@ -249,7 +249,23 @@ type AgentTaskModelSelection struct {
 	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
 }
 
+// AgentTaskRepository is the host-captured boundary for an opted-in writer.
+// A lease coordinates LCR sessions; it is not an OS filesystem sandbox.
+type AgentTaskRepository struct {
+	Write              bool   `json:"write,omitempty"`
+	Root               string `json:"root,omitempty"`
+	State              string `json:"state,omitempty"`
+	SessionKey         string `json:"session_key,omitempty"`
+	BaseHEAD           string `json:"base_head,omitempty"`
+	BaseBranch         string `json:"base_branch,omitempty"`
+	HandoffFingerprint string `json:"handoff_fingerprint,omitempty"`
+	Changes            string `json:"changes,omitempty"`
+	Error              string `json:"error,omitempty"`
+}
+
 type AgentTask struct {
+	Workflow            AgentTaskWorkflow
+	Repository          AgentTaskRepository
 	ModelSelection      AgentTaskModelSelection
 	ObservedModel       AgentTaskModelSelection
 	ID                  string
@@ -302,6 +318,8 @@ type AgentTaskResource struct {
 }
 
 type CreateAgentTaskInput struct {
+	Workflow           AgentTaskWorkflow
+	Repository         AgentTaskRepository
 	ModelSelection     AgentTaskModelSelection
 	ID                 string
 	ParentTaskID       string
@@ -325,6 +343,7 @@ type CreateAgentTaskInput struct {
 }
 
 type UpdateAgentTaskInput struct {
+	Repository          *AgentTaskRepository
 	ModelSelection      *AgentTaskModelSelection
 	ObservedModel       *AgentTaskModelSelection
 	ID                  string

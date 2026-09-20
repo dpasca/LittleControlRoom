@@ -19,6 +19,16 @@ const (
 
 func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTaskInput) (model.AgentTask, error) {
 	input.Kind = model.NormalizeAgentTaskKind(input.Kind)
+	if input.Workflow.Enabled {
+		input.Workflow = model.AgentTaskWorkflow{Enabled: true, Phase: "queued"}
+	}
+	if input.Repository.Write {
+		root := firstNonEmpty(input.OriginWorktreePath, input.OriginProjectPath)
+		if root == "" {
+			return model.AgentTask{}, fmt.Errorf("repository_write requires an affiliated project or worktree")
+		}
+		input.Repository = model.AgentTaskRepository{Write: true, Root: canonicalRepositoryPath(root), State: "pending"}
+	}
 	createdWorkspace := ""
 	if input.WorkspacePath == "" && agentTaskNeedsWorkspace(input.Kind) {
 		workspace, err := appfs.CreateInternalWorkspace(s.cfg.DataDir, agentTaskWorkspacePrefix)
@@ -67,6 +77,11 @@ func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.Ag
 		return nil, err
 	}
 	for i, task := range tasks {
+		if task.Workflow.Enabled && task.Workflow.Phase == "submitted" {
+			if updated, err := s.settleStructuredTask(ctx, task); err == nil {
+				tasks[i] = updated
+			}
+		}
 		updated, _ := s.QueueAgentTaskResultCallback(ctx, task.ID)
 		if strings.TrimSpace(updated.ID) != "" {
 			tasks[i] = updated
@@ -83,6 +98,11 @@ func (s *Service) PurgeExpiredAgentTasks(ctx context.Context, now time.Time) (in
 	managedRoots := []string{appfs.InternalWorkspaceRoot(s.cfg.DataDir)}
 	purged := 0
 	for _, task := range tasks {
+		// Retention must not remove the workspace of a retained write owner,
+		// including records recovered after an interrupted lifecycle update.
+		if task.Repository.State == "held" {
+			continue
+		}
 		workspace := strings.TrimSpace(task.WorkspacePath)
 		if workspace != "" && appfs.IsManagedInternalPath(workspace, managedRoots) {
 			if err := os.RemoveAll(workspace); err != nil {
@@ -157,6 +177,15 @@ func (s *Service) AttachAgentTaskEngineerSession(ctx context.Context, taskID str
 }
 
 func (s *Service) CompleteAgentTask(ctx context.Context, taskID, summary string) (model.AgentTask, error) {
+	if task, err := s.store.GetAgentTask(ctx, taskID); err != nil {
+		return task, err
+	} else if task.Workflow.Enabled && task.Workflow.Phase != "completed" {
+		return task, fmt.Errorf("structured task requires agent_task.review_result with the current revision before completion")
+	}
+	if err := s.ReleaseTaskRepository(ctx, taskID); err != nil {
+		task, _ := s.store.GetAgentTask(ctx, taskID)
+		return task, err
+	}
 	status := model.AgentTaskStatusCompleted
 	completedAt := time.Now()
 	zeroTime := time.Time{}
@@ -178,6 +207,17 @@ func (s *Service) CompleteAgentTask(ctx context.Context, taskID, summary string)
 }
 
 func (s *Service) MarkAgentTaskReadyForReview(ctx context.Context, taskID, summary string) (model.AgentTask, error) {
+	task, err := s.store.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return task, err
+	}
+	if task.Workflow.Enabled {
+		return s.settleStructuredTask(ctx, task)
+	}
+	if err := s.ReleaseTaskRepository(ctx, taskID); err != nil {
+		task, _ := s.store.GetAgentTask(ctx, taskID)
+		return task, err
+	}
 	status := model.AgentTaskStatusWaiting
 	readyAt := time.Now()
 	summary = strings.TrimSpace(summary)
@@ -194,6 +234,9 @@ func (s *Service) QueueAgentTaskResultCallback(ctx context.Context, taskID strin
 	task, err := s.store.GetAgentTask(ctx, taskID)
 	if err != nil {
 		return model.AgentTask{}, err
+	}
+	if task.Workflow.Enabled && (!task.Workflow.Handoff || task.Workflow.CallerStopped || task.Workflow.Phase == "canceled" || task.Workflow.Result == nil || task.Workflow.Review != nil) {
+		return task, nil
 	}
 	provider := agentTaskResultCallbackProvider(task.OriginProvider)
 	projectPath := firstNonEmpty(task.OriginWorktreePath, task.OriginProjectPath)
@@ -215,15 +258,22 @@ func (s *Service) QueueAgentTaskResultCallback(ctx context.Context, taskID strin
 		}
 		return s.store.RecordAgentTaskCallerPending(ctx, task, problem)
 	}
+	operationID := fmt.Sprintf("agent-task-result:%s:%d", strings.TrimSpace(task.ID), task.ResultReadyAt.Unix())
+	revision := int64(0)
+	if task.Workflow.Enabled {
+		revision = task.Workflow.RunID
+		operationID = fmt.Sprintf("agent-task-review:%s:%d", task.ID, revision)
+	}
 	message := control.EngineerMessage{
-		OperationID:     fmt.Sprintf("agent-task-result:%s:%d", strings.TrimSpace(task.ID), task.ResultReadyAt.Unix()),
-		AgentTaskID:     task.ID,
-		ProjectPath:     projectPath,
-		Provider:        provider,
-		SessionMode:     control.SessionModeResumeOrNew,
-		TargetSessionID: task.OriginSessionID,
-		Prompt:          agentTaskResultCallbackPrompt(task),
-		State:           control.EngineerMessageQueued,
+		AgentTaskRevision: revision,
+		OperationID:       operationID,
+		AgentTaskID:       task.ID,
+		ProjectPath:       projectPath,
+		Provider:          provider,
+		SessionMode:       control.SessionModeResumeOrNew,
+		TargetSessionID:   task.OriginSessionID,
+		Prompt:            agentTaskResultCallbackPrompt(task),
+		State:             control.EngineerMessageQueued,
 	}
 	if _, err := s.store.CreateEngineerMessage(ctx, message); err != nil {
 		deliveryError := err.Error()
@@ -264,6 +314,9 @@ func agentTaskResultCallbackProvider(source model.SessionSource) control.Provide
 }
 
 func agentTaskResultCallbackPrompt(task model.AgentTask) string {
+	if task.Workflow.Enabled {
+		return fmt.Sprintf("Delegated task %s (%s) returned revision %d with outcome %s. Inspect work.agent_task_get (task_id and result_revision), review the actual diff and independently check its evidence. Worker claims are not host verification. Record agent_task.review_result for this exact revision: accept or changes_requested, with a short summary and your checks. Acceptance keeps the task visible. Corrections require an explicitly authorized agent_task.continue; this notice does not authorize commits, pushes or deletion.", task.ID, task.Title, task.Workflow.RunID, task.Workflow.Result.Outcome)
+	}
 	lines := []string{
 		"A delegated Little Control Room task you created is ready for review.",
 		"Task ID: " + strings.TrimSpace(task.ID),
@@ -310,6 +363,10 @@ func (s *Service) ConsumeAgentTaskResult(ctx context.Context, taskID, consumedBy
 }
 
 func (s *Service) ArchiveAgentTask(ctx context.Context, taskID string) (model.AgentTask, error) {
+	if err := s.ReleaseTaskRepository(ctx, taskID); err != nil {
+		task, _ := s.store.GetAgentTask(ctx, taskID)
+		return task, err
+	}
 	if _, err := s.ConsumeAgentTaskResult(ctx, taskID, "operator"); err != nil {
 		return model.AgentTask{}, err
 	}

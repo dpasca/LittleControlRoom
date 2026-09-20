@@ -812,6 +812,11 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 	if runtimeManager == nil {
 		runtimeManager = projectrun.NewManager()
 	}
+	svc.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot {
+		return append(codexManager.Snapshots(), codexManager.ParallelSnapshots()...)
+	}, runtimeManager.Snapshots)
+	codexManager.SetTurnAdmission(svc.BeginRepositoryTurn)
+	runtimeManager.SetStartAdmission(svc.BeginRepositoryProcess)
 	busCh, unsub := svc.Bus().Subscribe(128)
 	commandInput := textinput.New()
 	commandInput.Placeholder = "/chat"
@@ -2076,6 +2081,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if label == "" {
 			label = "agent task"
+		}
+		if msg.task.Workflow.Enabled {
+			m.status = "Agent task " + label + ": " + agentTaskListStatus(msg.task)
+			return m, m.requestEngineerMessagesPollCmd()
 		}
 		m.status = "Agent task " + label + " needs your call"
 		var cmd tea.Cmd

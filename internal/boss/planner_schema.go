@@ -107,6 +107,8 @@ func bossPlannerDomainActionFields(domain string) []string {
 			"control_capability",
 			"request_id",
 			"task_id",
+			"repository_write",
+			"structured_results",
 			"task_title",
 			"task_kind",
 			"parent_task_id",

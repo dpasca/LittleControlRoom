@@ -145,3 +145,29 @@ func TestEngineerMessageTerminalReplayIsNotReportedAsPending(t *testing.T) {
 		t.Fatalf("terminal replay status = %q", result.Status)
 	}
 }
+
+func TestStructuredReviewWaitsForLiveIdleCaller(t *testing.T) {
+	path := t.TempDir()
+	live := &fakeCodexSession{projectPath: path, snapshot: codexapp.Snapshot{Provider: codexapp.ProviderCodex, ThreadID: "caller", Started: true, Busy: true, ActiveTurnID: "turn"}}
+	manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) { return live, nil })
+	m := Model{codexManager: manager, allProjects: []model.ProjectSummary{{Path: path, PresentOnDisk: true}}}
+	message := control.EngineerMessage{ProjectPath: path, Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew, TargetSessionID: "caller", AgentTaskRevision: 1}
+	if d := m.engineerMessageDisposition(message); !d.wait || d.deliver {
+		t.Fatalf("revived missing caller: %+v", d)
+	}
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: path, Provider: codexapp.ProviderCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if d := m.engineerMessageDisposition(message); !d.wait || d.deliver {
+		t.Fatalf("steered busy caller: %+v", d)
+	}
+	live.snapshot.Busy = false
+	live.snapshot.ActiveTurnID = ""
+	if d := m.engineerMessageDisposition(message); !d.deliver || d.wait {
+		t.Fatalf("idle caller blocked: %+v", d)
+	}
+	message.TargetSessionID = "other"
+	if d := m.engineerMessageDisposition(message); d.failure == nil || d.deliver {
+		t.Fatalf("changed caller accepted: %+v", d)
+	}
+}

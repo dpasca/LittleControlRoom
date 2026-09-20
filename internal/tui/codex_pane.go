@@ -1413,6 +1413,9 @@ func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.
 }
 
 func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codexapp.LaunchRequest {
+	if m.svc != nil {
+		req.TurnAdmission = m.svc.BeginRepositoryTurn
+	}
 	if task, ok := m.agentTaskForProjectPath(req.ProjectPath); ok {
 		if root := firstNonEmptyString(task.OriginWorktreePath, task.OriginProjectPath); root != "" {
 			req.LCAgentWritableRoots = []string{root}
@@ -2351,6 +2354,15 @@ func (m Model) interruptVisibleCodexCmd() tea.Cmd {
 		label = embeddedProvider(snapshot).Label()
 	}
 	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if m.svc != nil {
+			snapshot := session.Snapshot()
+			ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+			err := m.svc.StopStructuredTasksForEngineer(ctx, projectPath, embeddedSessionSource(snapshot.Provider), snapshot.ControlSessionKey, snapshot.ThreadID)
+			cancel()
+			if err != nil {
+				return codexActionMsg{projectPath: projectPath, err: err}
+			}
+		}
 		if err := session.Interrupt(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
@@ -2371,6 +2383,14 @@ func (m Model) closeVisibleCodexCmd() tea.Cmd {
 		closedSnapshot = codexCloseStateSnapshot(snapshot)
 	}
 	return func() tea.Msg {
+		if m.svc != nil {
+			ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+			err := m.svc.StopStructuredTasksForEngineer(ctx, projectPath, embeddedSessionSource(closedSnapshot.Provider), closedSnapshot.ControlSessionKey, closedSnapshot.ThreadID)
+			cancel()
+			if err != nil {
+				return codexActionMsg{projectPath: projectPath, err: err}
+			}
+		}
 		if err := manager.CloseProject(projectPath); err != nil {
 			return codexActionMsg{err: err}
 		}

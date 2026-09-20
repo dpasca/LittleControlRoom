@@ -4,7 +4,9 @@ Status: implementation in progress. The first return-address slice now separates
 host control keys from provider conversation IDs, persists immutable bindings,
 and retains pending results until identity arrives. Task model/effort selection
 also persists across continuation and reopen, with separate requested and reported
-metadata. The remaining workflow below
+metadata. Opt-in clean-checkout repository write ownership now coordinates
+managed engineer turns and processes, persists restart ownership and captures
+handoff evidence. The remaining workflow below
 is proposed; this document does not authorize changes to running sessions.
 It extends the existing
 [control surface](agent_control_surface.md) and [query surface](agent_query_surface.md).
@@ -219,12 +221,23 @@ acceptance and rework. A cheap worker with expensive retries may cost more overa
    Saved choices survive restart and override global defaults on resume; current
    requested/reported models are visible in task details and queries. Tests cover
    all four providers, rejected choices and fresh/resumed LCAgent root grants.
-   Per-run accounting, repository preflight and write ownership remain; test
-   interrupted launch and external changes as those boundaries are added.
-3. **Explicit results and review.** Add result revisions, typed submissions,
-   lifecycle phases, bounded evidence queries and exact-caller review delivery.
-   Test blocked/failed/interrupted turns, stale results, busy callers, duplicate
-   delivery, unavailable callers and late results after stop.
+   Opt-in clean-checkout preflight and durable exclusive managed write ownership
+   are implemented, including process/engineer checks, alias handling, blocked
+   launches, restart refusal, and changed-revision handoff evidence. Caller turns
+   are conservatively blocked while a lease is held; transcript inspection remains
+   available. Dirty-baseline ownership boundaries, read-only caller execution and
+   per-run accounting remain. External edits cannot be attributed automatically.
+3. **Explicit results and review (implemented, opt-in).** `structured_results=true`
+   creates monotonically numbered runs, bounded immutable worker claims, host
+   checkout evidence and exact-caller review records. Submission does not complete
+   a task. Idle handoff releases ownership before a revision-tagged callback;
+   absent/busy callers wait, and explicit stop suppresses automatic review.
+   Free-text endings are unclassified. Acceptance completes without hiding the
+   task; changes_requested records review without launching a correction.
+   Deterministic tests cover all 16 caller/worker provider combinations, restart,
+   stale/duplicate claims, identity spoofing, blocked results, idle handoff and
+   cancellation at final submission admission. Live provider smoke remains an
+   explicit follow-up; no paid calls are part of this slice.
 4. **Bounded automatic supervision.** Add scoped grants for creation policy,
    corrections and acceptance; caller/worker report contracts; concise UI notices.
    Test revocation, scope widening, unauthorized acceptance, correction limits,

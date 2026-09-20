@@ -13,7 +13,7 @@ import (
 )
 
 const engineerMessageSelect = `
-	SELECT id, operation_id, agent_task_id, project_path, provider, session_mode, requested_target_session_id,
+	SELECT id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
 		target_session_id, prompt,
 		reveal, todo_id, todo_label, todo_text, state, attempt_count,
 		last_error, created_at, updated_at, delivered_at, model_selection_json
@@ -91,13 +91,13 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	message.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO engineer_messages(
-			id, operation_id, agent_task_id, project_path, provider, session_mode, requested_target_session_id,
+			id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
 			target_session_id, prompt,
 			reveal, todo_id, todo_label, todo_text, state, attempt_count,
 			last_error, created_at, updated_at, delivered_at, model_selection_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, message.ID, message.OperationID, message.AgentTaskID, message.ProjectPath, string(message.Provider),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, message.ID, message.OperationID, message.AgentTaskID, message.AgentTaskRevision, message.ProjectPath, string(message.Provider),
 		string(message.SessionMode), message.RequestedTargetSessionID, message.TargetSessionID, message.Prompt,
 		boolToInt(message.Reveal), message.TodoID,
 		message.TodoLabel, message.TodoText, string(message.State), message.AttemptCount,
@@ -128,8 +128,8 @@ func (s *Store) linkEngineerMessageToAgentTask(ctx context.Context, message cont
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE agent_tasks
 		SET result_message_id = ?, updated_at = ?
-		WHERE id = ?
-	`, message.ID, time.Now().Unix(), message.AgentTaskID)
+		WHERE id = ? AND (?=0 OR (json_extract(workflow_json,'$.run_id')=? AND json_extract(workflow_json,'$.phase') IN ('awaiting_review','blocked','failed')))
+	`, message.ID, time.Now().Unix(), message.AgentTaskID, message.AgentTaskRevision, message.AgentTaskRevision)
 	if err != nil {
 		return fmt.Errorf("link engineer message to agent task: %w", err)
 	}
@@ -146,6 +146,7 @@ func (s *Store) linkEngineerMessageToAgentTask(ctx context.Context, message cont
 func sameEngineerMessageRequest(existing, proposed control.EngineerMessage) bool {
 	return existing.EngineerModelSelection == proposed.EngineerModelSelection &&
 		existing.AgentTaskID == proposed.AgentTaskID &&
+		existing.AgentTaskRevision == proposed.AgentTaskRevision &&
 		existing.ProjectPath == proposed.ProjectPath &&
 		existing.Provider == proposed.Provider &&
 		existing.SessionMode == proposed.SessionMode &&
@@ -424,6 +425,7 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 		&message.ID,
 		&message.OperationID,
 		&message.AgentTaskID,
+		&message.AgentTaskRevision,
 		&message.ProjectPath,
 		&provider,
 		&sessionMode,

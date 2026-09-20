@@ -58,6 +58,8 @@ type bossAction struct {
 	ControlCapability        string                         `json:"control_capability"`
 	RequestID                string                         `json:"request_id"`
 	TaskID                   string                         `json:"task_id"`
+	StructuredResults        bool                           `json:"structured_results"`
+	RepositoryWrite          bool                           `json:"repository_write"`
 	TaskTitle                string                         `json:"task_title"`
 	TaskKind                 string                         `json:"task_kind"`
 	ParentTaskID             string                         `json:"parent_task_id"`

@@ -162,8 +162,8 @@ generated runtime guidance / LCAgent system prompt
 ```
 
 The query surface is read-only. Mutations remain in the separate progressive
-[Agent Control Surface](agent_control_surface.md), where typed operations are
-queued for explicit TUI confirmation.
+[Agent Control Surface](agent_control_surface.md), where typed actions use explicit TUI confirmation or narrowly authorized
+exact-session metadata updates.
 
 ## Adding a query
 
@@ -177,3 +177,17 @@ queued for explicit TUI confirmation.
 
 No new transport tool is needed. The query appears in compact domain discovery,
 and its schema remains deferred until an agent describes it.
+
+Delegated-task records also include `repository`: whether exclusive managed write
+ownership was requested, its exact root, state (`pending`, `held`, `blocked`,
+`released`), owner control key, baseline HEAD/branch, last handoff fingerprint,
+bounded changed-file status, and any preflight/handoff issue. A fingerprint is
+host-captured checkout evidence, not attribution of edits to the worker. The
+fields describe the latest ownership transfer, not a complete run ledger.
+
+Structured tasks expose compact `workflow` identity and phase in list results.
+`work.agent_task_get` returns the full current workflow; optional positive
+`result_revision` adds one immutable historical result with separate
+`worker_claims`, `caller_review`, and `host_repository_evidence`. Missing host
+handoff evidence is null. Worker and caller checks are reported claims, not
+host-executed test attestations. Privacy is checked before reading history.

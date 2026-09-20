@@ -555,7 +555,8 @@ func (e *Executor) agentTaskList(ctx context.Context, raw json.RawMessage) (map[
 }
 
 type idArgs struct {
-	TaskID string `json:"task_id"`
+	TaskID         string `json:"task_id"`
+	ResultRevision int64  `json:"result_revision,omitempty"`
 }
 
 func (e *Executor) agentTaskGet(ctx context.Context, raw json.RawMessage) (map[string]any, error) {
@@ -574,7 +575,26 @@ func (e *Executor) agentTaskGet(ctx context.Context, raw json.RawMessage) (map[s
 	if !e.taskVisible(task) {
 		return nil, errors.New("agent task is hidden by the private-category disclosure policy")
 	}
-	return map[string]any{"agent_task": agentTaskRecord(task)}, nil
+	record := agentTaskRecord(task)
+	record["workflow"] = task.Workflow
+	response := map[string]any{"agent_task": record}
+	if args.ResultRevision < 0 {
+		return nil, errors.New("result_revision must be positive")
+	}
+	if args.ResultRevision > 0 {
+		reader, ok := e.reader.(interface {
+			GetAgentTaskResult(context.Context, string, int64) (map[string]any, error)
+		})
+		if !ok {
+			return nil, errors.New("task result history unavailable")
+		}
+		result, err := reader.GetAgentTaskResult(ctx, taskID, args.ResultRevision)
+		if err != nil {
+			return nil, err
+		}
+		response["result"] = result
+	}
+	return response, nil
 }
 
 func (e *Executor) goalRunList(ctx context.Context, raw json.RawMessage) (map[string]any, error) {

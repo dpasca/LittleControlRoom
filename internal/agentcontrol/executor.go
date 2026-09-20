@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 	"lcroom/internal/store"
 )
 
@@ -91,6 +92,23 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 	invocation, err := control.BuildProposedInvocation(operationID, capability.Name, arguments)
 	if err != nil {
 		return nil, err
+	}
+	if capability.Name == control.CapabilityAgentTaskSubmitResult || capability.Name == control.CapabilityAgentTaskReviewResult {
+		actor := model.AgentTaskActor{ProjectPath: e.originProjectPath, Provider: model.NormalizeSessionSource(model.SessionSource(e.provider)), SessionKey: e.sessionKey}
+		var task model.AgentTask
+		if capability.Name == control.CapabilityAgentTaskSubmitResult {
+			var input control.AgentTaskSubmitResultInput
+			json.Unmarshal(invocation.Args, &input)
+			task, err = e.store.SubmitAgentTaskResult(ctx, actor, input)
+		} else {
+			var input control.AgentTaskReviewResultInput
+			json.Unmarshal(invocation.Args, &input)
+			task, err = e.store.ReviewAgentTaskResult(ctx, actor, input)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"success": true, "terminal": true, "operator_confirmation": false, "requires_new_user_turn": false, "task_id": task.ID, "workflow": task.Workflow, "message": "Task metadata recorded. End this turn after submitting a worker result; the host waits for the worker to stop before review. No corrective turn or repository action was started."}, nil
 	}
 	created, err := e.store.CreateControlOperation(ctx, control.Operation{
 		ID:              operationID,

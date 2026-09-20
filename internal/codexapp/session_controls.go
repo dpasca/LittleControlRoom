@@ -65,6 +65,12 @@ func (s *appServerSession) Compact() error {
 }
 
 func (s *appServerSession) Review() error {
+	unlockAdmission, admissionErr := beginManagedTurn(s.turnAdmission)
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer unlockAdmission()
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()

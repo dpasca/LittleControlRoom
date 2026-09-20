@@ -168,6 +168,8 @@ func attachmentDisplayLabel(path string) string {
 }
 
 type Submission struct {
+	RequireIdle bool         `json:"-"`
+	BeforeStart func() error `json:"-"`
 	Text        string
 	DisplayText string // optional; if set, used for transcript display instead of Text
 	Attachments []Attachment
@@ -708,6 +710,9 @@ type Session interface {
 }
 
 type LaunchRequest struct {
+	RequireLiveIdle bool
+	SubmissionCheck func() error  `json:"-"`
+	TurnAdmission   TurnAdmission `json:"-"`
 	// ImageReviewEnabled is operator-selected for this session only, never a global default.
 	ImageReviewEnabled bool
 	// ImageReviewAPIKey is passed only to the recovery MCP helper environment.
@@ -914,6 +919,7 @@ func sessionStateSnapshot(session Session) Snapshot {
 }
 
 type Manager struct {
+	turnAdmission           TurnAdmission
 	mu                      sync.Mutex
 	shutdownMu              sync.Mutex
 	sessions                map[string]Session
@@ -1093,6 +1099,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		return nil, false, err
 	}
 
+	req = m.enrichTurnAdmission(req)
 	projectPath := strings.TrimSpace(req.ProjectPath)
 	ensureManagedPlaywrightSessionKey(&req)
 	ensureTodoCaptureSessionKey(&req)
@@ -1111,6 +1118,10 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		delete(m.sessionProviders, projectPath)
 		existing = nil
 		ok = false
+	}
+	if req.RequireLiveIdle && (!ok || existingState.ActiveTurnID != "" || existingState.Busy || existingState.BusyExternal || existingState.Closed || existingState.PendingApproval != nil || existingState.PendingToolInput != nil) {
+		m.mu.Unlock()
+		return nil, false, fmt.Errorf("review delivery requires the exact live idle caller; it will not reopen or steer a session")
 	}
 	if req.ForceNew && ok {
 		confirmedID := strings.TrimSpace(req.ConfirmedReplacementSessionID)
@@ -1208,9 +1219,15 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		}
 	}
 
+	req, finishInitialAdmission, unlockAdmission, err := admitManagedLaunch(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlockAdmission()
 	session, err := m.factory(req, func() {
 		m.notify(projectPath)
 	})
+	finishInitialAdmission()
 	if err != nil {
 		return nil, false, err
 	}
@@ -1259,6 +1276,7 @@ func (m *Manager) OpenParallel(req LaunchRequest) (Session, bool, error) {
 		return nil, false, err
 	}
 
+	req = m.enrichTurnAdmission(req)
 	projectPath := strings.TrimSpace(req.ProjectPath)
 	ensureManagedPlaywrightSessionKey(&req)
 	ensureTodoCaptureSessionKey(&req)
@@ -1287,9 +1305,15 @@ func (m *Manager) OpenParallel(req LaunchRequest) (Session, bool, error) {
 
 	// Parallel sessions use a separate update stream so their progress cannot
 	// overwrite the foreground project's interactive snapshot cache.
+	req, finishInitialAdmission, unlockAdmission, err := admitManagedLaunch(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer unlockAdmission()
 	session, err := m.factory(req, func() {
 		m.notifyParallel(projectPath)
 	})
+	finishInitialAdmission()
 	if err != nil {
 		return nil, false, err
 	}

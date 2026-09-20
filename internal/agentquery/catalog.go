@@ -252,7 +252,8 @@ func Capabilities() []Capability {
 			"Load one delegated agent task by exact id.",
 			SensitivityContent,
 			objectSchema(map[string]any{
-				"task_id": stringProperty("Exact delegated agent task id.", 1),
+				"task_id":         stringProperty("Exact delegated agent task id.", 1),
+				"result_revision": map[string]any{"type": "integer", "minimum": 1, "description": "Include immutable claims and review for this exact run revision."},
 			}, []string{"task_id"}),
 		),
 		collectionCapability(
