@@ -83,6 +83,7 @@ type scanMsg struct {
 type embeddedSessionActivityRecordRequest struct {
 	activity     service.EmbeddedSessionActivity
 	refreshAfter bool
+	agentTaskID  string
 }
 
 type projectInvalidationKind uint8
@@ -307,7 +308,7 @@ func (m *Model) recordEmbeddedSessionTransitionCmd(projectPath string, snapshot 
 	return m.requestEmbeddedSessionActivityRecordCmd(activity, false)
 }
 
-func (m Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+func (m *Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
 	if m.svc == nil {
 		return nil
 	}
@@ -315,19 +316,27 @@ func (m Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot code
 	if !ok {
 		return nil
 	}
+	if m.isAgentTaskProjectPath(projectPath) {
+		return m.requestEmbeddedSessionActivityRecordCmd(activity, false)
+	}
 	return m.recordEmbeddedSessionStateCmd(activity)
 }
 
 func (m *Model) requestEmbeddedSessionActivityRecordCmd(activity service.EmbeddedSessionActivity, refreshAfter bool) tea.Cmd {
-	if m.isAgentTaskProjectPath(activity.ProjectPath) {
-		return nil
-	}
 	key := embeddedSessionActivityRecordKey(activity)
 	if key == "" {
 		return nil
 	}
 	m.ensureEmbeddedActivityRecordState()
 	req := embeddedSessionActivityRecordRequest{activity: activity, refreshAfter: refreshAfter}
+	if task, ok := m.agentTaskForProjectPath(activity.ProjectPath); ok {
+		req.agentTaskID = task.ID
+		req.refreshAfter = false
+		if task.Provider == activity.Source && task.SessionID == "" {
+			task.SessionID = activity.SessionID
+			m.upsertOpenAgentTask(task)
+		}
+	}
 	if m.embeddedActivityInFlight[key] {
 		m.embeddedActivityQueued[key] = mergeEmbeddedSessionActivityRecordRequest(m.embeddedActivityQueued[key], req)
 		return nil
@@ -341,7 +350,12 @@ func (m Model) recordEmbeddedSessionActivityRecordCmd(key string, req embeddedSe
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(embeddedSessionActivityRecordTimeout)
 		defer cancel()
-		err := m.svc.RecordEmbeddedSessionActivity(ctx, req.activity)
+		var err error
+		if req.agentTaskID != "" {
+			err = m.svc.RecordAgentTaskEngineerSession(ctx, req.agentTaskID, req.activity.Source, req.activity.SessionID)
+		} else {
+			err = m.svc.RecordEmbeddedSessionActivity(ctx, req.activity)
+		}
 		err = timeoutActionError(err, embeddedSessionActivityRecordTimeout, "recording embedded session activity")
 		return embeddedSessionActivityRecordedMsg{
 			key:          key,
@@ -381,7 +395,7 @@ func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionAct
 	}
 }
 
-func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+func (m *Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
 	if m.svc == nil {
 		return nil
 	}
@@ -390,7 +404,7 @@ func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, sna
 		return nil
 	}
 	if m.isAgentTaskProjectPath(projectPath) {
-		return nil
+		return m.recordEmbeddedSessionSettledCmd(projectPath, snapshot)
 	}
 	activity, ok := embeddedSessionSettledActivityFromSnapshot(projectPath, snapshot)
 	refreshCmd := m.refreshProjectStatusCmd(projectPath)

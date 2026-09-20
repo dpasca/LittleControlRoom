@@ -2899,6 +2899,9 @@ func projectSummaryForAgentTask(task model.AgentTask) (model.ProjectSummary, err
 
 func taskSessionIDForProvider(task model.AgentTask, provider codexapp.Provider) string {
 	source := modelSessionSourceFromCodexProvider(provider)
+	if model.NormalizeSessionSource(task.Provider) == source && strings.TrimSpace(task.SessionID) != "" {
+		return strings.TrimSpace(task.SessionID)
+	}
 	for _, resource := range task.Resources {
 		if model.NormalizeAgentTaskResourceKind(resource.Kind) != model.AgentTaskResourceEngineerSession {
 			continue

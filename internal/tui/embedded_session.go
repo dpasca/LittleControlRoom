@@ -200,10 +200,13 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	if task, ok := m.agentTaskForProjectPath(msg.projectPath); ok {
 		selectedPath := m.currentSelectedProjectPath()
 		task.Provider = modelSessionSourceFromCodexProvider(embeddedProvider(msg.snapshot))
-		task.SessionID = strings.TrimSpace(msg.snapshot.ThreadID)
+		if sessionID := strings.TrimSpace(msg.snapshot.ThreadID); sessionID != "" {
+			task.SessionID = sessionID
+		}
 		task.LastTouchedAt = m.currentTime()
 		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
 		m.rebuildProjectList(selectedPath)
+		renameRefreshCmd = batchCmds(renameRefreshCmd, m.recordEmbeddedSessionTransitionCmd(msg.projectPath, msg.snapshot))
 	}
 	revealOnOpen := m.revealEmbeddedOpenOnSessionOpened(msg)
 	superseded := msg.openRequestID != 0 && msg.openRequestID < m.codexOpenRequestSeq

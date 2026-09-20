@@ -101,6 +101,13 @@ func (s *Service) GetAgentTask(ctx context.Context, taskID string) (model.AgentT
 	return s.store.GetAgentTask(ctx, taskID)
 }
 
+// RecordAgentTaskEngineerSession retains an identity announced after launch (or
+// recovered while reopening). Unlike Attach, it does not start a new task turn
+// or clear review/acceptance state. A stale provider cannot replace the owner.
+func (s *Service) RecordAgentTaskEngineerSession(ctx context.Context, taskID string, provider model.SessionSource, sessionID string) error {
+	return s.store.RecordAgentTaskEngineerSession(ctx, taskID, provider, sessionID)
+}
+
 func (s *Service) AttachAgentTaskEngineerSession(ctx context.Context, taskID string, provider model.SessionSource, sessionID string) (model.AgentTask, error) {
 	task, err := s.store.GetAgentTask(ctx, taskID)
 	if err != nil {

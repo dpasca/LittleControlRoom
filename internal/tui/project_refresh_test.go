@@ -183,12 +183,12 @@ func TestAgentTaskPathsDoNotUseProjectRefreshPipeline(t *testing.T) {
 		Busy:           true,
 		LastActivityAt: time.Now(),
 	}
-	if cmd := m.recordEmbeddedSessionTransitionCmd(workspace, snapshot); cmd != nil {
-		t.Fatal("agent-task activity should not be recorded through project session state")
+	if cmd := m.recordEmbeddedSessionTransitionCmd(workspace, snapshot); cmd == nil {
+		t.Fatal("agent-task identity should be recorded through the task-specific path")
 	}
 	snapshot.Busy = false
 	if cmd := m.recordEmbeddedSessionSettledAndRefreshCmd(workspace, snapshot); cmd != nil {
-		t.Fatal("agent-task settle should not schedule project status refresh")
+		t.Fatal("agent-task settle should coalesce with the identity write, without a project status refresh")
 	}
 }
 

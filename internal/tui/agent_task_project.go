@@ -131,6 +131,8 @@ func agentTaskSessionFormat(source model.SessionSource) string {
 		return "opencode_db"
 	case model.SessionSourceClaudeCode:
 		return "claude_code"
+	case model.SessionSourceLCAgent:
+		return "lcagent_jsonl"
 	case model.SessionSourceCodex:
 		return "modern"
 	default:

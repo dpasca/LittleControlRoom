@@ -15,6 +15,46 @@ import (
 	"lcroom/internal/model"
 )
 
+// RecordAgentTaskEngineerSession fills a launch-time identity gap without
+// resetting task lifecycle or replacing a newer, explicitly attached session.
+func (s *Store) RecordAgentTaskEngineerSession(ctx context.Context, taskID string, provider model.SessionSource, sessionID string) error {
+	provider = model.NormalizeSessionSource(provider)
+	sessionID = strings.TrimSpace(sessionID)
+	if provider == model.SessionSourceUnknown || sessionID == "" {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now()
+	result, err := tx.ExecContext(ctx, `UPDATE agent_tasks SET provider = ?, session_id = ?, updated_at = ?
+		WHERE id = ? AND session_id = '' AND (provider = ? OR provider = '' OR provider = ?)`,
+		string(provider), sessionID, now.Unix(), taskID, string(provider), string(model.SessionSourceUnknown))
+	if err != nil {
+		return fmt.Errorf("record agent task session: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_task_resources WHERE task_id = ? AND kind = ? AND provider = ?`,
+		taskID, string(model.AgentTaskResourceEngineerSession), string(provider)); err != nil {
+		return err
+	}
+	if err := insertAgentTaskResources(ctx, tx, taskID, []model.AgentTaskResource{{
+		Kind: model.AgentTaskResourceEngineerSession, Provider: provider,
+		SessionID: sessionID, Label: "current engineer session",
+	}}, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) CreateAgentTask(ctx context.Context, input model.CreateAgentTaskInput) (model.AgentTask, error) {
 	normalized, err := normalizeCreateAgentTaskInput(input)
 	if err != nil {
