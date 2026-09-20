@@ -12,6 +12,7 @@ import (
 
 const (
 	agentTaskActionFocusTrash = iota
+	agentTaskActionFocusCapture
 	agentTaskActionFocusKeep
 )
 
@@ -21,6 +22,26 @@ type agentTaskActionConfirmState struct {
 	TaskTitle   string
 	Selected    int
 	Submitting  bool
+	// Capture is offered only while a changes_requested review of the current
+	// revision leaves the checkout awaiting an authorized correction boundary.
+	Capture         bool
+	CaptureRevision int64
+}
+
+// agentTaskOffersCorrectionCapture reads cached task state only.
+func agentTaskOffersCorrectionCapture(task model.AgentTask) bool {
+	if !task.Repository.Write || task.Repository.State == "held" || !task.Workflow.Enabled {
+		return false
+	}
+	review := task.Workflow.Review
+	return review != nil && review.Decision == "changes_requested" && review.Revision == task.Workflow.RunID
+}
+
+func (confirm agentTaskActionConfirmState) focusOrder() []int {
+	if confirm.Capture {
+		return []int{agentTaskActionFocusTrash, agentTaskActionFocusCapture, agentTaskActionFocusKeep}
+	}
+	return []int{agentTaskActionFocusTrash, agentTaskActionFocusKeep}
 }
 
 func (m Model) selectedAgentTask() (model.AgentTask, model.ProjectSummary, bool) {
@@ -59,10 +80,12 @@ func (m *Model) openAgentTaskActionConfirmForSelection() tea.Cmd {
 		return nil
 	}
 	m.agentTaskAction = &agentTaskActionConfirmState{
-		TaskID:      task.ID,
-		ProjectPath: task.WorkspacePath,
-		TaskTitle:   agentTaskActionTitle(task),
-		Selected:    agentTaskActionFocusKeep,
+		TaskID:          task.ID,
+		ProjectPath:     task.WorkspacePath,
+		TaskTitle:       agentTaskActionTitle(task),
+		Selected:        agentTaskActionFocusKeep,
+		Capture:         agentTaskOffersCorrectionCapture(task),
+		CaptureRevision: task.Workflow.RunID,
 	}
 	m.status = "Agent task actions open"
 	return nil
@@ -80,11 +103,15 @@ func (m *Model) cycleAgentTaskActionSelection(delta int) {
 	if confirm == nil || delta == 0 {
 		return
 	}
-	if confirm.Selected == agentTaskActionFocusKeep {
-		confirm.Selected = agentTaskActionFocusTrash
-	} else {
-		confirm.Selected = agentTaskActionFocusKeep
+	order := confirm.focusOrder()
+	index := 0
+	for i, focus := range order {
+		if focus == confirm.Selected {
+			index = i
+		}
 	}
+	index = (index + delta%len(order) + len(order)) % len(order)
+	confirm.Selected = order[index]
 }
 
 func (m Model) updateAgentTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -112,6 +139,14 @@ func (m Model) updateAgentTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, tea.
 		if confirm.Selected == agentTaskActionFocusKeep {
 			m.closeAgentTaskActionConfirm("Agent task actions closed")
 			return m, nil
+		}
+		if confirm.Selected == agentTaskActionFocusCapture {
+			if !confirm.Capture {
+				return m, nil
+			}
+			confirm.Submitting = true
+			m.status = "Capturing correction baseline..."
+			return m, m.captureCorrectionBaselineCmd(confirm.TaskID, confirm.ProjectPath)
 		}
 		task := model.AgentTask{ID: confirm.TaskID, Title: confirm.TaskTitle, WorkspacePath: confirm.ProjectPath}
 		if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
@@ -161,6 +196,27 @@ func (m Model) archiveAgentTaskCmd(taskID, projectPath, selectPath string) tea.C
 	}
 }
 
+// captureCorrectionBaselineCmd runs the checkout inspection off the UI thread.
+func (m Model) captureCorrectionBaselineCmd(taskID, projectPath string) tea.Cmd {
+	svc := m.svc
+	return func() tea.Msg {
+		if svc == nil {
+			return agentTaskActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
+		}
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		task, err := svc.CaptureAgentTaskCorrectionBaseline(ctx, taskID)
+		err = timeoutActionError(err, tuiGitActionTimeout, "capturing the correction baseline")
+		return agentTaskActionMsg{
+			task:        task,
+			projectPath: projectPath,
+			selectPath:  projectPath,
+			status:      "Correction baseline captured; a correction run may continue on these edits",
+			err:         err,
+		}
+	}
+}
+
 func (m Model) renderAgentTaskActionOverlay(body string, bodyW, bodyH int) string {
 	confirm := m.agentTaskAction
 	if confirm == nil {
@@ -172,6 +228,13 @@ func (m Model) renderAgentTaskActionOverlay(body string, bodyW, bodyH int) strin
 		detailValueStyle.Render("Move this agent task to Trash and hide it from the dashboard."),
 		detailMutedStyle.Render("Its task record and workspace will be deleted automatically after 7 days."),
 		detailMutedStyle.Render(m.displayPathWithHomeTilde(confirm.ProjectPath)),
+	}
+	if confirm.Selected == agentTaskActionFocusCapture {
+		messageLines = []string{
+			detailValueStyle.Render(fmt.Sprintf("Authorize the checkout as it stands now as the starting point for a correction of revision %d.", confirm.CaptureRevision)),
+			detailMutedStyle.Render("Nothing is stashed, reset or committed. Use this after making your own fixes on top of the result you rejected."),
+			detailMutedStyle.Render(m.displayPathWithHomeTilde(confirm.ProjectPath)),
+		}
 	}
 	buttons := m.renderAgentTaskActionButtons(*confirm)
 	lines := []string{
@@ -191,18 +254,23 @@ func (m Model) renderAgentTaskActionButtons(confirm agentTaskActionConfirmState)
 	if confirm.Submitting {
 		return disabledActionTextStyle.Render("[" + todoDialogWaitingLabel(m.spinnerFrame) + "]")
 	}
-	return strings.Join([]string{
-		renderDialogButton("Trash", confirm.Selected == agentTaskActionFocusTrash),
-		renderDialogButton("Keep", confirm.Selected == agentTaskActionFocusKeep),
-	}, " ")
+	buttons := []string{renderDialogButton("Trash", confirm.Selected == agentTaskActionFocusTrash)}
+	if confirm.Capture {
+		buttons = append(buttons, renderDialogButton("Capture baseline", confirm.Selected == agentTaskActionFocusCapture))
+	}
+	return strings.Join(append(buttons, renderDialogButton("Keep", confirm.Selected == agentTaskActionFocusKeep)), " ")
 }
 
 func (m Model) agentTaskFooterActions(width int) []footerAction {
 	if width < 60 {
 		return nil
 	}
-	if _, _, ok := m.selectedAgentTask(); !ok {
+	task, _, ok := m.selectedAgentTask()
+	if !ok {
 		return nil
+	}
+	if agentTaskOffersCorrectionCapture(task) {
+		return []footerAction{footerHideAction("x", "actions")}
 	}
 	return []footerAction{footerHideAction("x", "trash")}
 }
