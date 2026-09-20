@@ -1032,7 +1032,7 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(inv control.Invocation, 
 		return controlInvocationOutcome{model: m, err: err}
 	}
 	var provider codexapp.Provider
-	if strings.TrimSpace(input.Prompt) != "" {
+	if strings.TrimSpace(input.Prompt) != "" || input.Model != "" {
 		var err error
 		provider, err = m.resolveAgentTaskControlProvider(input.Provider, model.AgentTask{})
 		if err != nil {
@@ -1069,6 +1069,8 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			return msg
 		}
 		msg.task, msg.err = svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+			ModelSelection:     taskModelChoice(provider, input.EngineerModelSelection),
+			Provider:           modelSessionSourceFromCodexProvider(provider),
 			ParentTaskID:       strings.TrimSpace(input.ParentTaskID),
 			Title:              input.Title,
 			Kind:               modelAgentTaskKindFromControl(input.Kind),
@@ -1167,9 +1169,10 @@ func (m Model) applyBossAgentTaskCreated(msg bossAgentTaskCreatedMsg) (tea.Model
 	}
 	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, msg.input.Prompt)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, msg.provider, embeddedLaunchOptions{
-		forceNew: true,
-		prompt:   prompt,
-		reveal:   msg.input.Reveal,
+		modelSelection: msg.input.EngineerModelSelection,
+		forceNew:       true,
+		prompt:         prompt,
+		reveal:         msg.input.Reveal,
 	})
 	m = normalizeUpdateModel(updated)
 	if cmd == nil {
@@ -1214,6 +1217,22 @@ func (m Model) loadBossAgentTaskContinueCmd(inv control.Invocation, input contro
 		ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
 		defer cancel()
 		msg.task, msg.err = svc.GetAgentTask(ctx, input.TaskID)
+		if msg.err == nil {
+			provider, err := m.resolveAgentTaskControlProvider(input.Provider, msg.task)
+			if err == nil {
+				msg.input.EngineerModelSelection, err = inheritedTaskModelChoice(msg.task, provider, input.EngineerModelSelection)
+			}
+			// Explicit choices were validated by the shared control entry point.
+			// Revalidate inherited choices too: a saved ID may have left the catalog.
+			if err == nil && input.Model == "" && msg.input.Model != "" {
+				var models []codexapp.ModelOption
+				models, err = m.prelaunchEmbeddedModelOptions(ctx, provider)
+				if err == nil {
+					err = engineerCatalog(provider, models, "prelaunch").Validate(msg.input.EngineerModelSelection)
+				}
+			}
+			msg.err = err
+		}
 		msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "loading the agent task")
 		return msg
 	}
@@ -1257,15 +1276,26 @@ func (m Model) applyBossAgentTaskContinueLoaded(msg bossAgentTaskContinueLoadedM
 			return m, bossControlResultCmd(msg.inv, m.status, err)
 		}
 	}
+	if input.Model != "" {
+		if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
+			err := fmt.Errorf("wait for the active worker turn before continuing with a saved or explicit model choice")
+			m.status = err.Error()
+			return m, bossControlResultCmd(msg.inv, m.status, err)
+		}
+	}
+	task.ModelSelection = taskModelChoice(provider, input.EngineerModelSelection)
+	task.ObservedModel = model.AgentTaskModelSelection{}
+	m.upsertOpenAgentTask(task)
 	resumeID := taskSessionIDForProvider(task, provider)
 	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt, agentTaskPromptOptions{
 		ResumePausedGoal: input.SessionMode != control.SessionModeNew && resumeID != "",
 	})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
-		forceNew: input.SessionMode == control.SessionModeNew,
-		prompt:   prompt,
-		reveal:   input.Reveal,
-		resumeID: resumeID,
+		modelSelection: input.EngineerModelSelection,
+		forceNew:       input.SessionMode == control.SessionModeNew,
+		prompt:         prompt,
+		reveal:         input.Reveal,
+		resumeID:       resumeID,
 	})
 	m = normalizeUpdateModel(updated)
 	if cmd == nil {
@@ -2786,17 +2816,19 @@ func (m Model) liveAgentTaskSnapshot(task model.AgentTask) (codexapp.Snapshot, b
 }
 
 func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, successStatus string) tea.Cmd {
-	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
+	return m.prepareAgentTaskModelCmd(task, mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok || opened.err != nil || m.svc == nil {
 			return msg
 		}
+		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		defer cancel()
 		taskID := strings.TrimSpace(task.ID)
 		opened.agentTaskID = taskID
 		opened.agentTaskTitle = strings.TrimSpace(task.Title)
 		provider := modelSessionSourceFromCodexProvider(embeddedProvider(opened.snapshot))
 		sessionID := strings.TrimSpace(opened.snapshot.ThreadID)
-		if _, err := m.svc.AttachAgentTaskEngineerSession(m.ctx, taskID, provider, sessionID); err != nil {
+		if _, err := m.svc.AttachAgentTaskEngineerSession(ctx, taskID, provider, sessionID); err != nil {
 			opened.err = err
 			opened.status = strings.TrimSpace(opened.status)
 			if opened.status == "" {
@@ -2805,13 +2837,17 @@ func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, suc
 			opened.status += "; task tracking update failed"
 			return opened
 		}
+		if err := m.svc.Store().RecordAgentTaskObservedModel(ctx, taskID, sessionID, taskObservedModel(opened.snapshot)); err != nil {
+			opened.err = err
+			return opened
+		}
 		status := strings.TrimSpace(successStatus)
 		if status == "" {
 			status = "The requested task is underway"
 		}
 		opened.status = status
 		return opened
-	})
+	}))
 }
 
 func modelAgentTaskKindFromControl(kind control.AgentTaskKind) model.AgentTaskKind {
@@ -2826,6 +2862,9 @@ func modelAgentTaskKindFromControl(kind control.AgentTaskKind) model.AgentTaskKi
 func (m Model) resolveAgentTaskControlProvider(provider control.Provider, task model.AgentTask) (codexapp.Provider, error) {
 	switch provider.Normalized() {
 	case control.ProviderAuto:
+		if resolved := codexProviderFromSessionSource(task.ModelSelection.Provider); resolved != "" {
+			return resolved, nil
+		}
 		if resolved := codexProviderFromSessionSource(task.Provider); resolved != "" {
 			return resolved, nil
 		}

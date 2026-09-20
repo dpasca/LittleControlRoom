@@ -262,6 +262,12 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 		}
 		lines = append(lines, detailField("Engineer", sessionValue))
 	}
+	if label := taskModelLabel(task.ModelSelection); label != "" {
+		lines = append(lines, renderWrappedDetailField("Requested model", detailValueStyle, width, label))
+	}
+	if label := taskModelLabel(task.ObservedModel); label != "" {
+		lines = append(lines, renderWrappedDetailField("Reported model", detailValueStyle, width, label))
+	}
 	if last := agentTaskLastActivity(task); !last.IsZero() {
 		lines = append(lines, detailField("Last touched", detailValueStyle.Render(last.Format(time.RFC3339))))
 	}

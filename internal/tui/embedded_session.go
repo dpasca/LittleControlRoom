@@ -323,7 +323,14 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 			}
 			m.markCodexSkipNextLiveRefresh(msg.projectPath)
 		}
-		m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning, msg.modelProvider)
+		if task, ok := m.agentTaskForProjectPath(msg.projectPath); ok {
+			task.ModelSelection = taskModelChoice(msg.provider, control.EngineerModelSelection{Model: msg.model, ModelProvider: msg.modelProvider, ReasoningEffort: msg.reasoning})
+			task.ObservedModel = model.AgentTaskModelSelection{}
+			m.upsertOpenAgentTask(task)
+			asyncCmd = m.persistAgentTaskModelChoiceCmd(task)
+		} else {
+			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning, msg.modelProvider)
+		}
 		m.recordRecentModel(msg.provider, msg.model, msg.modelProvider)
 		m.returnToTodoFromModelPicker()
 		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
@@ -802,6 +809,9 @@ func shouldRecordEmbeddedSessionSettledAfterDisappearance(prev codexapp.Snapshot
 }
 
 func shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(hadPrev bool, prev, next codexapp.Snapshot) bool {
+	if next.ThreadID != "" && taskObservedModel(next).Model != "" && taskObservedModel(prev) != taskObservedModel(next) {
+		return true
+	}
 	// An identity can arrive while idle, before the first turn or after replay.
 	if next.ControlSessionKey != "" && next.ThreadID != "" && (!hadPrev || prev.ControlSessionKey != next.ControlSessionKey || prev.ThreadID != next.ThreadID) {
 		return true
@@ -918,6 +928,7 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 		Source:               embeddedSessionSource(snapshot.Provider),
 		SessionID:            sessionID,
 		ControlSessionKey:    snapshot.ControlSessionKey,
+		ObservedModel:        taskObservedModel(snapshot),
 		Format:               embeddedSessionFormat(snapshot.Provider),
 		LastActivityAt:       lastActivity,
 		LatestTurnStartedAt:  latestTurnStartedAt,

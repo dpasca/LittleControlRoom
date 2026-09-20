@@ -240,7 +240,18 @@ type CommitTodoCheck struct {
 	UpdatedAt        time.Time
 }
 
+// AgentTaskModelSelection separates the engineer type from its model vendor.
+// Reported choices may differ from requested aliases and are never inferred.
+type AgentTaskModelSelection struct {
+	Provider        SessionSource `json:"provider,omitempty"`
+	Model           string        `json:"model,omitempty"`
+	ModelProvider   string        `json:"model_provider,omitempty"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+}
+
 type AgentTask struct {
+	ModelSelection      AgentTaskModelSelection
+	ObservedModel       AgentTaskModelSelection
 	ID                  string
 	ParentTaskID        string
 	Title               string
@@ -291,6 +302,7 @@ type AgentTaskResource struct {
 }
 
 type CreateAgentTaskInput struct {
+	ModelSelection     AgentTaskModelSelection
 	ID                 string
 	ParentTaskID       string
 	Title              string
@@ -313,6 +325,8 @@ type CreateAgentTaskInput struct {
 }
 
 type UpdateAgentTaskInput struct {
+	ModelSelection      *AgentTaskModelSelection
+	ObservedModel       *AgentTaskModelSelection
 	ID                  string
 	ParentTaskID        *string
 	Title               *string

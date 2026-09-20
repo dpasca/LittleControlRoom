@@ -171,6 +171,7 @@ type EngineerSendPromptResult struct {
 }
 
 type AgentTaskCreateInput struct {
+	EngineerModelSelection
 	RequestID    string        `json:"request_id,omitempty"`
 	Title        string        `json:"title"`
 	Kind         AgentTaskKind `json:"kind"`
@@ -183,6 +184,7 @@ type AgentTaskCreateInput struct {
 }
 
 type AgentTaskContinueInput struct {
+	EngineerModelSelection
 	RequestID   string      `json:"request_id,omitempty"`
 	TaskID      string      `json:"task_id"`
 	Prompt      string      `json:"prompt"`
@@ -490,7 +492,7 @@ func AgentTaskCreateCapability() Capability {
 func AgentTaskContinueCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskContinue,
-		Description:  "Continue an existing delegated agent task, reusing its workspace and engineer session when possible.",
+		Description:  "Continue a visible delegated task. Omitted model fields retain its saved choice; explicit model fields replace that choice for this task.",
 		InputSchema:  agentTaskContinueInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskExternal,
@@ -738,6 +740,9 @@ func NormalizeAgentTaskCreateInput(input AgentTaskCreateInput) (AgentTaskCreateI
 	}
 	input.Capabilities = normalizeCapabilityList(input.Capabilities)
 	input.Resources = normalizeResourceRefs(input.Resources)
+	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
+		return AgentTaskCreateInput{}, err
+	}
 	return input, nil
 }
 
@@ -758,6 +763,9 @@ func NormalizeAgentTaskContinueInput(input AgentTaskContinueInput) (AgentTaskCon
 	input.SessionMode = input.SessionMode.Normalized()
 	if input.SessionMode == "" {
 		return AgentTaskContinueInput{}, fmt.Errorf("unsupported engineer session mode: %s", input.SessionMode)
+	}
+	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
+		return AgentTaskContinueInput{}, err
 	}
 	return input, nil
 }
@@ -1621,11 +1629,15 @@ func agentTaskCreateInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"request_id":     map[string]any{"type": "string"},
-			"title":          map[string]any{"type": "string"},
-			"kind":           map[string]any{"type": "string", "enum": AgentTaskKindStrings(false)},
-			"parent_task_id": map[string]any{"type": "string"},
-			"prompt":         map[string]any{"type": "string"},
+			"model":            engineerModelProperty(),
+			"model_provider":   engineerModelProviderProperty(),
+			"reasoning_effort": engineerEffortProperty(),
+			"select_model":     engineerSelectModelProperty(),
+			"request_id":       map[string]any{"type": "string"},
+			"title":            map[string]any{"type": "string"},
+			"kind":             map[string]any{"type": "string", "enum": AgentTaskKindStrings(false)},
+			"parent_task_id":   map[string]any{"type": "string"},
+			"prompt":           map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
 				"enum": ProviderStrings(false),
@@ -1643,9 +1655,13 @@ func agentTaskContinueInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"request_id": map[string]any{"type": "string"},
-			"task_id":    map[string]any{"type": "string"},
-			"prompt":     map[string]any{"type": "string"},
+			"model":            engineerModelProperty(),
+			"model_provider":   engineerModelProviderProperty(),
+			"reasoning_effort": engineerEffortProperty(),
+			"select_model":     engineerSelectModelProperty(),
+			"request_id":       map[string]any{"type": "string"},
+			"task_id":          map[string]any{"type": "string"},
+			"prompt":           map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
 				"enum": ProviderStrings(false),

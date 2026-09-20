@@ -81,6 +81,11 @@ a provider resume ID. An empty `origin.session_id` with a result delivery status
 means the caller has not yet been bound; agents must not substitute the newest
 session in that project.
 
+`model_selection` holds the task's saved requested choice; `observed_model` holds
+the current worker's last reported choice. Each contains `provider`, `model`,
+`model_provider`, and `reasoning_effort` when known. Empty reported fields mean
+unknown or still pending, not that the requested choice has been used.
+
 ## Disclosure and privacy
 
 Portfolio scope is not unrestricted database access.

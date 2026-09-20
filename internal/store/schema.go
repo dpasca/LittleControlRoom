@@ -293,6 +293,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 			origin_provider TEXT NOT NULL DEFAULT '',
 			origin_session_id TEXT NOT NULL DEFAULT '',
 			origin_session_key TEXT NOT NULL DEFAULT '',
+			model_selection_json TEXT NOT NULL DEFAULT '{}',
+			observed_model_json TEXT NOT NULL DEFAULT '{}',
 			result_message_id TEXT NOT NULL DEFAULT '',
 			expires_at INTEGER,
 			result_ready_at INTEGER,
@@ -835,6 +837,13 @@ func (s *Store) ensureAgentTaskMetadataColumns(ctx context.Context) error {
 	if _, ok := columns["capabilities"]; !ok {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN capabilities TEXT NOT NULL DEFAULT '[]'`); err != nil {
 			return fmt.Errorf("add agent_tasks.capabilities column: %w", err)
+		}
+	}
+	for _, column := range []string{"model_selection_json", "observed_model_json"} {
+		if _, ok := columns[column]; !ok {
+			if _, err := s.db.ExecContext(ctx, `ALTER TABLE agent_tasks ADD COLUMN `+column+` TEXT NOT NULL DEFAULT '{}'`); err != nil {
+				return err
+			}
 		}
 	}
 	textColumns := []string{

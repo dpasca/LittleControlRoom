@@ -1405,6 +1405,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 }
 
 func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.LaunchRequest {
+	if task, ok := m.agentTaskForProjectPath(req.ProjectPath); ok {
+		req = applyTaskModelToLaunch(req, task)
+	}
 	req = m.applyEmbeddedModelPreference(req)
 	return m.enrichEmbeddedLaunchRequestBase(req)
 }

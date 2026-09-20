@@ -313,7 +313,7 @@ func bossActionSchema() map[string]any {
 					"select_model":     map[string]any{"type": "boolean"},
 				},
 				"required":    []string{"model", "model_provider", "reasoning_effort", "select_model"},
-				"description": "Engineer launch controls only: exact IDs from engineer.models, or select_model=true to ask the operator before launch; use empty strings and false for defaults.",
+				"description": "Engineer and agent-task launch controls: exact IDs from engineer.models, or select_model=true to ask the operator before launch; empty strings and false retain the task choice on continuation or use defaults for a new launch.",
 			},
 			"engineer_provider": map[string]any{
 				"type":        "string",

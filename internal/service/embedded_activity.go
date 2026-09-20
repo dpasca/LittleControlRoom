@@ -18,6 +18,7 @@ import (
 )
 
 type EmbeddedSessionActivity struct {
+	ObservedModel        model.AgentTaskModelSelection
 	ControlSessionKey    string
 	ProjectPath          string
 	Source               model.SessionSource

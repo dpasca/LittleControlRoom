@@ -19,7 +19,7 @@ type controlEngineerModelValidatedMsg struct {
 
 func controlEngineerSelection(inv control.Invocation) (control.EngineerModelSelection, codexapp.Provider, bool) {
 	switch inv.Capability {
-	case control.CapabilityEngineerSendPrompt, control.CapabilityProjectCreateAndStartEngineer, control.CapabilityTodoCreateWorktreeAndStartEngineer:
+	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue, control.CapabilityEngineerSendPrompt, control.CapabilityProjectCreateAndStartEngineer, control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		var args struct {
 			control.EngineerModelSelection
 			Provider control.Provider `json:"provider"`
@@ -128,6 +128,10 @@ func (m Model) applyControlEngineerModelValidated(msg controlEngineerModelValida
 
 func (m Model) applyControlModelPickerSelection(option codexapp.ModelOption, effort string) (tea.Model, tea.Cmd) {
 	inv := *m.codexModelPicker.ControlInvocation
+	if (inv.Capability == control.CapabilityAgentTaskCreate || inv.Capability == control.CapabilityAgentTaskContinue) && option.Model == "" {
+		m.status = "Choose an explicit model for this delegated task"
+		return m, nil
+	}
 	var args map[string]any
 	if err := json.Unmarshal(inv.Args, &args); err != nil {
 		return m.cancelControlModelPicker(err)

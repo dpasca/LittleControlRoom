@@ -180,6 +180,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				renderBossControlDetail("Task", input.Title, width),
 				renderBossControlDetail("Kind", string(input.Kind), width),
 				renderBossControlDetail("Provider", input.Provider.Label(), width),
+				renderBossControlDetail("Model / effort", engineerModelSelectionLabel(input.EngineerModelSelection), width),
 				renderBossControlDetail("Caps", capabilities, width),
 				"",
 				bossControlSectionStyle.Render(fitLine("Prompt", width)),
@@ -200,6 +201,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				"",
 				renderBossControlDetail("Task", input.TaskID, width),
 				renderBossControlDetail("Provider", input.Provider.Label(), width),
+				renderBossControlDetail("Model / effort", taskContinuationModelLabel(input.EngineerModelSelection), width),
 				renderBossControlDetail("Mode", string(input.SessionMode), width),
 				"",
 				bossControlSectionStyle.Render(fitLine("Prompt", width)),
@@ -539,4 +541,11 @@ func engineerModelSelectionLabel(selection control.EngineerModelSelection) strin
 		effort = "default effort"
 	}
 	return model + " / " + effort
+}
+
+func taskContinuationModelLabel(selection control.EngineerModelSelection) string {
+	if selection.Model == "" && !selection.SelectModel {
+		return "Keep the task's saved choice"
+	}
+	return engineerModelSelectionLabel(selection)
 }

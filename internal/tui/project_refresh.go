@@ -332,6 +332,10 @@ func (m *Model) requestEmbeddedSessionActivityRecordCmd(activity service.Embedde
 	if task, ok := m.agentTaskForProjectPath(activity.ProjectPath); ok {
 		req.agentTaskID = task.ID
 		req.refreshAfter = false
+		if task.Provider == activity.Source && task.SessionID == activity.SessionID && activity.ObservedModel.Model != "" && task.ObservedModel != activity.ObservedModel {
+			task.ObservedModel = activity.ObservedModel
+			m.upsertOpenAgentTask(task)
+		}
 		if task.Provider == activity.Source && task.SessionID == "" {
 			task.SessionID = activity.SessionID
 			m.upsertOpenAgentTask(task)
@@ -355,6 +359,9 @@ func (m Model) recordEmbeddedSessionActivityRecordCmd(key string, req embeddedSe
 			err = m.svc.RecordEmbeddedSessionIdentity(ctx, req.activity)
 			if err == nil {
 				err = m.svc.RecordAgentTaskEngineerSession(ctx, req.agentTaskID, req.activity.Source, req.activity.SessionID)
+			}
+			if err == nil {
+				err = m.svc.Store().RecordAgentTaskObservedModel(ctx, req.agentTaskID, req.activity.SessionID, req.activity.ObservedModel)
 			}
 		} else {
 			err = m.svc.RecordEmbeddedSessionActivity(ctx, req.activity)
@@ -462,6 +469,9 @@ func mergeEmbeddedSessionActivityRecordRequest(existing, next embeddedSessionAct
 	existingAt := existing.activity.LastActivityAt
 	if nextAt.After(existingAt) || (nextAt.Equal(existingAt) && next.activity.LatestTurnCompleted && !existing.activity.LatestTurnCompleted) {
 		merged.activity = next.activity
+	}
+	if !nextAt.Before(existingAt) && next.activity.ObservedModel.Model != "" {
+		merged.activity.ObservedModel = next.activity.ObservedModel
 	}
 	merged.refreshAfter = existing.refreshAfter || next.refreshAfter
 	return merged

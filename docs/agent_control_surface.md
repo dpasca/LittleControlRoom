@@ -34,9 +34,10 @@ invocation and never executes it.
 
 ## Engineer model selection
 
-The three engineer controls (`engineer.send_prompt`,
-`todo.create_worktree_and_start_engineer`, and
-`project.create_and_start_engineer`) accept optional `model`,
+The engineer and task controls (`engineer.send_prompt`,
+`todo.create_worktree_and_start_engineer`,
+`project.create_and_start_engineer`, `agent_task.create`, and
+`agent_task.continue`) accept optional `model`,
 `reasoning_effort`, and LCAgent `model_provider` fields. Discover exact IDs
 through the read-only `engineer.models` query for an explicit provider.
 The query returns supported effort IDs, model defaults, source, and observation
@@ -61,6 +62,21 @@ loading failure terminates the operation. `select_model` and an explicit
 `reveal: true` only shows the engineer session. It does **not** request a model
 picker. Confirmation displays either the explicit model/effort, current defaults,
 or the pending picker choice.
+
+For delegated tasks, an explicit choice is persisted on the task before launch.
+Continuation with omitted model fields inherits that choice and revalidates it;
+reopening the task also prefers it over global defaults. Switching the engineer
+provider for a task with a saved model requires a new explicit model choice.
+An unavailable model fails explicitly. Task model selection does not update global
+preferences, and choosing a model inside a task's pane updates that task's choice.
+An active worker must finish before a continuation with a model choice can start.
+
+Task details and queries distinguish `model_selection` (requested provider, model,
+model vendor and effort) from `observed_model` (last provider-reported choice).
+Pending changes are not reported as effective; older sessions cannot overwrite
+the current worker's report. Legacy tasks without explicit choices still use the
+existing defaults. The task picker requires an explicit model; cancellation starts
+no work. These fields describe the current task, not a per-run accounting ledger.
 
 ## Agent workflow
 

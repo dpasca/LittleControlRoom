@@ -167,24 +167,26 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 		}
 	case control.CapabilityAgentTaskCreate:
 		payload = control.AgentTaskCreateInput{
-			RequestID:    strings.TrimSpace(action.RequestID),
-			Title:        strings.TrimSpace(action.TaskTitle),
-			Kind:         control.AgentTaskKind(strings.TrimSpace(action.TaskKind)),
-			ParentTaskID: strings.TrimSpace(action.ParentTaskID),
-			Prompt:       bossLosslessControlPrompt(action),
-			Provider:     control.Provider(strings.TrimSpace(action.EngineerProvider)),
-			Reveal:       action.Reveal,
-			Capabilities: append([]string(nil), action.Capabilities...),
-			Resources:    append([]control.ResourceRef(nil), action.Resources...),
+			EngineerModelSelection: action.EngineerModelSelection,
+			RequestID:              strings.TrimSpace(action.RequestID),
+			Title:                  strings.TrimSpace(action.TaskTitle),
+			Kind:                   control.AgentTaskKind(strings.TrimSpace(action.TaskKind)),
+			ParentTaskID:           strings.TrimSpace(action.ParentTaskID),
+			Prompt:                 bossLosslessControlPrompt(action),
+			Provider:               control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			Reveal:                 action.Reveal,
+			Capabilities:           append([]string(nil), action.Capabilities...),
+			Resources:              append([]control.ResourceRef(nil), action.Resources...),
 		}
 	case control.CapabilityAgentTaskContinue:
 		payload = control.AgentTaskContinueInput{
-			RequestID:   strings.TrimSpace(action.RequestID),
-			TaskID:      strings.TrimSpace(action.TaskID),
-			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
-			SessionMode: control.SessionMode(strings.TrimSpace(action.SessionMode)),
-			Prompt:      bossLosslessControlPrompt(action),
-			Reveal:      action.Reveal,
+			EngineerModelSelection: action.EngineerModelSelection,
+			RequestID:              strings.TrimSpace(action.RequestID),
+			TaskID:                 strings.TrimSpace(action.TaskID),
+			Provider:               control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			SessionMode:            control.SessionMode(strings.TrimSpace(action.SessionMode)),
+			Prompt:                 bossLosslessControlPrompt(action),
+			Reveal:                 action.Reveal,
 		}
 	case control.CapabilityAgentTaskClose:
 		payload = control.AgentTaskCloseInput{
@@ -407,6 +409,7 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		}
 		lines := []string{
 			fmt.Sprintf("Create agent task %q and use %s?", input.Title, provider),
+			"Model / effort: " + engineerModelSelectionLabel(input.EngineerModelSelection),
 			"",
 			strings.TrimSpace(input.Prompt),
 			"",
@@ -426,6 +429,7 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		}
 		lines := []string{
 			fmt.Sprintf("Continue agent task %s.", input.TaskID),
+			"Model / effort: " + taskContinuationModelLabel(input.EngineerModelSelection),
 			"",
 			strings.TrimSpace(input.Prompt),
 			"",

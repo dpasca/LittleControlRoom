@@ -57,3 +57,41 @@ func TestEngineerControlChoicesSurviveNormalization(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentTaskModelInputsPreserveChoicesAndRejectAmbiguity(t *testing.T) {
+	for _, capability := range []CapabilityName{CapabilityAgentTaskCreate, CapabilityAgentTaskContinue} {
+		base := map[string]any{"title": "Worker", "kind": "agent", "task_id": "agt_worker", "provider": "lcagent", "prompt": "work", "session_mode": "resume_or_new", "model": "cheap", "model_provider": "zai", "reasoning_effort": "low"}
+		if capability == CapabilityAgentTaskCreate {
+			delete(base, "task_id")
+			delete(base, "session_mode")
+		} else {
+			delete(base, "title")
+			delete(base, "kind")
+		}
+		raw, _ := json.Marshal(base)
+		inv, err := ValidateInvocation(Invocation{Capability: capability, Args: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var selection EngineerModelSelection
+		if err := json.Unmarshal(inv.Args, &selection); err != nil {
+			t.Fatal(err)
+		}
+		if selection.Model != "cheap" || selection.ModelProvider != "zai" || selection.ReasoningEffort != "low" {
+			t.Fatalf("lost choice: %#v", selection)
+		}
+		for _, change := range []map[string]any{{"provider": "auto"}, {"provider": "codex"}, {"select_model": true}, {"model": ""}} {
+			changed := map[string]any{}
+			for k, v := range base {
+				changed[k] = v
+			}
+			for k, v := range change {
+				changed[k] = v
+			}
+			raw, _ = json.Marshal(changed)
+			if _, err := ValidateInvocation(Invocation{Capability: capability, Args: raw}); err == nil {
+				t.Fatalf("accepted ambiguous selection: %s", raw)
+			}
+		}
+	}
+}

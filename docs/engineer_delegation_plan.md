@@ -2,7 +2,9 @@
 
 Status: implementation in progress. The first return-address slice now separates
 host control keys from provider conversation IDs, persists immutable bindings,
-and retains pending results until identity arrives. The remaining workflow below
+and retains pending results until identity arrives. Task model/effort selection
+also persists across continuation and reopen, with separate requested and reported
+metadata. The remaining workflow below
 is proposed; this document does not authorize changes to running sessions.
 It extends the existing
 [control surface](agent_control_surface.md) and [query surface](agent_query_surface.md).
@@ -212,9 +214,13 @@ acceptance and rework. A cheap worker with expensive retries may cost more overa
    the lifecycle work below. Test fresh and resumed callers for all four
    providers, late identity binding, replaced sessions and restart recovery.
    Keep task visibility and existing confirmation behavior intact in this slice.
-2. **Selectable visible workers.** Add task model/effort selection and run metadata,
-   repository preflight and write ownership. Test fresh/resumed LCAgent root grants,
-   rejected models, interrupted launch, external changes and row visibility.
+2. **Selectable visible workers (model selection implemented).** Task creation and
+   continuation accept the shared exact model/effort selection and prelaunch picker.
+   Saved choices survive restart and override global defaults on resume; current
+   requested/reported models are visible in task details and queries. Tests cover
+   all four providers, rejected choices and fresh/resumed LCAgent root grants.
+   Per-run accounting, repository preflight and write ownership remain; test
+   interrupted launch and external changes as those boundaries are added.
 3. **Explicit results and review.** Add result revisions, typed submissions,
    lifecycle phases, bounded evidence queries and exact-caller review delivery.
    Test blocked/failed/interrupted turns, stale results, busy callers, duplicate
