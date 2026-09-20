@@ -18,9 +18,10 @@ LCAgent; reopening must not silently start a clean Codex session. Keep reports
 short. Default to returning edits without committing unless the user requested a
 commit. Model cost matters; do not use expensive inference for routine work.
 
-The user's latest request was to create this handoff so another agent can continue
-because the current provider's usage is running out. No agent was launched or
-messaged by this handoff request. No paid provider smoke test has been run.
+This document was first written so another agent could continue when the previous
+provider's usage ran out, and has since been updated in place as work landed. No
+agent has been launched or messaged by it, and no paid provider smoke test has
+been run.
 
 ## Exact checkout and Git state
 
@@ -28,16 +29,17 @@ messaged by this handoff request. No paid provider smoke test has been run.
 - Branch: `spike/ai-agent-task-delegation`
 - Canonical checkout: `/Users/davide/dev/repos/LittleControlRoom`, expected on `master`.
   Do not work there or rename its branch.
-- HEAD at handoff: `adbe2033 Implement agent task handoff and result tracking`
-  (59 files, 2,839 insertions, 65 deletions; includes ownership and structured results).
+- HEAD at handoff: `dfb1ffae Offer correction baseline capture from the task actions dialog`.
+- Correction-loop commits:
+  - `dfb1ffae Offer correction baseline capture from the task actions dialog`
+  - `3e803498 Continue delegated corrections on the reviewed checkout`
+  - `b5297eea docs: record engineer delegation continuation handoff`
 - Earlier commits:
+  - `adbe2033 Implement agent task handoff and result tracking`
   - `adc06e83 Persist and apply per-task engineer model selection`
   - `9270efa6 Preserve stable control identities for delegated tasks`
   - `03172774 docs: plan visible engineer delegation and caller review`
-- Worktree was clean immediately before this document was created. The previous
-  conversational report said implementation was uncommitted; that is now stale.
-  Recheck Git state rather than replaying that assumption. This handoff document
-  itself is left uncommitted.
+- Recheck Git state rather than replaying any conversational assumption about it.
 - No deployment/restart of the user's main LCR runtime was performed in the last
   implementation turn. Committed source is not proof that the running app has it.
 
@@ -118,40 +120,48 @@ in-progress rather than waiting for the user.
 `host_repository_evidence`, after privacy checks. Lists expose compact workflow
 metadata instead of all evidence.
 
+### Bounded correction loop
+
+A `changes_requested` review of the current revision now authorizes one
+reacquisition of the dirty checkout. `acquireTaskRepository` admits it when the
+observed evidence fingerprint equals the state recorded at that revision's
+handoff, or a boundary captured explicitly after caller fixes; any other state
+fails visibly with both fingerprints, leaves the lease unheld and preserves every
+edit. Captures are tied to the exact reviewed run, refuse to run under held
+ownership or an active managed writer, never touch the checkout, and are cleared
+by a clean acquisition. An accepted result authorizes no correction.
+
+`agent_task.continue` therefore resumes the same worker on its preserved edits
+and opens the next revision, so review, correction and acceptance run end to end
+under one confirmation per correction. The task actions dialog (`x`) offers the
+capture when a rejected revision is outstanding; task detail names the authorized
+starting point.
+
 ## Next implementation slice
 
-Read step 4 of `docs/engineer_delegation_plan.md`. The most important gap is a
-**bounded correction loop**, including safe continuation over uncommitted edits.
-`changes_requested` currently only records review; `agent_task.continue` still
-requires confirmation. Every repository acquisition currently requires a clean
-checkout, so ordinary corrections to a worker's dirty result are not yet supported.
+Read step 5 of `docs/engineer_delegation_plan.md`.
 
-Recommended order (design guidance, not an already implemented contract):
-
-1. Add an explicit captured dirty-baseline ownership boundary for correction runs.
-   Tie continuation to the exact task, reviewed result revision and repository
-   handoff fingerprint. Check HEAD/branch/index/worktree/untracked state before
-   reacquiring ownership. If intervening edits or unknown evidence prevent proving
-   the intended boundary, fail visibly and preserve everything. Do not “solve” this
-   by stashing, resetting or silently adopting arbitrary dirty files. Decide how
-   caller fixes become an explicitly captured new baseline.
-2. Add durable scoped supervision authorization: exact caller/worker, repository,
+1. Add durable scoped supervision authorization: exact caller/worker, repository,
    model selection, allowed correction operations, correction-count limits,
    supported time/turn/token limits, stop/revocation behavior. Do not silently
    broaden authority or treat a callback prompt as authorization. Initial creation
    and corrections need a clear bounded grant before removing confirmations.
    Exact-caller acceptance already exists for opted-in tasks; preserve that path.
-3. Connect caller review → bounded correction → next revision → independent
-   acceptance. Keep workers visible, model choices stable and notices concise.
-   Missing/stopped/replaced callers must never be revived by late results.
-4. Add worker versus caller-review/correction usage accounting and totals. Use
+   Correction-count limits belong here, not in the ownership boundary. Missing,
+   stopped or replaced callers must never be revived by late results.
+2. Run a bounded real-provider smoke of the correction loop before designing the
+   grant further. Every provider combination is currently exercised only against
+   deterministic adapters; no real worker has driven a correction. Record the
+   effective model and usage, and never fall back to a costly model silently.
+3. Add worker versus caller-review/correction usage accounting and totals. Use
    reported usage where available and label estimates/unknowns. Do not advertise
    a hard dollar cap if the provider cannot enforce it. Evaluate cost per accepted
    task before adding multiple writable workers or recursive delegation.
 
-Acceptance scenario: one visible cheaper worker makes a plausible but incomplete
-change; caller rejects it with concrete evidence; an authorized correction runs
-on preserved edits; caller verifies the new revision and accepts. Old callbacks,
+Acceptance scenario, now covered deterministically but never run against a live
+provider: one visible cheaper worker makes a plausible but incomplete change;
+caller rejects it with concrete evidence; an authorized correction runs on
+preserved edits; caller verifies the new revision and accepts. Old callbacks,
 stop/restart and duplicate messages must not launch extra work or accept stale
 results. Test superficially passing worker checks that a caller correctly rejects.
 Use deterministic adapters first; any real-provider smoke should be deliberately
@@ -171,9 +181,10 @@ bounded and identify its model/usage, without expensive silent fallback.
   `agent_task_result_handoffs`, and `engineer_messages.agent_task_revision`.
   `agent_task_repository.go`: durable leases; `engineer_messages.go`: callbacks.
 - `internal/service/agent_task_repository.go`: `repositoryMu`, turn/process
-  admission, idle checks, preflight, bounded fingerprint, release. Inspect this
-  before designing dirty continuation; fingerprint alone is not an attribution
-  or permission grant.
+  admission, idle checks, preflight, bounded fingerprint, release,
+  `correctionBoundary` admission and `CaptureAgentTaskCorrectionBaseline`.
+  A fingerprint is evidence of state, not attribution or a permission grant.
+  `internal/service/agent_task_correction_test.go` covers the loop and its refusals.
 - `internal/service/agent_task_results.go`: idle settlement and explicit-stop
   suppression. `agent_task.go`: creation, callback prompt/queue, legacy guards.
 - `internal/codexapp/turn_admission.go`: admission before session mutex; new
@@ -207,13 +218,26 @@ skill paths vary per embedded session. Do not spawn hidden collaboration agents.
 
 ## Validation already performed and honest limits
 
-Last implementation turn:
+Correction-loop turn:
 
-- `make test` ran vet and the full Go suite. One failure:
-  `TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill` in codexapp.
-  The installed `opencode debug skill` output omitted the expected overlay
-  Playwright skill. It also failed on an isolated retry and had been seen in prior
-  ownership work. Do not claim the complete suite is green or hide the exclusion.
+- `make test` ran vet and the full Go suite: 74 packages passed, vet clean, one
+  failure, `TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill` in
+  codexapp, at `opencode_config_overlay_test.go:134` (the installed
+  `opencode debug skill` output omits the expected overlay Playwright
+  description). It is unrelated to delegation and predates this work. Do not
+  claim the complete suite is green or hide the exclusion. Note that the codexapp
+  package passes when run alone with `go test ./internal/codexapp/`; the failure
+  appears under the full `./...` run, so it is not purely an installed-CLI
+  limitation and its real trigger is still undiagnosed.
+- Service (~174 s), TUI, control, store, agentcontrol, agentquery, runtimemcp and
+  boss suites all passed.
+- Isolated `make scan` and `make doctor` passed against a throwaway config/DB
+  inside the workspace. A PTY-backed `make tui` against the same isolated DB
+  loaded the project list, opened `/perf` (watchdog armed at 2 s, no captured
+  stalls in that run) and quit cleanly.
+
+Earlier ownership/results turn:
+
 - The service full suite passed (~233 seconds); TUI full suite passed.
 - All 16 caller/worker provider combinations passed deterministic control tests.
   Tests also cover identities/spoofing, stale/conflicting results, restart history,
@@ -228,8 +252,9 @@ Last implementation turn:
   working/review/blocked/completed/unclassified/canceled fixtures and preserved
   LCAgent labels; `/perf` reported no captured stalls in that run.
 - No live paid provider turn, production database mutation, main runtime restart,
-  push, or merge was performed in that implementation turn. End-to-end live
-  provider behavior and actual savings remain unmeasured.
+  push, or merge has been performed in any implementation turn so far. End-to-end
+  live provider behavior and actual savings remain unmeasured. The correction
+  loop in particular has only ever run against deterministic fixtures.
 
 Previous logs may still exist under `/tmp/lcr-results-*.log` (full-test, packages,
 final-focused, final-ui, vet, scan, doctor, opencode-retry). Treat these as optional
@@ -241,7 +266,12 @@ when touching UI. Keep temporary config/DB/artifact homes in an isolated directo
 inside the assigned workspace; never point experiments at the production DB.
 The previous fixture directory was removed after the TUI exited normally.
 Use a real PTY command with `stty cols 160 rows 48` before `make tui`; do not launch
-it through a Python heredoc (stdin becomes a pipe). Startup settings can be closed
+it through a Python heredoc (stdin becomes a pipe). In a non-interactive runner,
+`script -q /dev/null /bin/zsh -c 'stty cols 160 rows 48; make tui ...'` with paced
+keystrokes piped in does work; send each key group separately with sleeps, because
+a single burst like `/perf\r` arrives faster than the TUI opens its prompt. A run
+that times out leaves the runtime lock held, so the next launch refuses to start;
+kill the leftover `lcroom tui` and `go run` processes before retrying. Startup settings can be closed
 with separate Esc presses. `/` then `perf` + Enter opens performance. Quit uses
 `q`, then select Quit with Tab if necessary, then Enter. Never press Enter on a
 fixture task: that would launch a provider rather than merely inspect its details.
