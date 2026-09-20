@@ -16,7 +16,7 @@ Do not create one-off action colors in feature code. Use `uistyle.RenderDialogAc
 
 Footer hints should mirror these same semantic tones in their compact form. For example, `Esc close` should use the cancel tone, not a neutral hint tone.
 
-Write control-key shortcuts with lowercase modifiers, for example `ctrl+s`, so labels do not imply the Shift key. Keep this spelling consistent between action chips, footers, and status text.
+Shortcut labels must match the actual binding, including case. Show unshifted letter keys in lowercase (`a`, `c`); reserve uppercase labels (`A`) for actual uppercase/Shift bindings. Do not case-fold input handlers to make uppercase and lowercase interchangeable. Write modifiers in lowercase, for example `ctrl+s` and `alt+enter`, so labels do not imply Shift. Keep this spelling consistent between action chips, footers, and status text. Named standalone keys such as `Enter`, `Esc`, and `Tab` retain their conventional spelling.
 
 ## Modal Shape
 

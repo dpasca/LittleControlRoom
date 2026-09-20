@@ -150,7 +150,7 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 	case snapshot.PendingToolInput != nil && snapshot.PendingToolInput.ManualCommand != nil:
 		status := "Waiting for manual command"
 		if snapshot.PendingToolInput.ManualCommand.CanExecute {
-			status = "A approve and run once"
+			status = "a approve and run once"
 		}
 		return []string{
 			renderFooterLine(

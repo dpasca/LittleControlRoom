@@ -58,3 +58,7 @@ Interactive TUI verification needs a real PTY-backed terminal. In non-interactiv
 - Treat `--allow-multiple-instances` as a temporary escape hatch for dev/debug sessions, not the normal way to run Little Control Room day to day.
 - Prefer `make tui-parallel` for isolated TUI experiments, and run `make tui-parallel-clean` periodically so stale `/tmp/lcroom-parallel-*` sandboxes do not pile up and confuse later debugging.
 - When touching startup, project loading, or refresh flows, make failure states explicit in the UI/status text. Do not leave the app looking like it is still "Loading..." when the real issue is an error.
+
+## TUI Shortcut Conventions
+
+Follow [docs/tui_design_rules.md](docs/tui_design_rules.md) for UI changes. Shortcut labels must match binding case: lowercase for unshifted letters, uppercase only for actual uppercase/Shift bindings. Do not case-fold key handlers. Keep modifiers lowercase and hints consistent across dialogs, footers, and status text.
