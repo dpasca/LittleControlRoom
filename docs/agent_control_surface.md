@@ -104,10 +104,24 @@ explicit `agent_task.close` with `status: waiting` releases ownership without
 accepting the result; active processes still block release.
 
 The lease is opt-in for compatibility. Legacy tasks keep their existing behavior
-but cannot start a conflicting turn against a leased checkout. New acquisitions,
-including continuations, require a clean baseline; explicit dirty ownership
-boundaries and per-run evidence history remain future work. Workers are instructed
-to return edits without committing and to leave no write-capable processes running.
+but cannot start a conflicting turn against a leased checkout. A first acquisition
+requires a clean baseline. A correction run may reacquire a dirty checkout only at
+an authorized boundary, described below. Workers are instructed to return edits
+without committing and to leave no write-capable processes running.
+
+### Correction baselines
+
+A structured task whose current revision carries a `changes_requested` review may
+reacquire write ownership over the dirty checkout the caller reviewed. Admission
+compares the observed evidence fingerprint against an authorized starting state:
+the fingerprint recorded at that revision's handoff, or a boundary the host
+captured explicitly after the caller made its own fixes. Any other state fails
+visibly with the expected and observed fingerprints and leaves every edit in
+place; nothing is stashed, reset or silently adopted. A capture is tied to the
+exact reviewed run, so it cannot be replayed once that run has advanced. An
+accepted result authorizes no further correction, and a clean acquisition clears
+any captured boundary. Capture is a read: it refuses to run while a worker holds
+ownership or another managed writer is active in that checkout.
 
 ## Agent workflow
 
@@ -361,6 +375,6 @@ inspectable without reviving automatic review. Free-text-only endings become
 `unclassified`. Task phases and concise evidence counts remain visible in the TUI.
 
 Review rejection does not itself launch work. `agent_task.continue` still requires
-confirmation and creates a new run. Repository-writing correction runs still
-require a clean baseline; captured dirty-baseline continuation is a later slice.
-`agent_task.close` cannot bypass structured acceptance.
+confirmation and creates a new run; that run resumes the same worker on the exact
+reviewed edits rather than a clean checkout. `agent_task.close` cannot bypass
+structured acceptance.

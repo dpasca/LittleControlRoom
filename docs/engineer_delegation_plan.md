@@ -1,6 +1,7 @@
 # Visible engineer delegation
 
-Status: implementation in progress. The first return-address slice now separates
+Status: implementation in progress. The bounded correction loop now closes:
+review, correction on the preserved edits, next revision and acceptance. The first return-address slice now separates
 host control keys from provider conversation IDs, persists immutable bindings,
 and retains pending results until identity arrives. Task model/effort selection
 also persists across continuation and reopen, with separate requested and reported
@@ -177,8 +178,9 @@ never wait silently on a lease from a stopped or missing session.
 Preflight clean/baseline state and existing writers before launch. A lease cannot
 prevent external editors: record the starting state and detect intervening changes
 at handoff; report conflicts and preserve edits. Default to a clean baseline;
-support dirty baselines only with an explicit captured ownership boundary. Do not
-stash or overwrite user changes automatically.
+dirty baselines are admitted only at an explicitly authorized ownership boundary
+tied to the exact reviewed run. Do not stash or overwrite user changes
+automatically.
 
 Use the existing scoped LCAgent root grant, keeping staging artifacts separate
 from source edits. Other providers must receive the same intended repository and
@@ -225,8 +227,9 @@ acceptance and rework. A cheap worker with expensive retries may cost more overa
    are implemented, including process/engineer checks, alias handling, blocked
    launches, restart refusal, and changed-revision handoff evidence. Caller turns
    are conservatively blocked while a lease is held; transcript inspection remains
-   available. Dirty-baseline ownership boundaries, read-only caller execution and
-   per-run accounting remain. External edits cannot be attributed automatically.
+   available. Correction runs now reacquire a dirty checkout at an authorized
+   boundary. Read-only caller execution and per-run accounting remain. External
+   edits cannot be attributed automatically.
 3. **Explicit results and review (implemented, opt-in).** `structured_results=true`
    creates monotonically numbered runs, bounded immutable worker claims, host
    checkout evidence and exact-caller review records. Submission does not complete
@@ -238,11 +241,18 @@ acceptance and rework. A cheap worker with expensive retries may cost more overa
    stale/duplicate claims, identity spoofing, blocked results, idle handoff and
    cancellation at final submission admission. Live provider smoke remains an
    explicit follow-up; no paid calls are part of this slice.
-4. **Bounded automatic supervision.** Add scoped grants for creation policy,
+4. **Bounded correction loop (baseline implemented).** A `changes_requested`
+   review authorizes one reacquisition of the exact reviewed dirty checkout, or
+   of a boundary captured after caller fixes; any other state fails visibly and
+   preserves every edit. `agent_task.continue` resumes the same worker there and
+   opens the next revision, so review, correction and acceptance run end to end
+   under one confirmation per correction. Correction-count limits, revocation and
+   the removal of that per-correction confirmation belong to the grant below.
+5. **Bounded automatic supervision.** Add scoped grants for creation policy,
    corrections and acceptance; caller/worker report contracts; concise UI notices.
    Test revocation, scope widening, unauthorized acceptance, correction limits,
    task completion without trash and provider permission failures.
-5. **Cost evaluation, then concurrency.** Compare accepted tasks with and without
+6. **Cost evaluation, then concurrency.** Compare accepted tasks with and without
    delegation before expanding to multiple writers or recursive delegation.
 
 The first end-to-end milestone is one visible worker, on an explicit model,

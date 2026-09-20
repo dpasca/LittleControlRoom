@@ -315,7 +315,7 @@ func agentTaskResultCallbackProvider(source model.SessionSource) control.Provide
 
 func agentTaskResultCallbackPrompt(task model.AgentTask) string {
 	if task.Workflow.Enabled {
-		return fmt.Sprintf("Delegated task %s (%s) returned revision %d with outcome %s. Inspect work.agent_task_get (task_id and result_revision), review the actual diff and independently check its evidence. Worker claims are not host verification. Record agent_task.review_result for this exact revision: accept or changes_requested, with a short summary and your checks. Acceptance keeps the task visible. Corrections require an explicitly authorized agent_task.continue; this notice does not authorize commits, pushes or deletion.", task.ID, task.Title, task.Workflow.RunID, task.Workflow.Result.Outcome)
+		return fmt.Sprintf("Delegated task %s (%s) returned revision %d with outcome %s. Inspect work.agent_task_get (task_id and result_revision), review the actual diff and independently check its evidence. Worker claims are not host verification. Record agent_task.review_result for this exact revision: accept or changes_requested, with a short summary and your checks. Acceptance keeps the task visible. After changes_requested, an explicitly authorized agent_task.continue reopens the worker on the exact edits you reviewed; leave them in place rather than reverting or cleaning the checkout, or the correction is refused until the host captures a new baseline. This notice does not authorize commits, pushes or deletion.", task.ID, task.Title, task.Workflow.RunID, task.Workflow.Result.Outcome)
 	}
 	lines := []string{
 		"A delegated Little Control Room task you created is ready for review.",

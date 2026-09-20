@@ -167,14 +167,92 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 	if err != nil {
 		return err
 	}
+	correction := false
 	if baseline.changes != "" {
-		return fmt.Errorf("repository write preflight requires a clean checkout; preserve and resolve existing edits before continuing")
+		if err := correctionBoundary(task, baseline.fingerprint); err != nil {
+			return err
+		}
+		correction = true
 	}
 	repository := task.Repository
 	repository.State, repository.SessionKey = "held", sessionKey
 	repository.BaseHEAD, repository.BaseBranch = baseline.head, baseline.branch
 	repository.HandoffFingerprint, repository.Changes, repository.Error = "", "", ""
+	if !correction {
+		// A clean start supersedes any captured dirty boundary.
+		repository.CorrectionBaseline, repository.CorrectionRevision = "", 0
+	}
 	return s.store.AcquireAgentTaskRepository(ctx, task.ID, repository)
+}
+
+// correctionBoundary admits a dirty reacquisition only against an authorized
+// starting state for the exact reviewed run: either the state the caller
+// actually reviewed, or a boundary it captured explicitly after its own fixes.
+// A mismatch fails visibly; nothing is stashed, reset or silently adopted.
+func correctionBoundary(task model.AgentTask, observed string) error {
+	dirty := fmt.Errorf("repository write preflight requires a clean checkout; preserve and resolve existing edits before continuing")
+	review := task.Workflow.Review
+	if !task.Workflow.Enabled || review == nil || review.Decision != "changes_requested" || review.Revision != task.Workflow.RunID {
+		return dirty
+	}
+	if observed == "" {
+		return dirty
+	}
+	if observed == task.Repository.HandoffFingerprint {
+		return nil
+	}
+	if task.Repository.CorrectionBaseline != "" && task.Repository.CorrectionRevision == task.Workflow.RunID {
+		if observed == task.Repository.CorrectionBaseline {
+			return nil
+		}
+		return fmt.Errorf("checkout no longer matches the captured correction baseline for revision %d (expected %s, found %s); inspect the intervening changes and capture a new baseline", task.Workflow.RunID, shortFingerprint(task.Repository.CorrectionBaseline), shortFingerprint(observed))
+	}
+	return fmt.Errorf("checkout changed since revision %d was reviewed (reviewed %s, found %s); inspect the intervening changes and capture a correction baseline before continuing", task.Workflow.RunID, shortFingerprint(task.Repository.HandoffFingerprint), shortFingerprint(observed))
+}
+
+func shortFingerprint(value string) string {
+	if value == "" {
+		return "none"
+	}
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
+}
+
+// CaptureAgentTaskCorrectionBaseline records the current checkout as the exact
+// authorized starting state for one correction run. The caller uses it after
+// making its own fixes on top of a result it rejected. It never modifies the
+// checkout and cannot run while a worker holds ownership.
+func (s *Service) CaptureAgentTaskCorrectionBaseline(ctx context.Context, taskID string) (model.AgentTask, error) {
+	s.repositoryMu.Lock()
+	defer s.repositoryMu.Unlock()
+	task, err := s.store.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return task, err
+	}
+	if !task.Repository.Write || task.Repository.Root == "" {
+		return task, fmt.Errorf("task does not own a managed checkout")
+	}
+	if task.Repository.State == "held" {
+		return task, fmt.Errorf("worker still holds repository ownership; complete the handoff before capturing a correction baseline")
+	}
+	review := task.Workflow.Review
+	if !task.Workflow.Enabled || review == nil || review.Decision != "changes_requested" || review.Revision != task.Workflow.RunID {
+		return task, fmt.Errorf("a correction baseline requires a changes_requested review of the current revision")
+	}
+	if err := s.repositoryWritersIdle(ctx, task.Repository.Root); err != nil {
+		return task, err
+	}
+	snapshot, err := inspectTaskRepository(ctx, task.Repository.Root)
+	if err != nil {
+		return task, err
+	}
+	repository := task.Repository
+	repository.CorrectionBaseline, repository.CorrectionRevision = snapshot.fingerprint, task.Workflow.RunID
+	// A capture is how the caller clears an earlier boundary mismatch.
+	repository.State, repository.Changes, repository.Error = "released", snapshot.changes, ""
+	return s.store.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, Repository: &repository})
 }
 
 func (s *Service) repositoryWritersIdle(ctx context.Context, root string) error {

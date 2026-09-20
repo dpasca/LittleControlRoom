@@ -261,6 +261,11 @@ type AgentTaskRepository struct {
 	HandoffFingerprint string `json:"handoff_fingerprint,omitempty"`
 	Changes            string `json:"changes,omitempty"`
 	Error              string `json:"error,omitempty"`
+	// CorrectionBaseline authorizes one dirty reacquisition: the exact checkout
+	// fingerprint a caller captured after its own fixes. CorrectionRevision ties
+	// that capture to the reviewed run, so a stale boundary cannot be replayed.
+	CorrectionBaseline string `json:"correction_baseline,omitempty"`
+	CorrectionRevision int64  `json:"correction_revision,omitempty"`
 }
 
 type AgentTask struct {

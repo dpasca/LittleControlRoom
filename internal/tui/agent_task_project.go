@@ -287,6 +287,9 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 			owner = "owned by this task"
 		}
 		lines = append(lines, renderWrappedDetailField("Write ownership", detailValueStyle, width, owner))
+		if boundary := agentTaskCorrectionBoundarySummary(task); boundary != "" {
+			lines = append(lines, renderWrappedDetailField("Correction baseline", detailValueStyle, width, boundary))
+		}
 		if task.Repository.Error != "" {
 			lines = append(lines, renderWrappedDetailField("Repository issue", detailValueStyle, width, task.Repository.Error))
 		}
@@ -422,6 +425,22 @@ func agentTaskOriginSummary(task model.AgentTask) string {
 		parts = append(parts, shortID(sessionID))
 	}
 	return strings.Join(parts, " ")
+}
+
+// agentTaskCorrectionBoundarySummary renders cached ownership state only; the
+// authorized starting point for a correction run is never recomputed here.
+func agentTaskCorrectionBoundarySummary(task model.AgentTask) string {
+	if !task.Repository.Write || !task.Workflow.Enabled {
+		return ""
+	}
+	review := task.Workflow.Review
+	if review == nil || review.Decision != "changes_requested" || review.Revision != task.Workflow.RunID {
+		return ""
+	}
+	if task.Repository.CorrectionRevision == task.Workflow.RunID && task.Repository.CorrectionBaseline != "" {
+		return fmt.Sprintf("captured for revision %d, including caller fixes; a correction may continue on these edits", task.Workflow.RunID)
+	}
+	return fmt.Sprintf("the reviewed revision %d edits; a correction continues on them, and any other change needs a recaptured baseline", task.Workflow.RunID)
 }
 
 func agentTaskResultLifecycleSummary(task model.AgentTask) string {
