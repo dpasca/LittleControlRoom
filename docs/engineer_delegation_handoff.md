@@ -220,15 +220,16 @@ skill paths vary per embedded session. Do not spawn hidden collaboration agents.
 
 Correction-loop turn:
 
-- `make test` ran vet and the full Go suite: 74 packages passed, vet clean, one
-  failure, `TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill` in
-  codexapp, at `opencode_config_overlay_test.go:134` (the installed
-  `opencode debug skill` output omits the expected overlay Playwright
-  description). It is unrelated to delegation and predates this work. Do not
-  claim the complete suite is green or hide the exclusion. Note that the codexapp
-  package passes when run alone with `go test ./internal/codexapp/`; the failure
-  appears under the full `./...` run, so it is not purely an installed-CLI
-  limitation and its real trigger is still undiagnosed.
+- `make test` ran vet and the full Go suite. The final run was fully green: 75
+  packages, vet clean, no failures.
+- `TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill` in codexapp is
+  **intermittent**, not consistently broken. Within this turn it failed five
+  isolated runs and one full `./...` run at `opencode_config_overlay_test.go:134`
+  (the installed `opencode debug skill` output omitted the expected overlay
+  Playwright description), then passed both alone and under a later full run,
+  with no change to the code it covers. Treat a single green run as weak
+  evidence. Its real trigger — probably installed-CLI state rather than an
+  environment limitation — is still undiagnosed and is unrelated to delegation.
 - Service (~174 s), TUI, control, store, agentcontrol, agentquery, runtimemcp and
   boss suites all passed.
 - Isolated `make scan` and `make doctor` passed against a throwaway config/DB
