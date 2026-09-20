@@ -1068,6 +1068,10 @@ func (s *Store) RequeueRetryableFailedCommitTodoChecks(ctx context.Context, proj
 	return result.RowsAffected()
 }
 
+// ErrProjectPathExists is returned when a move or registration targets a
+// project path that already has a row in the projects table.
+var ErrProjectPathExists = errors.New("target project path already exists")
+
 func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, movedAt time.Time) error {
 	if oldPath == "" || newPath == "" {
 		return errors.New("move project path requires old and new paths")
@@ -1083,18 +1087,14 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	var existingCount int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE path = ?`, newPath).Scan(&existingCount); err != nil {
 		return err
 	}
 	if existingCount > 0 {
-		return fmt.Errorf("target project path already exists: %s", newPath)
+		return fmt.Errorf("%w: %s", ErrProjectPathExists, newPath)
 	}
 
 	result, err := tx.ExecContext(ctx, `

@@ -3684,6 +3684,48 @@ func TestPathAliasesAndFingerprintsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMoveProjectPathCollisionsReleaseConnections(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	oldPath, newPath := "/tmp/move-source", "/tmp/move-target"
+	for _, path := range []string{oldPath, newPath} {
+		if err := st.UpsertProjectState(ctx, model.ProjectState{
+			Path:      path,
+			Name:      filepath.Base(path),
+			Status:    model.StatusIdle,
+			InScope:   true,
+			UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("create project %s: %v", path, err)
+		}
+	}
+
+	for attempt := 0; attempt < sqliteMaxOpenConns*2; attempt++ {
+		if err := st.MoveProjectPath(ctx, oldPath, newPath, now); !errors.Is(err, ErrProjectPathExists) {
+			t.Fatalf("collision %d: got %v, want ErrProjectPathExists", attempt+1, err)
+		}
+		if inUse := st.db.Stats().InUse; inUse != 0 {
+			t.Fatalf("collision %d left %d connections in use", attempt+1, inUse)
+		}
+	}
+
+	for _, path := range []string{oldPath, newPath} {
+		if _, err := st.GetProjectSummary(ctx, path, false); err != nil {
+			t.Fatalf("read project after collisions: %v", err)
+		}
+	}
+	if err := st.MoveProjectPath(ctx, oldPath, "/tmp/move-success", now); err != nil {
+		t.Fatalf("move after collisions: %v", err)
+	}
+}
+
 func TestMoveProjectPathPreservesData(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

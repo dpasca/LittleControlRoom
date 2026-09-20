@@ -1441,21 +1441,19 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 	}
 
 	progress.setPhase("detecting project moves")
-	moves := s.detectProjectMoves(oldMap, discoveredSet, cachedFingerprints, currentFingerprints)
+	moves := s.detectProjectMoves(oldMap, discoveredSet, cachedFingerprints, currentFingerprints, liveWorktreePathsByRoot)
 	for index, move := range moves {
 		progress.setProject("persisting detected project moves", index+1, len(moves), move.NewPath)
-		if err := s.store.MoveProjectPath(ctx, move.OldPath, move.NewPath, now); err != nil {
+		if err := s.persistProjectMove(ctx, move, now); err != nil {
+			if errors.Is(err, store.ErrProjectPathExists) {
+				// The target gained its own project row after this scan
+				// loaded its project map (targeted refreshes and
+				// registrations run independently of full scans). Keep both
+				// rows and skip this move instead of failing the scan.
+				continue
+			}
 			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("move project path %s -> %s: %w", move.OldPath, move.NewPath, err))
 		}
-		if err := s.store.UpsertPathAlias(ctx, model.PathAlias{
-			OldPath:   move.OldPath,
-			NewPath:   move.NewPath,
-			Reason:    "git_recent_hash_match",
-			UpdatedAt: now,
-		}); err != nil {
-			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist path alias %s -> %s: %w", move.OldPath, move.NewPath, err))
-		}
-		s.publishProjectMoved(ctx, now, move)
 	}
 	if len(moves) > 0 {
 		progress.setPhase("reloading project state after moves")
@@ -2928,11 +2926,30 @@ func (s *Service) publishProjectMoved(ctx context.Context, now time.Time, move d
 	})
 }
 
+// persistProjectMove renames a project row to its detected new path, records
+// the path alias, and publishes the move event.
+func (s *Service) persistProjectMove(ctx context.Context, move detectedProjectMove, now time.Time) error {
+	if err := s.store.MoveProjectPath(ctx, move.OldPath, move.NewPath, now); err != nil {
+		return err
+	}
+	if err := s.store.UpsertPathAlias(ctx, model.PathAlias{
+		OldPath:   move.OldPath,
+		NewPath:   move.NewPath,
+		Reason:    "git_recent_hash_match",
+		UpdatedAt: now,
+	}); err != nil {
+		return err
+	}
+	s.publishProjectMoved(ctx, now, move)
+	return nil
+}
+
 func (s *Service) detectProjectMoves(
 	oldMap map[string]model.ProjectSummary,
 	discoveredSet map[string]struct{},
 	cached map[string]model.ProjectGitFingerprint,
 	current map[string]scanner.GitFingerprint,
+	liveByRoot map[string]map[string]struct{},
 ) []detectedProjectMove {
 	currentProjects := map[string]struct{}{}
 	for path := range oldMap {
@@ -2970,6 +2987,9 @@ func (s *Service) detectProjectMoves(
 		bestShared := []string(nil)
 		ambiguous := false
 		for _, newPath := range newPaths {
+			if moveTargetsSameRepoFamily(project, oldPath, newPath, liveByRoot) {
+				continue
+			}
 			shared := overlappingHashes(fingerprint.RecentHashes, current[newPath].RecentHashes)
 			score := len(shared)
 			if score == 0 {
@@ -3011,6 +3031,26 @@ func (s *Service) detectProjectMoves(
 		return moves[i].OldPath < moves[j].OldPath
 	})
 	return moves
+}
+
+// moveTargetsSameRepoFamily reports whether newPath is another checkout of
+// the same repository as the vanished project: a sibling linked worktree or
+// the repository root itself. Linked worktrees share one Git object store, so
+// overlapping recent commit hashes are normal between siblings and are not
+// rename evidence.
+func moveTargetsSameRepoFamily(project model.ProjectSummary, oldPath, newPath string, liveByRoot map[string]map[string]struct{}) bool {
+	root := filepath.Clean(strings.TrimSpace(project.WorktreeRootPath))
+	if project.WorktreeKind != model.WorktreeKindLinked || root == "" || root == "." {
+		root = filepath.Clean(oldPath)
+	}
+	if root == "" || root == "." || root == string(filepath.Separator) {
+		return false
+	}
+	if root == filepath.Clean(newPath) {
+		return true
+	}
+	_, ok := liveByRoot[root][filepath.Clean(newPath)]
+	return ok
 }
 
 func resolveProjectPath(path string, aliases map[string]model.PathAlias) string {
