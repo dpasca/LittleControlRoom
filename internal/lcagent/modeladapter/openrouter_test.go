@@ -442,7 +442,7 @@ func TestToolsWithOptionsExposeUserCommandRequestOnlyWhenInteractive(t *testing.
 	}
 	tools := ToolsWithOptions(ToolOptions{UserCommandRequestsEnabled: true})
 	spec := toolSpec(t, tools, "request_user_command")
-	if !strings.Contains(spec.Description, "never executes") || !strings.Contains(spec.Description, "verify the effect") {
+	if !strings.Contains(spec.Description, "Execution requires explicit Approve and run once") || !strings.Contains(spec.Description, "verify the effect") {
 		t.Fatalf("request_user_command description = %q", spec.Description)
 	}
 	properties := spec.Parameters["properties"].(map[string]any)
@@ -462,7 +462,7 @@ func TestSystemPromptExplainsUserCommandRequestBoundary(t *testing.T) {
 	for _, want := range []string{
 		"interactive user command requests available: yes",
 		"call request_user_command instead of ending the turn",
-		"never executes or approves the command",
+		"without changing session permissions",
 		"A user report from request_user_command is not verification",
 	} {
 		if !strings.Contains(prompt, want) {

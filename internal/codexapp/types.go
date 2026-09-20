@@ -330,11 +330,12 @@ type ToolInputQuestion struct {
 }
 
 // ManualCommandRequest describes a command that an embedded engineer cannot
-// execute within its current authority and has asked the operator to run.
+// execute within its current authority and has asked the operator to review.
 // The surrounding ToolInputRequest still carries the provider response shape,
 // while this metadata lets host surfaces present the request as a deliberate
-// manual action instead of a generic questionnaire.
+// command approval or manual action instead of a generic questionnaire.
 type ManualCommandRequest struct {
+	CanExecute     bool
 	QuestionID     string
 	Prompt         string
 	Command        string
@@ -355,6 +356,9 @@ type ToolInputRequest struct {
 
 func (r ToolInputRequest) Summary() string {
 	if r.ManualCommand != nil {
+		if r.ManualCommand.CanExecute {
+			return "Command approval required"
+		}
 		return "Manual terminal action required"
 	}
 	if len(r.Questions) == 0 {
@@ -768,6 +772,7 @@ type LaunchRequest struct {
 	LCAgentProvider            string
 	LCAgentAuto                string
 	LCAgentAdminWrite          bool
+	LCAgentWritableRoots       []string
 	LCAgentToolProfile         string
 	LCAgentContextProfile      string
 	LCAgentRequestTimeout      time.Duration

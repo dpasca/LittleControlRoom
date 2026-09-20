@@ -426,6 +426,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var maxTurns int
 	var searchRefineMinBytes int
 	var adminWrite, requireFinalResponseTool bool
+	var writableRoots []string
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
@@ -452,6 +453,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&visionReasoning, "vision-reasoning-effort", "", "optional reasoning effort for the vision model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets and unknown hosted models assume a 250k window")
+	fs.Func("writable-root", "additional repository root authorized for file edits (repeatable)", func(value string) error {
+		writableRoots = append(writableRoots, value)
+		return nil
+	})
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
 	fs.BoolVar(&requireFinalResponseTool, "require-final-response-tool", false, "require provider runs to finish through the structured final_response tool")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
@@ -517,6 +522,13 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	workspace.AdminWrite = adminWrite
+	for _, root := range writableRoots {
+		authorized, err := policy.NewWorkspace(root, auto)
+		if err != nil {
+			return fmt.Errorf("writable root: %w", err)
+		}
+		workspace.WritableRoots = append(workspace.WritableRoots, authorized.Root)
+	}
 	workspace.WorkspaceOnlyReads = opts.WorkspaceOnlyReads
 	if dataDir == "" {
 		dataDir = defaultDataDir()
@@ -1069,6 +1081,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.WebSearchEnabled = webSearchEnabled
 	systemPromptOptions.ManagedProcessesEnabled = runner.Processes != nil
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
+	systemPromptOptions.WritableRoots = runner.Patch.Workspace.WritableRoots
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
 	systemPromptOptions.NativeVisionEnabled = nativeVision

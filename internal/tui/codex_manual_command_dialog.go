@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -10,6 +11,12 @@ import (
 )
 
 const codexManualCommandOutcomeLimit = 1200
+
+type codexManualCommandSubmittedMsg struct {
+	ProjectPath string
+	RequestID   string
+	Result      tea.Msg
+}
 
 type codexManualCommandOutcomeState struct {
 	ProjectPath string
@@ -67,7 +74,11 @@ func (m Model) renderCodexManualCommandDialogContent(
 	if providerLabel == "" {
 		providerLabel = "LCAgent"
 	}
-	header := detailWarningStyle.Render("Manual terminal action required")
+	title := "Manual terminal action required"
+	if command.CanExecute {
+		title = "Command approval required"
+	}
+	header := detailWarningStyle.Render(title)
 	header += detailMutedStyle.Render(" - " + providerLabel)
 	lines := []string{header, ""}
 
@@ -91,11 +102,11 @@ func (m Model) renderCodexManualCommandDialogContent(
 	}
 	lines = append(lines, "", detailSectionStyle.Render("Command"))
 	lines = append(lines, renderCodexManualCommandBlock(command.Command, width))
-	lines = append(lines, renderWrappedDialogTextLines(
-		detailMutedStyle,
-		width,
-		"This dialog does not execute or approve the command. Run it yourself only if you want this change.",
-	)...)
+	notice := "This dialog does not execute or approve the command. Run it yourself only if you want this change."
+	if command.CanExecute {
+		notice = "Approve runs this exact command once (60-second limit) and returns output and exit status to LCAgent. Session permissions stay unchanged."
+	}
+	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, notice)...)
 
 	if outcome := m.activeCodexManualCommandOutcome(request.ID); outcome != nil {
 		input := outcome.Input
@@ -127,6 +138,13 @@ func (m Model) renderCodexManualCommandDialogContent(
 		renderDialogAction("S", "skip", cancelActionKeyStyle, cancelActionTextStyle),
 		renderDialogAction("O", "report another outcome", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "hide pane", navigateActionKeyStyle, navigateActionTextStyle),
+	}
+	if command.CanExecute {
+		label := "approve and run once"
+		if m.codexManualCommandSubmitting == request.ID && m.codexCommandSubmitProject == m.codexVisibleProject {
+			label = "submitting..."
+		}
+		actions = append([]string{renderDialogAction("A", label, navigateActionKeyStyle, navigateActionTextStyle)}, actions...)
 	}
 	lines = append(lines, renderCodexElicitationActionLines(width, actions)...)
 	return strings.Join(lines, "\n")
@@ -177,6 +195,9 @@ func (m Model) updateCodexManualCommandMode(
 	if request == nil || command == nil {
 		return m, nil
 	}
+	if m.codexManualCommandSubmitting == request.ID && m.codexCommandSubmitProject == m.codexVisibleProject {
+		return m, nil
+	}
 	if outcome := m.activeCodexManualCommandOutcome(request.ID); outcome != nil {
 		switch msg.String() {
 		case "esc":
@@ -202,6 +223,10 @@ func (m Model) updateCodexManualCommandMode(
 	}
 
 	switch strings.ToLower(msg.String()) {
+	case "a":
+		if command.CanExecute {
+			return m.submitCodexManualCommandAnswer(request, command, "Approve and run once", "Submitting command approval...")
+		}
 	case "c":
 		return m, m.copyCodexManualCommand(request.ID, command.Command)
 	case "r":
@@ -232,7 +257,26 @@ func (m Model) submitCodexManualCommandAnswer(
 	}
 	m.codexManualCommandOutcome = nil
 	m.status = status
-	return m, m.respondVisibleToolInputCmd(map[string][]string{questionID: {answer}})
+	projectPath, requestID, threadID := m.codexVisibleProject, request.ID, request.ThreadID
+	cmd := m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		snapshot := session.Snapshot()
+		pending := snapshot.PendingToolInput
+		if pending == nil || pending.ID != requestID || pending.ThreadID != threadID {
+			return codexActionMsg{projectPath: projectPath, err: fmt.Errorf("command request changed; review the current request")}
+		}
+		if err := session.RespondToolInput(map[string][]string{questionID: {answer}}); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Manual command response sent to " + embeddedProvider(snapshot).Label()}
+	})
+	if cmd == nil {
+		return m, nil
+	}
+	m.codexManualCommandSubmitting = request.ID
+	m.codexCommandSubmitProject = projectPath
+	return m, func() tea.Msg {
+		return codexManualCommandSubmittedMsg{ProjectPath: projectPath, RequestID: requestID, Result: cmd()}
+	}
 }
 
 func (m *Model) copyCodexManualCommand(requestID, command string) tea.Cmd {

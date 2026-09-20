@@ -32,9 +32,12 @@ type ApprovalBroker interface {
 }
 
 const (
-	UserCommandQuestionID    = "command_status"
-	UserCommandRanLabel      = "Ran it"
-	UserCommandDeclinedLabel = "Didn't run it"
+	UserCommandQuestionID     = "command_status"
+	UserCommandRanLabel       = "Ran it"
+	UserCommandExecuteLabel   = "Approve and run once"
+	UserCommandStatusApproved = "approved"
+	UserCommandStatusExecuted = "executed"
+	UserCommandDeclinedLabel  = "Didn't run it"
 
 	UserCommandStatusCompleted = "completed"
 	UserCommandStatusDeclined  = "declined"
@@ -43,11 +46,12 @@ const (
 )
 
 type UserCommandRequest struct {
-	ID        string
-	SessionID string
-	Command   string
-	CWD       string
-	Reason    string
+	CanExecute bool
+	ID         string
+	SessionID  string
+	Command    string
+	CWD        string
+	Reason     string
 }
 
 type UserCommandResponse struct {
@@ -55,9 +59,8 @@ type UserCommandResponse struct {
 	Message string
 }
 
-// UserCommandBroker pauses an embedded run while the operator performs a
-// command manually. It deliberately reports what the operator said happened;
-// it does not grant LCAgent authority to execute the command itself.
+// UserCommandBroker requests exact-command approval or a manual outcome.
+// Only an explicit approved response authorizes one execution.
 type UserCommandBroker interface {
 	RequestUserCommand(context.Context, UserCommandRequest) (UserCommandResponse, error)
 }

@@ -148,11 +148,15 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 	label := embeddedProvider(snapshot).Label()
 	switch {
 	case snapshot.PendingToolInput != nil && snapshot.PendingToolInput.ManualCommand != nil:
+		status := "Waiting for manual command"
+		if snapshot.PendingToolInput.ManualCommand.CanExecute {
+			status = "A approve and run once"
+		}
 		return []string{
 			renderFooterLine(
 				width,
-				detailWarningStyle.Render("Manual terminal action required"),
-				renderFooterStatus("Waiting for manual command"),
+				detailWarningStyle.Render(snapshot.PendingToolInput.Summary()),
+				renderFooterStatus(status),
 			),
 		}
 	case snapshot.PendingApproval != nil:

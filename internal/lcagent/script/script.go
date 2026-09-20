@@ -2362,11 +2362,14 @@ func (r *Runner) runUserCommandRequest(ctx context.Context, args requestUserComm
 		return result
 	}
 
+	spec := tools.CommandSpec{Command: command, CWD: cwd, Shell: true, TimeoutMS: 60000}
+	canExecute := r.Command.ApprovalDenialReason(spec) == ""
 	response, err := r.UserCommands.RequestUserCommand(ctx, UserCommandRequest{
-		SessionID: r.SessionID,
-		Command:   command,
-		CWD:       cwd,
-		Reason:    reason,
+		CanExecute: canExecute,
+		SessionID:  r.SessionID,
+		Command:    command,
+		CWD:        cwd,
+		Reason:     reason,
 	})
 	if err != nil {
 		result.Error = err.Error()
@@ -2375,6 +2378,16 @@ func (r *Runner) runUserCommandRequest(ctx context.Context, args requestUserComm
 	result.UserCommandStatus = strings.ToLower(strings.TrimSpace(response.Status))
 	result.UserResponse = strings.TrimSpace(response.Message)
 	switch result.UserCommandStatus {
+	case UserCommandStatusApproved:
+		if !canExecute {
+			result.Error = r.Command.ApprovalDenialReason(spec)
+			result.Denied = true
+			result.DenialReason = result.Error
+			return result
+		}
+		result = r.Command.RunApprovedSpec(ctx, spec)
+		result.UserCommandStatus = UserCommandStatusExecuted
+		return result
 	case UserCommandStatusCompleted:
 		result.Success = true
 		result.Output = "The user reported that they ran the requested command. This is user-reported, not verification; inspect the resulting state before claiming success."

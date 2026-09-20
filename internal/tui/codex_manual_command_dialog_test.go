@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/codexapp"
+	"lcroom/internal/model"
 )
 
 const testManualCommandProjectPath = "/tmp/manual-command-demo"
@@ -142,7 +143,7 @@ func TestLCAgentManualCommandReportedRunUsesExplicitResponse(t *testing.T) {
 		t.Fatalf("status = %q", got.status)
 	}
 	msg := cmd()
-	action, ok := msg.(codexActionMsg)
+	action, ok := msg.(codexManualCommandSubmittedMsg).Result.(codexActionMsg)
 	if !ok {
 		t.Fatalf("response command returned %T", msg)
 	}
@@ -233,5 +234,64 @@ func TestLCAgentManualCommandOutcomeEscapeReturnsToMainDialog(t *testing.T) {
 	}
 	if got.codexVisibleProject != testManualCommandProjectPath {
 		t.Fatalf("escape from outcome editor hid the engineer pane")
+	}
+}
+
+func TestCommandApprovalRunsThroughAgentAndBlocksRepeatedSubmission(t *testing.T) {
+	m, session := testManualCommandModel(t)
+	request := session.snapshot.PendingToolInput
+	request.ManualCommand.CanExecute = true
+	content := ansi.Strip(m.renderCodexManualCommandDialogContent(session.snapshot, *request, *request.ManualCommand, 90))
+	if !strings.Contains(content, "approve and run once") || !strings.Contains(content, "Command approval required") {
+		t.Fatalf("approval UI: %s", content)
+	}
+	updated, cmd := m.updateCodexManualCommandMode(request, request.ManualCommand, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got := updated.(Model)
+	if cmd == nil || got.codexManualCommandSubmitting != request.ID {
+		t.Fatal("missing submission state")
+	}
+	_, duplicate := got.updateCodexManualCommandMode(request, request.ManualCommand, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if duplicate != nil {
+		t.Fatal("duplicate approval submitted")
+	}
+	_ = cmd()
+	if len(session.toolAnswers) != 1 || session.toolAnswers[0]["command_status"][0] != "Approve and run once" {
+		t.Fatalf("answers: %#v", session.toolAnswers)
+	}
+	request.ManualCommand.CanExecute = false
+	_, cmd = m.updateCodexManualCommandMode(request, request.ManualCommand, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatal("manual-only request offered execution")
+	}
+}
+
+func TestAgentTaskLaunchAuthorizesOnlyOriginWorktree(t *testing.T) {
+	m := Model{}
+	m.openAgentTasks = []model.AgentTask{{
+		WorkspacePath:      "/task/staging",
+		OriginProjectPath:  "/repo",
+		OriginWorktreePath: "/repo-task",
+	}}
+	req := m.enrichEmbeddedLaunchRequestBase(codexapp.LaunchRequest{Provider: codexapp.ProviderLCAgent, ProjectPath: "/task/staging"})
+	if len(req.LCAgentWritableRoots) != 1 || req.LCAgentWritableRoots[0] != "/repo-task" {
+		t.Fatalf("roots: %#v", req.LCAgentWritableRoots)
+	}
+	req = m.enrichEmbeddedLaunchRequestBase(codexapp.LaunchRequest{Provider: codexapp.ProviderLCAgent, ProjectPath: "/unrelated"})
+	if len(req.LCAgentWritableRoots) != 0 {
+		t.Fatalf("unrelated launch received roots: %#v", req.LCAgentWritableRoots)
+	}
+}
+
+func TestCommandApprovalRejectsReplacedRequest(t *testing.T) {
+	m, session := testManualCommandModel(t)
+	request := session.snapshot.PendingToolInput
+	request.ManualCommand.CanExecute = true
+	_, cmd := m.updateCodexManualCommandMode(request, request.ManualCommand, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	replacement := *request
+	replacement.ID = "different-command"
+	session.snapshot.PendingToolInput = &replacement
+	result := cmd().(codexManualCommandSubmittedMsg).Result.(codexActionMsg)
+	if result.err == nil || len(session.toolAnswers) != 0 {
+		t.Fatalf("stale request submitted: %#v", result)
 	}
 }

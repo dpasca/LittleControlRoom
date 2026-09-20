@@ -69,6 +69,7 @@ type lcagentSession struct {
 	auto                string
 	sessionAuto         string
 	adminWrite          bool
+	writableRoots       []string
 	toolProfile         string
 	contextProfile      string
 	requestTimeout      time.Duration
@@ -250,6 +251,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		provider:                 provider,
 		auto:                     strings.TrimSpace(req.LCAgentAuto),
 		adminWrite:               req.LCAgentAdminWrite,
+		writableRoots:            append([]string(nil), req.LCAgentWritableRoots...),
 		toolProfile:              toolProfile,
 		contextProfile:           contextProfile,
 		requestTimeout:           requestTimeout,
@@ -1531,6 +1533,9 @@ func (s *lcagentSession) restoreLCAgentToolInputAfterSendFailure(request *ToolIn
 	if s.pendingToolInput == nil && s.busy && !s.closed {
 		s.pendingToolInput = cloneToolInputRequest(request)
 		s.status = "Waiting for you to run a command"
+		if request.ManualCommand.CanExecute {
+			s.status = "Waiting for command approval"
+		}
 		s.touchLocked()
 	}
 	s.mu.Unlock()
@@ -1937,6 +1942,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	}
 	if prepared.visionReasoning != "" {
 		args = append(args, "--vision-reasoning-effort", prepared.visionReasoning)
+	}
+	for _, root := range s.writableRoots {
+		args = append(args, "--writable-root", root)
 	}
 	if prepared.adminWrite {
 		args = append(args, "--admin-write")
@@ -2572,10 +2580,11 @@ func lcagentUserCommandRequestFromEvent(event map[string]json.RawMessage) *ToolI
 	reason := strings.TrimSpace(rawJSONString(event["reason"]))
 	completedLabel := firstNonEmpty(strings.TrimSpace(rawJSONString(event["completed_label"])), "Ran it")
 	declinedLabel := firstNonEmpty(strings.TrimSpace(rawJSONString(event["declined_label"])), "Didn't run it")
-	return &ToolInputRequest{
+	request := &ToolInputRequest{
 		ID:       id,
 		ThreadID: strings.TrimSpace(rawJSONString(event["session_id"])),
 		ManualCommand: &ManualCommandRequest{
+			CanExecute:     rawJSONBool(event["can_execute"]),
 			QuestionID:     questionID,
 			Prompt:         prompt,
 			Command:        command,
@@ -2603,13 +2612,23 @@ func lcagentUserCommandRequestFromEvent(event map[string]json.RawMessage) *ToolI
 			},
 		},
 	}
+	if request.ManualCommand.CanExecute {
+		request.Questions[0].Options = append([]ToolInputOption{{Label: "Approve and run once", Description: "Execute this exact command and capture its result."}}, request.Questions[0].Options...)
+	}
+	return request
 }
 
-func lcagentUserCommandRequestText(_ map[string]json.RawMessage) string {
+func lcagentUserCommandRequestText(event map[string]json.RawMessage) string {
+	if rawJSONBool(event["can_execute"]) {
+		return "LCAgent requested one-time command approval. Review the action dialog to continue."
+	}
 	return "LCAgent paused for a manual terminal command. Review the action dialog to continue."
 }
 
 func lcagentUserCommandResolvedStatus(status string) string {
+	if status == "approved" {
+		return "Running approved command"
+	}
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "completed":
 		return "User reported the requested command ran"
@@ -2709,6 +2728,7 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	bridge := lcagentProcessBridge{
 		manager:          s.runtimeManager,
 		projectPath:      s.projectPath,
+		writableRoots:    s.writableRoots,
 		stdin:            s.stdin,
 		appendAsync:      s.appendDisplayAsync,
 		watchProcessExit: s.watchManagedProcessExit,
@@ -3169,13 +3189,16 @@ func (s *lcagentSession) permissionsTextLocked(compact bool) string {
 	if s.adminWrite {
 		lines = append(lines, "admin write: on; explicit absolute-path writes outside the workspace are allowed")
 	} else {
-		lines = append(lines, "admin write: off; write tools stay inside the workspace")
+		lines = append(lines, "admin write: off; write tools stay inside the workspace and authorized repository roots")
+	}
+	for _, root := range s.writableRoots {
+		lines = append(lines, "authorized repository: "+root)
 	}
 	lines = append(lines,
 		"",
 		"Off: write tools are denied. Commands are limited to explicit read-only forms.",
 		"Low: project-local file edits are allowed. Commands may inspect, or run approved argv-only verification forms such as go test ./..., npm run test, make test, cargo test, pytest, tsc --noEmit, eslint, ruff, prettier --check, or similar checks. Other commands ask for approval.",
-		"Medium: project-local file edits stay allowed, and command execution no longer uses the Low allowlist, so trusted local setup/build/process commands can run without repeated approval. Write tools still stay inside the workspace unless admin write is on.",
+		"Medium: project-local file edits stay allowed, and command execution no longer uses the Low allowlist, so trusted local setup/build/process commands can run without repeated approval. Write tools stay inside the workspace and authorized repository roots unless admin write is on.",
 	)
 	if !compact {
 		lines = append(lines, "", "Change it here with /permissions off, /permissions low, or /permissions medium.")

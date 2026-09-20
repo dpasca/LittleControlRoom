@@ -28,8 +28,9 @@ const (
 )
 
 type CommandRunner struct {
-	Workspace   policy.Workspace
-	ArtifactDir string
+	Workspace    policy.Workspace
+	ArtifactDir  string
+	approvedOnce bool
 }
 
 type CommandSpec struct {
@@ -41,6 +42,21 @@ type CommandSpec struct {
 	Purpose          string
 	AdminScope       string
 	AllowedExitCodes []int
+}
+
+// ApprovalDenialReason preserves hard guards even for an operator-approved command.
+func (r CommandRunner) ApprovalDenialReason(spec CommandSpec) string {
+	if commandContainsRecursiveRM(spec) {
+		return commandguard.RecursiveRMDenialReason
+	}
+	return commandSystemMutationDenialReason(spec, r.Workspace.AdminWrite)
+}
+
+// RunApprovedSpec grants only this invocation command and source-edit authority.
+func (r CommandRunner) RunApprovedSpec(ctx context.Context, spec CommandSpec) ToolResult {
+	r.Workspace.Auto = policy.AutonomyMedium
+	r.approvedOnce = true
+	return r.RunSpec(ctx, spec)
 }
 
 func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Duration) ToolResult {
@@ -95,7 +111,7 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 	}
-	if reason := commandWorkspaceWriteDenialReason(spec); reason != "" {
+	if reason := commandWorkspaceWriteDenialReason(spec); reason != "" && !r.approvedOnce {
 		return ToolResult{
 			Success:          false,
 			Error:            reason,
