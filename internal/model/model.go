@@ -258,6 +258,7 @@ type AgentTask struct {
 	OriginProjectPath   string
 	OriginWorktreePath  string
 	OriginProvider      SessionSource
+	OriginSessionKey    string // Host control identity; never a provider resume ID.
 	OriginSessionID     string
 	ResultMessageID     string
 	ExpiresAt           time.Time
@@ -305,6 +306,7 @@ type CreateAgentTaskInput struct {
 	OriginProjectPath  string
 	OriginWorktreePath string
 	OriginProvider     SessionSource
+	OriginSessionKey   string // Host control identity; never a provider resume ID.
 	OriginSessionID    string
 	ExpiresAt          time.Time
 	Resources          []AgentTaskResource

@@ -75,6 +75,12 @@ one exact recording because it was explicitly attached or because the operator
 confirmed disclosure. Grants are host inputs to the executor, never caller
 claims in `run_lcr_query` arguments.
 
+Delegated task records expose `origin.control_session_key` separately from
+`origin.session_id`. The former identifies the host control channel and is never
+a provider resume ID. An empty `origin.session_id` with a result delivery status
+means the caller has not yet been bound; agents must not substitute the newest
+session in that project.
+
 ## Disclosure and privacy
 
 Portfolio scope is not unrestricted database access.

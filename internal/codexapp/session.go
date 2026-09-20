@@ -69,6 +69,7 @@ type appServerSession struct {
 	playwrightMCPExpected     bool
 	runtimeMCPExpected        bool
 	imageReviewEnabled        bool
+	controlSessionKey         string
 	managedBrowserSessionKey  string
 	dataDir                   string
 	codexHomeOverlay          string

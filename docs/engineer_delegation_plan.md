@@ -1,7 +1,10 @@
 # Visible engineer delegation
 
-Status: proposed implementation plan. This document does not describe shipped
-behavior or authorize changes to running sessions. It extends the existing
+Status: implementation in progress. The first return-address slice now separates
+host control keys from provider conversation IDs, persists immutable bindings,
+and retains pending results until identity arrives. The remaining workflow below
+is proposed; this document does not authorize changes to running sessions.
+It extends the existing
 [control surface](agent_control_surface.md) and [query surface](agent_query_surface.md).
 
 ## Product contract
@@ -201,8 +204,12 @@ acceptance and rework. A cheap worker with expensive retries may cost more overa
 
 ## Delivery sequence and acceptance gates
 
-1. **Reliable return address.** Add durable host/provider identity binding and use
-   it in task provenance/callbacks. Test fresh and resumed callers for all four
+1. **Reliable return address (initial slice implemented).** Durable control-channel
+   bindings now scope the provider ID by exact project, provider and control key.
+   Task origins retain the key separately; late announcements wake pending results.
+   Ambiguous legacy callbacks fail explicitly unless exact recorded identity exists.
+   Separate logical-engineer/generation records and result revisions remain for
+   the lifecycle work below. Test fresh and resumed callers for all four
    providers, late identity binding, replaced sessions and restart recovery.
    Keep task visibility and existing confirmation behavior intact in this slice.
 2. **Selectable visible workers.** Add task model/effort selection and run metadata,

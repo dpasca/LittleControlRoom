@@ -673,6 +673,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	var lcrControls *agentcontrol.Executor
 	if lcrControlScope != "" {
+		// Native controls know the stable thread before invoking any host operation.
+		if err := lcrStateStore.BindEngineerSession(runCtx, workspace.Root, lcrmodel.SessionSourceLCAgent, threadID, threadID); err != nil {
+			return fmt.Errorf("bind LCR caller identity: %w", err)
+		}
 		lcrControls, err = agentcontrol.NewExecutor(agentcontrol.Options{
 			Store:             lcrStateStore,
 			OriginProjectPath: workspace.Root,

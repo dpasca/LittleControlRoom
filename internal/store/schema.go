@@ -15,6 +15,13 @@ import (
 
 func (s *Store) initSchema(ctx context.Context) error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS engineer_session_bindings (
+			project_path TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			control_session_key TEXT NOT NULL,
+			provider_session_id TEXT NOT NULL,
+			PRIMARY KEY(project_path, provider, control_session_key)
+		);`,
 		`CREATE TABLE IF NOT EXISTS engineer_model_catalogs (provider TEXT PRIMARY KEY, catalog_json TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS projects (
 			path TEXT PRIMARY KEY,
@@ -285,6 +292,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			origin_worktree_path TEXT NOT NULL DEFAULT '',
 			origin_provider TEXT NOT NULL DEFAULT '',
 			origin_session_id TEXT NOT NULL DEFAULT '',
+			origin_session_key TEXT NOT NULL DEFAULT '',
 			result_message_id TEXT NOT NULL DEFAULT '',
 			expires_at INTEGER,
 			result_ready_at INTEGER,
@@ -478,6 +486,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.backfillAgentTaskOrigins(ctx); err != nil {
+		return err
+	}
+	if err := s.migrateAgentTaskCallerBindings(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectCategoriesPrivateColumn(ctx); err != nil {
@@ -832,6 +843,7 @@ func (s *Store) ensureAgentTaskMetadataColumns(ctx context.Context) error {
 		"origin_worktree_path",
 		"origin_provider",
 		"origin_session_id",
+		"origin_session_key",
 		"result_message_id",
 		"result_delivery_error",
 		"result_consumed_by",
@@ -983,7 +995,7 @@ func (s *Store) backfillAgentTaskOrigins(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, `
 			UPDATE agent_tasks
 			SET origin_operation_id = ?, origin_project_path = ?, origin_worktree_path = ?,
-				origin_provider = ?, origin_session_id = ?
+				origin_provider = ?, origin_session_key = ?
 			WHERE id = ? AND origin_operation_id = ''
 		`, backfill.operationID, backfill.projectPath, backfill.worktreePath, backfill.provider, backfill.sessionID, backfill.taskID); err != nil {
 			return fmt.Errorf("backfill agent task origin: %w", err)

@@ -171,11 +171,12 @@ func agentTaskRecord(task model.AgentTask) map[string]any {
 		"session_id":     task.SessionID,
 		"workspace_path": task.WorkspacePath,
 		"origin": map[string]any{
-			"operation_id":  task.OriginOperationID,
-			"project_path":  task.OriginProjectPath,
-			"worktree_path": task.OriginWorktreePath,
-			"provider":      task.OriginProvider,
-			"session_id":    task.OriginSessionID,
+			"operation_id":        task.OriginOperationID,
+			"project_path":        task.OriginProjectPath,
+			"worktree_path":       task.OriginWorktreePath,
+			"provider":            task.OriginProvider,
+			"session_id":          task.OriginSessionID,
+			"control_session_key": task.OriginSessionKey,
 		},
 		"result_lifecycle": map[string]any{
 			"message_id":     task.ResultMessageID,

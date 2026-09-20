@@ -206,8 +206,8 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		task.LastTouchedAt = m.currentTime()
 		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
 		m.rebuildProjectList(selectedPath)
-		renameRefreshCmd = batchCmds(renameRefreshCmd, m.recordEmbeddedSessionTransitionCmd(msg.projectPath, msg.snapshot))
 	}
+	renameRefreshCmd = batchCmds(renameRefreshCmd, m.recordEmbeddedSessionTransitionCmd(msg.projectPath, msg.snapshot))
 	revealOnOpen := m.revealEmbeddedOpenOnSessionOpened(msg)
 	superseded := msg.openRequestID != 0 && msg.openRequestID < m.codexOpenRequestSeq
 	focusInput := revealOnOpen
@@ -250,11 +250,11 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 					m = updated
 				}
 				m.status = "Pick the LCAgent provider, model, and reasoning, then send the TODO draft."
-				return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, pickerCmd)
+				return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, pickerCmd)
 			}
 			m.openCodexModelPickerLoading()
 			m.status = "Pick a model, then send the TODO draft."
-			return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, m.openCodexModelPickerCmd())
+			return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.openCodexModelPickerCmd())
 		}
 		if draft.autoSubmit {
 			if status != "" {
@@ -802,6 +802,11 @@ func shouldRecordEmbeddedSessionSettledAfterDisappearance(prev codexapp.Snapshot
 }
 
 func shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(hadPrev bool, prev, next codexapp.Snapshot) bool {
+	// An identity can arrive while idle, before the first turn or after replay.
+	if next.ControlSessionKey != "" && next.ThreadID != "" && (!hadPrev || prev.ControlSessionKey != next.ControlSessionKey || prev.ThreadID != next.ThreadID) {
+		return true
+	}
+
 	if next.Closed || !next.Started || !next.Busy || embeddedSnapshotActivityAt(next).IsZero() {
 		return false
 	}
@@ -898,6 +903,9 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 	}
 	sessionID := strings.TrimSpace(snapshot.ThreadID)
 	lastActivity := embeddedSnapshotActivityAt(snapshot)
+	if lastActivity.IsZero() && snapshot.ControlSessionKey != "" && sessionID != "" {
+		lastActivity = time.Now()
+	}
 	if projectPath == "" || sessionID == "" || lastActivity.IsZero() {
 		return service.EmbeddedSessionActivity{}, false
 	}
@@ -909,6 +917,7 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 		ProjectPath:          projectPath,
 		Source:               embeddedSessionSource(snapshot.Provider),
 		SessionID:            sessionID,
+		ControlSessionKey:    snapshot.ControlSessionKey,
 		Format:               embeddedSessionFormat(snapshot.Provider),
 		LastActivityAt:       lastActivity,
 		LatestTurnStartedAt:  latestTurnStartedAt,

@@ -21,6 +21,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 	policy := req.PlaywrightPolicy.Normalize()
 	ensureManagedPlaywrightSessionKey(&req)
+	ensureTodoCaptureSessionKey(&req)
 	reconnectTranscript := cloneTranscriptEntries(req.ReconnectTranscript)
 	var rolloutResumeState codexRolloutResumeState
 	if strings.TrimSpace(req.ResumeID) != "" {
@@ -42,6 +43,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightMCPExpected:     shouldShadowPlaywrightSkill(policy),
 		runtimeMCPExpected:        shouldShadowRuntimeSkill(req),
 		imageReviewEnabled:        req.ImageReviewEnabled,
+		controlSessionKey:         strings.TrimSpace(req.TodoCaptureSessionKey),
 		managedBrowserSessionKey:  strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                   strings.TrimSpace(req.AppDataDir),
 		runtimeManager:            req.RuntimeManager,
@@ -130,6 +132,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		ThreadID:                 s.threadID,
 		Preset:                   s.preset,
 		BrowserActivity:          s.browserActivity.Normalize(),
+		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
 		CurrentBrowserPageStale:  s.currentBrowserPageStale,

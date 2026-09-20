@@ -18,6 +18,7 @@ import (
 )
 
 type EmbeddedSessionActivity struct {
+	ControlSessionKey    string
 	ProjectPath          string
 	Source               model.SessionSource
 	SessionID            string
@@ -33,6 +34,9 @@ type EmbeddedSessionActivity struct {
 func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity EmbeddedSessionActivity) error {
 	if s == nil || s.store == nil {
 		return nil
+	}
+	if err := s.RecordEmbeddedSessionIdentity(ctx, activity); err != nil {
+		return err
 	}
 	projectPath := filepath.Clean(strings.TrimSpace(activity.ProjectPath))
 	if projectPath == "" || projectPath == "." || activity.LastActivityAt.IsZero() {
@@ -358,4 +362,24 @@ func codexSessionDateCandidates(times ...time.Time) []time.Time {
 		add(time.Now())
 	}
 	return out
+}
+
+// RecordEmbeddedSessionIdentity runs in the activity worker, never the TUI update path.
+func (s *Service) RecordEmbeddedSessionIdentity(ctx context.Context, activity EmbeddedSessionActivity) error {
+	if strings.TrimSpace(activity.ControlSessionKey) == "" || strings.TrimSpace(activity.SessionID) == "" {
+		return nil
+	}
+	if err := s.store.BindEngineerSession(ctx, activity.ProjectPath, activity.Source, activity.ControlSessionKey, activity.SessionID); err != nil {
+		return err
+	}
+	ids, err := s.store.AgentTaskIDsAwaitingCaller(ctx, activity.ProjectPath, activity.Source, activity.ControlSessionKey)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := s.QueueAgentTaskResultCallback(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

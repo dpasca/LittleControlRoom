@@ -2501,6 +2501,9 @@ func TestAgentTaskCreatePersistsExternalOriginAndTodoAffiliation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := svc.Store().BindEngineerSession(ctx, "/tmp/lcr-intercept--carrier", model.SessionSourceCodex, "caller-session", "provider-thread"); err != nil {
+		t.Fatal(err)
+	}
 	m := Model{ctx: ctx, svc: svc}
 	msg, ok := m.createBossAgentTaskCmd(inv, input, "")().(bossAgentTaskCreatedMsg)
 	if !ok || msg.err != nil {
@@ -2509,7 +2512,7 @@ func TestAgentTaskCreatePersistsExternalOriginAndTodoAffiliation(t *testing.T) {
 	task := msg.task
 	if task.OriginOperationID != input.RequestID || task.OriginProjectPath != "/tmp/lcr-intercept" ||
 		task.OriginWorktreePath != "/tmp/lcr-intercept--carrier" || task.OriginProvider != model.SessionSourceCodex ||
-		task.OriginSessionID != "caller-session" {
+		task.OriginSessionKey != "caller-session" || task.OriginSessionID != "provider-thread" {
 		t.Fatalf("task origin = %#v", task)
 	}
 	if len(task.Resources) != 1 || task.Resources[0].Kind != model.AgentTaskResourceTodo || task.Resources[0].RefID != "1298" {

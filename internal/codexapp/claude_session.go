@@ -79,6 +79,7 @@ type claudeCodeSession struct {
 	notify                   func()
 	checkAuthentication      func(context.Context) error
 	playwrightPolicy         browserctl.Policy
+	controlSessionKey        string
 	managedBrowserSessionKey string
 	dataDir                  string
 	browserActivity          browserctl.SessionActivity
@@ -289,6 +290,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		return nil, fmt.Errorf("Claude Code permission mode: %w", err)
 	}
 	ensureManagedPlaywrightSessionKey(&req)
+	ensureTodoCaptureSessionKey(&req)
 	policy := req.PlaywrightPolicy.Normalize()
 	var approvalServer *claudeapproval.Server
 	if requestedPermissionMode.UsesApprovalBridge() {
@@ -321,6 +323,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		notify:                   notify,
 		checkAuthentication:      CheckClaudeCodeAuthentication,
 		playwrightPolicy:         policy,
+		controlSessionKey:        strings.TrimSpace(req.TodoCaptureSessionKey),
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                  browserctl.EffectiveDataDir(req.AppDataDir),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
@@ -448,6 +451,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		Preset:                   s.preset,
 		PermissionLevel:          string(s.effectivePermissionModeLocked()),
 		BrowserActivity:          s.browserActivity.Normalize(),
+		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
 		TranscriptRevision:       s.transcriptRevision,

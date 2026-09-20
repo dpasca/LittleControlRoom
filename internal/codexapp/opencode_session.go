@@ -39,6 +39,7 @@ type openCodeSession struct {
 	preset                   codexcli.Preset
 	notify                   func()
 	playwrightPolicy         browserctl.Policy
+	controlSessionKey        string
 	managedBrowserSessionKey string
 	dataDir                  string
 	browserActivity          browserctl.SessionActivity
@@ -289,12 +290,14 @@ func newOpenCodeHTTPClient() *http.Client {
 func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ensureManagedPlaywrightSessionKey(&req)
+	ensureTodoCaptureSessionKey(&req)
 	policy := req.PlaywrightPolicy.Normalize()
 	s := &openCodeSession{
 		projectPath:              req.ProjectPath,
 		preset:                   req.Preset,
 		notify:                   notify,
 		playwrightPolicy:         policy,
+		controlSessionKey:        strings.TrimSpace(req.TodoCaptureSessionKey),
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                  browserctl.EffectiveDataDir(req.AppDataDir),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
@@ -365,6 +368,7 @@ func (s *openCodeSession) stateSnapshotLocked() Snapshot {
 		ThreadID:                 s.sessionID,
 		Preset:                   s.preset,
 		BrowserActivity:          s.browserActivity.Normalize(),
+		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
 		TranscriptRevision:       s.transcriptRevision,

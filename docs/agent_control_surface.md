@@ -105,6 +105,21 @@ context, while the control message tells the receiving engineer what to read
 and what outcome to pursue. The sender does not need to ask the operator to
 copy that instruction manually. By default, sending requires LCR confirmation.
 
+### Delegated-task return addresses
+
+Task creation captures the caller's host control key separately from its provider
+conversation ID. LCR persists a binding scoped to the exact worktree, provider,
+and control key when the embedded session announces its identity. Native LCAgent
+binds its stable thread before invoking controls. A binding cannot be overwritten
+by a newer session in the same worktree.
+
+If the identity has not arrived, the result stays on the visible task with an
+explicit delivery status. A late binding queues the result without requiring a
+list refresh; persisted bindings and queued callbacks survive restart. Delivery
+still uses the existing exact-target mailbox and confirmation policy. Legacy
+records are only repaired from exact recorded identity; ambiguous queued attempts
+are retained as failures and require explicit redelivery to a verified caller.
+
 ### Approve collaboration once per project pair
 
 At an eligible engineer handoff, open review with **Ctrl+G**. **Enter** sends

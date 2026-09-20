@@ -198,8 +198,22 @@ func (s *Service) QueueAgentTaskResultCallback(ctx context.Context, taskID strin
 	provider := agentTaskResultCallbackProvider(task.OriginProvider)
 	projectPath := firstNonEmpty(task.OriginWorktreePath, task.OriginProjectPath)
 	if task.ResultReadyAt.IsZero() || !task.ResultConsumedAt.IsZero() || strings.TrimSpace(task.ResultMessageID) != "" ||
-		provider == "" || strings.TrimSpace(projectPath) == "" || strings.TrimSpace(task.OriginSessionID) == "" {
+		provider == "" || strings.TrimSpace(projectPath) == "" {
 		return task, nil
+	}
+	task, err = s.store.ResolveAgentTaskCaller(ctx, task)
+	if err != nil {
+		return task, err
+	}
+	if strings.TrimSpace(task.OriginSessionID) == "" {
+		if task.OriginSessionKey == "" {
+			return task, nil
+		}
+		problem := "Waiting for the originating engineer's provider session identity; callback has not been sent."
+		if task.ResultDeliveryError == problem {
+			return task, nil
+		}
+		return s.store.RecordAgentTaskCallerPending(ctx, task, problem)
 	}
 	message := control.EngineerMessage{
 		OperationID:     fmt.Sprintf("agent-task-result:%s:%d", strings.TrimSpace(task.ID), task.ResultReadyAt.Unix()),

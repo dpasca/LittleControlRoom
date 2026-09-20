@@ -102,6 +102,7 @@ type agentTaskCreationContext struct {
 	originProjectPath  string
 	originWorktreePath string
 	originProvider     model.SessionSource
+	originSessionKey   string
 	originSessionID    string
 	categoryID         string
 }
@@ -1079,6 +1080,7 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			OriginWorktreePath: creationContext.originWorktreePath,
 			OriginProvider:     creationContext.originProvider,
 			OriginSessionID:    creationContext.originSessionID,
+			OriginSessionKey:   creationContext.originSessionKey,
 		})
 		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "creating the agent task")
 		return msg
@@ -1106,7 +1108,11 @@ func resolveAgentTaskCreationContext(ctx context.Context, svc *service.Service, 
 		result.originOperationID = strings.TrimSpace(operation.ID)
 		result.originWorktreePath = cleanAgentTaskPath(operation.ProjectPath)
 		result.originProvider = modelSessionSourceFromControlProvider(control.NormalizeProvider(operation.Provider))
-		result.originSessionID = strings.TrimSpace(operation.SessionKey)
+		result.originSessionKey = strings.TrimSpace(operation.SessionKey)
+		result.originSessionID, err = svc.Store().ResolveEngineerSession(ctx, result.originWorktreePath, result.originProvider, result.originSessionKey)
+		if err != nil {
+			return agentTaskCreationContext{}, fmt.Errorf("resolve task caller: %w", err)
+		}
 	}
 	lookupPaths := compactStrings(result.originWorktreePath, result.originProjectPath)
 	if len(lookupPaths) == 0 {
@@ -1389,8 +1395,14 @@ func agentTaskResultConsumer(ctx context.Context, svc *service.Service, inv cont
 	if svc != nil && svc.Store() != nil && control.IsExternalOperationID(inv.RequestID) {
 		if operation, err := svc.Store().GetControlOperation(ctx, inv.RequestID); err == nil {
 			identity := strings.TrimSpace(operation.Provider)
-			if sessionID := strings.TrimSpace(operation.SessionKey); sessionID != "" {
-				identity = strings.TrimSpace(identity + " " + sessionID)
+			if key := strings.TrimSpace(operation.SessionKey); key != "" {
+				provider := modelSessionSourceFromControlProvider(control.NormalizeProvider(operation.Provider))
+				sessionID, err := svc.Store().ResolveEngineerSession(ctx, operation.ProjectPath, provider, key)
+				if err == nil && sessionID != "" {
+					identity = strings.TrimSpace(identity + " " + sessionID)
+				} else {
+					identity = strings.TrimSpace(identity + " control " + key)
+				}
 			}
 			if identity != "" {
 				return identity

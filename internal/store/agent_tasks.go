@@ -77,14 +77,14 @@ func (s *Store) CreateAgentTask(ctx context.Context, input model.CreateAgentTask
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO agent_tasks(
 			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
-			origin_operation_id, origin_project_path, origin_worktree_path, origin_provider, origin_session_id,
+			origin_operation_id, origin_project_path, origin_worktree_path, origin_provider, origin_session_id, origin_session_key,
 			result_message_id, expires_at, result_ready_at, result_delivered_at, result_delivery_error, result_consumed_at, result_consumed_by,
 			created_at, last_touched_at, completed_at, archived_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, normalized.ID, normalized.ParentTaskID, normalized.Title, string(normalized.Kind), string(normalized.Status), normalized.Summary,
 		encodeAgentTaskCapabilities(normalized.Capabilities), string(normalized.Provider), normalized.SessionID, normalized.WorkspacePath,
-		normalized.OriginOperationID, normalized.OriginProjectPath, normalized.OriginWorktreePath, string(normalized.OriginProvider), normalized.OriginSessionID,
+		normalized.OriginOperationID, normalized.OriginProjectPath, normalized.OriginWorktreePath, string(normalized.OriginProvider), normalized.OriginSessionID, normalized.OriginSessionKey,
 		"", nullableTimeUnixValue(normalized.ExpiresAt), nil, nil, "", nil, "",
 		now.Unix(), now.Unix(), nullableTimeUnixValue(time.Time{}), nullableTimeUnixValue(time.Time{}), now.Unix())
 	if err != nil {
@@ -107,7 +107,7 @@ func (s *Store) GetAgentTask(ctx context.Context, id string) (model.AgentTask, e
 	task, err := scanAgentTask(s.db.QueryRowContext(ctx, `
 		SELECT
 			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
-			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id,
+			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id, at.origin_session_key,
 			at.result_message_id, at.expires_at, at.result_ready_at, at.result_delivered_at, at.result_delivery_error, at.result_consumed_at, at.result_consumed_by,
 			at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
@@ -157,7 +157,7 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 	query := `
 		SELECT
 			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
-			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id,
+			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id, at.origin_session_key,
 			at.result_message_id, at.expires_at, at.result_ready_at, at.result_delivered_at, at.result_delivery_error, at.result_consumed_at, at.result_consumed_by,
 			at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
@@ -209,7 +209,7 @@ func (s *Store) ListExpiredAgentTasks(ctx context.Context, now time.Time) ([]mod
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
-			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id,
+			at.origin_operation_id, at.origin_project_path, at.origin_worktree_path, at.origin_provider, at.origin_session_id, at.origin_session_key,
 			at.result_message_id, at.expires_at, at.result_ready_at, at.result_delivered_at, at.result_delivery_error, at.result_consumed_at, at.result_consumed_by,
 			at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
@@ -440,6 +440,7 @@ func normalizeCreateAgentTaskInput(input model.CreateAgentTaskInput) (model.Crea
 	input.OriginWorktreePath = cleanOptionalPath(input.OriginWorktreePath)
 	input.OriginProvider = model.NormalizeSessionSource(input.OriginProvider)
 	input.OriginSessionID = strings.TrimSpace(input.OriginSessionID)
+	input.OriginSessionKey = strings.TrimSpace(input.OriginSessionKey)
 	return input, nil
 }
 
@@ -515,6 +516,7 @@ func scanAgentTask(scanner interface {
 		&task.OriginWorktreePath,
 		&originProvider,
 		&task.OriginSessionID,
+		&task.OriginSessionKey,
 		&task.ResultMessageID,
 		&expiresAt,
 		&resultReadyAt,

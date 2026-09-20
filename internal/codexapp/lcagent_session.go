@@ -3823,6 +3823,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		ProjectPath:                 s.projectPath,
 		ThreadID:                    s.threadID,
 		BrowserActivity:             s.browserActivity.Normalize(),
+		ControlSessionKey:           strings.TrimSpace(s.threadID), // Native controls use the stable thread, not the per-turn run ID.
 		ManagedBrowserSessionKey:    strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:       strings.TrimSpace(s.currentBrowserPageURL),
 		CurrentBrowserPageStale:     s.currentBrowserPageStale,

@@ -396,7 +396,7 @@ func TestAgentTaskOriginBackfillFromCompletedCreateOperation(t *testing.T) {
 	}
 	if task.OriginOperationID != operationID || task.OriginProjectPath != projectPath ||
 		task.OriginWorktreePath != worktreePath || task.OriginProvider != model.SessionSourceCodex ||
-		task.OriginSessionID != "caller-session" {
+		task.OriginSessionKey != "caller-session" || task.OriginSessionID != "" {
 		t.Fatalf("backfilled origin = %#v", task)
 	}
 	if task.CategoryID != category.ID || task.ResultReadyAt.IsZero() {

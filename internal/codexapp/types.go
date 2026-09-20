@@ -594,6 +594,8 @@ type BackgroundTaskSnapshot struct {
 }
 
 type Snapshot struct {
+	// ControlSessionKey identifies the host control channel, not a provider transcript.
+	ControlSessionKey           string
 	ImageReviewEnabled          bool
 	Provider                    Provider
 	ProjectPath                 string

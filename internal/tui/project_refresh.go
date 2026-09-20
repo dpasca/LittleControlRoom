@@ -352,7 +352,10 @@ func (m Model) recordEmbeddedSessionActivityRecordCmd(key string, req embeddedSe
 		defer cancel()
 		var err error
 		if req.agentTaskID != "" {
-			err = m.svc.RecordAgentTaskEngineerSession(ctx, req.agentTaskID, req.activity.Source, req.activity.SessionID)
+			err = m.svc.RecordEmbeddedSessionIdentity(ctx, req.activity)
+			if err == nil {
+				err = m.svc.RecordAgentTaskEngineerSession(ctx, req.agentTaskID, req.activity.Source, req.activity.SessionID)
+			}
 		} else {
 			err = m.svc.RecordEmbeddedSessionActivity(ctx, req.activity)
 		}
@@ -447,7 +450,7 @@ func embeddedSessionActivityRecordKey(activity service.EmbeddedSessionActivity) 
 			sessionID = normalizedSessionID
 		}
 	}
-	return projectPath + "\x00" + string(source) + "\x00" + sessionID
+	return projectPath + "\x00" + string(source) + "\x00" + sessionID + "\x00" + activity.ControlSessionKey
 }
 
 func mergeEmbeddedSessionActivityRecordRequest(existing, next embeddedSessionActivityRecordRequest) embeddedSessionActivityRecordRequest {
