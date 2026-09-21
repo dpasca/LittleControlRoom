@@ -9,6 +9,7 @@ import (
 	"lcroom/internal/claudestyle"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
+	"lcroom/internal/slashcmd"
 )
 
 func TestClaudeOutputStyleSidebarLabelHiddenForOtherProviders(t *testing.T) {
@@ -222,5 +223,42 @@ func TestSaveClaudeOutputStyleCmdSkipsUnchangedValue(t *testing.T) {
 
 	if cmd := m.saveClaudeOutputStyleCmd("Terse"); cmd != nil {
 		t.Fatal("saveClaudeOutputStyleCmd() scheduled a write for an unchanged value")
+	}
+}
+
+// Completion must come from the snapshot, never from a disk read on the
+// render path, so a pane with no live Claude session offers no style names.
+func TestVisibleClaudeOutputStyleNamesEmptyWithoutClaudeSession(t *testing.T) {
+	m := Model{}
+	if names := m.visibleClaudeOutputStyleNames(); len(names) != 0 {
+		t.Fatalf("names = %v, want none without a visible Claude session", names)
+	}
+}
+
+func TestCodexSlashSuggestionsCompleteStyleNames(t *testing.T) {
+	styles := []slashcmd.Choice{
+		slashcmd.NewChoice("default", "Claude Code's standard responses"),
+		slashcmd.NewChoice("Terse", "Answer first, minimal prose"),
+	}
+
+	got := codexSlashSuggestionsForInputWithStyles("/style te", styles)
+	if len(got) != 1 {
+		t.Fatalf("suggestions = %+v, want only the Terse completion", got)
+	}
+	if got[0].Insert != "/style Terse" {
+		t.Fatalf("insert = %q, want the exact-cased name", got[0].Insert)
+	}
+	if got[0].Summary != "Answer first, minimal prose" {
+		t.Fatalf("summary = %q, want the style description as a hint", got[0].Summary)
+	}
+}
+
+// Without discovered styles the pane keeps the ordinary command list, so a
+// Codex or OpenCode pane is unaffected.
+func TestCodexSlashSuggestionsUnchangedWithoutStyles(t *testing.T) {
+	withStyles := codexSlashSuggestionsForInputWithStyles("/style ", nil)
+	plain := codexSlashSuggestionsForInput("/style ")
+	if len(withStyles) != len(plain) {
+		t.Fatalf("suggestions changed without discovered styles: %+v vs %+v", withStyles, plain)
 	}
 }

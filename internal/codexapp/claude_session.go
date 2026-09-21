@@ -498,6 +498,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		ReasoningEffort:          s.reasoningEffort,
 		OutputStyle:              s.outputStyle,
 		PendingOutputStyle:       s.pendingOutputStyle,
+		AvailableOutputStyles:    append([]claudestyle.Option(nil), s.availableStyles...),
 		PendingModel:             concreteClaudeModel(s.pendingModel),
 		PendingReasoning:         s.pendingReasoning,
 		MCPUsage:                 exportedMCPUsageSnapshot(s.mcpUsage),

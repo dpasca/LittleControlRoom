@@ -135,21 +135,38 @@ func Find(options []Option, name string) (Option, bool) {
 	return Option{}, false
 }
 
-// ResolveCaseInsensitive returns the exact stored name for a case-insensitive
-// match. It exists so a typed `/style terse` can be corrected to `Terse`
-// instead of being sent to Claude Code, which would accept it and apply
-// nothing.
-func ResolveCaseInsensitive(options []Option, name string) (Option, bool) {
+// Resolve maps typed input to a style, accepting any casing and returning the
+// exact stored name. Claude Code matches style names case-sensitively and
+// silently applies nothing for a wrong-case name, so resolving here is what
+// makes `/style terse` work instead of quietly doing nothing.
+//
+// The ambiguous return reports the rare case of two styles whose names differ
+// only by case: picking one arbitrarily would apply a style the user did not
+// ask for, so the caller must ask which.
+func Resolve(options []Option, name string) (match Option, ambiguous []Option, ok bool) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Option{}, false
+		return Option{}, nil, false
 	}
+	// An exact match always wins, so a deliberate exact name is never treated
+	// as ambiguous against a differently-cased sibling.
+	if exact, found := Find(options, name); found {
+		return exact, nil, true
+	}
+	matches := []Option{}
 	for _, option := range options {
 		if strings.EqualFold(option.Name, name) {
-			return option, true
+			matches = append(matches, option)
 		}
 	}
-	return Option{}, false
+	switch len(matches) {
+	case 0:
+		return Option{}, nil, false
+	case 1:
+		return matches[0], nil, true
+	default:
+		return Option{}, matches, false
+	}
 }
 
 // Names returns every discovered style name in listing order.

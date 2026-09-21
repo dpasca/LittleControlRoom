@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudecli"
+	"lcroom/internal/claudestyle"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/keyedmutex"
 	"lcroom/internal/projectrun"
@@ -644,8 +645,12 @@ type Snapshot struct {
 	// OutputStyle is the Claude Code response style in effect, empty for the
 	// built-in default. PendingOutputStyle is a selection that applies on the
 	// next prompt.
-	OutputStyle                 string
-	PendingOutputStyle          string
+	OutputStyle        string
+	PendingOutputStyle string
+	// AvailableOutputStyles lets the UI complete style names, with their
+	// descriptions as hints, without reading the style directory on the render
+	// path. It refreshes whenever the session lists or stages a style.
+	AvailableOutputStyles       []claudestyle.Option
 	VisionModel                 string
 	VisionModelProvider         string
 	ImageAnalysisActive         bool

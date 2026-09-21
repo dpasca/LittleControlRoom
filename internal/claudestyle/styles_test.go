@@ -79,10 +79,11 @@ func TestDiscoverProjectStyleShadowsUserStyleWithSameName(t *testing.T) {
 	}
 }
 
-// Claude Code's own lookup is case-sensitive, so Find must be too. The
-// case-insensitive resolver exists to correct typed input before it reaches the
-// CLI, which would accept a wrong-case name and apply no style at all.
-func TestFindIsCaseSensitiveAndResolverIsNot(t *testing.T) {
+// Claude Code's own lookup is case-sensitive, so Find must be too. Resolve is
+// the forgiving entry point that turns typed input into the exact stored name
+// before it reaches the CLI, which would otherwise accept a wrong-case name
+// and apply no style at all.
+func TestFindIsCaseSensitiveAndResolveIsNot(t *testing.T) {
 	home := t.TempDir()
 	writeStyle(t, home, "terse.md", "---\nname: Terse\n---\n")
 	options := Discover(home, t.TempDir())
@@ -90,12 +91,50 @@ func TestFindIsCaseSensitiveAndResolverIsNot(t *testing.T) {
 	if _, ok := Find(options, "terse"); ok {
 		t.Fatalf("Find must not match a different case")
 	}
-	option, ok := ResolveCaseInsensitive(options, "terse")
+	option, ambiguous, ok := Resolve(options, "terse")
 	if !ok {
-		t.Fatalf("ResolveCaseInsensitive should match a different case")
+		t.Fatalf("Resolve should match a different case, ambiguous=%v", Names(ambiguous))
 	}
 	if option.Name != "Terse" {
-		t.Fatalf("resolver returned %q, want the exact stored name %q", option.Name, "Terse")
+		t.Fatalf("Resolve returned %q, want the exact stored name %q", option.Name, "Terse")
+	}
+}
+
+func TestResolveRejectsUnknownName(t *testing.T) {
+	options := Discover(t.TempDir(), t.TempDir())
+	if _, _, ok := Resolve(options, "Nope"); ok {
+		t.Fatal("Resolve matched a style that does not exist")
+	}
+}
+
+// Two styles differing only by case cannot be disambiguated from a loose
+// spelling, and guessing would silently apply the wrong one.
+func TestResolveReportsCaseOnlyCollisionAsAmbiguous(t *testing.T) {
+	home := t.TempDir()
+	writeStyle(t, home, "a.md", "---\nname: Terse\n---\n")
+	writeStyle(t, home, "b.md", "---\nname: terse\n---\n")
+	options := Discover(home, t.TempDir())
+
+	_, ambiguous, ok := Resolve(options, "TERSE")
+	if ok {
+		t.Fatal("Resolve should not guess between two case-only variants")
+	}
+	if len(ambiguous) != 2 {
+		t.Fatalf("ambiguous = %v, want both candidates", Names(ambiguous))
+	}
+}
+
+// An exact hit must win outright, so someone who types the precise name never
+// gets an ambiguity error caused by a differently-cased sibling.
+func TestResolvePrefersExactMatchOverCaseOnlySibling(t *testing.T) {
+	home := t.TempDir()
+	writeStyle(t, home, "a.md", "---\nname: Terse\n---\n")
+	writeStyle(t, home, "b.md", "---\nname: terse\n---\n")
+	options := Discover(home, t.TempDir())
+
+	option, _, ok := Resolve(options, "terse")
+	if !ok || option.Name != "terse" {
+		t.Fatalf("Resolve(%q) = %q ok=%v, want the exact match", "terse", option.Name, ok)
 	}
 }
 

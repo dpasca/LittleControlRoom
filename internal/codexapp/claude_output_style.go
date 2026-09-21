@@ -47,18 +47,21 @@ func (s *claudeCodeSession) StageOutputStyle(name string) error {
 		return nil
 	}
 
-	option, ok := claudestyle.Find(s.availableStyles, name)
+	option, ambiguous, ok := claudestyle.Resolve(s.availableStyles, name)
 	if !ok {
-		// A near-miss is the common case: Claude Code matches the frontmatter
-		// name exactly, so the wrong case would be accepted and do nothing.
-		if corrected, found := claudestyle.ResolveCaseInsensitive(s.availableStyles, name); found {
-			return fmt.Errorf("unknown output style %q; output style names are case-sensitive, did you mean %q?", name, corrected.Name)
+		if len(ambiguous) > 0 {
+			return fmt.Errorf("output style %q matches more than one style: %s; type the exact name", name, strings.Join(claudestyle.Names(ambiguous), ", "))
 		}
 		return fmt.Errorf("unknown output style %q; available: %s", name, strings.Join(claudestyle.Names(s.availableStyles), ", "))
 	}
 
 	s.pendingOutputStyle = option.Name
 	s.lastSystemNotice = "Claude Code will use the " + option.Name + " output style on the next prompt."
+	if option.Name != name {
+		// Say which style was actually selected so a loose spelling never
+		// leaves the user guessing what is now in effect.
+		s.lastSystemNotice = "Claude Code will use the " + option.Name + " output style on the next prompt (matched from \"" + name + "\")."
+	}
 	s.updateStatusLocked()
 	s.notifyAsync()
 	return nil

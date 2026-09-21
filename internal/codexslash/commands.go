@@ -99,6 +99,86 @@ var specs = []Spec{
 	{Name: "output-style", Usage: "/output-style [name|default]", Summary: "Alias for /style", Hidden: true},
 }
 
+// OutputStyleSuggestionsForInput returns style-name completions when input is
+// a /style command with discovered names to offer. The false return means the
+// caller should keep the generic suggestions, so a non-Claude pane and an
+// unrelated command are both left untouched.
+func OutputStyleSuggestionsForInput(input string, styles []slashcmd.Choice) ([]Suggestion, bool) {
+	if len(styles) == 0 {
+		return nil, false
+	}
+	trimmed := strings.TrimLeft(input, " \t\r\n")
+	if !strings.HasPrefix(trimmed, "/") {
+		return nil, false
+	}
+	body := strings.TrimSpace(strings.TrimPrefix(trimmed, "/"))
+	if body == "" {
+		return nil, false
+	}
+	name, rawArgs := slashcmd.SplitCommandBody(body)
+	switch strings.ToLower(name) {
+	case "style", "output-style":
+	default:
+		return nil, false
+	}
+	// Without a trailing space the user is still completing the command name,
+	// so leave name completion alone until they commit to an argument.
+	if rawArgs == "" && !strings.HasSuffix(trimmed, " ") {
+		return nil, false
+	}
+	return OutputStyleSuggestions(rawArgs, styles), true
+}
+
+// OutputStyleSuggestions completes an output style name. Matching is
+// case-insensitive for typing convenience while the inserted value keeps the
+// style's exact name, which is what Claude Code requires: it matches style
+// names case-sensitively and silently applies nothing for a wrong-case name.
+func OutputStyleSuggestions(argPrefix string, styles []slashcmd.Choice) []Suggestion {
+	argPrefix = strings.TrimSpace(argPrefix)
+	lowered := strings.ToLower(argPrefix)
+	out := []Suggestion{}
+	seen := map[string]struct{}{}
+	for _, style := range styles {
+		name := strings.TrimSpace(style.Value)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if lowered != "" && !strings.HasPrefix(strings.ToLower(name), lowered) {
+			continue
+		}
+		summary := strings.TrimSpace(style.Summary)
+		if summary == "" {
+			summary = "Use the " + name + " output style from the next prompt"
+		}
+		out = append(out, Suggestion{
+			Insert:  "/style " + name,
+			Display: "/style " + name,
+			Summary: summary,
+		})
+	}
+	if len(out) > 0 {
+		return out
+	}
+	// With no discovered names, or nothing matching what was typed, keep the
+	// command itself discoverable rather than showing an empty list.
+	if _, ok := seen["default"]; !ok && (lowered == "" || strings.HasPrefix("default", lowered)) {
+		out = append(out, Suggestion{
+			Insert:  "/style default",
+			Display: "/style default",
+			Summary: "Return to Claude Code's standard responses from the next prompt",
+		})
+	}
+	return append(out, Suggestion{
+		Insert:  "/style",
+		Display: "/style [name|default]",
+		Summary: "Show the current Claude Code output style and the styles found on disk",
+	})
+}
+
 func Specs() []Spec {
 	out := make([]Spec, len(specs))
 	copy(out, specs)
@@ -150,10 +230,11 @@ func Suggestions(input string) []Suggestion {
 			Summary: "Open a local picker for the embedded model and reasoning effort used by this and future embedded sessions of the same tool, even after restarting LCR",
 		}}
 	case "style", "output-style":
-		return []Suggestion{
-			{Insert: "/style", Display: "/style", Summary: "Show the current Claude Code output style and the styles found on disk"},
-			{Insert: "/style default", Display: "/style default", Summary: "Return to Claude Code's standard responses from the next prompt"},
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = fields[len(fields)-1]
 		}
+		return OutputStyleSuggestions(argPrefix, nil)
 	case "status":
 		return []Suggestion{{
 			Insert:  "/status",

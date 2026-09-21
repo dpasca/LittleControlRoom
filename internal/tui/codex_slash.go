@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/codexslash"
 	"lcroom/internal/commands"
 	"lcroom/internal/slashcmd"
@@ -25,11 +26,34 @@ func (m Model) codexSlashInput() string {
 }
 
 func (m Model) codexSlashSuggestions() []codexslash.Suggestion {
-	return codexSlashSuggestionsForInput(m.codexSlashInput())
+	return codexSlashSuggestionsForInputWithStyles(m.codexSlashInput(), m.visibleClaudeOutputStyleNames())
+}
+
+// visibleClaudeOutputStyleNames reads the style names off the current session
+// snapshot. Completion runs on the render path, so the names must already be
+// in memory: the session refreshes them from disk when it lists or stages a
+// style, never here.
+func (m Model) visibleClaudeOutputStyleNames() []slashcmd.Choice {
+	snapshot, ok := m.codexSnapshotForProject(m.codexComposerProjectPath())
+	if !ok || snapshot.Provider != codexapp.ProviderClaudeCode {
+		return nil
+	}
+	choices := make([]slashcmd.Choice, 0, len(snapshot.AvailableOutputStyles))
+	for _, option := range snapshot.AvailableOutputStyles {
+		choices = append(choices, slashcmd.NewChoice(option.Name, option.Description))
+	}
+	return choices
 }
 
 func codexSlashSuggestionsForInput(input string) []codexslash.Suggestion {
+	return codexSlashSuggestionsForInputWithStyles(input, nil)
+}
+
+func codexSlashSuggestionsForInputWithStyles(input string, styleNames []slashcmd.Choice) []codexslash.Suggestion {
 	suggestions := append([]codexslash.Suggestion(nil), codexslash.Suggestions(input)...)
+	if replacement, ok := codexslash.OutputStyleSuggestionsForInput(input, styleNames); ok {
+		suggestions = replacement
+	}
 	seen := make(map[string]struct{}, len(suggestions))
 	for _, suggestion := range suggestions {
 		seen[strings.ToLower(strings.TrimSpace(suggestion.Insert))] = struct{}{}

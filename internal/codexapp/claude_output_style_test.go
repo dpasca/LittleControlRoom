@@ -52,18 +52,54 @@ func TestStageOutputStyleRejectsUnknownName(t *testing.T) {
 }
 
 // Claude Code matches style names case-sensitively and accepts a wrong-case
-// name without applying anything, so LCR must catch the near-miss itself.
-func TestStageOutputStyleReportsCaseMismatchAsSuggestion(t *testing.T) {
+// name without applying anything. LCR resolves the casing itself so a loosely
+// typed name works instead of silently doing nothing.
+func TestStageOutputStyleAcceptsAnyCasing(t *testing.T) {
 	home := t.TempDir()
 	writeUserStyle(t, home, "terse.md", "Terse")
 	s := newOutputStyleSession(t, home, t.TempDir())
 
-	err := s.StageOutputStyle("terse")
-	if err == nil {
-		t.Fatal("StageOutputStyle() error = nil, want a case-sensitivity rejection")
+	if err := s.StageOutputStyle("terse"); err != nil {
+		t.Fatalf("StageOutputStyle(%q) error = %v, want the casing resolved", "terse", err)
 	}
-	if !strings.Contains(err.Error(), "case-sensitive") || !strings.Contains(err.Error(), `"Terse"`) {
-		t.Fatalf("error %q should suggest the exact name", err)
+	if s.pendingOutputStyle != "Terse" {
+		t.Fatalf("pendingOutputStyle = %q, want the exact stored name %q", s.pendingOutputStyle, "Terse")
+	}
+	if !strings.Contains(s.lastSystemNotice, "Terse") {
+		t.Fatalf("notice = %q, want it to name the style actually selected", s.lastSystemNotice)
+	}
+}
+
+func TestStageOutputStyleRejectsCaseOnlyAmbiguity(t *testing.T) {
+	home := t.TempDir()
+	writeUserStyle(t, home, "a.md", "Terse")
+	writeUserStyle(t, home, "b.md", "terse")
+	s := newOutputStyleSession(t, home, t.TempDir())
+
+	err := s.StageOutputStyle("TERSE")
+	if err == nil {
+		t.Fatal("StageOutputStyle() error = nil, want an ambiguity rejection")
+	}
+	if !strings.Contains(err.Error(), "more than one") {
+		t.Fatalf("error %q should report the ambiguity", err)
+	}
+	if s.pendingOutputStyle != "" {
+		t.Fatalf("pendingOutputStyle = %q, want nothing staged", s.pendingOutputStyle)
+	}
+}
+
+func TestSnapshotCarriesAvailableStyleNamesForCompletion(t *testing.T) {
+	home := t.TempDir()
+	writeUserStyle(t, home, "terse.md", "Terse")
+	s := newOutputStyleSession(t, home, t.TempDir())
+
+	styles := s.stateSnapshotLocked().AvailableOutputStyles
+	names := claudestyle.Names(styles)
+	if len(names) != 2 || names[0] != "default" || names[1] != "Terse" {
+		t.Fatalf("AvailableOutputStyles = %v, want the discovered names for completion", names)
+	}
+	if styles[1].Description != "test style" {
+		t.Fatalf("description = %q, want it carried for completion hints", styles[1].Description)
 	}
 }
 
