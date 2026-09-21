@@ -121,11 +121,6 @@ func OutputStyleSuggestionsForInput(input string, styles []slashcmd.Choice) ([]S
 	default:
 		return nil, false
 	}
-	// Without a trailing space the user is still completing the command name,
-	// so leave name completion alone until they commit to an argument.
-	if rawArgs == "" && !strings.HasSuffix(trimmed, " ") {
-		return nil, false
-	}
 	return OutputStyleSuggestions(rawArgs, styles), true
 }
 
@@ -161,7 +156,13 @@ func OutputStyleSuggestions(argPrefix string, styles []slashcmd.Choice) []Sugges
 		})
 	}
 	if len(out) > 0 {
-		return out
+		// Keep the bare command reachable so the status form stays available
+		// once Tab starts cycling through concrete style names.
+		return append(out, Suggestion{
+			Insert:  "/style",
+			Display: "/style",
+			Summary: "Show the current output style and the styles found on disk",
+		})
 	}
 	// With no discovered names, or nothing matching what was typed, keep the
 	// command itself discoverable rather than showing an empty list.

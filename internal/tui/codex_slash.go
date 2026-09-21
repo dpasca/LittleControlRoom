@@ -34,7 +34,10 @@ func (m Model) codexSlashSuggestions() []codexslash.Suggestion {
 // in memory: the session refreshes them from disk when it lists or stages a
 // style, never here.
 func (m Model) visibleClaudeOutputStyleNames() []slashcmd.Choice {
-	snapshot, ok := m.codexSnapshotForProject(m.codexComposerProjectPath())
+	// Read the delivered snapshot cache directly. Completion runs on every
+	// render, so it must not attempt a session snapshot of its own: the
+	// reveal path is budgeted for exactly one non-blocking refresh.
+	snapshot, ok := m.currentCachedCodexSnapshot()
 	if !ok || snapshot.Provider != codexapp.ProviderClaudeCode {
 		return nil
 	}

@@ -19,12 +19,28 @@ func TestClaudeOutputStyleSidebarLabelHiddenForOtherProviders(t *testing.T) {
 	}
 }
 
-// The default style carries no information, so the row stays out of the
-// sidebar rather than adding a line that always reads "default".
-func TestClaudeOutputStyleSidebarLabelHiddenForDefault(t *testing.T) {
+// The row is how output styles are discovered, so the default is named rather
+// than hidden. A blank row would read the same as the feature not existing.
+func TestClaudeOutputStyleSidebarLabelNamesDefault(t *testing.T) {
 	snapshot := codexapp.Snapshot{Provider: codexapp.ProviderClaudeCode}
-	if label, _ := claudeOutputStyleSidebarLabel(snapshot); label != "" {
-		t.Fatalf("label = %q, want no row for the default style", label)
+	label, pending := claudeOutputStyleSidebarLabel(snapshot)
+	if label != claudestyle.DefaultName {
+		t.Fatalf("label = %q, want %q so the row is always visible", label, claudestyle.DefaultName)
+	}
+	if pending {
+		t.Fatal("pending = true, want false with nothing staged")
+	}
+}
+
+func TestSidebarRendersStyleRowForDefault(t *testing.T) {
+	rows := embeddedSidebarModelRows(codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode,
+		Model:    "claude-opus-5",
+	}, 60)
+
+	joined := strings.Join(rows, "\n")
+	if !strings.Contains(joined, "Style") || !strings.Contains(joined, claudestyle.DefaultName) {
+		t.Fatalf("sidebar rows = %q, want a Style row naming the default", joined)
 	}
 }
 
@@ -235,6 +251,40 @@ func TestVisibleClaudeOutputStyleNamesEmptyWithoutClaudeSession(t *testing.T) {
 	}
 }
 
+// Typing /style and pressing Tab must offer the style names directly. A user
+// who does not already know a style name has no other way to learn one.
+func TestCodexSlashSuggestionsCompleteStyleNamesWithoutTrailingSpace(t *testing.T) {
+	styles := []slashcmd.Choice{
+		slashcmd.NewChoice("default", "Claude Code's standard responses"),
+		slashcmd.NewChoice("Terse", "Answer first, minimal prose"),
+	}
+
+	got := codexSlashSuggestionsForInputWithStyles("/style", styles)
+	inserts := make([]string, 0, len(got))
+	for _, suggestion := range got {
+		inserts = append(inserts, suggestion.Insert)
+	}
+	if len(inserts) < 2 || inserts[0] != "/style default" || inserts[1] != "/style Terse" {
+		t.Fatalf("suggestions = %v, want the style names offered for a bare /style", inserts)
+	}
+}
+
+// Tab cycling through concrete names must not strand the status form.
+func TestCodexSlashSuggestionsKeepBareStyleReachable(t *testing.T) {
+	styles := []slashcmd.Choice{slashcmd.NewChoice("Terse", "Answer first")}
+
+	got := codexSlashSuggestionsForInputWithStyles("/style", styles)
+	found := false
+	for _, suggestion := range got {
+		if suggestion.Insert == "/style" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("suggestions = %+v, want the bare /style status form still reachable", got)
+	}
+}
+
 func TestCodexSlashSuggestionsCompleteStyleNames(t *testing.T) {
 	styles := []slashcmd.Choice{
 		slashcmd.NewChoice("default", "Claude Code's standard responses"),
@@ -242,8 +292,8 @@ func TestCodexSlashSuggestionsCompleteStyleNames(t *testing.T) {
 	}
 
 	got := codexSlashSuggestionsForInputWithStyles("/style te", styles)
-	if len(got) != 1 {
-		t.Fatalf("suggestions = %+v, want only the Terse completion", got)
+	if len(got) == 0 {
+		t.Fatalf("suggestions = %+v, want the Terse completion", got)
 	}
 	if got[0].Insert != "/style Terse" {
 		t.Fatalf("insert = %q, want the exact-cased name", got[0].Insert)

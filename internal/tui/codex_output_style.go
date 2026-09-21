@@ -139,23 +139,20 @@ func claudeOutputStyleStatusLine(snapshot codexapp.Snapshot, options []claudesty
 	return strings.Join(parts, " · ") + " · available: " + strings.Join(claudestyle.Names(options), ", ")
 }
 
-// claudeOutputStyleSidebarLabel renders the sidebar value. It returns an empty
-// string for a non-Claude provider and for Claude's default style, so the row
-// appears only when it carries information.
+// claudeOutputStyleSidebarLabel renders the sidebar value for Claude Code
+// panes. The default style is named rather than hidden: the row is how a user
+// discovers that output styles exist at all, and a blank row would leave them
+// unable to tell "default" apart from "this feature is missing".
 func claudeOutputStyleSidebarLabel(snapshot codexapp.Snapshot) (label string, pending bool) {
 	if snapshot.Provider != codexapp.ProviderClaudeCode {
 		return "", false
 	}
 	current := strings.TrimSpace(snapshot.OutputStyle)
-	next := strings.TrimSpace(snapshot.PendingOutputStyle)
-	if next != "" && next != current {
-		if current == "" {
-			current = claudestyle.DefaultName
-		}
-		return current + " → " + next, true
-	}
 	if current == "" {
-		return "", false
+		current = claudestyle.DefaultName
+	}
+	if next := strings.TrimSpace(snapshot.PendingOutputStyle); next != "" && next != current {
+		return current + " → " + next, true
 	}
 	return current, false
 }
