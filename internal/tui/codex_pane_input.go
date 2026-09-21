@@ -898,6 +898,9 @@ func (m *Model) removeCodexAttachmentMarkerBeforeCursor() bool {
 }
 
 func (m *Model) syncCodexComposerSize() {
+	if m.syncCodexToolInputComposerSize() {
+		return
+	}
 	width := m.embeddedCodexMainWidth()
 	if width <= 0 {
 		width = 120

@@ -647,8 +647,11 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 				)
 			}
 		}
-		if len(snapshot.PendingToolInput.Questions) > 1 {
-			actions = append(actions, footerNavAction("Tab", "next"))
+		if state.QuestionIndex < len(snapshot.PendingToolInput.Questions)-1 {
+			actions = append(actions, footerNavAction("Tab", "next question"))
+		}
+		if state.QuestionIndex > 0 {
+			actions = append(actions, footerNavAction("shift+Tab", "previous question"))
 		}
 		if m.managedBrowserCanReveal(snapshot) {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))

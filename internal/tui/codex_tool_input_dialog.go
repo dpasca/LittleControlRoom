@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/codexapp"
 )
 
@@ -31,7 +33,10 @@ type codexToolInputRow struct {
 	IsOther     bool
 }
 
-const codexToolInputOtherRowLabel = "Type a different answer"
+const (
+	codexToolInputOtherRowLabel   = "Type a different answer"
+	codexToolInputComposerMaxRows = 6
+)
 
 func codexToolInputQuestionsFromSnapshot(snapshot codexapp.Snapshot) (*codexapp.ToolInputRequest, bool) {
 	request := snapshot.PendingToolInput
@@ -134,14 +139,62 @@ func (m Model) codexToolInputComposerActive(snapshot codexapp.Snapshot) bool {
 	return len(rows) > 0 && codexToolInputComposerFocused(rows, state.OptionIndex)
 }
 
+// codexToolInputDialogWidths returns the panel, content, and composer widths of
+// the structured input dialog. The composer width has to be shared with the
+// live textarea: wrapping it at one width and rendering it at another leaves the
+// cursor off the visible rows.
+func codexToolInputDialogWidths(bodyW int) (panelW, innerW, composerW int) {
+	panelW = min(92, max(44, bodyW-14))
+	panelW = min(panelW, max(14, bodyW-6))
+	innerW = max(10, panelW-4)
+	return panelW, innerW, max(12, innerW-2)
+}
+
+// codexToolInputComposerRows counts the visual rows a typed answer occupies,
+// including the row the cursor moves to after filling a line. textarea.LineCount
+// only counts logical lines, so a single wrapped answer would be clipped to its
+// first row.
+func codexToolInputComposerRows(input textarea.Model) int {
+	textWidth := max(1, input.Width()-2)
+	rows := 0
+	for _, line := range strings.Split(input.Value(), "\n") {
+		rows += ansi.StringWidth(line)/textWidth + 1
+	}
+	return max(1, min(codexToolInputComposerMaxRows, rows))
+}
+
+// syncCodexToolInputComposerSize keeps the live textarea wrapped at the width it
+// is rendered with inside the dialog, so the cursor and the visible rows agree.
+func (m *Model) syncCodexToolInputComposerSize() bool {
+	if !m.codexVisible() {
+		return false
+	}
+	snapshot, ok := m.cachedLiveCodexSnapshot(m.codexVisibleProject)
+	if !ok || snapshot.PendingApproval != nil {
+		return false
+	}
+	if _, ok := codexToolInputQuestionsFromSnapshot(snapshot); !ok {
+		return false
+	}
+	width := m.width
+	if width <= 0 {
+		width = 120
+	}
+	_, _, composerW := codexToolInputDialogWidths(width)
+	m.codexInput.SetWidth(composerW)
+	// The live textarea keeps the full dialog height so its scroll offset stays
+	// at the top for answers that fit; the rendered copy may show fewer rows,
+	// but never a different window onto them.
+	m.codexInput.SetHeight(codexToolInputComposerMaxRows)
+	return true
+}
+
 func (m Model) renderCodexToolInputDialogOverlay(body string, bodyW, bodyH int, snapshot codexapp.Snapshot) string {
 	request, ok := codexToolInputQuestionsFromSnapshot(snapshot)
 	if !ok {
 		return body
 	}
-	panelW := min(92, max(44, bodyW-14))
-	panelW = min(panelW, max(14, bodyW-6))
-	panelInnerW := max(10, panelW-4)
+	panelW, panelInnerW, _ := codexToolInputDialogWidths(bodyW)
 	maxLines := max(1, bodyH-4)
 	content := m.renderCodexToolInputDialogContent(snapshot, *request, panelInnerW, maxLines)
 	content = clampDialogContent(
@@ -211,11 +264,13 @@ func (m Model) renderCodexToolInputDialogBody(
 	lines := []string{renderDialogHeader(providerLabel+" needs your answer", projectName, "", width), ""}
 
 	if len(request.Questions) > 1 {
-		progress := fmt.Sprintf("Question %d of %d", state.QuestionIndex+1, len(request.Questions))
-		if answered := countAnsweredToolQuestions(request, state.Answers); answered > 0 {
-			progress += fmt.Sprintf(" · %d of %d answered", answered, len(request.Questions))
-		}
+		answered := countAnsweredToolQuestions(request, state.Answers)
+		progress := fmt.Sprintf("Question %d of %d · %d answered", state.QuestionIndex+1, len(request.Questions), answered)
 		lines = append(lines, detailMutedStyle.Render(fitFooterWidth(progress, width)))
+		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(
+			"Tab moves between questions without losing answers. Nothing is sent until every question has one.",
+			width,
+		)))
 	}
 	if header := strings.TrimSpace(question.Header); header != "" {
 		lines = append(lines, detailSectionStyle.Render(fitFooterWidth(header, width)))
@@ -253,7 +308,7 @@ func (m Model) renderCodexToolInputDialogBody(
 		}
 		input := m.codexInput
 		input.SetWidth(max(12, width-2))
-		input.SetHeight(max(1, min(6, input.LineCount())))
+		input.SetHeight(codexToolInputComposerRows(input))
 		if !composerFocused {
 			input.Blur()
 		}
@@ -271,7 +326,7 @@ func (m Model) renderCodexToolInputDialogBody(
 	}
 	lines = append(lines, renderCodexElicitationActionLines(
 		width,
-		codexToolInputDialogActions(request, question, rows, composerFocused, allowsText),
+		codexToolInputDialogActions(request, question, rows, state.QuestionIndex, composerFocused, allowsText),
 	)...)
 	return strings.Join(lines, "\n")
 }
@@ -280,6 +335,7 @@ func codexToolInputDialogActions(
 	request codexapp.ToolInputRequest,
 	question codexapp.ToolInputQuestion,
 	rows []codexToolInputRow,
+	questionIndex int,
 	composerFocused bool,
 	allowsText bool,
 ) []string {
@@ -310,7 +366,10 @@ func codexToolInputDialogActions(
 	if !composerFocused && allowsText {
 		actions = append(actions, renderDialogAction("type", "own answer", navigateActionKeyStyle, navigateActionTextStyle))
 	}
-	if len(request.Questions) > 1 {
+	if questionIndex > 0 {
+		actions = append(actions, renderDialogAction("shift+Tab", "previous question", navigateActionKeyStyle, navigateActionTextStyle))
+	}
+	if questionIndex < len(request.Questions)-1 {
 		actions = append(actions, renderDialogAction("Tab", "next question", navigateActionKeyStyle, navigateActionTextStyle))
 	}
 	actions = append(actions,
@@ -394,16 +453,19 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 
 	switch msg.String() {
 	case "tab", "shift+tab":
-		if len(request.Questions) < 2 {
-			return m, nil
-		}
+		// Navigation never wraps: landing back on the first question after the
+		// last one reads like the current answer was dropped.
 		delta := 1
-		notice := "Moved to the next structured question"
+		notice := "Moved to the next question. Your answers are kept."
 		if msg.String() == "shift+tab" {
 			delta = -1
-			notice = "Moved to the previous structured question"
+			notice = "Moved to the previous question. Your answers are kept."
 		}
-		state.QuestionIndex = (state.QuestionIndex + delta + len(request.Questions)) % len(request.Questions)
+		target := state.QuestionIndex + delta
+		if target < 0 || target >= len(request.Questions) {
+			return m, nil
+		}
+		state.QuestionIndex = target
 		state.OptionIndex = codexToolInputCursorForAnswers(request.Questions[state.QuestionIndex], state.Answers)
 		m.codexToolAnswers[m.codexVisibleProject] = state
 		m.status = notice

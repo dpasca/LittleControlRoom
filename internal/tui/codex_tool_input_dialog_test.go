@@ -270,3 +270,93 @@ func TestToolInputDialogShortensDescriptionsToFitShortPanes(t *testing.T) {
 		}
 	}
 }
+
+func TestToolInputDialogWrapsLongTypedAnswer(t *testing.T) {
+	m, session := newToolInputDialogModel(t, testToolInputQuestionRequest())
+	text := "Neither of those yet: first widen menu coverage to the remaining pages, " +
+		"then add the reveal operation for offscreen catalog rows, and only then " +
+		"take the per-frame performance measurement I promised earlier."
+	for _, r := range text {
+		updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{"Neither of those yet", "performance measurement I", "promised earlier."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("wrapped answer missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter should send the wrapped answer")
+	}
+	_ = updated.(Model)
+	if action := toolInputSubmitResult(t, cmd()); action.err != nil {
+		t.Fatalf("wrapped answer submit failed: %v", action.err)
+	}
+	if got := session.toolAnswers[0]["question-1"]; len(got) != 1 || got[0] != text {
+		t.Fatalf("submitted answer = %#v, want the full typed text", got)
+	}
+}
+
+func TestToolInputDialogQuestionNavigationDoesNotWrapOrDropAnswers(t *testing.T) {
+	request := &codexapp.ToolInputRequest{
+		ID: "req_two",
+		Questions: []codexapp.ToolInputQuestion{
+			{ID: "first", Question: "First question?", IsOther: true, Options: []codexapp.ToolInputOption{{Label: "Alpha"}}},
+			{ID: "second", Question: "Second question?", IsOther: true, Options: []codexapp.ToolInputOption{{Label: "Beta"}}},
+		},
+	}
+	m, session := newToolInputDialogModel(t, request)
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	m = updated.(Model)
+	if len(session.toolAnswers) != 0 {
+		t.Fatalf("nothing should be sent while a question is unanswered: %#v", session.toolAnswers)
+	}
+	if got := m.codexToolAnswers["/tmp/demo"].QuestionIndex; got != 1 {
+		t.Fatalf("question index = %d, want the next unanswered question", got)
+	}
+	rendered := ansi.Strip(m.View())
+	for _, want := range []string{"Question 2 of 2 · 1 answered", "shift+Tab  previous question"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("dialog missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Tab  next question") {
+		t.Fatalf("the last question should not offer a forward move:\n%s", rendered)
+	}
+
+	// Tab on the last question must stay put rather than wrapping to the first.
+	updated, _ = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if got := m.codexToolAnswers["/tmp/demo"].QuestionIndex; got != 1 {
+		t.Fatalf("Tab wrapped to question %d", got)
+	}
+
+	updated, _ = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(Model)
+	if got := m.codexToolAnswers["/tmp/demo"].Answers["first"]; len(got) != 1 || got[0] != "Alpha" {
+		t.Fatalf("answer for the first question = %#v, want it preserved", got)
+	}
+
+	updated, _ = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	if cmd == nil {
+		t.Fatal("answering the last open question should submit")
+	}
+	_ = updated.(Model)
+	if action := toolInputSubmitResult(t, cmd()); action.err != nil {
+		t.Fatalf("submit failed: %v", action.err)
+	}
+	answers := session.toolAnswers[0]
+	if got := answers["first"]; len(got) != 1 || got[0] != "Alpha" {
+		t.Fatalf("submitted first answer = %#v", got)
+	}
+	if got := answers["second"]; len(got) != 1 || got[0] != "Beta" {
+		t.Fatalf("submitted second answer = %#v", got)
+	}
+}
