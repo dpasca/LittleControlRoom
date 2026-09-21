@@ -29,8 +29,9 @@ been run.
 - Branch: `spike/ai-agent-task-delegation`
 - Canonical checkout: `/Users/davide/dev/repos/LittleControlRoom`, expected on `master`.
   Do not work there or rename its branch.
-- HEAD at handoff: `dfb1ffae Offer correction baseline capture from the task actions dialog`.
+- HEAD at handoff: `21a8e0e1 Cover bounded correction rounds with a per-task grant`.
 - Correction-loop commits:
+  - `21a8e0e1 Cover bounded correction rounds with a per-task grant`
   - `dfb1ffae Offer correction baseline capture from the task actions dialog`
   - `3e803498 Continue delegated corrections on the reviewed checkout`
   - `b5297eea docs: record engineer delegation continuation handoff`
@@ -132,27 +133,46 @@ ownership or an active managed writer, never touch the checkout, and are cleared
 by a clean acquisition. An accepted result authorizes no correction.
 
 `agent_task.continue` therefore resumes the same worker on its preserved edits
-and opens the next revision, so review, correction and acceptance run end to end
-under one confirmation per correction. The task actions dialog (`x`) offers the
-capture when a rejected revision is outstanding; task detail names the authorized
-starting point.
+and opens the next revision, so review, correction and acceptance run end to end.
+The task actions dialog (`x`) offers the capture when a rejected revision is
+outstanding; task detail names the authorized starting point.
+
+### Per-task correction grant
+
+`agent_task.create` accepts `max_corrections` (0–3, requiring
+`structured_results`). The operator agrees to it in the confirmation that creates
+the task, and the preview states it. A granted round runs without asking again,
+so the loop no longer interrupts the caller for every correction.
+
+The grant covers a correction and nothing else: the original host-bound caller,
+resuming this task in its existing session with its saved model, while a
+`changes_requested` review of the current revision is outstanding. A fresh
+session, a named provider or model, another caller, a worker reopening itself, an
+accepted or superseded revision, an archived or completed task, and a spent or
+revoked grant all fall back to ordinary confirmation rather than failing. Rounds
+are consumed atomically against the exact workflow the decision was read from, so
+a replayed proposal cannot spend two; a new run carries the grant forward without
+refilling. Any explicit stop revokes the remainder, and the actions dialog can
+revoke it without stopping the worker or touching its edits.
 
 ## Next implementation slice
 
 Read step 5 of `docs/engineer_delegation_plan.md`.
 
-1. Add durable scoped supervision authorization: exact caller/worker, repository,
-   model selection, allowed correction operations, correction-count limits,
-   supported time/turn/token limits, stop/revocation behavior. Do not silently
-   broaden authority or treat a callback prompt as authorization. Initial creation
-   and corrections need a clear bounded grant before removing confirmations.
-   Exact-caller acceptance already exists for opted-in tasks; preserve that path.
-   Correction-count limits belong here, not in the ownership boundary. Missing,
+1. **Run a bounded real-provider smoke.** This is the largest remaining risk and
+   it needs a human at the TUI, because LCR refuses to share a database with the
+   running runtime and a worker turn spends real provider quota. Everything below
+   should be informed by it. Ollama is installed locally with `gemma4:12b-mlx`,
+   which may drive an LCAgent worker at zero cost, though it is weak at
+   tool-calling; treat a local run as a smoke of LCR's plumbing, not of worker
+   quality. Record the effective model and usage; never fall back to a costly
+   model silently.
+2. Extend authorization beyond the per-task grant: a host-level policy for future
+   delegations across projects, providers and resource limits; acceptance grants;
+   per-run time/turn/token limits; provider permission failures. Do not silently
+   broaden authority or treat a callback prompt as authorization. Exact-caller
+   acceptance already exists for opted-in tasks; preserve that path. Missing,
    stopped or replaced callers must never be revived by late results.
-2. Run a bounded real-provider smoke of the correction loop before designing the
-   grant further. Every provider combination is currently exercised only against
-   deterministic adapters; no real worker has driven a correction. Record the
-   effective model and usage, and never fall back to a costly model silently.
 3. Add worker versus caller-review/correction usage accounting and totals. Use
    reported usage where available and label estimates/unknowns. Do not advertise
    a hard dollar cap if the provider cannot enforce it. Evaluate cost per accepted
@@ -180,6 +200,12 @@ bounded and identify its model/usage, without expensive silent fallback.
 - `internal/store/schema.go`: `workflow_json`, `agent_task_results`,
   `agent_task_result_handoffs`, and `engineer_messages.agent_task_revision`.
   `agent_task_repository.go`: durable leases; `engineer_messages.go`: callbacks.
+- `internal/control/delegation_supervision.go`: the correction-grant eligibility
+  rule, evaluated on the proposal alone before any database read.
+  `internal/store/agent_task_supervision.go`: task-state checks, atomic round
+  consumption and revocation. The grant lives in `workflow_json`, so anything
+  constructing a fresh `model.AgentTaskWorkflow` must carry it forward;
+  `BeginStructuredTaskRun` is the one place that does.
 - `internal/service/agent_task_repository.go`: `repositoryMu`, turn/process
   admission, idle checks, preflight, bounded fingerprint, release,
   `correctionBoundary` admission and `CaptureAgentTaskCorrectionBaseline`.
@@ -232,6 +258,14 @@ Correction-loop turn:
   environment limitation — is still undiagnosed and is unrelated to delegation.
 - Service (~174 s), TUI, control, store, agentcontrol, agentquery, runtimemcp and
   boss suites all passed.
+- The grant slice re-ran `make test` twice: once fully green at 75 packages, once
+  with only the intermittent OpenCode failure below. `go vet ./...` is clean.
+  A second PTY-backed `make tui` loaded the list, opened `/perf` (no captured
+  stalls) and quit cleanly.
+- The grant's refusal paths are covered deterministically: replay, exhaustion,
+  worker self-continuation, fresh session, named provider, model change,
+  unrelated caller session/project/provider, accepted review, superseded
+  revision, explicit stop and operator revoke.
 - Isolated `make scan` and `make doctor` passed against a throwaway config/DB
   inside the workspace. A PTY-backed `make tui` against the same isolated DB
   loaded the project list, opened `/perf` (watchdog armed at 2 s, no captured
