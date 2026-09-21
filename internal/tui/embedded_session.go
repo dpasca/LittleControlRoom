@@ -1091,6 +1091,7 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		InterruptedTurnStartedAt:   options.interruptedTurnStartedAt,
 		Preset:                     m.currentCodexLaunchPreset(),
 		ClaudePermissionMode:       m.currentClaudePermissionMode(),
+		ClaudeOutputStyle:          m.currentClaudeOutputStyle(),
 		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
 		AppDataDir:                 m.appDataDir(),
 		CodexHome:                  m.codexHome(),
@@ -1717,6 +1718,13 @@ func (m Model) currentClaudePermissionMode() claudecli.PermissionMode {
 		return claudecli.DefaultPermissionMode()
 	}
 	return settings.ClaudePermissionMode
+}
+
+// currentClaudeOutputStyle returns the saved default output style. An unknown
+// name is not rejected here; the session validates it against the style files
+// on disk and falls back to Claude Code's default.
+func (m Model) currentClaudeOutputStyle() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().EmbeddedClaudeOutputStyle)
 }
 
 func (m Model) currentPlaywrightPolicy() browserctl.Policy {

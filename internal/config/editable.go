@@ -56,6 +56,7 @@ type EditableSettings struct {
 	EmbeddedCodexReasoning    string
 	EmbeddedClaudeModel       string
 	EmbeddedClaudeReasoning   string
+	EmbeddedClaudeOutputStyle string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
 	EmbeddedLCAgentModel      string
@@ -140,6 +141,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
 		EmbeddedClaudeModel:       cfg.EmbeddedClaudeModel,
 		EmbeddedClaudeReasoning:   cfg.EmbeddedClaudeReasoning,
+		EmbeddedClaudeOutputStyle: cfg.EmbeddedClaudeOutputStyle,
 		EmbeddedOpenCodeModel:     cfg.EmbeddedOpenCodeModel,
 		EmbeddedOpenCodeReasoning: cfg.EmbeddedOpenCodeReasoning,
 		EmbeddedLCAgentModel:      cfg.EmbeddedLCAgentModel,
@@ -717,6 +719,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
 	cfg.EmbeddedClaudeReasoning = strings.TrimSpace(settings.EmbeddedClaudeReasoning)
+	cfg.EmbeddedClaudeOutputStyle = strings.TrimSpace(settings.EmbeddedClaudeOutputStyle)
 	cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
 	cfg.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)
@@ -936,6 +939,9 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.EmbeddedClaudeReasoning); value != "" {
 		lines = append(lines, fmt.Sprintf("embedded_claude_reasoning_effort = %s", strconv.Quote(value)))
 	}
+	if value := strings.TrimSpace(settings.EmbeddedClaudeOutputStyle); value != "" {
+		lines = append(lines, fmt.Sprintf("embedded_claude_output_style = %s", strconv.Quote(value)))
+	}
 	if value := strings.TrimSpace(settings.EmbeddedOpenCodeModel); value != "" {
 		lines = append(lines, fmt.Sprintf("embedded_opencode_model = %s", strconv.Quote(value)))
 	}
@@ -952,6 +958,7 @@ func renderEditableSettings(settings EditableSettings) string {
 		strings.TrimSpace(settings.EmbeddedCodexReasoning) != "" ||
 		strings.TrimSpace(settings.EmbeddedClaudeModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedClaudeReasoning) != "" ||
+		strings.TrimSpace(settings.EmbeddedClaudeOutputStyle) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeModel) != "" ||
 		strings.TrimSpace(settings.EmbeddedOpenCodeReasoning) != "" ||
 		strings.TrimSpace(settings.EmbeddedLCAgentModel) != "" ||

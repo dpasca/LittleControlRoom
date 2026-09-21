@@ -67,7 +67,7 @@ func TestRunFailsClosedForMalformedOrUnexpectedInput(t *testing.T) {
 
 func TestSettingsJSONRegistersExecFormBashPreToolUseHook(t *testing.T) {
 	const executable = "/Applications/Little Control Room/lcroom"
-	raw, err := SettingsJSON(executable)
+	raw, err := SettingsJSON(executable, "")
 	if err != nil {
 		t.Fatalf("SettingsJSON() error = %v", err)
 	}
@@ -102,8 +102,41 @@ func TestSettingsJSONRegistersExecFormBashPreToolUseHook(t *testing.T) {
 	}
 }
 
+// An unset output style must stay out of the document entirely so Claude Code
+// keeps resolving the style from the user's own settings.
+func TestSettingsJSONOmitsOutputStyleWhenUnset(t *testing.T) {
+	raw, err := SettingsJSON("/tmp/lcroom", "  ")
+	if err != nil {
+		t.Fatalf("SettingsJSON() error = %v", err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		t.Fatalf("unmarshal settings document: %v", err)
+	}
+	if _, ok := document["outputStyle"]; ok {
+		t.Fatal("settings included outputStyle for an unset style")
+	}
+}
+
+func TestSettingsJSONCarriesOutputStyle(t *testing.T) {
+	raw, err := SettingsJSON("/tmp/lcroom", "Terse")
+	if err != nil {
+		t.Fatalf("SettingsJSON() error = %v", err)
+	}
+	var got settings
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	if got.OutputStyle != "Terse" {
+		t.Fatalf("outputStyle = %q, want %q", got.OutputStyle, "Terse")
+	}
+	if len(got.Hooks["PreToolUse"]) != 1 {
+		t.Fatal("selecting an output style must not drop the safety hook")
+	}
+}
+
 func TestSettingsJSONRequiresExecutable(t *testing.T) {
-	if _, err := SettingsJSON("  "); err == nil {
+	if _, err := SettingsJSON("  ", ""); err == nil {
 		t.Fatal("SettingsJSON() error = nil, want empty executable rejection")
 	}
 }

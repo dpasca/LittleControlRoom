@@ -38,7 +38,8 @@ type Model struct {
 	busCh <-chan events.Event
 	unsub func()
 
-	codexFastModeBusy bool
+	codexFastModeBusy     bool
+	claudeOutputStyleBusy bool
 
 	allProjects               []model.ProjectSummary
 	archivedProjects          []model.ProjectSummary
@@ -708,6 +709,12 @@ type setupSnapshotMsg struct {
 type editableSettingsAppliedMsg struct {
 	scanAfter bool
 	err       error
+}
+
+type claudeOutputStyleSavedMsg struct {
+	style string
+	path  string
+	err   error
 }
 
 type privacyModeSavedMsg struct {
@@ -3127,6 +3134,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsConfigPath = strings.TrimSpace(msg.path)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		return m, nil
+	case claudeOutputStyleSavedMsg:
+		if msg.err != nil {
+			// The session already uses the style; only the saved default failed.
+			m.reportError("Claude Code output style applied for this session; config save failed", msg.err, "")
+			return m, nil
+		}
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
+		if m.settingsBaseline != nil {
+			m.settingsBaseline.EmbeddedClaudeOutputStyle = msg.style
+		}
+		return m, nil
 	case privacyModeSavedMsg:
 		if msg.err != nil {
 			m.reportError("Privacy mode updated for this run; config save failed", msg.err, "")
@@ -3182,6 +3200,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case codexSessionOpenedMsg:
 		return m.applyCodexSessionOpenedMsg(msg)
+	case codexOutputStyleMsg:
+		m.claudeOutputStyleBusy = false
+		updated, cmd := m.applyCodexActionMsg(msg.action)
+		if msg.action.err != nil {
+			return updated, cmd
+		}
+		// Persist only a style the session accepted as a real style file.
+		saved := normalizeUpdateModel(updated)
+		return saved, tea.Batch(cmd, saved.saveClaudeOutputStyleCmd(msg.style))
 	case codexFastModeMsg:
 		m.codexFastModeBusy = false
 		return m.applyCodexActionMsg(msg.action)

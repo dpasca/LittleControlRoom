@@ -325,6 +325,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			case codexslash.KindFast:
 				return m.setVisibleCodexFastMode(snapshot, inv.FastMode)
+			case codexslash.KindOutputStyle:
+				return m.setVisibleClaudeOutputStyle(snapshot, inv.OutputStyle)
 			case codexslash.KindModel:
 				if embeddedProvider(snapshot).Normalized() == codexapp.ProviderLCAgent {
 					return m.openEmbeddedLCAgentModelPicker()

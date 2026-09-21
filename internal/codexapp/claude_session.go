@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/claudeapproval"
 	"lcroom/internal/claudeartifact"
 	"lcroom/internal/claudecli"
+	"lcroom/internal/claudestyle"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/projectrun"
 )
@@ -132,6 +133,10 @@ type claudeCodeSession struct {
 	usageRefreshQueued   bool
 	pendingModel         string
 	pendingReasoning     string
+	outputStyle          string
+	pendingOutputStyle   string
+	availableStyles      []claudestyle.Option
+	safetyExecutable     string
 	status               string
 	lastError            string
 	lastSystemNotice     string
@@ -311,7 +316,19 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		approvalServer = nil
 	}
 	permissionMode, _ := claudePermissionMode(requestedPermissionMode, strings.TrimSpace(mcpOptions.PermissionPromptTool) != "")
-	safetySettings, err := claudeSafetyHookSettings(req)
+	safetyExecutable, err := claudeSafetyHookExecutable(req)
+	if err != nil {
+		_ = approvalServer.Close()
+		return nil, fmt.Errorf("configure Claude Code destructive-command guard: %w", err)
+	}
+	availableStyles := claudestyle.Discover(claudeHome, req.ProjectPath)
+	outputStyle := ""
+	if requested := strings.TrimSpace(req.ClaudeOutputStyle); requested != "" {
+		if option, ok := claudestyle.Find(availableStyles, requested); ok {
+			outputStyle = option.Name
+		}
+	}
+	safetySettings, err := claudeSafetyHookSettings(safetyExecutable, outputStyle)
 	if err != nil {
 		_ = approvalServer.Close()
 		return nil, fmt.Errorf("configure Claude Code destructive-command guard: %w", err)
@@ -332,6 +349,9 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		runtimeManager:           req.RuntimeManager,
 		mcpOptions:               mcpOptions,
 		safetySettings:           safetySettings,
+		safetyExecutable:         safetyExecutable,
+		availableStyles:          availableStyles,
+		outputStyle:              outputStyle,
 		approvalServer:           approvalServer,
 		claudeHome:               claudeHome,
 		planUsageReader:          claudecli.NewPlanUsageReader(),
@@ -476,6 +496,8 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		LastActivityAt:           s.lastActivityAt,
 		Model:                    concreteClaudeModel(s.model),
 		ReasoningEffort:          s.reasoningEffort,
+		OutputStyle:              s.outputStyle,
+		PendingOutputStyle:       s.pendingOutputStyle,
 		PendingModel:             concreteClaudeModel(s.pendingModel),
 		PendingReasoning:         s.pendingReasoning,
 		MCPUsage:                 exportedMCPUsageSnapshot(s.mcpUsage),
@@ -645,6 +667,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
+		s.applyPendingOutputStyleLocked()
 		cmd, stdin, stdout, stderr, err = startClaudeTurnWithMCP(ctx, s.projectPath, sessionID, model, reasoning, string(permissionMode), s.playwrightPolicy, s.mcpOptions, s.safetySettings)
 		if err != nil {
 			cancel()
@@ -1801,11 +1824,13 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			var initMsg struct {
 				Model          string `json:"model"`
 				PermissionMode string `json:"permissionMode"`
+				OutputStyle    string `json:"output_style"`
 			}
 			if err := json.Unmarshal(env.Message, &initMsg); err == nil {
 				env.Model = firstNonEmptyTrimmed(env.Model, initMsg.Model)
 				env.PermissionMode = firstNonEmptyTrimmed(env.PermissionMode, initMsg.PermissionMode)
 			}
+			s.observeOutputStyleLocked(initMsg.OutputStyle)
 			if model := concreteClaudeModel(env.Model); model != "" {
 				s.model = model
 				s.pendingModel = ""

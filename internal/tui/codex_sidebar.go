@@ -1167,9 +1167,9 @@ func embeddedSidebarModelCommands(snapshot codexapp.Snapshot) string {
 		return ""
 	}
 	switch snapshot.Provider {
-	case codexapp.ProviderLCAgent:
-		return "/model"
-	case codexapp.ProviderCodex, codexapp.ProviderClaudeCode, codexapp.ProviderOpenCode:
+	case codexapp.ProviderClaudeCode:
+		return "/model /style"
+	case codexapp.ProviderLCAgent, codexapp.ProviderCodex, codexapp.ProviderOpenCode:
 		return "/model"
 	default:
 		return ""
@@ -1214,6 +1214,13 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", value, detailValueStyle, width, maxLines)...)
 	} else if reasoning != "" {
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, maxLines)...)
+	}
+	if style, pending := claudeOutputStyleSidebarLabel(snapshot); style != "" {
+		styleStyle := detailValueStyle
+		if pending {
+			styleStyle = detailWarningStyle
+		}
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Style", style, styleStyle, width, maxLines)...)
 	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent && !pendingMatchesCurrent {
 		if codexapp.ModelNamesEquivalent(snapshot.Provider, model, nextModel) {

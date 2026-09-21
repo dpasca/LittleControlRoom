@@ -907,6 +907,11 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.ZaiAPIKey = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiAPIKey))
 	settings.ZaiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldZaiModel))
 	settings.ProjectReasoningEffort = strings.TrimSpace(m.settingsFieldValue(settingsFieldProjectReasoning))
+	// The output style is owned by /style, like the embedded model preferences
+	// below. ParseEditableSettings rebuilds the struct from screen fields, so
+	// a value this screen does not edit has to be carried over explicitly or
+	// saving any unrelated setting would silently clear it.
+	settings.EmbeddedClaudeOutputStyle = strings.TrimSpace(baseline.EmbeddedClaudeOutputStyle)
 	lcagentRoutePreset := settings.LCAgentRoutePreset
 	lcagentProvider := settings.LCAgentProvider
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(baseline))

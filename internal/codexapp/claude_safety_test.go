@@ -9,7 +9,11 @@ import (
 
 func TestClaudeSafetyHookSettingsUsesLaunchExecutable(t *testing.T) {
 	const executable = "/Applications/Little Control Room/lcroom"
-	raw, err := claudeSafetyHookSettings(LaunchRequest{CLIExecutablePath: executable})
+	resolved, err := claudeSafetyHookExecutable(LaunchRequest{CLIExecutablePath: executable})
+	if err != nil {
+		t.Fatalf("claudeSafetyHookExecutable() error = %v", err)
+	}
+	raw, err := claudeSafetyHookSettings(resolved, "")
 	if err != nil {
 		t.Fatalf("claudeSafetyHookSettings() error = %v", err)
 	}

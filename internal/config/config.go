@@ -57,6 +57,7 @@ type AppConfig struct {
 	EmbeddedCodexReasoning    string
 	EmbeddedClaudeModel       string
 	EmbeddedClaudeReasoning   string
+	EmbeddedClaudeOutputStyle string
 	EmbeddedOpenCodeModel     string
 	EmbeddedOpenCodeReasoning string
 	EmbeddedLCAgentModel      string
@@ -248,6 +249,7 @@ type fileConfig struct {
 	EmbeddedCodexReasoning    *string                  `toml:"embedded_codex_reasoning_effort"`
 	EmbeddedClaudeModel       *string                  `toml:"embedded_claude_model"`
 	EmbeddedClaudeReasoning   *string                  `toml:"embedded_claude_reasoning_effort"`
+	EmbeddedClaudeOutputStyle *string                  `toml:"embedded_claude_output_style"`
 	EmbeddedOpenCodeModel     *string                  `toml:"embedded_opencode_model"`
 	EmbeddedOpenCodeReasoning *string                  `toml:"embedded_opencode_reasoning_effort"`
 	EmbeddedLCAgentModel      *string                  `toml:"embedded_lcagent_model"`
@@ -707,6 +709,7 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.EmbeddedCodexReasoning, fc.EmbeddedCodexReasoning)
 	applyOptionalTrimmedString(&cfg.EmbeddedClaudeModel, fc.EmbeddedClaudeModel)
 	applyOptionalTrimmedString(&cfg.EmbeddedClaudeReasoning, fc.EmbeddedClaudeReasoning)
+	applyOptionalTrimmedString(&cfg.EmbeddedClaudeOutputStyle, fc.EmbeddedClaudeOutputStyle)
 	applyOptionalTrimmedString(&cfg.EmbeddedOpenCodeModel, fc.EmbeddedOpenCodeModel)
 	applyOptionalTrimmedString(&cfg.EmbeddedOpenCodeReasoning, fc.EmbeddedOpenCodeReasoning)
 	applyOptionalTrimmedString(&cfg.EmbeddedLCAgentModel, fc.EmbeddedLCAgentModel)

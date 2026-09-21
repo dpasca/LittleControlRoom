@@ -606,3 +606,49 @@ func TestSuggestionsExposeSessionAliasWhenPrefixMatches(t *testing.T) {
 		t.Fatalf("Suggestions(/sess)[1].Insert = %q, want /session", suggestions[1].Insert)
 	}
 }
+
+func TestParseOutputStyleCommand(t *testing.T) {
+	inv, err := Parse("/style Terse")
+	if err != nil {
+		t.Fatalf("Parse(/style Terse) error = %v", err)
+	}
+	if inv.Kind != KindOutputStyle {
+		t.Fatalf("kind = %q, want %q", inv.Kind, KindOutputStyle)
+	}
+	if inv.OutputStyle != "Terse" {
+		t.Fatalf("OutputStyle = %q, want %q", inv.OutputStyle, "Terse")
+	}
+}
+
+// Claude Code's own command is /output-style, so accepting it as an alias
+// avoids an "unsupported embedded slash command" error for the name users
+// already know.
+func TestParseOutputStyleAcceptsClaudeCommandName(t *testing.T) {
+	inv, err := Parse("/output-style")
+	if err != nil {
+		t.Fatalf("Parse(/output-style) error = %v", err)
+	}
+	if inv.Kind != KindOutputStyle {
+		t.Fatalf("kind = %q, want %q", inv.Kind, KindOutputStyle)
+	}
+	if inv.OutputStyle != "" {
+		t.Fatalf("OutputStyle = %q, want empty for the status form", inv.OutputStyle)
+	}
+}
+
+func TestOutputStyleSuggestionsOfferDefault(t *testing.T) {
+	// A trailing space moves completion from command names to arguments.
+	suggestions := Suggestions("/style ")
+	if len(suggestions) == 0 {
+		t.Fatal("Suggestions(/style) returned nothing")
+	}
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/style default" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("suggestions %+v should offer returning to the default style", suggestions)
+	}
+}

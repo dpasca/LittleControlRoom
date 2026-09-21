@@ -661,6 +661,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) error 
 	s.cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	s.cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
 	s.cfg.EmbeddedClaudeReasoning = strings.TrimSpace(settings.EmbeddedClaudeReasoning)
+	s.cfg.EmbeddedClaudeOutputStyle = strings.TrimSpace(settings.EmbeddedClaudeOutputStyle)
 	s.cfg.EmbeddedOpenCodeModel = strings.TrimSpace(settings.EmbeddedOpenCodeModel)
 	s.cfg.EmbeddedOpenCodeReasoning = strings.TrimSpace(settings.EmbeddedOpenCodeReasoning)
 	s.cfg.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)

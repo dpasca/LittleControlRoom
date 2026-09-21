@@ -20,6 +20,10 @@ const (
 type settings struct {
 	Attribution attribution            `json:"attribution"`
 	Hooks       map[string][]hookGroup `json:"hooks"`
+	// OutputStyle is Claude Code's supported way to select a response style
+	// for a non-interactive run; there is no equivalent CLI flag. An empty
+	// value leaves the style to Claude Code's own settings resolution.
+	OutputStyle string `json:"outputStyle,omitempty"`
 }
 
 type attribution struct {
@@ -49,15 +53,21 @@ type preToolUseInput struct {
 }
 
 // SettingsJSON returns additive Claude Code settings that disable automatic
-// commit and pull-request attribution and register an LCR-owned Bash PreToolUse
-// hook. Exec-form args avoid passing the executable path through a shell.
-func SettingsJSON(executablePath string) (string, error) {
+// commit and pull-request attribution, register an LCR-owned Bash PreToolUse
+// hook, and optionally select an output style. Exec-form args avoid passing
+// the executable path through a shell.
+//
+// Claude Code does not validate outputStyle: an unknown name is accepted,
+// reported back in the session's init event, and applies nothing. Callers must
+// validate the name before passing it here.
+func SettingsJSON(executablePath, outputStyle string) (string, error) {
 	executablePath = strings.TrimSpace(executablePath)
 	if executablePath == "" {
 		return "", fmt.Errorf("Little Control Room executable path is empty")
 	}
 	data, err := json.Marshal(settings{
 		Attribution: attribution{},
+		OutputStyle: strings.TrimSpace(outputStyle),
 		Hooks: map[string][]hookGroup{
 			"PreToolUse": {
 				{

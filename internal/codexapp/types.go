@@ -597,50 +597,55 @@ type BackgroundTaskSnapshot struct {
 
 type Snapshot struct {
 	// ControlSessionKey identifies the host control channel, not a provider transcript.
-	ControlSessionKey           string
-	ImageReviewEnabled          bool
-	Provider                    Provider
-	ProjectPath                 string
-	ThreadID                    string
-	Preset                      codexcli.Preset
-	PermissionLevel             string
-	BrowserActivity             browserctl.SessionActivity
-	ManagedBrowserSessionKey    string
-	CurrentBrowserPageURL       string
-	CurrentBrowserPageStale     bool
-	TranscriptRevision          uint64
-	Phase                       SessionPhase
-	Started                     bool
-	Busy                        bool // A turn is currently active, whether local or external.
-	BusyExternal                bool // Another process owns the session; controls must remain read-only even when Busy is false.
-	Compacting                  bool // Distinguishes known conversation compaction from generic reconciling state.
-	BusySince                   time.Time
-	LastBusyActivityAt          time.Time
-	Closed                      bool
-	ActiveTurnID                string
-	LatestTurnStartedAt         time.Time
-	LatestTurnStateKnown        bool
-	LatestTurnCompleted         bool
-	HistoryHasMore              bool
-	HistoryLoading              bool
-	HistoryLoadError            string
-	PendingApproval             *ApprovalRequest
-	PendingToolInput            *ToolInputRequest
-	PendingElicitation          *ElicitationRequest
-	BackgroundTasks             []BackgroundTaskSnapshot // Provider-declared background work still awaiting a terminal notification.
-	ActivityPreview             []TranscriptEntry        // Bounded text-only tail for lightweight state snapshots.
-	Entries                     []TranscriptEntry
-	Transcript                  string
-	Status                      string
-	LastError                   string
-	LastSystemNotice            string
-	SuggestedInputDraftID       string
-	SuggestedInputDraft         string
-	SuggestedInputDraftSource   string
-	LastActivityAt              time.Time
-	CurrentCWD                  string
-	Model                       string
-	ModelProvider               string
+	ControlSessionKey         string
+	ImageReviewEnabled        bool
+	Provider                  Provider
+	ProjectPath               string
+	ThreadID                  string
+	Preset                    codexcli.Preset
+	PermissionLevel           string
+	BrowserActivity           browserctl.SessionActivity
+	ManagedBrowserSessionKey  string
+	CurrentBrowserPageURL     string
+	CurrentBrowserPageStale   bool
+	TranscriptRevision        uint64
+	Phase                     SessionPhase
+	Started                   bool
+	Busy                      bool // A turn is currently active, whether local or external.
+	BusyExternal              bool // Another process owns the session; controls must remain read-only even when Busy is false.
+	Compacting                bool // Distinguishes known conversation compaction from generic reconciling state.
+	BusySince                 time.Time
+	LastBusyActivityAt        time.Time
+	Closed                    bool
+	ActiveTurnID              string
+	LatestTurnStartedAt       time.Time
+	LatestTurnStateKnown      bool
+	LatestTurnCompleted       bool
+	HistoryHasMore            bool
+	HistoryLoading            bool
+	HistoryLoadError          string
+	PendingApproval           *ApprovalRequest
+	PendingToolInput          *ToolInputRequest
+	PendingElicitation        *ElicitationRequest
+	BackgroundTasks           []BackgroundTaskSnapshot // Provider-declared background work still awaiting a terminal notification.
+	ActivityPreview           []TranscriptEntry        // Bounded text-only tail for lightweight state snapshots.
+	Entries                   []TranscriptEntry
+	Transcript                string
+	Status                    string
+	LastError                 string
+	LastSystemNotice          string
+	SuggestedInputDraftID     string
+	SuggestedInputDraft       string
+	SuggestedInputDraftSource string
+	LastActivityAt            time.Time
+	CurrentCWD                string
+	Model                     string
+	ModelProvider             string
+	// OutputStyle is the Claude Code response style in effect, empty for the
+	// built-in default. PendingOutputStyle is a selection that applies on the
+	// next prompt.
+	OutputStyle                 string
+	PendingOutputStyle          string
 	VisionModel                 string
 	VisionModelProvider         string
 	ImageAnalysisActive         bool
@@ -742,13 +747,16 @@ type LaunchRequest struct {
 	// busy session during a forced-new launch, after operator confirmation.
 	ConfirmedReplacementSessionID string
 
-	ForceNew                 bool
-	Prompt                   string
-	InitialInput             Submission
-	Preset                   codexcli.Preset
-	ClaudePermissionMode     claudecli.PermissionMode
-	PendingModel             string
-	PendingReasoning         string
+	ForceNew             bool
+	Prompt               string
+	InitialInput         Submission
+	Preset               codexcli.Preset
+	ClaudePermissionMode claudecli.PermissionMode
+	PendingModel         string
+	PendingReasoning     string
+	// ClaudeOutputStyle names a Claude Code output style by its frontmatter
+	// name. An unknown name is ignored rather than failing the launch.
+	ClaudeOutputStyle        string
 	PlaywrightPolicy         browserctl.Policy
 	ManagedBrowserSessionKey string
 	// ClaudeApprovalSocket is an ephemeral, session-owned callback bridge used

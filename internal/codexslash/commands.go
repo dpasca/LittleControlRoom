@@ -18,6 +18,7 @@ const (
 	KindShowStatus     Kind = "show-status"
 	KindModel          Kind = "model"
 	KindFast           Kind = "fast"
+	KindOutputStyle    Kind = "style"
 	KindReconnect      Kind = "reconnect"
 	KindImageReview    Kind = "image-review"
 	KindHandoff        Kind = "handoff"
@@ -53,6 +54,7 @@ type Invocation struct {
 	Kind                Kind
 	ImageReviewMode     string
 	FastMode            string
+	OutputStyle         string
 	Prompt              string
 	SessionID           string
 	PermissionLevel     string
@@ -93,6 +95,8 @@ var specs = []Spec{
 	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
 	{Name: "image-review", Usage: "/image-review [on|off]", Summary: "Explicitly enable or disable external API image review for this Codex session only"},
 	{Name: "fast", Usage: "/fast [on|off|status]", Summary: "Inspect or change shared Codex fast mode (higher usage, two-hour limit)"},
+	{Name: "style", Usage: "/style [name|default]", Summary: "Show or change the Claude Code output style used from the next prompt"},
+	{Name: "output-style", Usage: "/output-style [name|default]", Summary: "Alias for /style", Hidden: true},
 }
 
 func Specs() []Spec {
@@ -145,6 +149,11 @@ func Suggestions(input string) []Suggestion {
 			Display: "/model",
 			Summary: "Open a local picker for the embedded model and reasoning effort used by this and future embedded sessions of the same tool, even after restarting LCR",
 		}}
+	case "style", "output-style":
+		return []Suggestion{
+			{Insert: "/style", Display: "/style", Summary: "Show the current Claude Code output style and the styles found on disk"},
+			{Insert: "/style default", Display: "/style default", Summary: "Return to Claude Code's standard responses from the next prompt"},
+		}
 	case "status":
 		return []Suggestion{{
 			Insert:  "/status",
@@ -528,6 +537,12 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindTerminal,
 			Canonical: "/terminal",
+		}, nil
+	case "style", "output-style":
+		return Invocation{
+			Kind:        KindOutputStyle,
+			OutputStyle: strings.TrimSpace(rawArgs),
+			Canonical:   slashcmd.CanonicalCommand("style", rawArgs),
 		}, nil
 	case "goal":
 		return parseGoalInvocation(rawArgs)
