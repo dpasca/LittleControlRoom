@@ -3445,6 +3445,86 @@ func TestLCAgentReplayCompletionClearsRecoveredError(t *testing.T) {
 	}
 }
 
+// A run that dies mid-dialog leaves the request behind. Replay has to say so,
+// otherwise the reopened transcript still looks like it is awaiting the user.
+func TestLCAgentReplayMarksUnansweredRequests(t *testing.T) {
+	commandRequest := map[string]any{
+		"type": "user_command_request", "id": "lca_user_command_1", "can_execute": true,
+		"command": "python3 -m pip install reportlab", "cwd": "/tmp/project",
+	}
+	approvalRequest := map[string]any{
+		"type": "approval_request", "id": "lca_approval_1",
+		"command": "rm -rf build", "cwd": "/tmp/project", "reason": "cleanup",
+	}
+	for _, tc := range []struct {
+		name     string
+		events   []map[string]any
+		wantNote string
+		wantLeft bool
+	}{
+		{
+			name:     "command request never answered",
+			events:   []map[string]any{commandRequest},
+			wantNote: "LCAgent stopped before this command request was answered",
+			wantLeft: true,
+		},
+		{
+			name: "command request answered",
+			events: []map[string]any{commandRequest,
+				{"type": "user_command_resolved", "id": "lca_user_command_1", "status": "declined"}},
+			wantNote: "LCAgent stopped before this command request was answered",
+			wantLeft: false,
+		},
+		{
+			name:     "approval request never answered",
+			events:   []map[string]any{approvalRequest},
+			wantNote: "LCAgent stopped before this approval request was answered",
+			wantLeft: true,
+		},
+		{
+			name: "approval request answered",
+			events: []map[string]any{approvalRequest,
+				{"type": "approval_resolved", "id": "lca_approval_1", "status": "declined"}},
+			wantNote: "LCAgent stopped before this approval request was answered",
+			wantLeft: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := append([]map[string]any{
+				{"type": "session_meta", "id": "lca_pending", "cwd": t.TempDir()},
+			}, tc.events...)
+			path := writeLCAgentReplayArtifact(t, t.TempDir(), time.Now(), "lca_pending", events)
+			replay, err := parseLCAgentReplayFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := &lcagentSession{}
+			session.applyReplay(replay)
+			transcript := session.Snapshot().Transcript
+			if got := strings.Contains(transcript, tc.wantNote); got != tc.wantLeft {
+				t.Fatalf("note %q present = %v, want %v\n%s", tc.wantNote, got, tc.wantLeft, transcript)
+			}
+		})
+	}
+}
+
+// The unanswered note is a transcript fact, not a provider failure.
+func TestLCAgentReplayUnansweredRequestIsNotAStoppedError(t *testing.T) {
+	path := writeLCAgentReplayArtifact(t, t.TempDir(), time.Now(), "lca_pending", []map[string]any{
+		{"type": "session_meta", "id": "lca_pending", "cwd": t.TempDir()},
+		{"type": "user_command_request", "id": "lca_user_command_1", "command": "make test"},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &lcagentSession{}
+	session.applyReplay(replay)
+	if got := StoppedSessionError(session.Snapshot()); got != "" {
+		t.Fatalf("stopped error = %q, want none for an unanswered request", got)
+	}
+}
+
 // A turn_aborted reason is terminal: later tool progress must not erase it.
 func TestLCAgentReplayKeepsAbortedErrorAfterToolProgress(t *testing.T) {
 	started := time.Now()

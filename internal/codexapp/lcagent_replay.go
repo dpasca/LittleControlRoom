@@ -34,6 +34,8 @@ type lcagentReplay struct {
 	lastActivityAt              time.Time
 	lastError                   string
 	lastErrorRecoverable        bool
+	pendingUserCommand          string
+	pendingApprovalRequest      string
 	imageAnalysisActive         bool
 	imageAnalyses               int
 	imageAnalysisFailures       int
@@ -597,18 +599,55 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptError, reason)
 		case "approval_request":
 			if request := lcagentApprovalRequestFromEvent(event, replay.sessionID); request != nil {
+				replay.pendingApprovalRequest = firstNonEmpty(request.Summary(), "a command approval")
 				replay.appendEntry(TranscriptStatus, "LCAgent requested command approval: "+request.Summary())
 			}
 		case "approval_resolved":
+			replay.pendingApprovalRequest = ""
 			replay.appendEntry(TranscriptStatus, lcagentApprovalResolvedText(event))
+		case "user_command_request":
+			replay.pendingUserCommand = firstNonEmpty(lcagentUserCommandLabel(event), "a manual terminal command")
+			replay.appendEntry(TranscriptStatus, lcagentUserCommandRequestText(event))
+		case "user_command_resolved":
+			replay.pendingUserCommand = ""
+			replay.appendEntry(TranscriptStatus, lcagentUserCommandResolvedText(event))
 		}
 	}); err != nil {
 		return nil, err
 	}
+	replay.noteUnansweredRequests()
 	if replay.threadID == "" {
 		replay.threadID = replay.sessionID
 	}
 	return replay, nil
+}
+
+// noteUnansweredRequests closes out dialogs the run never got an answer to.
+// A stopped session leaves its request behind, so without this the transcript
+// ends on a prompt that still looks like it is waiting for the user.
+func (r *lcagentReplay) noteUnansweredRequests() {
+	if r == nil {
+		return
+	}
+	if r.pendingUserCommand != "" {
+		r.appendEntry(TranscriptError, "LCAgent stopped before this command request was answered: "+r.pendingUserCommand)
+		r.pendingUserCommand = ""
+	}
+	if r.pendingApprovalRequest != "" {
+		r.appendEntry(TranscriptError, "LCAgent stopped before this approval request was answered: "+r.pendingApprovalRequest)
+		r.pendingApprovalRequest = ""
+	}
+}
+
+func lcagentUserCommandLabel(event map[string]json.RawMessage) string {
+	command := strings.TrimSpace(rawJSONString(event["command"]))
+	if command == "" {
+		return ""
+	}
+	if cwd := strings.TrimSpace(rawJSONString(event["cwd"])); cwd != "" {
+		command += " in " + cwd
+	}
+	return lcagentCondenseStatusText(command, 200)
 }
 
 func (r *lcagentReplay) applyImageAnalysisStarted(event map[string]json.RawMessage) {
