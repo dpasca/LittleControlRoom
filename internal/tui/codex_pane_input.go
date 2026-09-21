@@ -99,7 +99,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexManualCommandMode(manualRequest, manualCommand, msg)
 	}
 
-	if msg.String() == "esc" {
+	if msg.String() == "esc" && !m.codexToolInputComposerActive(snapshot) {
 		return m.hideCodexSession()
 	}
 	if msg.String() == "alt+s" {
@@ -562,88 +562,6 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, batchCmds(focusCmd, cmd)
 }
 
-func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	request := snapshot.PendingToolInput
-	if request == nil {
-		return m, nil
-	}
-	state := m.ensureToolAnswerState(m.codexVisibleProject, request)
-	if len(request.Questions) == 0 {
-		return m, nil
-	}
-	if state.QuestionIndex >= len(request.Questions) {
-		state.QuestionIndex = max(0, len(request.Questions)-1)
-	}
-	question := request.Questions[state.QuestionIndex]
-
-	if handled, cmd := m.tryHandleCodexPaste(msg, false); handled {
-		return m, cmd
-	}
-
-	switch msg.String() {
-	case "tab":
-		if len(request.Questions) > 1 {
-			state.QuestionIndex = (state.QuestionIndex + 1) % len(request.Questions)
-			m.codexToolAnswers[m.codexVisibleProject] = state
-			m.status = "Moved to the next structured question"
-		}
-		return m, nil
-	case "shift+tab":
-		if len(request.Questions) > 1 {
-			state.QuestionIndex = (state.QuestionIndex - 1 + len(request.Questions)) % len(request.Questions)
-			m.codexToolAnswers[m.codexVisibleProject] = state
-			m.status = "Moved to the previous structured question"
-		}
-		return m, nil
-	case "enter":
-		answer := strings.TrimSpace(m.codexInput.Value())
-		if answer != "" {
-			if question.MultiSelect {
-				state.Answers[question.ID] = addToolInputAnswer(state.Answers[question.ID], answer)
-			} else {
-				state.Answers[question.ID] = []string{answer}
-			}
-		}
-		if len(nonEmptyToolInputAnswers(state.Answers[question.ID])) == 0 {
-			return m, nil
-		}
-		m.codexToolAnswers[m.codexVisibleProject] = state
-		m.clearCodexDraft(m.codexVisibleProject)
-		return m.finishOrAdvanceToolInput(request, state)
-	case "backspace", "delete":
-		// Keep textarea editing behavior below.
-	default:
-		if optionIndex, ok := numericOptionSelection(msg.String()); ok && optionIndex < len(question.Options) {
-			label := question.Options[optionIndex].Label
-			if question.MultiSelect {
-				state.Answers[question.ID] = toggleToolInputAnswer(state.Answers[question.ID], label)
-				m.codexToolAnswers[m.codexVisibleProject] = state
-				m.status = "Selection toggled. Choose more options or press Enter to submit."
-				return m, nil
-			}
-			state.Answers[question.ID] = []string{label}
-			m.codexToolAnswers[m.codexVisibleProject] = state
-			m.clearCodexDraft(m.codexVisibleProject)
-			return m.finishOrAdvanceToolInput(request, state)
-		}
-	}
-
-	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
-		return m, nil
-	}
-	if codexShouldIgnoreStraySGRMousePacket(msg) {
-		return m, nil
-	}
-
-	var cmd tea.Cmd
-	before := m.codexInput.Value()
-	m.codexInput, cmd = m.codexInput.Update(msg)
-	m.noteCodexComposerKey(m.codexInput.Value() != before)
-	m.persistVisibleCodexDraft()
-	m.syncCodexComposerSize()
-	return m, cmd
-}
-
 func nonEmptyToolInputAnswers(values []string) []string {
 	answers := make([]string, 0, len(values))
 	for _, value := range values {
@@ -691,20 +609,6 @@ func toolInputAnswerSelected(values []string, answer string) bool {
 		}
 	}
 	return false
-}
-
-func (m Model) finishOrAdvanceToolInput(request *codexapp.ToolInputRequest, state codexToolAnswerState) (tea.Model, tea.Cmd) {
-	nextIndex := firstUnansweredToolQuestion(request, state.Answers)
-	m.codexToolAnswers[m.codexVisibleProject] = state
-	if nextIndex < len(request.Questions) {
-		state.QuestionIndex = nextIndex
-		m.codexToolAnswers[m.codexVisibleProject] = state
-		m.status = "Answer recorded. Continue with the next structured question."
-		return m, m.codexInput.Focus()
-	}
-	delete(m.codexToolAnswers, m.codexVisibleProject)
-	m.status = "Sending structured input..."
-	return m, m.respondVisibleToolInputCmd(state.Answers)
 }
 
 func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -341,6 +341,8 @@ type Model struct {
 	codexManualCommandCopyBusy    bool
 	codexManualCommandSubmitting  string
 	codexCommandSubmitProject     string
+	codexToolInputSubmitting      string
+	codexToolInputSubmitProject   string
 	codexViewport                 viewport.Model
 	codexTranscriptCache          codexTranscriptRenderCache
 	codexViewportContent          codexViewportContentState
@@ -3183,6 +3185,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case codexFastModeMsg:
 		m.codexFastModeBusy = false
 		return m.applyCodexActionMsg(msg.action)
+	case codexToolInputSubmittedMsg:
+		if msg.RequestID == m.codexToolInputSubmitting && msg.ProjectPath == m.codexToolInputSubmitProject {
+			m.codexToolInputSubmitting = ""
+			m.codexToolInputSubmitProject = ""
+		}
+		if result, ok := msg.Result.(codexActionMsg); ok {
+			return m.applyCodexActionMsg(result)
+		}
+		if msg.Result != nil {
+			return m, func() tea.Msg { return msg.Result }
+		}
+		return m, nil
 	case codexManualCommandSubmittedMsg:
 		if msg.RequestID == m.codexManualCommandSubmitting && msg.ProjectPath == m.codexCommandSubmitProject {
 			m.codexManualCommandSubmitting = ""

@@ -86,7 +86,10 @@ func (d codexDraft) titleText() string {
 type codexToolAnswerState struct {
 	RequestID     string
 	QuestionIndex int
-	Answers       map[string][]string
+	// OptionIndex is the highlighted row in the structured input dialog,
+	// counting the optional free-text row after the provider options.
+	OptionIndex int
+	Answers     map[string][]string
 }
 
 var (
@@ -732,15 +735,9 @@ func (m *Model) ensureToolAnswerState(projectPath string, request *codexapp.Tool
 	}
 	state, ok := m.codexToolAnswers[projectPath]
 	if !ok || state.RequestID != request.ID {
-		state = codexToolAnswerState{
-			RequestID: request.ID,
-			Answers:   make(map[string][]string),
-		}
+		state = newCodexToolAnswerState(request)
 	}
-	state.QuestionIndex = firstUnansweredToolQuestion(request, state.Answers)
-	if state.QuestionIndex >= len(request.Questions) {
-		state.QuestionIndex = max(0, len(request.Questions)-1)
-	}
+	state = normalizeCodexToolAnswerState(state, request)
 	m.codexToolAnswers[projectPath] = state
 	return state
 }
@@ -752,14 +749,40 @@ func (m Model) toolAnswerStateFor(projectPath string, request *codexapp.ToolInpu
 	projectPath = strings.TrimSpace(projectPath)
 	state, ok := m.codexToolAnswers[projectPath]
 	if !ok || state.RequestID != request.ID {
-		state = codexToolAnswerState{
-			RequestID: request.ID,
-			Answers:   make(map[string][]string),
-		}
+		state = newCodexToolAnswerState(request)
 	}
-	state.QuestionIndex = firstUnansweredToolQuestion(request, state.Answers)
+	return normalizeCodexToolAnswerState(state, request)
+}
+
+func newCodexToolAnswerState(request *codexapp.ToolInputRequest) codexToolAnswerState {
+	return codexToolAnswerState{
+		RequestID:     request.ID,
+		QuestionIndex: firstUnansweredToolQuestion(request, nil),
+		Answers:       make(map[string][]string),
+	}
+}
+
+// normalizeCodexToolAnswerState keeps the stored cursor positions inside the
+// current request. It deliberately preserves an explicitly chosen question so
+// Tab navigation is not undone by the first-unanswered heuristic.
+func normalizeCodexToolAnswerState(state codexToolAnswerState, request *codexapp.ToolInputRequest) codexToolAnswerState {
+	if state.Answers == nil {
+		state.Answers = make(map[string][]string)
+	}
+	if state.QuestionIndex < 0 {
+		state.QuestionIndex = 0
+	}
 	if state.QuestionIndex >= len(request.Questions) {
 		state.QuestionIndex = max(0, len(request.Questions)-1)
+	}
+	if len(request.Questions) == 0 {
+		state.OptionIndex = 0
+		return state
+	}
+	question := request.Questions[state.QuestionIndex]
+	rows := len(codexToolInputRowsFor(question, state.Answers[question.ID]))
+	if state.OptionIndex < 0 || state.OptionIndex >= rows {
+		state.OptionIndex = 0
 	}
 	return state
 }

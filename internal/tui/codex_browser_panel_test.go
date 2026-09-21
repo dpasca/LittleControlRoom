@@ -13,6 +13,21 @@ import (
 	"time"
 )
 
+// toolInputSubmitResult unwraps the in-flight guard message that structured
+// answers travel in so assertions can inspect the session action result.
+func toolInputSubmitResult(t *testing.T, msg tea.Msg) codexActionMsg {
+	t.Helper()
+	submitted, ok := msg.(codexToolInputSubmittedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexToolInputSubmittedMsg", msg)
+	}
+	action, ok := submitted.Result.(codexActionMsg)
+	if !ok {
+		t.Fatalf("structured answer result = %T, want codexActionMsg", submitted.Result)
+	}
+	return action
+}
+
 func TestPendingToolInputEnterSendsStructuredAnswer(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -65,11 +80,7 @@ func TestPendingToolInputEnterSendsStructuredAnswer(t *testing.T) {
 		t.Fatalf("status = %q, want sending structured input notice", got.status)
 	}
 
-	msg := cmd()
-	action, ok := msg.(codexActionMsg)
-	if !ok {
-		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
-	}
+	action := toolInputSubmitResult(t, cmd())
 	if action.status != "Structured input sent to Codex" {
 		t.Fatalf("action status = %q, want structured input notice", action.status)
 	}
@@ -147,7 +158,7 @@ func TestPendingClaudeMultiSelectTogglesOptionsBeforeSubmitting(t *testing.T) {
 		t.Fatal("Enter should submit selected options")
 	}
 	_ = updated.(Model)
-	if action, ok := cmd().(codexActionMsg); !ok || action.err != nil {
+	if action := toolInputSubmitResult(t, cmd()); action.err != nil {
 		t.Fatalf("multi-select submit returned %#v", action)
 	}
 	if len(session.toolAnswers) != 1 {

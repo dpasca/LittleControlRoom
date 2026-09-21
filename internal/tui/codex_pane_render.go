@@ -39,6 +39,8 @@ func (m Model) renderCodexView() string {
 	body := m.renderCodexSplitView(snapshot, width, height)
 	if _, _, ok := codexManualCommandFromSnapshot(snapshot); ok {
 		body = m.renderCodexManualCommandDialogOverlay(body, width, height, snapshot)
+	} else if _, ok := codexToolInputQuestionsFromSnapshot(snapshot); ok && snapshot.PendingApproval == nil {
+		body = m.renderCodexToolInputDialogOverlay(body, width, height, snapshot)
 	} else if snapshot.PendingElicitation != nil {
 		body = m.renderCodexElicitationDialogOverlay(body, width, height, snapshot)
 	}
@@ -183,6 +185,23 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			fitFooterWidth("Approval: "+snapshot.PendingApproval.Summary(), width),
 			renderFooterLine(width, renderFooterActionList(approvalActions...)),
 		}
+	case snapshot.PendingToolInput != nil:
+		// The question, its options, and the composer live in the centered
+		// dialog, so the lower area only keeps the footer and browser context.
+		lines := []string{}
+		if len(snapshot.PendingToolInput.Questions) == 0 {
+			// Nothing can be answered here, so name the blocked state instead
+			// of leaving an input box that cannot reach the provider.
+			lines = append(lines, fitFooterWidth(
+				detailWarningStyle.Render("Structured input without questions: "+snapshot.PendingToolInput.Summary()),
+				width,
+			))
+		}
+		lines = append(lines, m.renderCodexFooter(snapshot, width))
+		if browser := m.renderCodexBrowserPanel(snapshot, width); browser != "" {
+			lines = append(lines, browser)
+		}
+		return lines
 	case snapshot.Closed:
 		return []string{
 			fitFooterWidth(label+" session closed. Alt+Up hides it; Enter on the project opens a new one.", width),
@@ -194,7 +213,6 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			lines = append(lines, m.renderCodexBusyElsewhereNotice(snapshot, width))
 		}
 		lines = append(lines, m.renderCodexFooter(snapshot, width))
-		lines = append(lines, m.renderCodexRequestBlocks(snapshot, width)...)
 		if browser := m.renderCodexBrowserPanel(snapshot, width); browser != "" {
 			lines = append(lines, browser)
 		}
@@ -216,15 +234,6 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 	}
 }
 
-func (m Model) renderCodexRequestBlocks(snapshot codexapp.Snapshot, width int) []string {
-	switch {
-	case snapshot.PendingToolInput != nil:
-		return m.renderCodexToolInputBlocks(*snapshot.PendingToolInput, width)
-	default:
-		return nil
-	}
-}
-
 func (m Model) renderCodexBrowserPanel(snapshot codexapp.Snapshot, width int) string {
 	lines := []string{}
 	lines = append(lines, m.codexBrowserReconnectLines(snapshot)...)
@@ -240,48 +249,6 @@ func (m Model) renderCodexBrowserPanel(snapshot codexapp.Snapshot, width int) st
 		accent = lipgloss.Color("221")
 	}
 	return renderCodexMessageBlock("Browser", strings.Join(lines, "\n"), accent, lipgloss.Color("252"), max(24, width-4))
-}
-
-func (m Model) renderCodexToolInputBlocks(request codexapp.ToolInputRequest, width int) []string {
-	lines := []string{fitFooterWidth("Structured input: "+request.Summary(), width)}
-	if len(request.Questions) == 0 {
-		return lines
-	}
-	state := m.toolAnswerStateFor(m.codexVisibleProject, &request)
-	if state.QuestionIndex >= len(request.Questions) {
-		state.QuestionIndex = max(0, len(request.Questions)-1)
-	}
-	question := request.Questions[state.QuestionIndex]
-	if len(request.Questions) > 1 {
-		lines = append(lines, fitFooterWidth(fmt.Sprintf("Question %d/%d", state.QuestionIndex+1, len(request.Questions)), width))
-	}
-	if header := strings.TrimSpace(question.Header); header != "" {
-		lines = append(lines, fitFooterWidth(header, width))
-	}
-	prompt := question.Question
-	if question.IsSecret {
-		prompt += " [secret]"
-	}
-	if question.MultiSelect {
-		prompt += " [choose one or more]"
-	}
-	lines = append(lines, fitFooterWidth(prompt, width))
-	for i, option := range question.Options {
-		label := strings.TrimSpace(option.Label)
-		marker := ""
-		if question.MultiSelect {
-			marker = "[ ] "
-			if toolInputAnswerSelected(state.Answers[question.ID], label) {
-				marker = "[x] "
-			}
-		}
-		line := fmt.Sprintf("%d %s%s", i+1, marker, label)
-		if desc := strings.TrimSpace(option.Description); desc != "" {
-			line += " - " + desc
-		}
-		lines = append(lines, fitFooterWidth(line, width))
-	}
-	return lines
 }
 
 func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, width int) []string {
@@ -662,15 +629,22 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		state := m.toolAnswerStateFor(m.codexVisibleProject, snapshot.PendingToolInput)
 		if state.QuestionIndex >= 0 && state.QuestionIndex < len(snapshot.PendingToolInput.Questions) {
 			question := snapshot.PendingToolInput.Questions[state.QuestionIndex]
-			if question.MultiSelect {
+			rows := codexToolInputRowsFor(question, state.Answers[question.ID])
+			switch {
+			case question.MultiSelect:
 				actions[0] = footerPrimaryAction("Enter", "submit")
+			case len(rows) > 0 && !codexToolInputComposerFocused(rows, state.OptionIndex):
+				actions[0] = footerPrimaryAction("Enter", "choose")
 			}
-			if len(question.Options) > 0 {
+			if len(rows) > 0 {
 				optionAction := "choose"
 				if question.MultiSelect {
 					optionAction = "toggle"
 				}
-				actions = append(actions, footerNavAction("1-9", optionAction))
+				actions = append(actions,
+					footerNavAction("1-9", optionAction),
+					footerNavAction("up/down", "move"),
+				)
 			}
 		}
 		if len(snapshot.PendingToolInput.Questions) > 1 {
