@@ -13,6 +13,7 @@ import (
 const (
 	agentTaskActionFocusTrash = iota
 	agentTaskActionFocusCapture
+	agentTaskActionFocusRevoke
 	agentTaskActionFocusKeep
 )
 
@@ -26,6 +27,14 @@ type agentTaskActionConfirmState struct {
 	// revision leaves the checkout awaiting an authorized correction boundary.
 	Capture         bool
 	CaptureRevision int64
+	// Revoke is offered while an unspent correction grant could still reopen
+	// this worker without asking the operator again.
+	Revoke          bool
+	RevokeRemaining int
+}
+
+func agentTaskOffersSupervisionRevoke(task model.AgentTask) bool {
+	return task.Workflow.CorrectionsRemaining() > 0
 }
 
 // agentTaskOffersCorrectionCapture reads cached task state only.
@@ -38,10 +47,14 @@ func agentTaskOffersCorrectionCapture(task model.AgentTask) bool {
 }
 
 func (confirm agentTaskActionConfirmState) focusOrder() []int {
+	order := []int{agentTaskActionFocusTrash}
 	if confirm.Capture {
-		return []int{agentTaskActionFocusTrash, agentTaskActionFocusCapture, agentTaskActionFocusKeep}
+		order = append(order, agentTaskActionFocusCapture)
 	}
-	return []int{agentTaskActionFocusTrash, agentTaskActionFocusKeep}
+	if confirm.Revoke {
+		order = append(order, agentTaskActionFocusRevoke)
+	}
+	return append(order, agentTaskActionFocusKeep)
 }
 
 func (m Model) selectedAgentTask() (model.AgentTask, model.ProjectSummary, bool) {
@@ -86,6 +99,8 @@ func (m *Model) openAgentTaskActionConfirmForSelection() tea.Cmd {
 		Selected:        agentTaskActionFocusKeep,
 		Capture:         agentTaskOffersCorrectionCapture(task),
 		CaptureRevision: task.Workflow.RunID,
+		Revoke:          agentTaskOffersSupervisionRevoke(task),
+		RevokeRemaining: task.Workflow.CorrectionsRemaining(),
 	}
 	m.status = "Agent task actions open"
 	return nil
@@ -148,6 +163,14 @@ func (m Model) updateAgentTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, tea.
 			m.status = "Capturing correction baseline..."
 			return m, m.captureCorrectionBaselineCmd(confirm.TaskID, confirm.ProjectPath)
 		}
+		if confirm.Selected == agentTaskActionFocusRevoke {
+			if !confirm.Revoke {
+				return m, nil
+			}
+			confirm.Submitting = true
+			m.status = "Revoking the correction grant..."
+			return m, m.revokeSupervisionCmd(confirm.TaskID, confirm.ProjectPath)
+		}
 		task := model.AgentTask{ID: confirm.TaskID, Title: confirm.TaskTitle, WorkspacePath: confirm.ProjectPath}
 		if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
 			project := model.ProjectSummary{Name: confirm.TaskTitle, Path: confirm.ProjectPath, Kind: model.ProjectKindAgentTask}
@@ -196,6 +219,28 @@ func (m Model) archiveAgentTaskCmd(taskID, projectPath, selectPath string) tea.C
 	}
 }
 
+// revokeSupervisionCmd ends automatic corrections without stopping the worker,
+// deleting anything or touching the checkout.
+func (m Model) revokeSupervisionCmd(taskID, projectPath string) tea.Cmd {
+	svc := m.svc
+	return func() tea.Msg {
+		if svc == nil || svc.Store() == nil {
+			return agentTaskActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
+		}
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		task, err := svc.Store().RevokeAgentTaskSupervision(ctx, taskID)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "revoking the correction grant")
+		return agentTaskActionMsg{
+			task:        task,
+			projectPath: projectPath,
+			selectPath:  projectPath,
+			status:      "Correction grant revoked; further corrections ask for confirmation",
+			err:         err,
+		}
+	}
+}
+
 // captureCorrectionBaselineCmd runs the checkout inspection off the UI thread.
 func (m Model) captureCorrectionBaselineCmd(taskID, projectPath string) tea.Cmd {
 	svc := m.svc
@@ -229,6 +274,13 @@ func (m Model) renderAgentTaskActionOverlay(body string, bodyW, bodyH int) strin
 		detailMutedStyle.Render("Its task record and workspace will be deleted automatically after 7 days."),
 		detailMutedStyle.Render(m.displayPathWithHomeTilde(confirm.ProjectPath)),
 	}
+	if confirm.Selected == agentTaskActionFocusRevoke {
+		messageLines = []string{
+			detailValueStyle.Render(fmt.Sprintf("Stop reopening this worker automatically. %d correction round(s) would otherwise run without asking again.", confirm.RevokeRemaining)),
+			detailMutedStyle.Render("The worker, its session and its edits are untouched. Later corrections still work; they ask for confirmation."),
+			detailMutedStyle.Render(m.displayPathWithHomeTilde(confirm.ProjectPath)),
+		}
+	}
 	if confirm.Selected == agentTaskActionFocusCapture {
 		messageLines = []string{
 			detailValueStyle.Render(fmt.Sprintf("Authorize the checkout as it stands now as the starting point for a correction of revision %d.", confirm.CaptureRevision)),
@@ -258,6 +310,9 @@ func (m Model) renderAgentTaskActionButtons(confirm agentTaskActionConfirmState)
 	if confirm.Capture {
 		buttons = append(buttons, renderDialogButton("Capture baseline", confirm.Selected == agentTaskActionFocusCapture))
 	}
+	if confirm.Revoke {
+		buttons = append(buttons, renderDialogButton("Revoke corrections", confirm.Selected == agentTaskActionFocusRevoke))
+	}
 	return strings.Join(append(buttons, renderDialogButton("Keep", confirm.Selected == agentTaskActionFocusKeep)), " ")
 }
 
@@ -269,7 +324,7 @@ func (m Model) agentTaskFooterActions(width int) []footerAction {
 	if !ok {
 		return nil
 	}
-	if agentTaskOffersCorrectionCapture(task) {
+	if agentTaskOffersCorrectionCapture(task) || agentTaskOffersSupervisionRevoke(task) {
 		return []footerAction{footerHideAction("x", "actions")}
 	}
 	return []footerAction{footerHideAction("x", "trash")}

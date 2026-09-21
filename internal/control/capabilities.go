@@ -173,6 +173,7 @@ type EngineerSendPromptResult struct {
 type AgentTaskCreateInput struct {
 	StructuredResults bool `json:"structured_results,omitempty"`
 	RepositoryWrite   bool `json:"repository_write,omitempty"`
+	MaxCorrections    int  `json:"max_corrections,omitempty"`
 	EngineerModelSelection
 	RequestID    string        `json:"request_id,omitempty"`
 	Title        string        `json:"title"`
@@ -748,6 +749,12 @@ func NormalizeAgentTaskCreateInput(input AgentTaskCreateInput) (AgentTaskCreateI
 	input.Resources = normalizeResourceRefs(input.Resources)
 	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
 		return AgentTaskCreateInput{}, err
+	}
+	if input.MaxCorrections < 0 || input.MaxCorrections > MaxSupervisedCorrections {
+		return AgentTaskCreateInput{}, fmt.Errorf("max_corrections must be between 0 and %d", MaxSupervisedCorrections)
+	}
+	if input.MaxCorrections > 0 && !input.StructuredResults {
+		return AgentTaskCreateInput{}, fmt.Errorf("max_corrections requires structured_results, which defines the reviewed revision a correction answers")
 	}
 	return input, nil
 }
@@ -1635,7 +1642,8 @@ func agentTaskCreateInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"structured_results": map[string]any{"type": "boolean", "description": "Require a worker-bound structured result and exact-caller revision review. Authorizes only these task metadata submissions; corrections still require confirmed continuation."},
+			"structured_results": map[string]any{"type": "boolean", "description": "Require a worker-bound structured result and exact-caller revision review. Authorizes only these task metadata submissions."},
+			"max_corrections":    map[string]any{"type": "integer", "minimum": 0, "maximum": MaxSupervisedCorrections, "description": "Correction rounds this one confirmation also covers, so a rejected revision can be reopened without asking the operator again. Requires structured_results. Omit or use 0 to confirm every correction. The grant covers only the same caller reopening this task in its existing session with its saved model; it is revoked by an explicit stop."},
 			"repository_write":   map[string]any{"type": "boolean", "description": "Acquire exclusive managed write ownership of the exact affiliated checkout. Requires a clean initial baseline and idle managed writers. No automatic stash or commit."},
 			"model":              engineerModelProperty(),
 			"model_provider":     engineerModelProviderProperty(),

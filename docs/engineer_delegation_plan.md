@@ -1,7 +1,9 @@
 # Visible engineer delegation
 
 Status: implementation in progress. The bounded correction loop now closes:
-review, correction on the preserved edits, next revision and acceptance. The first return-address slice now separates
+review, correction on the preserved edits, next revision and acceptance, with an
+optional per-task grant that runs a bounded number of corrections without asking
+the operator again. The first return-address slice now separates
 host control keys from provider conversation IDs, persists immutable bindings,
 and retains pending results until identity arrives. Task model/effort selection
 also persists across continuation and reopen, with separate requested and reported
@@ -27,8 +29,9 @@ remain visible until the operator explicitly trashes them. Provider-native hidde
 subagents are not an alternative execution route for this feature.
 
 The first release supports one active worker per caller, one delegation level,
-and at most two automatic correction rounds. These are proposed product defaults,
-not current limits. Any supported caller can select any supported worker provider
+and at most three automatic correction rounds, which is now the enforced bound on
+a per-task grant. One worker per caller and one delegation level remain proposed
+defaults rather than enforced limits. Any supported caller can select any supported worker provider
 (Codex, OpenCode, Claude Code or LCAgent) independently of its own provider.
 
 ## Evidence and existing foundations
@@ -248,10 +251,17 @@ acceptance and rework. A cheap worker with expensive retries may cost more overa
    opens the next revision, so review, correction and acceptance run end to end
    under one confirmation per correction. Correction-count limits, revocation and
    the removal of that per-correction confirmation belong to the grant below.
-5. **Bounded automatic supervision.** Add scoped grants for creation policy,
-   corrections and acceptance; caller/worker report contracts; concise UI notices.
-   Test revocation, scope widening, unauthorized acceptance, correction limits,
-   task completion without trash and provider permission failures.
+5. **Bounded automatic supervision (per-task grant implemented).** `max_corrections`
+   on task creation covers up to three correction rounds in the confirmation that
+   creates the task. It is scoped to the original caller reopening that task in
+   its existing session with its saved model, while a `changes_requested` review
+   of the current revision is outstanding. Rounds are consumed atomically, survive
+   new runs without refilling, and are revoked by any explicit stop or by an
+   operator revoke that leaves the worker and its edits alone. Deterministic tests
+   cover replay, exhaustion, worker self-continuation, scope widening and each
+   refusal path. A host-level policy for future delegations across projects,
+   providers and resource limits remains, as do acceptance grants, per-run
+   time/turn/token limits and provider permission failures.
 6. **Cost evaluation, then concurrency.** Compare accepted tasks with and without
    delegation before expanding to multiple writers or recursive delegation.
 

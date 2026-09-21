@@ -155,6 +155,18 @@ func (e *Executor) operationReport(ctx context.Context, operation control.Operat
 			report["requires_new_user_turn"] = false
 			report["message"] = "Project collaboration is already approved. LCR will deliver this message automatically through its durable queue. Continue independent authorized work without asking for approval; check get_control_operation for delivery. Queued does not mean delivered. Do not create acknowledgment-only reply loops."
 		}
+		if !allowed {
+			granted, err := e.store.SupervisionAllowsOperation(ctx, operation)
+			if err != nil {
+				return nil, err
+			}
+			if granted {
+				report["automatic_delivery"] = true
+				report["operator_confirmation"] = false
+				report["requires_new_user_turn"] = false
+				report["message"] = "This task's correction grant covers this continuation, so LCR will reopen the same worker on the edits you reviewed without asking the operator again. One correction round is consumed. Check get_control_operation for delivery, then wait for the next result revision; do not resend or widen the request."
+			}
+		}
 	}
 	return report, nil
 }
@@ -175,6 +187,9 @@ func OperationReport(operation control.Operation, idempotentReplay bool) map[str
 	}
 	if operation.ConfirmationBy == control.ConfirmationProjectCollaboration && operation.Status == control.OperationRunning {
 		message = "Project collaboration authorized this message. Little Control Room is executing it or waiting to deliver it to the exact session."
+	}
+	if operation.ConfirmationBy == control.ConfirmationDelegationSupervision && operation.Status == control.OperationRunning {
+		message = "This task's correction grant authorized the continuation and consumed one round. Little Control Room is reopening the same worker on the edits you reviewed. Wait for the next result revision; do not resend."
 	}
 	return map[string]any{
 		"success":           true,

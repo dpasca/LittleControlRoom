@@ -240,3 +240,98 @@ func TestAgentTaskActionCaptureQueuesBaselineCommand(t *testing.T) {
 		t.Fatal("missing checkout reported success")
 	}
 }
+
+func TestRenderAgentTaskDetailStatesCorrectionGrantHonestly(t *testing.T) {
+	task := rejectedCaptureTask()
+	task.Workflow.MaxCorrections = 2
+	m := Model{}
+
+	rendered := ansi.Strip(m.renderAgentTaskDetailContent(task, 110))
+	if !strings.Contains(rendered, "Correction grant:") || !strings.Contains(rendered, "0 of 2 used") || !strings.Contains(rendered, "2 may run without asking again") {
+		t.Fatalf("live grant not shown: %q", rendered)
+	}
+
+	spent := task
+	spent.Workflow.CorrectionsUsed = 2
+	if rendered = ansi.Strip(m.renderAgentTaskDetailContent(spent, 110)); !strings.Contains(rendered, "spent, so further corrections ask for confirmation") {
+		t.Fatalf("spent grant not stated: %q", rendered)
+	}
+
+	revoked := task
+	revoked.Workflow.SupervisionRevoked = true
+	if rendered = ansi.Strip(m.renderAgentTaskDetailContent(revoked, 110)); !strings.Contains(rendered, "revoked, so further corrections ask for confirmation") {
+		t.Fatalf("revoked grant not stated: %q", rendered)
+	}
+
+	// A task with no grant must not imply one exists.
+	none := task
+	none.Workflow.MaxCorrections = 0
+	if rendered = ansi.Strip(m.renderAgentTaskDetailContent(none, 110)); strings.Contains(rendered, "Correction grant:") {
+		t.Fatalf("ungranted task advertised a grant: %q", rendered)
+	}
+}
+
+func TestAgentTaskActionRevokeQueuesSupervisionRevocation(t *testing.T) {
+	task := rejectedCaptureTask()
+	task.Workflow.MaxCorrections, task.Workflow.CorrectionsUsed = 2, 1
+	if !agentTaskOffersSupervisionRevoke(task) {
+		t.Fatal("unspent grant offered no revocation")
+	}
+	spent := task
+	spent.Workflow.CorrectionsUsed = 2
+	if agentTaskOffersSupervisionRevoke(spent) {
+		t.Fatal("offered to revoke a spent grant")
+	}
+
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := Model{
+		ctx:            context.Background(),
+		svc:            service.New(cfg, st, events.NewBus(), nil),
+		projects:       []model.ProjectSummary{project},
+		openAgentTasks: []model.AgentTask{task},
+		visibility:     visibilityAllFolders,
+		agentTaskAction: &agentTaskActionConfirmState{
+			TaskID:          task.ID,
+			ProjectPath:     task.WorkspacePath,
+			TaskTitle:       task.Title,
+			Selected:        agentTaskActionFocusRevoke,
+			Capture:         true,
+			CaptureRevision: 1,
+			Revoke:          true,
+			RevokeRemaining: 1,
+		},
+	}
+	overlay := ansi.Strip(m.renderAgentTaskActionOverlay(strings.Repeat("\n", 24), 120, 24))
+	for _, want := range []string{"Revoke corrections", "Stop reopening this worker automatically", "1 correction round(s)", "worker, its session and its edits are untouched"} {
+		if !strings.Contains(overlay, want) {
+			t.Fatalf("revoke option missing %q: %s", want, overlay)
+		}
+	}
+	updated, cmd := m.updateAgentTaskActionConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil || got.status != "Revoking the correction grant..." {
+		t.Fatalf("revoke did not queue work: cmd=%v status=%q", cmd != nil, got.status)
+	}
+	if !got.agentTaskAction.Submitting {
+		t.Fatal("revoke left no busy state")
+	}
+	msg, ok := cmd().(agentTaskActionMsg)
+	if !ok {
+		t.Fatal("revoke command returned the wrong message")
+	}
+	// The fixture task is not in this store, so the failure must be explicit.
+	if msg.err == nil {
+		t.Fatal("revoking an unknown task reported success")
+	}
+}

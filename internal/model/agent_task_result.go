@@ -48,6 +48,22 @@ type AgentTaskWorkflow struct {
 	Handoff       bool             `json:"handoff,omitempty"`
 	Result        *AgentTaskResult `json:"result,omitempty"`
 	Review        *AgentTaskReview `json:"review,omitempty"`
+	// Supervision is the operator's bounded correction grant, agreed once when
+	// the task is confirmed. It survives new runs; it is never widened by a
+	// worker, a caller or a callback prompt.
+	MaxCorrections     int  `json:"max_corrections,omitempty"`
+	CorrectionsUsed    int  `json:"corrections_used,omitempty"`
+	SupervisionRevoked bool `json:"supervision_revoked,omitempty"`
+}
+
+// CorrectionsRemaining reports the unused part of the grant. A revoked or
+// exhausted grant returns zero, which returns corrections to ordinary
+// confirmation rather than blocking them.
+func (w AgentTaskWorkflow) CorrectionsRemaining() int {
+	if !w.Enabled || w.SupervisionRevoked || w.MaxCorrections <= w.CorrectionsUsed {
+		return 0
+	}
+	return w.MaxCorrections - w.CorrectionsUsed
 }
 
 // These fields must come from host-bound tool context, never from model input.

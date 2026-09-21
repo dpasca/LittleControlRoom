@@ -359,6 +359,13 @@ func bossActionHasLosslessPacket(action bossAction) bool {
 		strings.TrimSpace(action.SuccessCondition) != ""
 }
 
+func agentTaskCorrectionGrantLabel(maxCorrections int) string {
+	if maxCorrections < 1 {
+		return "Correction rounds without asking again: none, every correction is confirmed"
+	}
+	return fmt.Sprintf("Correction rounds without asking again: %d, for this caller reopening this task with its saved model", maxCorrections)
+}
+
 func controlConfirmationContent(inv control.Invocation) (string, error) {
 	if inv.Capability == control.CapabilityIntegrationsManage {
 		var input control.IntegrationsManageInput
@@ -419,6 +426,7 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			fmt.Sprintf("Create agent task %q and use %s?", input.Title, provider),
 			fmt.Sprintf("Exclusive repository write ownership: %t", input.RepositoryWrite),
 			fmt.Sprintf("Structured worker results and caller review: %t", input.StructuredResults),
+			agentTaskCorrectionGrantLabel(input.MaxCorrections),
 			"Model / effort: " + engineerModelSelectionLabel(input.EngineerModelSelection),
 			"",
 			strings.TrimSpace(input.Prompt),

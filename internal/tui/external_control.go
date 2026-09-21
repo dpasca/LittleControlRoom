@@ -57,6 +57,11 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 			return externalControlProposalLoadedMsg{err: errors.New("service store unavailable")}
 		}
 		operation, automatic, err := svc.Store().ConfirmProjectCollaboration(parent, operationID)
+		if err == nil && !automatic {
+			// A task's own correction grant is the other standing authorization.
+			// It consumes one round only when it actually authorizes this run.
+			operation, automatic, err = svc.Store().ConfirmDelegationSupervision(parent, operationID)
+		}
 		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, err: err}
 	}
 }
@@ -69,6 +74,9 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 	}
 	if msg.automatic {
 		m.status = "Delivering approved project collaboration message"
+		if msg.operation.ConfirmationBy == control.ConfirmationDelegationSupervision {
+			m.status = "Running an authorized correction round for this delegated task"
+		}
 		return m, func() tea.Msg {
 			return bossui.ControlInvocationConfirmedMsg{Invocation: msg.operation.Invocation, OperationRecorded: true}
 		}

@@ -1071,7 +1071,7 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			return msg
 		}
 		msg.task, msg.err = svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-			Workflow:           model.AgentTaskWorkflow{Enabled: input.StructuredResults},
+			Workflow:           model.AgentTaskWorkflow{Enabled: input.StructuredResults, MaxCorrections: input.MaxCorrections},
 			Repository:         model.AgentTaskRepository{Write: input.RepositoryWrite},
 			ModelSelection:     taskModelChoice(provider, input.EngineerModelSelection),
 			Provider:           modelSessionSourceFromCodexProvider(provider),

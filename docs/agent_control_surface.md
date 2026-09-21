@@ -374,7 +374,26 @@ Explicit worker/caller stop cancels pending callbacks; late worker results remai
 inspectable without reviving automatic review. Free-text-only endings become
 `unclassified`. Task phases and concise evidence counts remain visible in the TUI.
 
-Review rejection does not itself launch work. `agent_task.continue` still requires
-confirmation and creates a new run; that run resumes the same worker on the exact
-reviewed edits rather than a clean checkout. `agent_task.close` cannot bypass
-structured acceptance.
+Review rejection does not itself launch work. `agent_task.continue` creates a new
+run that resumes the same worker on the exact reviewed edits rather than a clean
+checkout. `agent_task.close` cannot bypass structured acceptance.
+
+### Correction grants
+
+`agent_task.create` accepts optional `max_corrections` (0–3, requires
+`structured_results`). The operator agrees to it in the same confirmation that
+creates the task, and the dialog states it. It covers nothing but a correction:
+the original caller, from its host-bound session, reopening this task with
+`session_mode: resume_or_new`, an inherited provider and its saved model, while a
+`changes_requested` review of the current revision is outstanding. A fresh
+session, a named provider or model, another caller, a worker reopening itself, an
+accepted or superseded revision, an archived or completed task, and a grant that
+is spent or revoked all return to ordinary confirmation rather than failing.
+
+A round is consumed atomically when the grant authorizes execution, so a
+duplicate or replayed proposal cannot spend two. The grant survives new runs
+without refilling. Any explicit stop revokes the remainder, and the operator can
+revoke it from the task actions dialog without stopping the worker or touching
+its edits. Task detail states how much of the grant is used and whether it is
+live, spent or revoked. Grants never cover commits, pushes, deletion, model
+changes or a second concurrent worker.

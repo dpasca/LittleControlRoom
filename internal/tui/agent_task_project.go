@@ -279,6 +279,9 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 		if review := task.Workflow.Review; review != nil {
 			lines = append(lines, renderWrappedDetailField("Caller review", detailValueStyle, width, review.Decision+": "+review.Summary))
 		}
+		if grant := agentTaskSupervisionSummary(task); grant != "" {
+			lines = append(lines, renderWrappedDetailField("Correction grant", detailValueStyle, width, grant))
+		}
 	}
 	if task.Repository.Write {
 		lines = append(lines, renderWrappedDetailField("Repository", detailValueStyle, width, task.Repository.Root))
@@ -425,6 +428,25 @@ func agentTaskOriginSummary(task model.AgentTask) string {
 		parts = append(parts, shortID(sessionID))
 	}
 	return strings.Join(parts, " ")
+}
+
+// agentTaskSupervisionSummary renders the operator's standing correction grant
+// from cached state. An exhausted or revoked grant is stated explicitly so the
+// task never looks more autonomous than it is.
+func agentTaskSupervisionSummary(task model.AgentTask) string {
+	workflow := task.Workflow
+	if !workflow.Enabled || workflow.MaxCorrections < 1 {
+		return ""
+	}
+	used := fmt.Sprintf("%d of %d used", workflow.CorrectionsUsed, workflow.MaxCorrections)
+	switch {
+	case workflow.SupervisionRevoked:
+		return used + "; revoked, so further corrections ask for confirmation"
+	case workflow.CorrectionsRemaining() < 1:
+		return used + "; spent, so further corrections ask for confirmation"
+	default:
+		return used + fmt.Sprintf("; %d may run without asking again", workflow.CorrectionsRemaining())
+	}
 }
 
 // agentTaskCorrectionBoundarySummary renders cached ownership state only; the

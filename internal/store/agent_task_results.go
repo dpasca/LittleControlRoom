@@ -57,7 +57,9 @@ func (s *Store) BeginStructuredTaskRun(ctx context.Context, task model.AgentTask
 		}
 		return nil
 	}
-	next := model.AgentTaskWorkflow{Enabled: true, RunID: task.Workflow.RunID + 1, WorkerKey: key, Phase: "working"}
+	// A new run resets result metadata but never the operator's correction grant.
+	next := model.AgentTaskWorkflow{Enabled: true, RunID: task.Workflow.RunID + 1, WorkerKey: key, Phase: "working",
+		MaxCorrections: task.Workflow.MaxCorrections, CorrectionsUsed: task.Workflow.CorrectionsUsed, SupervisionRevoked: task.Workflow.SupervisionRevoked}
 	return s.workflowTransaction(ctx, task, next, model.AgentTaskStatusActive, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE engineer_messages SET state='failed',last_error='Superseded by a new task run' WHERE agent_task_id=? AND state IN ('queued','delivering')`, task.ID); err != nil {
 			return err
@@ -270,10 +272,21 @@ func (s *Store) GetAgentTaskResult(ctx context.Context, taskID string, revision 
 }
 
 func (s *Store) StopStructuredTask(ctx context.Context, task model.AgentTask, caller bool) error {
-	if !task.Workflow.Enabled || task.Workflow.Review != nil {
+	if !task.Workflow.Enabled {
 		return nil
 	}
+	if task.Workflow.Review != nil {
+		// The run is already settled, so there is no result lifecycle left to
+		// stop. An explicit stop must still end automatic corrections.
+		if task.Workflow.CorrectionsRemaining() < 1 {
+			return nil
+		}
+		next := task.Workflow
+		next.SupervisionRevoked = true
+		return s.workflowTransaction(ctx, task, next, task.Status, nil)
+	}
 	next := task.Workflow
+	next.SupervisionRevoked = true
 	if caller {
 		next.CallerStopped = true
 	} else {
