@@ -748,8 +748,11 @@ func (r *lcagentReplay) applyPhaseWriteGateFailed(event map[string]json.RawMessa
 		text += " (continuing current phase)"
 	}
 	if !rawJSONBool(event["fail_open"]) {
+		// Recorded gate failures are transient model glitches (empty or
+		// invalid JSON back from the gate) that the run retries past, so this
+		// only explains a stop when nothing succeeds afterwards.
 		r.lastError = text
-		r.lastErrorRecoverable = false
+		r.lastErrorRecoverable = true
 	}
 	r.appendEntry(TranscriptStatus, text)
 }

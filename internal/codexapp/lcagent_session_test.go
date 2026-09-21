@@ -3525,6 +3525,40 @@ func TestLCAgentReplayUnansweredRequestIsNotAStoppedError(t *testing.T) {
 	}
 }
 
+// Recorded gate failures are transient retries the run works past, so they
+// behave like denials rather than like an abort.
+func TestLCAgentReplayPhaseWriteGateFailureIsRecoverable(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		trailing    []map[string]any
+		wantStopped bool
+	}{
+		{name: "gate failure ended the run", wantStopped: true},
+		{
+			name:        "run recovered after the gate failure",
+			trailing:    []map[string]any{{"type": "tool_result", "tool": "run_command", "result": map[string]any{"success": true, "output": "ok"}}},
+			wantStopped: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := append([]map[string]any{
+				{"type": "session_meta", "id": "lca_gate", "cwd": t.TempDir()},
+				{"type": "phase_write_gate_failed", "message": "deepseek malformed_response: phase write gate returned empty content"},
+			}, tc.trailing...)
+			path := writeLCAgentReplayArtifact(t, t.TempDir(), time.Now(), "lca_gate", events)
+			replay, err := parseLCAgentReplayFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := &lcagentSession{}
+			session.applyReplay(replay)
+			if got := StoppedSessionError(session.Snapshot()); (got != "") != tc.wantStopped {
+				t.Fatalf("stopped error = %q, wantStopped %v", got, tc.wantStopped)
+			}
+		})
+	}
+}
+
 // A turn_aborted reason is terminal: later tool progress must not erase it.
 func TestLCAgentReplayKeepsAbortedErrorAfterToolProgress(t *testing.T) {
 	started := time.Now()
