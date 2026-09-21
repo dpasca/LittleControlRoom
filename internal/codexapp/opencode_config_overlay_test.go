@@ -124,12 +124,16 @@ func TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill(t *testing.T)
 	}
 
 	cmd := exec.Command("opencode", "debug", "skill")
-	// opencode also reads the operator's ~/.claude/skills. Left in, their real
-	// skill collection pushes this listing past the 64KiB that opencode flushes
-	// before exiting, and whichever entries fall past the cut are lost, so the
-	// skill under test disappears at random.
+	// opencode also scans the operator's external skill directories
+	// (~/.claude/skills, ~/.agents/skills). HOME alone is not enough to keep
+	// them out, and their real skill collection pushes this listing past the
+	// 64KiB that opencode flushes before exiting, so whichever entries fall
+	// past the cut are lost and the skill under test disappears at random.
+	// Use opencode's documented escape hatches to make the run hermetic.
 	env := withEnvOverride(os.Environ(), "XDG_CONFIG_HOME", overlayRoot)
 	env = withEnvOverride(env, "HOME", t.TempDir())
+	env = withEnvOverride(env, "OPENCODE_DISABLE_EXTERNAL_SKILLS", "1")
+	env = withEnvOverride(env, "OPENCODE_PURE", "1")
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -139,6 +143,12 @@ func TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill(t *testing.T)
 		t.Fatalf("opencode debug skill output reached the %d-byte truncation boundary; the assertions below cannot be trusted", len(output))
 	}
 	text := string(output)
+	// Positive control: the overlay's own helper skill must be listed, so a
+	// broken or empty listing fails here instead of misleading the assertions
+	// below.
+	if !strings.Contains(text, filepath.Join(overlayRoot, "opencode", "skills", "helper", "SKILL.md")) {
+		t.Fatalf("debug skill output missing overlay helper skill path (listing may be empty or from another config root): %s", text)
+	}
 	if !strings.Contains(text, "Use the embedded Playwright MCP tools already wired through Little Control Room") {
 		t.Fatalf("debug skill output missing overlay playwright description: %s", text)
 	}
