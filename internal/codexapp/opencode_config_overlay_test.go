@@ -124,10 +124,19 @@ func TestOpenCodeConfigOverlayDebugSkillShowsShadowPlaywrightSkill(t *testing.T)
 	}
 
 	cmd := exec.Command("opencode", "debug", "skill")
-	cmd.Env = withEnvOverride(os.Environ(), "XDG_CONFIG_HOME", overlayRoot)
+	// opencode also reads the operator's ~/.claude/skills. Left in, their real
+	// skill collection pushes this listing past the 64KiB that opencode flushes
+	// before exiting, and whichever entries fall past the cut are lost, so the
+	// skill under test disappears at random.
+	env := withEnvOverride(os.Environ(), "XDG_CONFIG_HOME", overlayRoot)
+	env = withEnvOverride(env, "HOME", t.TempDir())
+	cmd.Env = env
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("opencode debug skill error = %v\n%s", err, output)
+	}
+	if len(output) >= 64*1024 {
+		t.Fatalf("opencode debug skill output reached the %d-byte truncation boundary; the assertions below cannot be trusted", len(output))
 	}
 	text := string(output)
 	if !strings.Contains(text, "Use the embedded Playwright MCP tools already wired through Little Control Room") {

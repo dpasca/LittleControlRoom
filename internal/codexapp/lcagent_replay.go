@@ -33,6 +33,9 @@ type lcagentReplay struct {
 	startedAt                   time.Time
 	lastActivityAt              time.Time
 	lastError                   string
+	lastErrorRecoverable        bool
+	pendingUserCommand          string
+	pendingApprovalRequest      string
 	imageAnalysisActive         bool
 	imageAnalyses               int
 	imageAnalysisFailures       int
@@ -525,6 +528,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptTool, lcagentToolCallText(tool, event["args"]))
 		case "tool_result":
 			tool := rawJSONString(event["tool"])
+			replay.observeToolRecovery(event["result"])
 			replay.appendEntry(TranscriptTool, lcagentToolResultText(tool, event["result"]))
 		case "browser_activity_started":
 			replay.browserActivity = lcagentReplayBrowserActivity(event, replay.browserActivity, browserctl.SessionActivityStateActive)
@@ -579,31 +583,71 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptStatus, lcagentContextCompactedText(event))
 		case "turn_complete":
 			replay.lastError = ""
+			replay.lastErrorRecoverable = false
 			if text := lcagentTurnCompleteTraceText(event); text != "" {
 				replay.appendEntry(TranscriptStatus, text)
 			}
 		case "turn_aborted":
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent run aborted")
 			replay.lastError = reason
+			replay.lastErrorRecoverable = false
 			replay.appendEntry(TranscriptError, reason)
 		case "permission_denied":
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent permission denied")
 			replay.lastError = reason
+			replay.lastErrorRecoverable = true
 			replay.appendEntry(TranscriptError, reason)
 		case "approval_request":
 			if request := lcagentApprovalRequestFromEvent(event, replay.sessionID); request != nil {
+				replay.pendingApprovalRequest = firstNonEmpty(request.Summary(), "a command approval")
 				replay.appendEntry(TranscriptStatus, "LCAgent requested command approval: "+request.Summary())
 			}
 		case "approval_resolved":
+			replay.pendingApprovalRequest = ""
 			replay.appendEntry(TranscriptStatus, lcagentApprovalResolvedText(event))
+		case "user_command_request":
+			replay.pendingUserCommand = firstNonEmpty(lcagentUserCommandLabel(event), "a manual terminal command")
+			replay.appendEntry(TranscriptStatus, lcagentUserCommandRequestText(event))
+		case "user_command_resolved":
+			replay.pendingUserCommand = ""
+			replay.appendEntry(TranscriptStatus, lcagentUserCommandResolvedText(event))
 		}
 	}); err != nil {
 		return nil, err
 	}
+	replay.noteUnansweredRequests()
 	if replay.threadID == "" {
 		replay.threadID = replay.sessionID
 	}
 	return replay, nil
+}
+
+// noteUnansweredRequests closes out dialogs the run never got an answer to.
+// A stopped session leaves its request behind, so without this the transcript
+// ends on a prompt that still looks like it is waiting for the user.
+func (r *lcagentReplay) noteUnansweredRequests() {
+	if r == nil {
+		return
+	}
+	if r.pendingUserCommand != "" {
+		r.appendEntry(TranscriptError, "LCAgent stopped before this command request was answered: "+r.pendingUserCommand)
+		r.pendingUserCommand = ""
+	}
+	if r.pendingApprovalRequest != "" {
+		r.appendEntry(TranscriptError, "LCAgent stopped before this approval request was answered: "+r.pendingApprovalRequest)
+		r.pendingApprovalRequest = ""
+	}
+}
+
+func lcagentUserCommandLabel(event map[string]json.RawMessage) string {
+	command := strings.TrimSpace(rawJSONString(event["command"]))
+	if command == "" {
+		return ""
+	}
+	if cwd := strings.TrimSpace(rawJSONString(event["cwd"])); cwd != "" {
+		command += " in " + cwd
+	}
+	return lcagentCondenseStatusText(command, 200)
 }
 
 func (r *lcagentReplay) applyImageAnalysisStarted(event map[string]json.RawMessage) {
@@ -668,6 +712,23 @@ func (r *lcagentReplay) applyImageAnalysisFailed(event map[string]json.RawMessag
 	r.appendEntry(TranscriptStatus, "LCAgent vision analysis failed: "+message)
 }
 
+// observeToolRecovery clears a recoverable error once the agent succeeded at
+// something after it. A permission denial the model worked around is
+// transcript history, not the reason the session stopped.
+func (r *lcagentReplay) observeToolRecovery(raw json.RawMessage) {
+	if r == nil || !r.lastErrorRecoverable {
+		return
+	}
+	var result struct {
+		Success bool `json:"success"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil || !result.Success {
+		return
+	}
+	r.lastError = ""
+	r.lastErrorRecoverable = false
+}
+
 func (r *lcagentReplay) applyPhaseWriteGateResult(event map[string]json.RawMessage) {
 	if r == nil {
 		return
@@ -687,7 +748,11 @@ func (r *lcagentReplay) applyPhaseWriteGateFailed(event map[string]json.RawMessa
 		text += " (continuing current phase)"
 	}
 	if !rawJSONBool(event["fail_open"]) {
+		// Recorded gate failures are transient model glitches (empty or
+		// invalid JSON back from the gate) that the run retries past, so this
+		// only explains a stop when nothing succeeds afterwards.
 		r.lastError = text
+		r.lastErrorRecoverable = true
 	}
 	r.appendEntry(TranscriptStatus, text)
 }
