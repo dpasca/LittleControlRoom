@@ -3393,16 +3393,40 @@ func TestLCAgentContextUsageLiveAndReplayIgnoreVisionUsage(t *testing.T) {
 }
 
 func TestLCAgentReplayCompletionClearsRecoveredError(t *testing.T) {
-	for _, completed := range []bool{false, true} {
-		t.Run(fmt.Sprint(completed), func(t *testing.T) {
+	successResult := map[string]any{"success": true, "output": "[exit:0 | 1ms]"}
+	failureResult := map[string]any{"success": false, "error": "exit status 1"}
+	for _, tc := range []struct {
+		name        string
+		trailing    []map[string]any
+		wantStopped bool
+	}{
+		{
+			name:        "denial ended the run",
+			wantStopped: true,
+		},
+		{
+			name:        "turn completed",
+			trailing:    []map[string]any{{"type": "turn_complete", "summary": "done"}},
+			wantStopped: false,
+		},
+		{
+			// A denial the model worked around is history, not the stop reason.
+			name:        "agent kept working after the denial",
+			trailing:    []map[string]any{{"type": "tool_result", "tool": "run_command", "result": successResult}},
+			wantStopped: false,
+		},
+		{
+			name:        "nothing succeeded after the denial",
+			trailing:    []map[string]any{{"type": "tool_result", "tool": "run_command", "result": failureResult}},
+			wantStopped: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			started := time.Now()
-			events := []map[string]any{
+			events := append([]map[string]any{
 				{"type": "session_meta", "id": "lca_recovered", "cwd": t.TempDir()},
 				{"type": "permission_denied", "reason": "command denied"},
-			}
-			if completed {
-				events = append(events, map[string]any{"type": "turn_complete", "summary": "done"})
-			}
+			}, tc.trailing...)
 			path := writeLCAgentReplayArtifact(t, t.TempDir(), started, "lca_recovered", events)
 			replay, err := parseLCAgentReplayFile(path)
 			if err != nil {
@@ -3411,13 +3435,32 @@ func TestLCAgentReplayCompletionClearsRecoveredError(t *testing.T) {
 			session := &lcagentSession{}
 			session.applyReplay(replay)
 			snapshot := session.Snapshot()
-			if got := StoppedSessionError(snapshot); (got == "") != completed {
-				t.Fatalf("completed=%v: stopped error = %q", completed, got)
+			if got := StoppedSessionError(snapshot); (got != "") != tc.wantStopped {
+				t.Fatalf("stopped error = %q, wantStopped %v", got, tc.wantStopped)
 			}
 			if !strings.Contains(snapshot.Transcript, "command denied") {
 				t.Fatal("permission diagnostic missing from transcript")
 			}
 		})
+	}
+}
+
+// A turn_aborted reason is terminal: later tool progress must not erase it.
+func TestLCAgentReplayKeepsAbortedErrorAfterToolProgress(t *testing.T) {
+	started := time.Now()
+	path := writeLCAgentReplayArtifact(t, t.TempDir(), started, "lca_aborted", []map[string]any{
+		{"type": "session_meta", "id": "lca_aborted", "cwd": t.TempDir()},
+		{"type": "turn_aborted", "reason": "provider refused the request"},
+		{"type": "tool_result", "tool": "run_command", "result": map[string]any{"success": true, "output": "ok"}},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &lcagentSession{}
+	session.applyReplay(replay)
+	if got := StoppedSessionError(session.Snapshot()); !strings.Contains(got, "provider refused the request") {
+		t.Fatalf("stopped error = %q, want the abort reason preserved", got)
 	}
 }
 
