@@ -221,13 +221,26 @@ func (m *Model) applySelectedCodexSlashSuggestion() bool {
 	return true
 }
 
+// codexSlashCycleFallback is the list CycleSuggestion widens to when the
+// filtered list has collapsed. For a /style command that must be every
+// discovered style, not the command-name list, or cycling cannot reach a style
+// whose name is not a prefix of what is already typed.
+func (m Model) codexSlashCycleFallback(current string) []codexslash.Suggestion {
+	if styles := m.visibleClaudeOutputStyleNames(); len(styles) > 0 {
+		if all, ok := codexslash.OutputStyleSuggestionsForInput(current, styles); ok {
+			return all
+		}
+	}
+	return codexSlashSuggestionsForInput("/")
+}
+
 func (m *Model) cycleAndApplyCodexSlashSuggestion(delta int) bool {
 	if !m.codexSlashActive() {
 		return false
 	}
 	current := strings.TrimSpace(m.codexInput.Value())
 	suggestions := m.codexSlashSuggestions()
-	suggestion, selectedIndex, ok := slashcmd.CycleSuggestion(current, m.codexSlashSelected, suggestions, codexSlashSuggestionsForInput("/"), delta)
+	suggestion, selectedIndex, ok := slashcmd.CycleSuggestion(current, m.codexSlashSelected, suggestions, m.codexSlashCycleFallback(current), delta)
 	if !ok {
 		return false
 	}

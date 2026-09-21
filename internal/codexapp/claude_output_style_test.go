@@ -238,3 +238,31 @@ func TestSnapshotReportsOutputStyle(t *testing.T) {
 		t.Fatalf("snapshot OutputStyle = %q, want empty before the next turn", snapshot.OutputStyle)
 	}
 }
+
+// Claude Code puts output_style at the top level of its init event, not inside
+// a nested "message" object. Reading only the nested field meant the reported
+// style was never observed at all.
+func TestInitEventTopLevelOutputStyleIsObserved(t *testing.T) {
+	home := t.TempDir()
+	writeUserStyle(t, home, "terse.md", "Terse")
+	s := newOutputStyleSession(t, home, t.TempDir())
+	s.sessionID = "session-1"
+
+	s.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"session-1","model":"claude-opus-5","output_style":"Terse"}`)
+
+	if s.outputStyle != "Terse" {
+		t.Fatalf("outputStyle = %q, want the style reported at the top level of init", s.outputStyle)
+	}
+}
+
+func TestInitEventDefaultOutputStyleClearsOverride(t *testing.T) {
+	s := newOutputStyleSession(t, t.TempDir(), t.TempDir())
+	s.sessionID = "session-1"
+	s.outputStyle = "Terse"
+
+	s.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"session-1","output_style":"default"}`)
+
+	if s.outputStyle != "" {
+		t.Fatalf("outputStyle = %q, want it cleared when Claude reports the default", s.outputStyle)
+	}
+}

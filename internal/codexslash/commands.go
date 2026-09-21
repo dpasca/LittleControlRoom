@@ -131,6 +131,15 @@ func OutputStyleSuggestionsForInput(input string, styles []slashcmd.Choice) ([]S
 func OutputStyleSuggestions(argPrefix string, styles []slashcmd.Choice) []Suggestion {
 	argPrefix = strings.TrimSpace(argPrefix)
 	lowered := strings.ToLower(argPrefix)
+	// Once the typed argument is itself a complete style name, stop filtering.
+	// Otherwise the list collapses to that one entry and Tab can only cycle
+	// between it and the bare command, making every other style unreachable.
+	for _, style := range styles {
+		if strings.EqualFold(strings.TrimSpace(style.Value), lowered) {
+			lowered = ""
+			break
+		}
+	}
 	out := []Suggestion{}
 	seen := map[string]struct{}{}
 	for _, style := range styles {

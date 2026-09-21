@@ -240,6 +240,7 @@ type claudeStreamEnvelope struct {
 	Model             string                      `json:"model"`
 	PermissionMode    string                      `json:"permissionMode"`
 	Effort            string                      `json:"effort"`
+	OutputStyle       string                      `json:"output_style"`
 	Message           json.RawMessage             `json:"message"`
 	Result            string                      `json:"result"`
 	IsError           bool                        `json:"is_error"`
@@ -1831,7 +1832,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 				env.Model = firstNonEmptyTrimmed(env.Model, initMsg.Model)
 				env.PermissionMode = firstNonEmptyTrimmed(env.PermissionMode, initMsg.PermissionMode)
 			}
-			s.observeOutputStyleLocked(initMsg.OutputStyle)
+			s.observeOutputStyleLocked(firstNonEmptyTrimmed(env.OutputStyle, initMsg.OutputStyle))
 			if model := concreteClaudeModel(env.Model); model != "" {
 				s.model = model
 				s.pendingModel = ""

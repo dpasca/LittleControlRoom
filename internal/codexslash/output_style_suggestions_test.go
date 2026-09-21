@@ -94,3 +94,48 @@ func TestOutputStyleSuggestionsFallBackWhenDescriptionMissing(t *testing.T) {
 		t.Fatalf("suggestions = %+v, want a usable hint even without a description", got)
 	}
 }
+
+// Simulates pressing Tab repeatedly: each cycle feeds the applied insert back
+// in as the new input. Every style must be reachable. Filtering on an exact
+// name previously collapsed the list so only "default" and the bare command
+// could ever be selected.
+func TestOutputStyleSuggestionsTabCycleReachesEveryStyle(t *testing.T) {
+	names := styleChoices("default", "Terse", "Verbose")
+	current := "/style"
+	seen := map[string]bool{}
+
+	for i := 0; i < 8; i++ {
+		suggestions, ok := OutputStyleSuggestionsForInput(current, names)
+		if !ok {
+			t.Fatalf("iteration %d: %q produced no style suggestions", i, current)
+		}
+		next, _, cycled := slashcmd.CycleSuggestion(current, 0, suggestions, suggestions, 1)
+		if !cycled {
+			t.Fatalf("iteration %d: cycling stopped at %q", i, current)
+		}
+		current = next.Insert
+		seen[current] = true
+	}
+
+	for _, want := range []string{"/style default", "/style Terse", "/style Verbose"} {
+		if !seen[want] {
+			t.Fatalf("Tab cycling never reached %q; visited %v", want, seen)
+		}
+	}
+}
+
+// A partial prefix must still narrow the list; only a complete name stops
+// filtering.
+func TestOutputStyleSuggestionsStillFilterOnPartialPrefix(t *testing.T) {
+	got := styleInserts(OutputStyleSuggestions("ter", styleChoices("default", "Terse", "Verbose")))
+	if len(got) != 2 || got[0] != "/style Terse" {
+		t.Fatalf("suggestions = %v, want only Terse plus the status form", got)
+	}
+}
+
+func TestOutputStyleSuggestionsExactNameShowsAllForCycling(t *testing.T) {
+	got := styleInserts(OutputStyleSuggestions("default", styleChoices("default", "Terse")))
+	if len(got) != 3 {
+		t.Fatalf("suggestions = %v, want the full list so Tab can move off default", got)
+	}
+}
