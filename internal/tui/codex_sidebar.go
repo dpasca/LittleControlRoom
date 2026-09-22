@@ -1215,12 +1215,8 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 	} else if reasoning != "" {
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, maxLines)...)
 	}
-	if style, pending := claudeOutputStyleSidebarLabel(snapshot); style != "" {
-		styleStyle := detailValueStyle
-		if pending {
-			styleStyle = detailWarningStyle
-		}
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Style", style, styleStyle, width, maxLines)...)
+	if style, _ := claudeOutputStyleSidebarLabel(snapshot); style != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Style", style, claudeOutputStyleSidebarValueStyle(snapshot), width, maxLines)...)
 	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent && !pendingMatchesCurrent {
 		if codexapp.ModelNamesEquivalent(snapshot.Provider, model, nextModel) {

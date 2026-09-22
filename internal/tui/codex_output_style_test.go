@@ -10,6 +10,8 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/slashcmd"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestClaudeOutputStyleSidebarLabelHiddenForOtherProviders(t *testing.T) {
@@ -310,5 +312,61 @@ func TestCodexSlashSuggestionsUnchangedWithoutStyles(t *testing.T) {
 	plain := codexSlashSuggestionsForInput("/style ")
 	if len(withStyles) != len(plain) {
 		t.Fatalf("suggestions changed without discovered styles: %+v vs %+v", withStyles, plain)
+	}
+}
+
+func styleSnapshot(current, pending string) codexapp.Snapshot {
+	return codexapp.Snapshot{
+		Provider:           codexapp.ProviderClaudeCode,
+		OutputStyle:        current,
+		PendingOutputStyle: pending,
+		AvailableOutputStyles: []claudestyle.Option{
+			{Name: claudestyle.DefaultName, Verbosity: claudestyle.VerbosityVerbose},
+			{Name: "Terse", Verbosity: claudestyle.VerbosityConcise},
+			{Name: "Explanatory", Verbosity: claudestyle.VerbosityVerbose},
+		},
+	}
+}
+
+// The colour is the signal read at a glance: green only for a style known to
+// constrain output, red for anything expected to be lengthy. A named style is
+// not automatically safe.
+func TestClaudeOutputStyleSidebarValueStyleColorsByVerbosity(t *testing.T) {
+	green := claudeOutputStyleTerseStyle.GetForeground()
+	red := claudeOutputStyleVerboseStyle.GetForeground()
+	if green == red {
+		t.Fatal("concise and verbose colors must be visually distinct")
+	}
+
+	for _, tc := range []struct {
+		style string
+		want  lipgloss.TerminalColor
+		why   string
+	}{
+		{style: "", want: red, why: "the unconstrained default"},
+		{style: "Terse", want: green, why: "a style known to be concise"},
+		{style: "Explanatory", want: red, why: "a named but verbose style"},
+		{style: "Unheard", want: red, why: "an unclassifiable style must not look safe"},
+	} {
+		got := claudeOutputStyleSidebarValueStyle(styleSnapshot(tc.style, "")).GetForeground()
+		if got != tc.want {
+			t.Fatalf("style %q colored %v, want %v (%s)", tc.style, got, tc.want, tc.why)
+		}
+	}
+}
+
+// A staged change should read as the state being moved to, so switching away
+// from default turns green immediately rather than after the next prompt.
+func TestClaudeOutputStyleSidebarValueStyleFollowsStagedStyle(t *testing.T) {
+	if got := claudeOutputStyleSidebarValueStyle(styleSnapshot("", "Terse")).GetForeground(); got != claudeOutputStyleTerseStyle.GetForeground() {
+		t.Fatalf("staging a concise style should color green, got %v", got)
+	}
+	if got := claudeOutputStyleSidebarValueStyle(styleSnapshot("Terse", claudestyle.DefaultName)).GetForeground(); got != claudeOutputStyleVerboseStyle.GetForeground() {
+		t.Fatalf("staging the default should color red, got %v", got)
+	}
+	// Switching from a concise style to a verbose one is the case most worth
+	// noticing before the prompt is sent.
+	if got := claudeOutputStyleSidebarValueStyle(styleSnapshot("Terse", "Explanatory")).GetForeground(); got != claudeOutputStyleVerboseStyle.GetForeground() {
+		t.Fatalf("staging a verbose style should color red, got %v", got)
 	}
 }

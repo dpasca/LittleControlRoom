@@ -5,10 +5,20 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"lcroom/internal/claudestyle"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
+)
+
+// The sidebar value is colored like a health signal: green only when the style
+// in effect is known to constrain output, red for anything expected to be
+// lengthy. Red is the safe side, so a style LCR cannot classify is flagged
+// rather than made to look concise.
+var (
+	claudeOutputStyleTerseStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	claudeOutputStyleVerboseStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
 )
 
 type codexOutputStyleMsg struct {
@@ -143,6 +153,20 @@ func claudeOutputStyleStatusLine(snapshot codexapp.Snapshot, options []claudesty
 // panes. The default style is named rather than hidden: the row is how a user
 // discovers that output styles exist at all, and a blank row would leave them
 // unable to tell "default" apart from "this feature is missing".
+// claudeOutputStyleSidebarValueStyle colors the sidebar value by the style
+// that will be in effect for the next prompt, so a staged change reads as the
+// state the user is moving to rather than the one they are leaving.
+func claudeOutputStyleSidebarValueStyle(snapshot codexapp.Snapshot) lipgloss.Style {
+	effective := strings.TrimSpace(snapshot.PendingOutputStyle)
+	if effective == "" {
+		effective = strings.TrimSpace(snapshot.OutputStyle)
+	}
+	if claudestyle.VerbosityOf(snapshot.AvailableOutputStyles, effective) == claudestyle.VerbosityConcise {
+		return claudeOutputStyleTerseStyle
+	}
+	return claudeOutputStyleVerboseStyle
+}
+
 func claudeOutputStyleSidebarLabel(snapshot codexapp.Snapshot) (label string, pending bool) {
 	if snapshot.Provider != codexapp.ProviderClaudeCode {
 		return "", false

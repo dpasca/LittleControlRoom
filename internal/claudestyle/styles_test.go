@@ -162,3 +162,71 @@ func TestDiscoverIgnoresNonMarkdownEntries(t *testing.T) {
 		t.Fatalf("expected only the markdown style, got %v", names)
 	}
 }
+
+func TestVerbosityInferredFromNameAndDescription(t *testing.T) {
+	home := t.TempDir()
+	writeStyle(t, home, "terse.md", "---\nname: Terse\ndescription: Answer first, minimal prose, no recaps\n---\n")
+	writeStyle(t, home, "exp.md", "---\nname: Explanatory\ndescription: Educational insights while coding\n---\n")
+	writeStyle(t, home, "mystery.md", "---\nname: Dave\ndescription: my personal thing\n---\n")
+	options := Discover(home, t.TempDir())
+
+	for name, want := range map[string]Verbosity{
+		"Terse":       VerbosityConcise,
+		"Explanatory": VerbosityVerbose,
+		// Unclassifiable styles report verbose: the colour exists to warn, so
+		// an unknown style must not look safe.
+		"Dave":      VerbosityVerbose,
+		DefaultName: VerbosityVerbose,
+	} {
+		option, ok := Find(options, name)
+		if !ok {
+			t.Fatalf("style %q not discovered", name)
+		}
+		if option.Verbosity != want {
+			t.Fatalf("%s verbosity = %q, want %q", name, option.Verbosity, want)
+		}
+	}
+}
+
+// A style file can state its own verbosity instead of relying on wording.
+func TestDeclaredVerbosityOverridesInference(t *testing.T) {
+	home := t.TempDir()
+	writeStyle(t, home, "a.md", "---\nname: Chatty\nverbosity: concise\ndescription: detailed walkthroughs\n---\n")
+	writeStyle(t, home, "b.md", "---\nname: Brief\nverbosity: verbose\ndescription: short answers\n---\n")
+	options := Discover(home, t.TempDir())
+
+	if got, _ := Find(options, "Chatty"); got.Verbosity != VerbosityConcise {
+		t.Fatalf("declared concise lost to inference: %q", got.Verbosity)
+	}
+	if got, _ := Find(options, "Brief"); got.Verbosity != VerbosityVerbose {
+		t.Fatalf("declared verbose lost to inference: %q", got.Verbosity)
+	}
+}
+
+// "brief but thorough explanations" is exactly the case worth flagging, so a
+// verbose marker outranks a concise one.
+func TestVerboseWordingWinsOverConciseWording(t *testing.T) {
+	home := t.TempDir()
+	writeStyle(t, home, "mixed.md", "---\nname: Mixed\ndescription: brief but thorough explanations\n---\n")
+	if got, _ := Find(Discover(home, t.TempDir()), "Mixed"); got.Verbosity != VerbosityVerbose {
+		t.Fatalf("verbosity = %q, want verbose for mixed wording", got.Verbosity)
+	}
+}
+
+func TestVerbosityOfUnknownNameIsVerbose(t *testing.T) {
+	options := Discover(t.TempDir(), t.TempDir())
+	if got := VerbosityOf(options, "NeverHeardOfIt"); got != VerbosityVerbose {
+		t.Fatalf("VerbosityOf(unknown) = %q, want verbose", got)
+	}
+	if got := VerbosityOf(options, ""); got != VerbosityVerbose {
+		t.Fatalf("VerbosityOf(empty) = %q, want verbose", got)
+	}
+}
+
+func TestVerbosityOfResolvesAnyCasing(t *testing.T) {
+	home := t.TempDir()
+	writeStyle(t, home, "terse.md", "---\nname: Terse\ndescription: concise\n---\n")
+	if got := VerbosityOf(Discover(home, t.TempDir()), "terse"); got != VerbosityConcise {
+		t.Fatalf("VerbosityOf(%q) = %q, want concise", "terse", got)
+	}
+}

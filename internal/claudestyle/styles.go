@@ -36,12 +36,33 @@ const (
 	SourceProject Source = "project"
 )
 
+// Verbosity is how much prose a style is expected to produce. It drives the
+// at-a-glance colour in the UI, where the point is to notice a verbose setting
+// before spending a turn on it.
+type Verbosity string
+
+const (
+	// VerbosityConcise is proven concise: the style declares it, or its name
+	// and description clearly say so.
+	VerbosityConcise Verbosity = "concise"
+	// VerbosityVerbose covers Claude Code's unconstrained default, styles that
+	// declare themselves verbose, and styles that say so in their text.
+	VerbosityVerbose Verbosity = "verbose"
+)
+
+// VerbosityKey is the optional frontmatter field a style file can set to
+// "concise" or "verbose" to state its intent instead of relying on inference.
+const VerbosityKey = "verbosity"
+
 // Option is one selectable output style.
 type Option struct {
 	Name        string
 	Description string
 	Source      Source
 	Path        string
+	// Verbosity is declared by the style file when it sets a verbosity field,
+	// and inferred from its name and description otherwise.
+	Verbosity Verbosity
 }
 
 // Label renders a short source-qualified description for pickers and status
@@ -62,6 +83,7 @@ func Discover(claudeHome, projectPath string) []Option {
 		Name:        DefaultName,
 		Description: "Claude Code's standard responses",
 		Source:      SourceBuiltIn,
+		Verbosity:   VerbosityVerbose,
 	}}
 	byName := map[string]int{DefaultName: 0}
 
@@ -103,7 +125,7 @@ func loadStyleDir(dir string, source Source) []Option {
 		if err != nil {
 			continue
 		}
-		name, description := parseFrontMatter(string(data))
+		name, description, declared := parseFrontMatter(string(data))
 		if name == "" {
 			// Without a frontmatter name Claude Code cannot address the style,
 			// so listing it would offer a selection that silently does nothing.
@@ -114,6 +136,7 @@ func loadStyleDir(dir string, source Source) []Option {
 			Description: description,
 			Source:      source,
 			Path:        path,
+			Verbosity:   resolveVerbosity(declared, name, description),
 		})
 	}
 	sort.Slice(options, func(i, j int) bool { return options[i].Name < options[j].Name })
@@ -185,10 +208,63 @@ func IsDefault(name string) bool {
 	return name == "" || name == DefaultName
 }
 
-func parseFrontMatter(markdown string) (name, description string) {
+// conciseWords and verboseWords classify a style that does not declare its own
+// verbosity. They match the vocabulary style authors actually use in a name or
+// one-line description.
+var (
+	conciseWords = []string{
+		"terse", "concise", "brief", "short", "minimal", "compact",
+		"succinct", "laconic", "no-nonsense", "straight",
+	}
+	verboseWords = []string{
+		"verbose", "explanatory", "explain", "detailed", "detail", "thorough",
+		"learning", "teaching", "tutorial", "educational", "insight",
+		"comprehensive", "elaborate", "narrate", "walkthrough",
+	}
+)
+
+// resolveVerbosity prefers the style's own declaration, then infers from its
+// name and description. Anything still unproven is reported verbose: the
+// colour exists to warn, so an unrecognised style should not look safe.
+func resolveVerbosity(declared, name, description string) Verbosity {
+	switch strings.ToLower(strings.TrimSpace(declared)) {
+	case string(VerbosityConcise), "terse", "short", "brief", "low":
+		return VerbosityConcise
+	case string(VerbosityVerbose), "long", "high", "explanatory":
+		return VerbosityVerbose
+	}
+	haystack := strings.ToLower(name + " " + description)
+	// A verbose marker wins over a concise one: a style described as "brief
+	// but detailed explanations" is the kind worth flagging.
+	for _, word := range verboseWords {
+		if strings.Contains(haystack, word) {
+			return VerbosityVerbose
+		}
+	}
+	for _, word := range conciseWords {
+		if strings.Contains(haystack, word) {
+			return VerbosityConcise
+		}
+	}
+	return VerbosityVerbose
+}
+
+// VerbosityOf reports the verbosity for a style name, defaulting to verbose
+// for an unknown name so an unrecognised value never reads as safe.
+func VerbosityOf(options []Option, name string) Verbosity {
+	if IsDefault(name) {
+		return VerbosityVerbose
+	}
+	if option, _, ok := Resolve(options, name); ok {
+		return option.Verbosity
+	}
+	return VerbosityVerbose
+}
+
+func parseFrontMatter(markdown string) (name, description, verbosity string) {
 	scanner := bufio.NewScanner(strings.NewReader(markdown))
 	if !scanner.Scan() || strings.TrimSpace(scanner.Text()) != "---" {
-		return "", ""
+		return "", "", ""
 	}
 	values := map[string]string{}
 	for scanner.Scan() {
@@ -201,12 +277,14 @@ func parseFrontMatter(markdown string) (name, description string) {
 			continue
 		}
 		key = strings.TrimSpace(strings.ToLower(key))
-		if key != "name" && key != "description" {
+		if key != "name" && key != "description" && key != VerbosityKey {
 			continue
 		}
 		values[key] = trimFrontMatterValue(value)
 	}
-	return strings.TrimSpace(values["name"]), strings.TrimSpace(values["description"])
+	return strings.TrimSpace(values["name"]),
+		strings.TrimSpace(values["description"]),
+		strings.TrimSpace(values[VerbosityKey])
 }
 
 func trimFrontMatterValue(value string) string {
