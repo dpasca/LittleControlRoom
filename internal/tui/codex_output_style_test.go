@@ -370,3 +370,50 @@ func TestClaudeOutputStyleSidebarValueStyleFollowsStagedStyle(t *testing.T) {
 		t.Fatalf("staging a verbose style should color red, got %v", got)
 	}
 }
+
+// The output style is a global preference, so it must be applied by the shared
+// launch normalizer. Wiring it into a single call site left sessions opened
+// from the picker, /new, a TODO dialog, or restart recovery starting unstyled.
+func TestEveryClaudeLaunchInheritsSavedOutputStyle(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.EmbeddedClaudeOutputStyle = "Terse"
+	m := Model{settingsBaseline: &settings}
+
+	req := m.enrichEmbeddedLaunchRequestBase(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderClaudeCode,
+		ProjectPath: t.TempDir(),
+	})
+	if req.ClaudeOutputStyle != "Terse" {
+		t.Fatalf("ClaudeOutputStyle = %q, want the saved global preference", req.ClaudeOutputStyle)
+	}
+}
+
+// An explicit per-launch choice still wins over the saved preference.
+func TestExplicitLaunchOutputStyleIsNotOverwritten(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.EmbeddedClaudeOutputStyle = "Terse"
+	m := Model{settingsBaseline: &settings}
+
+	req := m.enrichEmbeddedLaunchRequestBase(codexapp.LaunchRequest{
+		Provider:          codexapp.ProviderClaudeCode,
+		ProjectPath:       t.TempDir(),
+		ClaudeOutputStyle: "Explanatory",
+	})
+	if req.ClaudeOutputStyle != "Explanatory" {
+		t.Fatalf("ClaudeOutputStyle = %q, want the explicit launch choice preserved", req.ClaudeOutputStyle)
+	}
+}
+
+func TestNonClaudeLaunchGetsNoOutputStyle(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.EmbeddedClaudeOutputStyle = "Terse"
+	m := Model{settingsBaseline: &settings}
+
+	req := m.enrichEmbeddedLaunchRequestBase(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderCodex,
+		ProjectPath: t.TempDir(),
+	})
+	if req.ClaudeOutputStyle != "" {
+		t.Fatalf("ClaudeOutputStyle = %q, want none for a non-Claude provider", req.ClaudeOutputStyle)
+	}
+}

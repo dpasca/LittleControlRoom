@@ -149,10 +149,6 @@ func claudeOutputStyleStatusLine(snapshot codexapp.Snapshot, options []claudesty
 	return strings.Join(parts, " · ") + " · available: " + strings.Join(claudestyle.Names(options), ", ")
 }
 
-// claudeOutputStyleSidebarLabel renders the sidebar value for Claude Code
-// panes. The default style is named rather than hidden: the row is how a user
-// discovers that output styles exist at all, and a blank row would leave them
-// unable to tell "default" apart from "this feature is missing".
 // claudeOutputStyleSidebarValueStyle colors the sidebar value by the style
 // that will be in effect for the next prompt, so a staged change reads as the
 // state the user is moving to rather than the one they are leaving.
@@ -167,6 +163,10 @@ func claudeOutputStyleSidebarValueStyle(snapshot codexapp.Snapshot) lipgloss.Sty
 	return claudeOutputStyleVerboseStyle
 }
 
+// claudeOutputStyleSidebarLabel renders the sidebar value for Claude Code
+// panes. The default style is named rather than hidden: the row is how a user
+// discovers that output styles exist at all, and a blank row would leave them
+// unable to tell "default" apart from "this feature is missing".
 func claudeOutputStyleSidebarLabel(snapshot codexapp.Snapshot) (label string, pending bool) {
 	if snapshot.Provider != codexapp.ProviderClaudeCode {
 		return "", false

@@ -1091,7 +1091,6 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		InterruptedTurnStartedAt:   options.interruptedTurnStartedAt,
 		Preset:                     m.currentCodexLaunchPreset(),
 		ClaudePermissionMode:       m.currentClaudePermissionMode(),
-		ClaudeOutputStyle:          m.currentClaudeOutputStyle(),
 		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
 		AppDataDir:                 m.appDataDir(),
 		CodexHome:                  m.codexHome(),

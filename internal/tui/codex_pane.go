@@ -1445,6 +1445,13 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 	if provider == codexapp.ProviderClaudeCode && strings.TrimSpace(string(req.ClaudePermissionMode)) == "" {
 		req.ClaudePermissionMode = m.currentClaudePermissionMode()
 	}
+	// The output style is a global preference, so it has to be applied to
+	// every Claude launch, not just the one built by embeddedLaunchRequest.
+	// Sessions opened from the picker, /new, a TODO dialog, or restart
+	// recovery all arrive here and would otherwise start unstyled.
+	if provider == codexapp.ProviderClaudeCode && strings.TrimSpace(req.ClaudeOutputStyle) == "" {
+		req.ClaudeOutputStyle = m.currentClaudeOutputStyle()
+	}
 	if state, ok := m.repositoryIntegrityStateForProject(req.ProjectPath); ok && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
 		req.WorkspaceContract = codexapp.WorkspaceContract{
 			AssignedPath:       req.ProjectPath,
