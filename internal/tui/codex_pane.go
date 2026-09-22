@@ -130,6 +130,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexToolAnswers == nil {
 		m.codexToolAnswers = make(map[string]codexToolAnswerState)
 	}
+	if m.codexToolInputMinimized == nil {
+		m.codexToolInputMinimized = make(map[string]string)
+	}
 	if m.codexLCAgentStatusVisible == nil {
 		m.codexLCAgentStatusVisible = make(map[string]struct{})
 	}

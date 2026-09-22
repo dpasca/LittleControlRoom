@@ -69,7 +69,7 @@ func newToolInputDialogModel(t *testing.T, request *codexapp.ToolInputRequest) (
 	}, session
 }
 
-func TestToolInputDialogReplacesComposerBlockWithModal(t *testing.T) {
+func TestToolInputDialogDocksBelowTranscript(t *testing.T) {
 	m, _ := newToolInputDialogModel(t, testToolInputQuestionRequest())
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
@@ -78,10 +78,10 @@ func TestToolInputDialogReplacesComposerBlockWithModal(t *testing.T) {
 
 	lower := ansi.Strip(strings.Join(m.codexLowerBlocks(snapshot, m.width), "\n"))
 	if strings.Contains(lower, "Structured input:") {
-		t.Fatalf("lower blocks should no longer render the structured input block: %q", lower)
+		t.Fatalf("lower blocks should no longer render the plain structured input block: %q", lower)
 	}
-	if strings.Contains(lower, "Transport and MCP adapter") {
-		t.Fatalf("options should live in the dialog, not above the input box: %q", lower)
+	if !strings.Contains(lower, "╭") {
+		t.Fatalf("the question should render as a docked dialog panel: %q", lower)
 	}
 
 	rendered := ansi.Strip(m.View())
@@ -254,13 +254,14 @@ func TestToolInputDialogShortensDescriptionsToFitShortPanes(t *testing.T) {
 		t.Fatal("snapshot should be available")
 	}
 
-	tall := ansi.Strip(m.renderCodexToolInputDialogOverlay(strings.Repeat("\n", 31), 120, 32, snapshot))
+	m.height = 44
+	tall := ansi.Strip(m.renderCodexToolInputDialogBlock(snapshot, 120))
 	if !strings.Contains(tall, "Plan numbering order") {
 		t.Fatalf("tall pane should show every option description:\n%s", tall)
 	}
 
-	m.height = 16
-	short := ansi.Strip(m.renderCodexToolInputDialogOverlay(strings.Repeat("\n", 15), 120, 16, snapshot))
+	m.height = 18
+	short := ansi.Strip(m.renderCodexToolInputDialogBlock(snapshot, 120))
 	if strings.Contains(short, "Plan numbering order") {
 		t.Fatalf("short pane should drop unselected descriptions:\n%s", short)
 	}
@@ -282,7 +283,7 @@ func TestToolInputDialogWrapsLongTypedAnswer(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.View())
-	for _, want := range []string{"Neither of those yet", "performance measurement I", "promised earlier."} {
+	for _, want := range []string{"Neither of those yet", "performance measurement I", "earlier."} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("wrapped answer missing %q:\n%s", want, rendered)
 		}
@@ -359,4 +360,41 @@ func TestToolInputDialogQuestionNavigationDoesNotWrapOrDropAnswers(t *testing.T)
 	if got := answers["second"]; len(got) != 1 || got[0] != "Beta" {
 		t.Fatalf("submitted second answer = %#v", got)
 	}
+}
+
+func TestToolInputDialogMinimizeRevealsTranscript(t *testing.T) {
+	m, _ := newToolInputDialogModel(t, testToolInputQuestionRequest())
+	transcriptLines := ansi.Strip(m.View())
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m"), Alt: true})
+	m = updated.(Model)
+	minimized := ansi.Strip(m.View())
+	if strings.Contains(minimized, "Transport and MCP adapter") {
+		t.Fatalf("minimized dialog should not render options:\n%s", minimized)
+	}
+	for _, want := range []string{"Waiting for your answer:", "alt+m answer"} {
+		if !strings.Contains(minimized, want) {
+			t.Fatalf("minimized bar missing %q:\n%s", want, minimized)
+		}
+	}
+	if countRenderedLines(minimized) != countRenderedLines(transcriptLines) {
+		t.Fatal("pane height should stay stable while minimized")
+	}
+
+	// Answer keys must not reach the question while it is parked.
+	updated, _ = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	m = updated.(Model)
+	if len(m.codexToolAnswers) != 0 {
+		t.Fatalf("minimized dialog should ignore option keys: %#v", m.codexToolAnswers)
+	}
+
+	updated, _ = m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m"), Alt: true})
+	m = updated.(Model)
+	if restored := ansi.Strip(m.View()); !strings.Contains(restored, "Transport and MCP adapter") {
+		t.Fatalf("alt+m should reopen the dialog:\n%s", restored)
+	}
+}
+
+func countRenderedLines(view string) int {
+	return strings.Count(view, "\n") + 1
 }

@@ -39,8 +39,6 @@ func (m Model) renderCodexView() string {
 	body := m.renderCodexSplitView(snapshot, width, height)
 	if _, _, ok := codexManualCommandFromSnapshot(snapshot); ok {
 		body = m.renderCodexManualCommandDialogOverlay(body, width, height, snapshot)
-	} else if _, ok := codexToolInputQuestionsFromSnapshot(snapshot); ok && snapshot.PendingApproval == nil {
-		body = m.renderCodexToolInputDialogOverlay(body, width, height, snapshot)
 	} else if snapshot.PendingElicitation != nil {
 		body = m.renderCodexElicitationDialogOverlay(body, width, height, snapshot)
 	}
@@ -186,8 +184,8 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			renderFooterLine(width, renderFooterActionList(approvalActions...)),
 		}
 	case snapshot.PendingToolInput != nil:
-		// The question, its options, and the composer live in the centered
-		// dialog, so the lower area only keeps the footer and browser context.
+		// The question docks under the transcript instead of covering it, so the
+		// session output that the answer depends on stays readable.
 		lines := []string{}
 		if len(snapshot.PendingToolInput.Questions) == 0 {
 			// Nothing can be answered here, so name the blocked state instead
@@ -200,6 +198,9 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		lines = append(lines, m.renderCodexFooter(snapshot, width))
 		if browser := m.renderCodexBrowserPanel(snapshot, width); browser != "" {
 			lines = append(lines, browser)
+		}
+		if dialog := m.renderCodexToolInputDialogBlock(snapshot, width); dialog != "" {
+			lines = append(lines, dialog)
 		}
 		return lines
 	case snapshot.Closed:
@@ -614,6 +615,17 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 
 	var actions []footerAction
 	switch {
+	case snapshot.PendingToolInput != nil && m.codexToolInputMinimizedFor(snapshot):
+		exitAction := "close"
+		if codexSnapshotCanInterruptActiveTurn(snapshot) {
+			exitAction = "interrupt"
+		}
+		actions = append(actions,
+			footerPrimaryAction("alt+m", "answer"),
+			footerNavAction("pgup/pgdn", "scroll"),
+			footerExitAction("ctrl+c", exitAction),
+			footerHideAction("Alt+Up", "hide"),
+		)
 	case snapshot.PendingToolInput != nil:
 		answerAction := "answer"
 		exitAction := "close"

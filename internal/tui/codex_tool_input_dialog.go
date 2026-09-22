@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/codexapp"
 )
@@ -143,11 +142,26 @@ func (m Model) codexToolInputComposerActive(snapshot codexapp.Snapshot) bool {
 // the structured input dialog. The composer width has to be shared with the
 // live textarea: wrapping it at one width and rendering it at another leaves the
 // cursor off the visible rows.
-func codexToolInputDialogWidths(bodyW int) (panelW, innerW, composerW int) {
-	panelW = min(92, max(44, bodyW-14))
-	panelW = min(panelW, max(14, bodyW-6))
+func codexToolInputDialogWidths(paneW int) (panelW, innerW, composerW int) {
+	if paneW <= 0 {
+		paneW = 120
+	}
+	panelW = max(24, paneW-2)
 	innerW = max(10, panelW-4)
 	return panelW, innerW, max(12, innerW-2)
+}
+
+// codexToolInputDialogMaxContentLines keeps the docked dialog from crowding out
+// the transcript it is meant to sit beside.
+func codexToolInputDialogMaxContentLines(paneH int) int {
+	if paneH <= 0 {
+		paneH = 30
+	}
+	// The dialog has to stay answerable on short panes, so it keeps a floor that
+	// fits a question, its options, and the action chips. Above that it leaves
+	// room for the transcript; alt+m parks it when a long question still crowds
+	// the session out.
+	return max(12, paneH-10)
 }
 
 // codexToolInputComposerRows counts the visual rows a typed answer occupies,
@@ -189,24 +203,67 @@ func (m *Model) syncCodexToolInputComposerSize() bool {
 	return true
 }
 
-func (m Model) renderCodexToolInputDialogOverlay(body string, bodyW, bodyH int, snapshot codexapp.Snapshot) string {
+// renderCodexToolInputDialogBlock renders the question as a panel docked under
+// the transcript. Docking keeps the session text readable while the question is
+// open; a centered overlay would hide the very output the answer depends on.
+func (m Model) renderCodexToolInputDialogBlock(snapshot codexapp.Snapshot, width int) string {
 	request, ok := codexToolInputQuestionsFromSnapshot(snapshot)
 	if !ok {
-		return body
+		return ""
 	}
-	panelW, panelInnerW, _ := codexToolInputDialogWidths(bodyW)
-	maxLines := max(1, bodyH-4)
+	if m.codexToolInputMinimizedFor(snapshot) {
+		return renderCodexToolInputMinimizedBar(snapshot, *request, width)
+	}
+	panelW, panelInnerW, _ := codexToolInputDialogWidths(width)
+	maxLines := codexToolInputDialogMaxContentLines(m.height)
 	content := m.renderCodexToolInputDialogContent(snapshot, *request, panelInnerW, maxLines)
 	content = clampDialogContent(
 		content,
 		maxLines,
 		4,
-		detailMutedStyle.Render("... options shortened to fit ..."),
+		detailMutedStyle.Render("... options shortened to fit; alt+m hides this dialog ..."),
 	)
-	panel := renderDialogPanel(panelW, panelInnerW, content)
-	left := max(0, (bodyW-lipgloss.Width(panel))/2)
-	top := max(0, (bodyH-lipgloss.Height(panel))/2)
-	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+	return renderDialogPanel(panelW, panelInnerW, content)
+}
+
+func renderCodexToolInputMinimizedBar(snapshot codexapp.Snapshot, request codexapp.ToolInputRequest, width int) string {
+	summary := strings.TrimSpace(request.Summary())
+	if summary == "" {
+		summary = embeddedProvider(snapshot).Label() + " is waiting for your answer"
+	}
+	label := detailWarningStyle.Render("Waiting for your answer: ") + detailValueStyle.Render(summary)
+	actions := renderFooterActionList(
+		footerPrimaryAction("alt+m", "answer"),
+		footerNavAction("pgup/pgdn", "scroll"),
+	)
+	return renderFooterLine(max(20, width), label, actions)
+}
+
+// codexToolInputMinimizedFor reports whether the user parked this exact request
+// to read the transcript. The record is per request, so a new question always
+// opens visible.
+func (m Model) codexToolInputMinimizedFor(snapshot codexapp.Snapshot) bool {
+	request, ok := codexToolInputQuestionsFromSnapshot(snapshot)
+	if !ok {
+		return false
+	}
+	minimized, found := m.codexToolInputMinimized[normalizeProjectPath(m.codexVisibleProject)]
+	return found && minimized == strings.TrimSpace(request.ID)
+}
+
+func (m *Model) toggleCodexToolInputMinimized(request *codexapp.ToolInputRequest) {
+	if m.codexToolInputMinimized == nil {
+		m.codexToolInputMinimized = make(map[string]string)
+	}
+	key := normalizeProjectPath(m.codexVisibleProject)
+	requestID := strings.TrimSpace(request.ID)
+	if m.codexToolInputMinimized[key] == requestID {
+		delete(m.codexToolInputMinimized, key)
+		m.status = "Question dialog reopened"
+		return
+	}
+	m.codexToolInputMinimized[key] = requestID
+	m.status = "Question dialog hidden. Press alt+m to answer."
 }
 
 // codexToolInputDescriptionMode controls how much option help the dialog keeps
@@ -373,7 +430,8 @@ func codexToolInputDialogActions(
 		actions = append(actions, renderDialogAction("Tab", "next question", navigateActionKeyStyle, navigateActionTextStyle))
 	}
 	actions = append(actions,
-		renderDialogAction("alt+up", "hide", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("alt+m", "read session", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("alt+up", "hide pane", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("ctrl+c", "interrupt", cancelActionKeyStyle, cancelActionTextStyle),
 	)
 	return actions
@@ -430,6 +488,19 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 	}
 	if m.codexToolInputSubmitPending(request.ID) {
 		// The answer is already on its way; repeat activation would send it twice.
+		return m, nil
+	}
+	if msg.String() == "alt+m" {
+		m.toggleCodexToolInputMinimized(request)
+		return m, m.codexInput.Focus()
+	}
+	if m.codexToolInputMinimizedFor(snapshot) {
+		// While parked, the pane belongs to the transcript: only reopening the
+		// dialog reaches the question, everything else scrolls or is ignored.
+		if msg.String() == "enter" {
+			m.toggleCodexToolInputMinimized(request)
+			return m, m.codexInput.Focus()
+		}
 		return m, nil
 	}
 	state := m.ensureToolAnswerState(m.codexVisibleProject, request)

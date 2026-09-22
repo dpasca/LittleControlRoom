@@ -344,6 +344,7 @@ type Model struct {
 	codexCommandSubmitProject     string
 	codexToolInputSubmitting      string
 	codexToolInputSubmitProject   string
+	codexToolInputMinimized       map[string]string
 	codexViewport                 viewport.Model
 	codexTranscriptCache          codexTranscriptRenderCache
 	codexViewportContent          codexViewportContentState
@@ -871,6 +872,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		codexHistoryLoads:             make(map[string]codexHistoryViewportRestore),
 		codexArtifactLinkScans:        make(map[string]codexArtifactLinkScanState),
 		codexToolAnswers:              make(map[string]codexToolAnswerState),
+		codexToolInputMinimized:       make(map[string]string),
 		browserAttentionAcknowledged:  make(map[string]string),
 		aiLatencyInFlight:             make(map[int64]aiLatencyOp),
 		detailViewport:                detailViewport,
