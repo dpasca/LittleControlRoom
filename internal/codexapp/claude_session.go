@@ -152,6 +152,11 @@ type claudeCodeSession struct {
 	modeNoticeShown      bool
 	modeFallbackShown    bool
 
+	// launchedPending* hold the staged choices the running CLI process was
+	// started with; only those are applied when that process reports in.
+	launchedPendingModel     string
+	launchedPendingReasoning string
+
 	assistantBlocks     map[string]map[string]struct{}
 	toolCalls           map[string]claudeToolCall
 	toolResults         map[string]struct{}
@@ -665,6 +670,8 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	if s.cmd == nil {
 		model := firstNonEmptyTrimmed(concreteClaudeModel(s.pendingModel), concreteClaudeModel(s.model))
 		reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
+		s.launchedPendingModel = concreteClaudeModel(s.pendingModel)
+		s.launchedPendingReasoning = strings.TrimSpace(s.pendingReasoning)
 		sessionID := strings.TrimSpace(s.sessionID)
 		permissionMode, modeNotice := claudePermissionMode(s.requestedPermissionMode, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
 		s.permissionMode = permissionMode
@@ -1132,6 +1139,13 @@ func claudeModelOptionExists(models []ModelOption, id string) bool {
 }
 
 func claudeModelNamesEquivalent(left, right string) bool {
+	// When the CLI catalog says what an alias runs, an older pinned version of
+	// the same family is a different model.
+	if leftResolved, ok := claudeKnownResolvedModel(left); ok {
+		if rightResolved, ok := claudeKnownResolvedModel(right); ok {
+			return strings.EqualFold(leftResolved, rightResolved)
+		}
+	}
 	leftFamily, leftIsAlias := claudeModelAliasFamily(left)
 	rightFamily, rightIsAlias := claudeModelAliasFamily(right)
 	return (leftIsAlias || rightIsAlias) &&
@@ -1848,12 +1862,14 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			}
 			s.observeOutputStyleLocked(firstNonEmptyTrimmed(env.OutputStyle, initMsg.OutputStyle))
 			if model := concreteClaudeModel(env.Model); model != "" {
-				s.model = model
-				s.pendingModel = ""
+				s.observeClaudeModelLocked(model)
 			}
-			if effort := strings.TrimSpace(s.pendingReasoning); effort != "" {
+			if effort := s.launchedPendingReasoning; effort != "" {
 				s.reasoningEffort = effort
-				s.pendingReasoning = ""
+				if strings.TrimSpace(s.pendingReasoning) == effort {
+					s.pendingReasoning = ""
+				}
+				s.launchedPendingReasoning = ""
 			}
 			if modeRaw := strings.TrimSpace(env.PermissionMode); modeRaw != "" {
 				if mode, err := claudecli.ParsePermissionMode(modeRaw); err == nil {
@@ -1948,14 +1964,25 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	s.notifyAsync()
 }
 
+// observeClaudeModelLocked records the model the running process reports.
+// A choice staged after that process started stays pending for the next turn.
+func (s *claudeCodeSession) observeClaudeModelLocked(model string) {
+	s.model = model
+	if launched := s.launchedPendingModel; launched != "" {
+		if concreteClaudeModel(s.pendingModel) == launched {
+			s.pendingModel = ""
+		}
+		s.launchedPendingModel = ""
+	}
+}
+
 func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string) string {
 	var msg claudeStreamMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return ""
 	}
 	if model := concreteClaudeModel(msg.Model); model != "" {
-		s.model = model
-		s.pendingModel = ""
+		s.observeClaudeModelLocked(model)
 	}
 	if msg.ID == "" {
 		msg.ID = firstNonEmptyTrimmed(envelopeUUID, fmt.Sprintf("assistant-%d", len(s.entries)))

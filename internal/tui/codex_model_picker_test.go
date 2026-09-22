@@ -167,3 +167,27 @@ func TestClaudeModelPickerRowShowsVersionedNameAndAlias(t *testing.T) {
 		t.Fatalf("default row = %q, want one default marker", row)
 	}
 }
+
+func TestLeaderModelPickerUsesVisibleClaudeSessionProvider(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/lcr-picker-claude",
+		snapshot:    codexapp.Snapshot{Provider: codexapp.ProviderClaudeCode, ProjectPath: "/tmp/lcr-picker-claude", Started: true, ThreadID: "thread", Model: "claude-opus-5", ReasoningEffort: "high"},
+		models:      []codexapp.ModelOption{{Model: "claude-opus-5", DisplayName: "Opus 5"}, {Model: "sonnet", DisplayName: "Sonnet 5"}},
+	}
+	manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) { return session, nil })
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: "/tmp/lcr-picker-claude", Provider: codexapp.ProviderClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{codexManager: manager, codexVisibleProject: "/tmp/lcr-picker-claude", recentClaudeModels: []string{"sonnet"}, recentCodexModels: []string{"gpt-5"}}
+	m.openCodexModelPickerLoading()
+	updated, _ := m.Update(m.openCodexModelPickerCmd()())
+	got := updated.(Model)
+
+	title := strings.SplitN(ansi.Strip(got.renderCodexModelPickerContent(100, 30)), "\n", 2)[0]
+	if !strings.Contains(title, "(Claude Code)") {
+		t.Fatalf("picker title = %q, want the visible Claude Code session", title)
+	}
+	if len(got.codexModelPicker.RecentModels) != 1 || got.codexModelPicker.RecentModels[0].Model != "sonnet" {
+		t.Fatalf("recent models = %#v, want Claude recents", got.codexModelPicker.RecentModels)
+	}
+}

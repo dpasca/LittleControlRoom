@@ -403,7 +403,9 @@ func (m Model) currentEmbeddedSessionProvider() codexapp.Provider {
 }
 
 func (m Model) codexModelPickerProvider() codexapp.Provider {
-	if state := m.codexModelPicker; state != nil {
+	// An unset provider means "the visible session"; Normalized would turn it
+	// into Codex.
+	if state := m.codexModelPicker; state != nil && strings.TrimSpace(string(state.Provider)) != "" {
 		if provider := state.Provider.Normalized(); provider != "" {
 			return provider
 		}
@@ -446,11 +448,14 @@ func (m *Model) openCodexModelPickerLoadingFor(target codexModelPickerTarget) {
 }
 
 func (m *Model) openCodexModelPickerLoadingForProvider(target codexModelPickerTarget, provider codexapp.Provider) {
+	if strings.TrimSpace(string(provider)) != "" {
+		provider = provider.Normalized()
+	}
 	m.codexModelPicker = &codexModelPickerState{
 		Loading:  true,
 		Focus:    codexModelPickerFocusFilter,
 		Target:   target,
-		Provider: provider.Normalized(),
+		Provider: provider,
 	}
 }
 
@@ -469,7 +474,9 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	if existing := m.codexModelPicker; existing != nil {
 		state.ControlInvocation = existing.ControlInvocation
 		state.Target = existing.Target
-		state.Provider = existing.Provider.Normalized()
+		if strings.TrimSpace(string(existing.Provider)) != "" {
+			state.Provider = existing.Provider.Normalized()
+		}
 	}
 
 	recentModelIDs := m.recentCodexModels

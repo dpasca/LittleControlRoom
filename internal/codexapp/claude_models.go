@@ -309,6 +309,28 @@ func claudeAliasResolvedModel(options []ModelOption, alias string) string {
 	return ""
 }
 
+// claudeKnownResolvedModel returns the concrete model a Claude name runs:
+// concrete IDs are themselves, aliases need the latest CLI catalog.
+func claudeKnownResolvedModel(model string) (string, bool) {
+	model = concreteClaudeModel(model)
+	if model == "" {
+		return "", false
+	}
+	if strings.Contains(strings.ToLower(model), "claude-") {
+		return model, true
+	}
+	options := latestClaudeModelCatalog()
+	for _, option := range options {
+		if strings.EqualFold(strings.TrimSpace(option.Model), model) && strings.TrimSpace(option.ResolvedModel) != "" {
+			return strings.TrimSpace(option.ResolvedModel), true
+		}
+	}
+	if resolved := claudeAliasResolvedModel(options, model); resolved != "" {
+		return resolved, true
+	}
+	return "", false
+}
+
 // claudeCatalogModelDisplayName names a Claude model the way the latest CLI
 // catalog does, so an alias such as "opus" reads as the version it runs.
 func claudeCatalogModelDisplayName(model string) string {

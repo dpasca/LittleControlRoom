@@ -184,3 +184,65 @@ func TestParseClaudeModelCatalogLineReportsInitializeErrors(t *testing.T) {
 		t.Fatalf("parse error response = ok %t err %v", ok, err)
 	}
 }
+
+func TestClaudeModelStagedMidTurnSurvivesRunningTurnReports(t *testing.T) {
+	session := &claudeCodeSession{
+		model:            "claude-opus-5",
+		reasoningEffort:  "high",
+		pendingModel:     "opus[1m]",
+		pendingReasoning: "max",
+		assistantBlocks:  make(map[string]map[string]struct{}),
+		toolCalls:        make(map[string]claudeToolCall),
+		toolResults:      make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-5"}`)
+	session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg_1","model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"Still working."}]}}`)
+
+	snapshot := session.Snapshot()
+	if snapshot.PendingModel != "opus[1m]" || snapshot.PendingReasoning != "max" {
+		t.Fatalf("pending = %q/%q, want the choice staged after launch kept for the next turn", snapshot.PendingModel, snapshot.PendingReasoning)
+	}
+	if snapshot.Model != "claude-opus-5" || snapshot.ReasoningEffort != "high" {
+		t.Fatalf("current = %q/%q, want the running turn's model and effort", snapshot.Model, snapshot.ReasoningEffort)
+	}
+}
+
+func TestClaudeModelStagedBeforeLaunchIsConsumedWhenReported(t *testing.T) {
+	session := &claudeCodeSession{
+		model:                    "claude-opus-5",
+		pendingModel:             "opus[1m]",
+		pendingReasoning:         "max",
+		launchedPendingModel:     "opus[1m]",
+		launchedPendingReasoning: "max",
+		assistantBlocks:          make(map[string]map[string]struct{}),
+		toolCalls:                make(map[string]claudeToolCall),
+		toolResults:              make(map[string]struct{}),
+	}
+
+	session.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-5-5[1m]"}`)
+
+	snapshot := session.Snapshot()
+	if snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
+		t.Fatalf("pending = %q/%q, want launched choice consumed", snapshot.PendingModel, snapshot.PendingReasoning)
+	}
+	if snapshot.Model != "claude-opus-5-5[1m]" || snapshot.ReasoningEffort != "max" {
+		t.Fatalf("current = %q/%q", snapshot.Model, snapshot.ReasoningEffort)
+	}
+}
+
+func TestClaudeModelEquivalenceUsesCatalogResolution(t *testing.T) {
+	useClaudeModelCatalogHelper(t)
+	if ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5", "opus") != true {
+		t.Fatal("without a catalog, family aliases should stay equivalent")
+	}
+	if _, err := loadClaudeModelCatalog(context.Background(), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5", "opus") {
+		t.Fatal("opus resolves to Opus 5.5, so it must not match a pinned Opus 5")
+	}
+	if !ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5-5[1m]", "opus[1m]") {
+		t.Fatal("opus[1m] should match the model it resolves to")
+	}
+}
