@@ -48,6 +48,38 @@ func (m Model) agentTaskForProjectPath(projectPath string) (model.AgentTask, boo
 	return model.AgentTask{}, false
 }
 
+// agentTaskSessionBindingGrace bounds how long after its last real activity a
+// finished task may still adopt a late engineer session identity. The
+// announcement from a task's own session lands seconds after completion; a
+// match arriving hours later is an unrelated session reusing the workspace path.
+const agentTaskSessionBindingGrace = 30 * time.Minute
+
+// agentTaskAcceptsSessionBinding reports whether a task may adopt an observed
+// engineer session identity. Completed tasks keep their workspace path in the
+// project list indefinitely, so a path match alone would let a long-finished
+// task capture an unrelated live session days later.
+func agentTaskAcceptsSessionBinding(task model.AgentTask, now time.Time) bool {
+	switch model.NormalizeAgentTaskStatus(task.Status) {
+	case model.AgentTaskStatusActive, model.AgentTaskStatusWaiting:
+		return true
+	case model.AgentTaskStatusCompleted:
+		last := agentTaskLastActivity(task)
+		return !last.IsZero() && !now.Before(last) && now.Sub(last) <= agentTaskSessionBindingGrace
+	default:
+		return false
+	}
+}
+
+// agentTaskForSessionBinding resolves the task owning projectPath only when that
+// task is still eligible to take on a session identity.
+func (m Model) agentTaskForSessionBinding(projectPath string) (model.AgentTask, bool) {
+	task, ok := m.agentTaskForProjectPath(projectPath)
+	if !ok || !agentTaskAcceptsSessionBinding(task, time.Now()) {
+		return model.AgentTask{}, false
+	}
+	return task, true
+}
+
 func (m Model) isAgentTaskProjectPath(projectPath string) bool {
 	_, ok := m.agentTaskForProjectPath(projectPath)
 	return ok
@@ -187,9 +219,13 @@ func agentTaskClassificationType(task model.AgentTask) model.SessionCategory {
 	}
 }
 
+// agentTaskLastActivity reports observed task activity. UpdatedAt is excluded
+// on purpose: it advances on bookkeeping writes that explicitly leave the task
+// lifecycle alone (see store.RecordAgentTaskEngineerSession), so including it
+// makes a long-finished task look like it just acted.
 func agentTaskLastActivity(task model.AgentTask) time.Time {
 	latest := task.CreatedAt
-	for _, candidate := range []time.Time{task.UpdatedAt, task.LastTouchedAt, task.ResultReadyAt, task.ResultDeliveredAt, task.ResultConsumedAt, task.CompletedAt, task.ArchivedAt} {
+	for _, candidate := range []time.Time{task.LastTouchedAt, task.ResultReadyAt, task.ResultDeliveredAt, task.ResultConsumedAt, task.CompletedAt, task.ArchivedAt} {
 		if candidate.After(latest) {
 			latest = candidate
 		}
