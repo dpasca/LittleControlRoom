@@ -133,6 +133,7 @@ type claudeCodeSession struct {
 	usageRefreshQueued   bool
 	pendingModel         string
 	pendingReasoning     string
+	modelCatalog         func(context.Context, string) ([]ModelOption, error) // nil keeps the curated aliases
 	outputStyle          string
 	pendingOutputStyle   string
 	availableStyles      []claudestyle.Option
@@ -357,6 +358,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		claudeHome:               claudeHome,
 		planUsageReader:          claudecli.NewPlanUsageReader(),
 		pendingModel:             concreteClaudeModel(req.PendingModel),
+		modelCatalog:             loadClaudeModelCatalog,
 		pendingReasoning:         strings.TrimSpace(req.PendingReasoning),
 		permissionMode:           permissionMode,
 		status:                   claudeSupportStatus,
@@ -813,6 +815,8 @@ func (s *claudeCodeSession) ShowStatus() error {
 	model := concreteClaudeModel(s.model)
 	if model == "" {
 		model = "(default)"
+	} else if label := claudeCatalogModelDisplayName(model); label != model {
+		model = label + " · " + model
 	}
 	mode := s.effectivePermissionModeLocked()
 	sessionFile := strings.TrimSpace(s.sessionFile)
@@ -974,11 +978,20 @@ func (s *claudeCodeSession) Review() error {
 
 func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	catalog := s.modelCatalog
+	projectPath := s.projectPath
+	current := []string{s.pendingModel, s.model}
+	s.mu.Unlock()
 
-	models := append([]ModelOption(nil), claudeEmbeddedModelOptions()...)
+	// Ask the installed CLI outside the session lock: a cold catalog spawns it.
+	models := claudeEmbeddedModelOptions()
+	if catalog != nil {
+		if listed, err := catalog(context.Background(), projectPath); err == nil && len(listed) > 0 {
+			models = listed
+		}
+	}
 	extra := make([]ModelOption, 0, 2)
-	for _, model := range []string{s.pendingModel, s.model} {
+	for _, model := range current {
 		model = concreteClaudeModel(model)
 		if model == "" || claudeModelOptionExists(models, model) || claudeModelOptionExists(extra, model) {
 			continue
@@ -986,7 +999,7 @@ func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 		extra = append(extra, ModelOption{
 			ID:                        model,
 			Model:                     model,
-			DisplayName:               model,
+			DisplayName:               claudeCatalogModelDisplayName(model),
 			Description:               "Current Claude Code model",
 			SupportedReasoningEfforts: claudeReasoningEffortOptions(),
 			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
@@ -1012,7 +1025,7 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 	}
 	parts := []string{}
 	if s.pendingModel != "" {
-		parts = append(parts, "model "+s.pendingModel)
+		parts = append(parts, "model "+claudeCatalogModelDisplayName(s.pendingModel))
 	}
 	if s.pendingReasoning != "" {
 		parts = append(parts, "effort "+s.pendingReasoning)
@@ -1110,7 +1123,8 @@ func claudeModelOptionExists(models []ModelOption, id string) bool {
 	id = strings.TrimSpace(id)
 	for _, option := range models {
 		if strings.EqualFold(strings.TrimSpace(option.ID), id) ||
-			strings.EqualFold(strings.TrimSpace(option.Model), id) {
+			strings.EqualFold(strings.TrimSpace(option.Model), id) ||
+			strings.EqualFold(strings.TrimSpace(option.ResolvedModel), id) {
 			return true
 		}
 	}

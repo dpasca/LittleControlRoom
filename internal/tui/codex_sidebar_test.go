@@ -624,7 +624,7 @@ func TestEmbeddedSidebarHidesEquivalentClaudeAliasAsNextModel(t *testing.T) {
 	snapshot.PendingReasoning = "high"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	if !strings.Contains(rendered, "Model claude-fable-5 / high") {
+	if !strings.Contains(rendered, "Model Fable 5 / high") {
 		t.Fatalf("sidebar model rows should keep the concrete active Claude model:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Next") {
@@ -642,14 +642,14 @@ func TestEmbeddedSidebarNormalizesEquivalentClaudeAliasWhenReasoningChanges(t *t
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
 	for _, want := range []string{
-		"Model claude-opus-5 / xhigh",
-		"Next claude-opus-5 / max",
+		"Model Opus 5 / xhigh",
+		"Next Opus 5 / max",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("sidebar model rows missing normalized label %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Next opus / max") {
+	if strings.Contains(rendered, "Next Opus / max") {
 		t.Fatalf("equivalent active and pending Claude models should use one label:\n%s", rendered)
 	}
 }
@@ -663,7 +663,7 @@ func TestEmbeddedSidebarShowsDifferentClaudeAliasAsNextModel(t *testing.T) {
 	snapshot.PendingReasoning = "high"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	if !strings.Contains(rendered, "Next opus / high") {
+	if !strings.Contains(rendered, "Next Opus / high") {
 		t.Fatalf("different Claude alias should be shown as a next-model change:\n%s", rendered)
 	}
 }

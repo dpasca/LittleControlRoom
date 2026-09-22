@@ -2070,7 +2070,7 @@ func (m *Model) returnToTodoFromModelPicker() {
 
 func (m Model) embeddedModelLabelForProject(projectPath string, provider codexapp.Provider) string {
 	if pref, ok := m.embeddedModelPreference(provider); ok && pref.Model != "" {
-		label := pref.Model
+		label := codexapp.ModelDisplayName(provider, pref.Model)
 		if provider.Normalized() == codexapp.ProviderLCAgent && strings.TrimSpace(pref.ModelProvider) != "" {
 			label = settingsLCAgentModelPickerProviderLabel(pref.ModelProvider) + " / " + label
 		}
@@ -2083,7 +2083,7 @@ func (m Model) embeddedModelLabelForProject(projectPath string, provider codexap
 		model := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 		reasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 		if model != "" {
-			label := model
+			label := codexapp.ModelDisplayName(provider, model)
 			if provider.Normalized() == codexapp.ProviderLCAgent {
 				modelProvider := firstNonEmptyTrimmed(snapshot.PendingModelProvider, snapshot.ModelProvider)
 				if modelProvider != "" {

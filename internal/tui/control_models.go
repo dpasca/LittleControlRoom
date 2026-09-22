@@ -57,7 +57,7 @@ func (m Model) saveEngineerCatalog(ctx context.Context, provider codexapp.Provid
 func engineerCatalogSource(provider codexapp.Provider) string {
 	switch provider {
 	case codexapp.ProviderClaudeCode:
-		return "built_in_aliases_and_session"
+		return "claude_code_cli_with_alias_fallback"
 	case codexapp.ProviderLCAgent:
 		return "provider_listing_and_curated_routes"
 	default:

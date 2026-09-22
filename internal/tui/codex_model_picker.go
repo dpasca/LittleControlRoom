@@ -150,6 +150,14 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 		}
 		return nil, err
 	}
+	if provider == codexapp.ProviderClaudeCode && m.codexManager != nil {
+		// The installed CLI knows what its aliases resolve to; prefer it over a
+		// stored catalog that may predate a model release.
+		if listed, err := m.codexManager.ClaudeCodeModelCatalog(ctx); err == nil && len(listed) > 0 {
+			m.saveEngineerCatalog(ctx, provider, listed, engineerCatalogSource(provider))
+			return mergePrelaunchModelOptions(claudePrelaunchModelOptions(listed), m.recentPrelaunchModelOptions(provider)), nil
+		}
+	}
 	if m.svc != nil && m.svc.Store() != nil {
 		catalog, err := m.svc.Store().EngineerModelCatalog(ctx, controlProviderFromCodexProvider(provider))
 		if err == nil && len(catalog.Models) > 0 {
@@ -165,6 +173,25 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 		}
 	}
 	return m.fallbackPrelaunchEmbeddedModelOptions(ctx, provider), nil
+}
+
+// claudePrelaunchModelOptions folds Claude Code's own "default" choice into
+// the provider-default row: launching without --model has the same effect.
+func claudePrelaunchModelOptions(listed []codexapp.ModelOption) []codexapp.ModelOption {
+	options := []codexapp.ModelOption{providerDefaultModelOption(codexapp.ProviderClaudeCode)}
+	for _, option := range listed {
+		if strings.EqualFold(strings.TrimSpace(option.Model), "default") {
+			if label := strings.TrimSpace(option.DisplayName); label != "" {
+				options[0].DisplayName += " · " + label
+			}
+			if description := strings.TrimSpace(option.Description); description != "" {
+				options[0].Description += " Currently " + description + "."
+			}
+			continue
+		}
+		options = append(options, option)
+	}
+	return options
 }
 
 func (m Model) liveEmbeddedSessionForProvider(provider codexapp.Provider) (codexapp.Session, codexapp.Snapshot, bool) {
@@ -272,7 +299,7 @@ func (m Model) recentPrelaunchModelOptions(provider codexapp.Provider) []codexap
 			ID:            modelID,
 			Model:         modelID,
 			ModelProvider: strings.TrimSpace(modelProvider),
-			DisplayName:   modelID,
+			DisplayName:   codexapp.ModelDisplayName(provider, modelID),
 			Description:   "Recently used " + provider.Label() + " model.",
 		}
 		if provider == codexapp.ProviderCodex {
@@ -1106,7 +1133,8 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	m.todoModelPickerLaunch = nil
 	perfOpID := m.beginAILatencyOp("Model apply", projectPath, strings.TrimSpace(provider.Label()+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
-	m.status = "Staging " + modelName + "..."
+	modelLabel := codexapp.ModelDisplayName(provider, modelName)
+	m.status = "Staging " + modelLabel + "..."
 	manager := m.codexManager
 	return m, func() tea.Msg {
 		startedAt := time.Now()
@@ -1156,7 +1184,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 				err:          err,
 			}
 		}
-		status := "Embedded model set to " + modelName
+		status := "Embedded model set to " + modelLabel
 		if effort != "" {
 			status += " with " + effort + " reasoning for the next prompt"
 		} else {
@@ -1164,19 +1192,21 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 		}
 		awaitSettle := true
 		if snapshot.Busy {
-			status = "Embedded model change to " + modelName
+			status = "Embedded model change to " + modelLabel
 			if effort != "" {
 				status += " (" + effort + ")"
 			}
 			status += " is staged for the next fresh prompt"
 		}
-		if strings.EqualFold(strings.TrimSpace(snapshot.Model), modelName) &&
+		sameModel := strings.EqualFold(strings.TrimSpace(snapshot.Model), modelName) ||
+			(strings.TrimSpace(modelOption.ResolvedModel) != "" && strings.EqualFold(strings.TrimSpace(snapshot.Model), strings.TrimSpace(modelOption.ResolvedModel)))
+		if sameModel &&
 			(modelProvider == "" || strings.EqualFold(strings.TrimSpace(snapshot.ModelProvider), modelProvider)) &&
 			strings.EqualFold(strings.TrimSpace(snapshot.ReasoningEffort), effort) &&
 			strings.TrimSpace(snapshot.PendingModel) == "" &&
 			strings.TrimSpace(snapshot.PendingModelProvider) == "" &&
 			strings.TrimSpace(snapshot.PendingReasoning) == "" {
-			status = "Embedded model remains " + modelName
+			status = "Embedded model remains " + modelLabel
 			if effort != "" {
 				status += " with " + effort + " reasoning"
 			}
@@ -1228,7 +1258,7 @@ func (m Model) applyPrelaunchModelPickerSelection(modelOption codexapp.ModelOpti
 	}
 	m.rememberEmbeddedModelPreference(provider, modelName, effort, modelProvider)
 	m.recordRecentModel(provider, modelName, modelProvider)
-	m.status = launchLabel + " " + provider.Label() + " model set to " + modelName
+	m.status = launchLabel + " " + provider.Label() + " model set to " + codexapp.ModelDisplayName(provider, modelName)
 	if effort != "" {
 		m.status += " with " + effort + " reasoning"
 	}
@@ -1284,7 +1314,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 			header = append(header, "")
 		}
 	} else if snapshot, ok := m.currentCodexSnapshot(); ok {
-		current := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
+		current := codexapp.ModelDisplayName(embeddedProvider(snapshot), firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model))
 		currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 		currentLabel := "Current"
 		currentReasoningOption := ""
@@ -1425,7 +1455,8 @@ func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected b
 	if modelName := strings.TrimSpace(option.Model); modelName != "" && !strings.EqualFold(modelName, label) {
 		parts = append(parts, modelName)
 	}
-	if option.IsDefault {
+	// Claude Code's own "default" choice already names itself.
+	if option.IsDefault && !strings.EqualFold(strings.TrimSpace(option.Model), "default") {
 		parts = append(parts, "default")
 	}
 	if m.codexModelPickerProvider() == codexapp.ProviderLCAgent {
@@ -1481,6 +1512,15 @@ func codexModelOptionIndexForProvider(models []codexapp.ModelOption, desired, de
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(option.Model), desired) || strings.EqualFold(strings.TrimSpace(option.DisplayName), desired) {
+			return i
+		}
+	}
+	// A running session reports the concrete model its alias resolved to.
+	for i, option := range models {
+		if desiredProvider != "" && strings.ToLower(strings.TrimSpace(option.ModelProvider)) != desiredProvider {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(option.ResolvedModel), desired) {
 			return i
 		}
 	}

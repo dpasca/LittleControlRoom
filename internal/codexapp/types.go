@@ -1,6 +1,7 @@
 package codexapp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -98,6 +99,17 @@ func ModelNamesEquivalent(provider Provider, left, right string) bool {
 		return claudeModelNamesEquivalent(left, right)
 	}
 	return false
+}
+
+// ModelDisplayName returns the user-facing name for a provider model ID.
+// Claude models read like "Opus 5.5 (1M)", with aliases showing the version
+// the latest Claude Code catalog resolves them to. Other providers keep IDs.
+func ModelDisplayName(provider Provider, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || provider.Normalized() != ProviderClaudeCode {
+		return model
+	}
+	return claudeCatalogModelDisplayName(model)
 }
 
 type TranscriptEntry struct {
@@ -548,9 +560,12 @@ type ReasoningEffortOption struct {
 }
 
 type ModelOption struct {
-	ID                        string
-	Model                     string
-	ModelProvider             string
+	ID            string
+	Model         string
+	ModelProvider string
+	// ResolvedModel is the concrete model an alias such as Claude's "opus"
+	// currently maps to, when the provider reports it.
+	ResolvedModel             string
 	DisplayName               string
 	Description               string
 	Hidden                    bool
@@ -947,6 +962,7 @@ type Manager struct {
 	idleProtected           map[string]struct{}
 	opLocks                 keyedmutex.Locker
 	factory                 sessionFactory
+	claudeModelCatalog      func(context.Context, string) ([]ModelOption, error)
 
 	idleTimeout  time.Duration
 	reapInterval time.Duration
@@ -956,7 +972,9 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	return NewManagerWithFactory(newEmbeddedSession)
+	manager := NewManagerWithFactory(newEmbeddedSession)
+	manager.claudeModelCatalog = loadClaudeModelCatalog
+	return manager
 }
 
 func NewManagerWithFactory(factory func(req LaunchRequest, notify func()) (Session, error)) *Manager {

@@ -236,3 +236,14 @@ func TestTaskModelChoiceDoesNotSteerAnActiveTurn(t *testing.T) {
 		t.Fatalf("model choice steered active turn: %#v", result)
 	}
 }
+
+func TestTaskModelLabelNamesClaudeVersionAndKeepsID(t *testing.T) {
+	label := taskModelLabel(model.AgentTaskModelSelection{Provider: model.SessionSourceClaudeCode, Model: "claude-opus-5-5[1m]", ReasoningEffort: "high"})
+	if label != "Opus 5.5 (1M) · claude-opus-5-5[1m] · high reasoning" {
+		t.Fatalf("Claude task model label = %q", label)
+	}
+	label = taskModelLabel(model.AgentTaskModelSelection{Provider: model.SessionSourceCodex, Model: "gpt-5.5"})
+	if label != "gpt-5.5" {
+		t.Fatalf("Codex task model label = %q, want raw ID", label)
+	}
+}

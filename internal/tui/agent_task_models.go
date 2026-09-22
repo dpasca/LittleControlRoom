@@ -76,7 +76,11 @@ func taskModelLabel(choice model.AgentTaskModelSelection) string {
 	if choice.Model == "" {
 		return ""
 	}
-	parts := []string{choice.Model}
+	label := codexapp.ModelDisplayName(codexProviderFromSessionSource(choice.Provider), choice.Model)
+	parts := []string{label}
+	if label != choice.Model {
+		parts = append(parts, choice.Model)
+	}
 	if choice.ModelProvider != "" {
 		parts = append(parts, "via "+choice.ModelProvider)
 	}

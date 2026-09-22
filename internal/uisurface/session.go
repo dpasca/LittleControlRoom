@@ -162,7 +162,7 @@ func BuildLiveEngineerSessionDetail(snapshot codexapp.Snapshot, now time.Time) E
 		instruments = append(instruments, FieldValue("Phase", phase, sessionPhaseTone(snapshot.Phase)))
 	}
 	if item.Model != "" {
-		instruments = append(instruments, FieldValue("Model", item.Model, ToneValue))
+		instruments = append(instruments, FieldValue("Model", codexapp.ModelDisplayName(snapshot.Provider, item.Model), ToneValue))
 	}
 	if item.ReasoningEffort != "" {
 		instruments = append(instruments, FieldValue("Reasoning", item.ReasoningEffort, ToneValue))

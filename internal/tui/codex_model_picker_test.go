@@ -130,3 +130,40 @@ func TestCodexModelPickerLCAgentDefaultOnlyReasoningUsesProviderOptions(t *testi
 		t.Fatalf("selected reasoning = %#v ok=%v, want xhigh", selected, ok)
 	}
 }
+
+func TestClaudePrelaunchModelOptionsFoldCLIDefaultIntoProviderDefault(t *testing.T) {
+	options := claudePrelaunchModelOptions([]codexapp.ModelOption{
+		{ID: "default", Model: "default", ResolvedModel: "claude-opus-5-5[1m]", DisplayName: "Opus 5.5 (1M)", Description: "Opus 5.5 with 1M context", IsDefault: true},
+		{ID: "sonnet", Model: "sonnet", ResolvedModel: "claude-sonnet-5", DisplayName: "Sonnet 5"},
+	})
+	if len(options) != 2 {
+		t.Fatalf("options = %#v, want provider default plus sonnet", options)
+	}
+	if options[0].Model != "" || options[0].DisplayName != "Claude Code default · Opus 5.5 (1M)" {
+		t.Fatalf("provider default = %#v, want it to name the model Claude Code resolves", options[0])
+	}
+	if options[1].Model != "sonnet" {
+		t.Fatalf("second option = %#v, want sonnet", options[1])
+	}
+}
+
+func TestCodexModelOptionIndexMatchesResolvedClaudeModel(t *testing.T) {
+	models := []codexapp.ModelOption{
+		{Model: "sonnet", ResolvedModel: "claude-sonnet-5"},
+		{Model: "opus[1m]", ResolvedModel: "claude-opus-5-5[1m]"},
+	}
+	if got := codexModelOptionIndex(models, "claude-opus-5-5[1m]"); got != 1 {
+		t.Fatalf("index for running concrete model = %d, want its alias row", got)
+	}
+	if got := codexModelOptionIndex(models, "sonnet"); got != 0 {
+		t.Fatalf("index for alias = %d, want exact alias row", got)
+	}
+}
+
+func TestClaudeModelPickerRowShowsVersionedNameAndAlias(t *testing.T) {
+	m := Model{codexModelPicker: &codexModelPickerState{Provider: codexapp.ProviderClaudeCode}}
+	row := ansi.Strip(m.renderCodexModelPickerRow(codexapp.ModelOption{Model: "default", DisplayName: "Opus 5.5 (1M)", IsDefault: true}, false, 60, false))
+	if strings.TrimSpace(row) != "Opus 5.5 (1M)  default" {
+		t.Fatalf("default row = %q, want one default marker", row)
+	}
+}

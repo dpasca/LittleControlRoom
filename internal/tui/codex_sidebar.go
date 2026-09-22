@@ -1204,7 +1204,7 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 		reasoning = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), reasoning)
 	}
 	if model != "" {
-		value := model
+		value := codexapp.ModelDisplayName(snapshot.Provider, model)
 		if snapshot.Provider == codexapp.ProviderLCAgent && modelProvider != "" {
 			value += " · " + codexapp.LCAgentProviderDisplayName(modelProvider)
 		}
@@ -1223,7 +1223,7 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 			nextModel = model
 		}
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
-		next := nextModel
+		next := codexapp.ModelDisplayName(snapshot.Provider, nextModel)
 		if snapshot.Provider == codexapp.ProviderLCAgent {
 			if nextProvider := strings.TrimSpace(snapshot.PendingModelProvider); nextProvider != "" {
 				next += " · " + codexapp.LCAgentProviderDisplayName(nextProvider)
