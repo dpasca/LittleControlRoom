@@ -150,3 +150,49 @@ func TestAgentTaskLateIdentityPreservesAcceptedResult(t *testing.T) {
 		t.Fatalf("resume identity = %q", id)
 	}
 }
+
+// A bookkeeping write to UpdatedAt must not make a long-finished task look like
+// it just acted; store.RecordAgentTaskEngineerSession advances UpdatedAt while
+// deliberately leaving the task lifecycle untouched.
+func TestAgentTaskLastActivityIgnoresBookkeepingUpdates(t *testing.T) {
+	done := time.Now().Add(-44 * time.Hour)
+	task := model.AgentTask{
+		Status:        model.AgentTaskStatusCompleted,
+		CreatedAt:     done.Add(-4 * time.Hour),
+		LastTouchedAt: done,
+		CompletedAt:   done,
+		UpdatedAt:     time.Now(),
+	}
+	if got := agentTaskLastActivity(task); !got.Equal(done) {
+		t.Fatalf("last activity = %v, want %v", got, done)
+	}
+}
+
+func TestAgentTaskSessionBindingRejectsStaleCompletedTask(t *testing.T) {
+	now := time.Now()
+	completedAt := func(at time.Time) model.AgentTask {
+		return model.AgentTask{
+			Status:        model.AgentTaskStatusCompleted,
+			CreatedAt:     at.Add(-time.Hour),
+			LastTouchedAt: at,
+			CompletedAt:   at,
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		task model.AgentTask
+		want bool
+	}{
+		{"active", model.AgentTask{Status: model.AgentTaskStatusActive}, true},
+		{"waiting", model.AgentTask{Status: model.AgentTaskStatusWaiting}, true},
+		{"just completed", completedAt(now), true},
+		{"completed within grace", completedAt(now.Add(-agentTaskSessionBindingGrace + time.Minute)), true},
+		{"completed past grace", completedAt(now.Add(-agentTaskSessionBindingGrace - time.Minute)), false},
+		{"completed two days ago", completedAt(now.Add(-44 * time.Hour)), false},
+		{"archived", model.AgentTask{Status: model.AgentTaskStatusArchived, LastTouchedAt: now}, false},
+	} {
+		if got := agentTaskAcceptsSessionBinding(tc.task, now); got != tc.want {
+			t.Errorf("%s: accepts binding = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

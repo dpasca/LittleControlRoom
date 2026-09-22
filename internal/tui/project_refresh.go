@@ -329,7 +329,7 @@ func (m *Model) requestEmbeddedSessionActivityRecordCmd(activity service.Embedde
 	}
 	m.ensureEmbeddedActivityRecordState()
 	req := embeddedSessionActivityRecordRequest{activity: activity, refreshAfter: refreshAfter}
-	if task, ok := m.agentTaskForProjectPath(activity.ProjectPath); ok {
+	if task, ok := m.agentTaskForSessionBinding(activity.ProjectPath); ok {
 		req.agentTaskID = task.ID
 		req.refreshAfter = false
 		if task.Provider == activity.Source && task.SessionID == activity.SessionID && activity.ObservedModel.Model != "" && task.ObservedModel != activity.ObservedModel {
