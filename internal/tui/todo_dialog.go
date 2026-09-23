@@ -2069,34 +2069,40 @@ func (m *Model) returnToTodoFromModelPicker() {
 }
 
 func (m Model) embeddedModelLabelForProject(projectPath string, provider codexapp.Provider) string {
-	if pref, ok := m.embeddedModelPreference(provider); ok && pref.Model != "" {
-		label := codexapp.ModelDisplayName(provider, pref.Model)
-		if provider.Normalized() == codexapp.ProviderLCAgent && strings.TrimSpace(pref.ModelProvider) != "" {
-			label = settingsLCAgentModelPickerProviderLabel(pref.ModelProvider) + " / " + label
-		}
-		if pref.Reasoning != "" {
-			label += ", " + pref.Reasoning
-		}
-		return label
+	model, reasoning := m.embeddedModelSelectionForProject(projectPath, provider)
+	label := firstNonEmptyTrimmed(model, "default")
+	if reasoning != "" {
+		label += ", " + reasoning
+	}
+	return label
+}
+
+// embeddedModelSelectionForProject returns the display model and reasoning
+// effort the next launch will request. Empty values mean the provider default.
+func (m Model) embeddedModelSelectionForProject(projectPath string, provider codexapp.Provider) (string, string) {
+	if pref, ok := m.embeddedModelPreference(provider); ok {
+		return embeddedModelDisplayLabel(provider, pref.Model, pref.ModelProvider), pref.Reasoning
 	}
 	if snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider); ok {
-		model := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
-		reasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
-		if model != "" {
-			label := codexapp.ModelDisplayName(provider, model)
-			if provider.Normalized() == codexapp.ProviderLCAgent {
-				modelProvider := firstNonEmptyTrimmed(snapshot.PendingModelProvider, snapshot.ModelProvider)
-				if modelProvider != "" {
-					label = settingsLCAgentModelPickerProviderLabel(modelProvider) + " / " + label
-				}
-			}
-			if reasoning != "" {
-				label += ", " + reasoning
-			}
-			return label
+		if model := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model); model != "" {
+			modelProvider := firstNonEmptyTrimmed(snapshot.PendingModelProvider, snapshot.ModelProvider)
+			reasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
+			return embeddedModelDisplayLabel(provider, model, modelProvider), reasoning
 		}
 	}
-	return "default"
+	return "", ""
+}
+
+func embeddedModelDisplayLabel(provider codexapp.Provider, model, modelProvider string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	label := codexapp.ModelDisplayName(provider, model)
+	if provider.Normalized() == codexapp.ProviderLCAgent && strings.TrimSpace(modelProvider) != "" {
+		label = settingsLCAgentModelPickerProviderLabel(modelProvider) + " / " + label
+	}
+	return label
 }
 
 func (m *Model) syncTodoDialogSize() {
@@ -2513,22 +2519,35 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	lines = append(lines, "")
 	projectPath := copyDialog.ProjectPath
 	settings := m.currentSettingsBaseline()
+	providers := todoCopyDialogProviders()
+	modelLabels := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		model, _ := m.embeddedModelSelectionForProject(projectPath, provider)
+		modelLabels = append(modelLabels, model)
+	}
+	layout := newTodoCopyChooserLayout(panelInnerW, modelLabels)
 	runButtons := make([]string, 0, 3)
 	for _, mode := range []int{todoCopyModeHere, todoCopyModeNewWorktree} {
 		runButtons = append(runButtons, renderDialogButton(todoCopyRunModeLabel(mode), copyDialog.RunMode == mode))
 	}
 	candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
 	if len(candidates) > 0 {
-		runButtons = append(runButtons, renderTodoCopyHotkey("x")+
+		runButtons = append(runButtons, " "+renderTodoCopyHotkey("x")+
 			detailValueStyle.Render(fmt.Sprintf(" existing %s (%d)", pluralize("worktree", len(candidates)), len(candidates))))
 	}
-	providerButtons := make([]string, 0, 4)
-	for _, provider := range todoCopyDialogProviders() {
-		label := m.todoCopyProviderButtonLabel(projectPath, provider, settings)
-		providerButtons = append(providerButtons, renderDialogButton(label, copyDialog.Provider == provider))
+	lines = append(lines,
+		layout.renderLabeledRow(m.renderTodoCopySectionHeader("Run in", "w"), strings.Join(runButtons, " "), panelInnerW),
+		"",
+		layout.renderProviderHeader(m.renderTodoCopySectionHeader("Agent", "a"), panelInnerW),
+	)
+	for _, provider := range providers {
+		lines = append(lines, m.renderTodoCopyProviderRow(layout, projectPath, provider, copyDialog.Provider == provider, settings, panelInnerW))
 	}
-	optionButtons := []string{m.renderTodoCopyModelSelection(projectPath, copyDialog.Provider, copyDialog.OpenModelFirst)}
-	lines = append(lines, m.renderTodoCopyChooserColumns(panelInnerW, runButtons, providerButtons, optionButtons))
+	lines = append(lines, layout.renderLabeledRow(
+		m.renderTodoCopySectionHeader("Options", ""),
+		renderTodoCopyModelOption(copyDialog.Provider, copyDialog.OpenModelFirst),
+		panelInnerW,
+	))
 	if statusLine := m.todoCopyProviderStatusLine(copyDialog.Provider, settings); statusLine != "" {
 		lines = append(lines, detailField("Agent status", statusLine))
 	}
@@ -2689,59 +2708,91 @@ func renderTodoCopyHotkey(hotkey string) string {
 	return detailLabelStyle.Render("[" + strings.TrimSpace(hotkey) + "]")
 }
 
-func (m Model) renderTodoCopyModelSelection(projectPath string, provider codexapp.Provider, openModelFirst bool) string {
-	if provider.Normalized() != codexapp.ProviderLCAgent {
-		state := "off"
-		stateStyle := detailMutedStyle
-		if openModelFirst {
-			state = "on"
-			stateStyle = detailWarningStyle
-		}
-		return renderTodoCopyHotkey("m") + detailValueStyle.Render(" change model ") + stateStyle.Render("("+state+")")
+func renderTodoCopyModelOption(provider codexapp.Provider, openModelFirst bool) string {
+	if provider.Normalized() == codexapp.ProviderLCAgent {
+		return renderTodoCopyHotkey("m") + detailValueStyle.Render(" change model")
 	}
-	selection := m.embeddedModelLabelForProject(projectPath, provider)
-	return renderTodoCopyHotkey("m") +
-		detailValueStyle.Render(" model ") +
-		detailMutedStyle.Render(selection)
+	state := "off"
+	stateStyle := detailMutedStyle
+	if openModelFirst {
+		state = "on"
+		stateStyle = detailWarningStyle
+	}
+	return renderTodoCopyHotkey("m") + detailValueStyle.Render(" change model ") + stateStyle.Render("("+state+")")
 }
 
-func (m Model) renderTodoCopyChooserColumns(width int, runButtons, providerButtons, optionButtons []string) string {
-	gap := 2
-	columnCount := 3
-	columnWidth := max(18, (width-gap*(columnCount-1))/columnCount)
-	lastWidth := max(18, width-columnWidth*(columnCount-1)-gap*(columnCount-1))
+// todoCopyChooserLayout keeps every agent on its own full-width row so the
+// model and reasoning effort are never squeezed into a narrow column.
+type todoCopyChooserLayout struct {
+	LeadWidth      int
+	StatusWidth    int
+	ModelWidth     int
+	ReasoningWidth int
+}
 
-	columns := []struct {
-		width int
-		lines []string
-	}{
-		{width: columnWidth, lines: append([]string{m.renderTodoCopySectionHeader("Run in", "w")}, runButtons...)},
-		{width: columnWidth, lines: append([]string{m.renderTodoCopySectionHeader("Agent", "a")}, providerButtons...)},
-		{width: lastWidth, lines: append([]string{m.renderTodoCopySectionHeader("Options", "")}, optionButtons...)},
+const todoCopyChooserGap = 2
+
+// newTodoCopyChooserLayout sizes the model column to the longest label so the
+// reasoning effort sits right next to it rather than at the far edge.
+func newTodoCopyChooserLayout(width int, modelLabels []string) todoCopyChooserLayout {
+	layout := todoCopyChooserLayout{LeadWidth: 15, StatusWidth: 13, ReasoningWidth: 10}
+	available := max(12, width-layout.LeadWidth-layout.StatusWidth-layout.ReasoningWidth-2*todoCopyChooserGap)
+	layout.ModelWidth = 12
+	for _, label := range modelLabels {
+		layout.ModelWidth = max(layout.ModelWidth, lipgloss.Width(label))
 	}
+	layout.ModelWidth = min(layout.ModelWidth, available)
+	return layout
+}
 
-	height := 0
-	for _, column := range columns {
-		height = max(height, len(column.lines))
+func (l todoCopyChooserLayout) renderLabeledRow(label, content string, width int) string {
+	return fitFooterWidth(fitStyledWidth(label, l.LeadWidth)+content, width)
+}
+
+func (l todoCopyChooserLayout) renderProviderHeader(label string, width int) string {
+	row := fitStyledWidth(label, l.LeadWidth) +
+		detailMutedStyle.Render(fitStyledWidth("Status", l.StatusWidth+todoCopyChooserGap)) +
+		detailMutedStyle.Render(fitStyledWidth("Model", l.ModelWidth+todoCopyChooserGap)) +
+		detailMutedStyle.Render(fitStyledWidth("Reasoning", l.ReasoningWidth))
+	return fitFooterWidth(row, width)
+}
+
+func (m Model) renderTodoCopyProviderRow(layout todoCopyChooserLayout, projectPath string, provider codexapp.Provider, selected bool, settings config.EditableSettings, width int) string {
+	readiness := m.todoCopyProviderReadiness(provider, settings)
+	model, reasoning := m.embeddedModelSelectionForProject(projectPath, provider)
+	marker := "  "
+	labelStyle := detailValueStyle
+	statusStyle := readiness.Style
+	modelStyle := detailValueStyle
+	reasoningStyle := detailValueStyle
+	if model == "" {
+		model = "default"
+		modelStyle = detailMutedStyle
 	}
-
-	parts := make([]string, 0, len(columns)*2-1)
-	for idx, column := range columns {
-		lines := append([]string(nil), column.lines...)
-		for len(lines) < height {
-			lines = append(lines, "")
-		}
-		rendered := make([]string, 0, len(lines))
-		for _, line := range lines {
-			rendered = append(rendered, fitStyledWidth(line, column.width))
-		}
-		parts = append(parts, lipgloss.NewStyle().Width(column.width).Render(strings.Join(rendered, "\n")))
-		if idx < len(columns)-1 {
-			parts = append(parts, strings.Repeat(" ", gap))
-		}
+	if reasoning == "" {
+		reasoning = "default"
+		reasoningStyle = detailMutedStyle
 	}
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+	if selected {
+		// Every cell carries the selection background so the highlight has no gaps.
+		marker = "› "
+		background := dialogSelectedRowStyle.GetBackground()
+		labelStyle = dialogSelectedRowStyle
+		statusStyle = statusStyle.Background(background)
+		modelStyle = dialogSelectedRowStyle
+		reasoningStyle = dialogSelectedRowStyle
+	}
+	cell := func(style lipgloss.Style, value string, valueWidth, gap int) string {
+		return style.Render(fitStyledWidth(truncateText(value, valueWidth), valueWidth+gap))
+	}
+	row := cell(labelStyle, marker+provider.Label(), layout.LeadWidth, 0) +
+		cell(statusStyle, readiness.State, layout.StatusWidth, todoCopyChooserGap) +
+		cell(modelStyle, model, layout.ModelWidth, todoCopyChooserGap) +
+		cell(reasoningStyle, reasoning, layout.ReasoningWidth, 0)
+	if padding := width - lipgloss.Width(row); selected && padding > 0 {
+		row += dialogSelectedRowStyle.Render(strings.Repeat(" ", padding))
+	}
+	return fitFooterWidth(row, width)
 }
 
 func todoCopyDialogProviders() []codexapp.Provider {

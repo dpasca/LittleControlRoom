@@ -244,6 +244,58 @@ func TestTodoCopyDialogShowsProviderReadinessWarnings(t *testing.T) {
 	}
 }
 
+func TestTodoCopyDialogShowsFullModelAndReasoningPerAgent(t *testing.T) {
+	m := Model{
+		embeddedModelPrefs: map[codexapp.Provider]embeddedModelPreference{
+			codexapp.ProviderCodex:      {Model: "gpt-6-astra", Reasoning: "low"},
+			codexapp.ProviderOpenCode:   {Model: "moonshotai/kimi-k2.5-thinking"},
+			codexapp.ProviderClaudeCode: {Reasoning: "high"},
+			codexapp.ProviderLCAgent:    {Model: "glm-5.3-flash", ModelProvider: "zai", Reasoning: "medium"},
+		},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      9,
+			TodoText:    "Show every agent's model and reasoning",
+			RunMode:     todoCopyModeHere,
+			Provider:    codexapp.ProviderClaudeCode,
+		},
+		width:  100,
+		height: 30,
+	}
+
+	rendered := ansi.Strip(m.renderTodoCopyDialogOverlay("", 100, 30))
+	want := map[string][]string{
+		"Codex ":      {"gpt-6-astra", "low"},
+		"OpenCode":    {"moonshotai/kimi-k2.5-thinking", "default"},
+		"Claude Code": {"default", "high"},
+		"LCAgent":     {"Z.ai / glm-5.3-flash", "medium"},
+	}
+	for label, fields := range want {
+		var row string
+		for _, line := range strings.Split(rendered, "\n") {
+			if strings.Contains(line, label) && !strings.Contains(line, "Agent status") {
+				row = line
+				break
+			}
+		}
+		if row == "" {
+			t.Fatalf("rendered copy dialog = %q, want a row for %q", rendered, label)
+		}
+		modelAt := strings.Index(row, fields[0])
+		reasoningAt := strings.LastIndex(row, fields[1])
+		if modelAt < 0 || reasoningAt <= modelAt {
+			t.Fatalf("row %q, want model %q followed by reasoning %q", row, fields[0], fields[1])
+		}
+	}
+	if !strings.Contains(rendered, "› Claude Code") {
+		t.Fatalf("rendered copy dialog = %q, want selected agent marker", rendered)
+	}
+	if !strings.Contains(rendered, "Reasoning") {
+		t.Fatalf("rendered copy dialog = %q, want reasoning column header", rendered)
+	}
+}
+
 func TestTodoDialogEnterReopensPinnedLiveEngineerSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	worktreePath := "/tmp/repo--feat-pinned"
