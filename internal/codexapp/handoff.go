@@ -156,6 +156,7 @@ func (h SessionHandoff) render() string {
 	writeSessionHandoffField(&out, "Active turn", snapshot.ActiveTurnID)
 	writeSessionHandoffField(&out, "Phase", string(snapshot.Phase))
 	writeSessionHandoffField(&out, "Model", snapshot.Model)
+	writeSessionHandoffField(&out, "Reported model", snapshot.ReportedModel)
 	writeSessionHandoffField(&out, "Reasoning effort", snapshot.ReasoningEffort)
 	writeSessionHandoffField(&out, "Preset", string(snapshot.Preset))
 	writeSessionHandoffField(&out, "Last activity", formatSessionHandoffTime(snapshot.LastActivityAt))

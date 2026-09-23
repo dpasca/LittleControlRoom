@@ -120,7 +120,7 @@ func BuildLiveEngineerSession(snapshot codexapp.Snapshot, now time.Time) Enginee
 		Summary:            clipSessionText(summary, 240),
 		LastActivityAt:     lastActivity,
 		LastActivityLabel:  formatLastActivity(now, lastActivity),
-		Model:              strings.TrimSpace(snapshot.Model),
+		Model:              codexapp.ModelDisplayName(snapshot.Provider, snapshot.Model),
 		ReasoningEffort:    strings.TrimSpace(snapshot.ReasoningEffort),
 		TranscriptRevision: snapshot.TranscriptRevision,
 	}
@@ -162,7 +162,7 @@ func BuildLiveEngineerSessionDetail(snapshot codexapp.Snapshot, now time.Time) E
 		instruments = append(instruments, FieldValue("Phase", phase, sessionPhaseTone(snapshot.Phase)))
 	}
 	if item.Model != "" {
-		instruments = append(instruments, FieldValue("Model", codexapp.ModelDisplayName(snapshot.Provider, item.Model), ToneValue))
+		instruments = append(instruments, FieldValue("Model", item.Model, ToneValue))
 	}
 	if item.ReasoningEffort != "" {
 		instruments = append(instruments, FieldValue("Reasoning", item.ReasoningEffort, ToneValue))

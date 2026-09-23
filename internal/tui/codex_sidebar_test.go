@@ -615,42 +615,41 @@ func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSidebarHidesEquivalentClaudeAliasAsNextModel(t *testing.T) {
+func TestEmbeddedSidebarHidesRestagedClaudeChoiceAsNextModel(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Provider = codexapp.ProviderClaudeCode
-	snapshot.Model = "claude-fable-5"
+	snapshot.Model = "fable"
+	snapshot.ReportedModel = "claude-fable-5"
 	snapshot.ReasoningEffort = "high"
 	snapshot.PendingModel = "fable"
 	snapshot.PendingReasoning = "high"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	if !strings.Contains(rendered, "Model Fable 5 / high") {
-		t.Fatalf("sidebar model rows should keep the concrete active Claude model:\n%s", rendered)
+	if !strings.Contains(rendered, "Model Fable / high") {
+		t.Fatalf("sidebar model rows should name the session's Claude choice:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Next") {
 		t.Fatalf("equivalent Claude alias should not be shown as a next-model change:\n%s", rendered)
 	}
 }
 
-func TestEmbeddedSidebarNormalizesEquivalentClaudeAliasWhenReasoningChanges(t *testing.T) {
+func TestEmbeddedSidebarShowsReasoningChangeForSameClaudeChoice(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Provider = codexapp.ProviderClaudeCode
-	snapshot.Model = "claude-opus-5"
+	snapshot.Model = "opus"
+	snapshot.ReportedModel = "claude-opus-5"
 	snapshot.ReasoningEffort = "xhigh"
 	snapshot.PendingModel = "opus"
 	snapshot.PendingReasoning = "max"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
 	for _, want := range []string{
-		"Model Opus 5 / xhigh",
-		"Next Opus 5 / max",
+		"Model Opus / xhigh",
+		"Next Opus / max",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("sidebar model rows missing normalized label %q:\n%s", want, rendered)
+			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)
 		}
-	}
-	if strings.Contains(rendered, "Next Opus / max") {
-		t.Fatalf("equivalent active and pending Claude models should use one label:\n%s", rendered)
 	}
 }
 

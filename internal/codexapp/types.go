@@ -657,6 +657,9 @@ type Snapshot struct {
 	CurrentCWD                string
 	Model                     string
 	ModelProvider             string
+	// ReportedModel is the model ID the provider last reported when Model is
+	// a selection that differs from it, such as a Claude alias.
+	ReportedModel string
 	// OutputStyle is the Claude Code response style in effect, empty for the
 	// built-in default. PendingOutputStyle is a selection that applies on the
 	// next prompt.

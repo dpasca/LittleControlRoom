@@ -147,19 +147,6 @@ func TestClaudePrelaunchModelOptionsFoldCLIDefaultIntoProviderDefault(t *testing
 	}
 }
 
-func TestCodexModelOptionIndexMatchesResolvedClaudeModel(t *testing.T) {
-	models := []codexapp.ModelOption{
-		{Model: "sonnet", ResolvedModel: "claude-sonnet-5"},
-		{Model: "opus[1m]", ResolvedModel: "claude-opus-5-5[1m]"},
-	}
-	if got := codexModelOptionIndex(models, "claude-opus-5-5[1m]"); got != 1 {
-		t.Fatalf("index for running concrete model = %d, want its alias row", got)
-	}
-	if got := codexModelOptionIndex(models, "sonnet"); got != 0 {
-		t.Fatalf("index for alias = %d, want exact alias row", got)
-	}
-}
-
 func TestClaudeModelPickerRowShowsVersionedNameAndAlias(t *testing.T) {
 	m := Model{codexModelPicker: &codexModelPickerState{Provider: codexapp.ProviderClaudeCode}}
 	row := ansi.Strip(m.renderCodexModelPickerRow(codexapp.ModelOption{Model: "default", DisplayName: "Opus 5.5 (1M)", IsDefault: true}, false, 60, false))

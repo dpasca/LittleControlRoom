@@ -39,7 +39,7 @@ func taskObservedModel(snapshot codexapp.Snapshot) model.AgentTaskModelSelection
 	if snapshot.Model == "" || snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
 		return model.AgentTaskModelSelection{}
 	}
-	return model.AgentTaskModelSelection{Provider: embeddedSessionSource(snapshot.Provider), Model: snapshot.Model, ModelProvider: snapshot.ModelProvider, ReasoningEffort: snapshot.ReasoningEffort}
+	return model.AgentTaskModelSelection{Provider: embeddedSessionSource(snapshot.Provider), Model: firstNonEmptyTrimmed(snapshot.ReportedModel, snapshot.Model), ModelProvider: snapshot.ModelProvider, ReasoningEffort: snapshot.ReasoningEffort}
 }
 
 func (m Model) prepareAgentTaskModelCmd(task model.AgentTask, cmd tea.Cmd) tea.Cmd {

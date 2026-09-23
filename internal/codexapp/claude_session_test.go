@@ -605,8 +605,8 @@ func TestClaudeStreamUsagePopulatesContextSnapshot(t *testing.T) {
 	if got, want := snapshot.TokenUsage.ContextLeftPercent(), 35; got != want {
 		t.Fatalf("ContextLeftPercent() = %d, want %d", got, want)
 	}
-	if got, want := snapshot.Model, "claude-opus-5"; got != want {
-		t.Fatalf("Model = %q, want %q", got, want)
+	if got, want := snapshot.ReportedModel, "claude-opus-5"; got != want {
+		t.Fatalf("ReportedModel = %q, want %q", got, want)
 	}
 	if err := session.ShowStatus(); err != nil {
 		t.Fatalf("ShowStatus() error = %v", err)
@@ -718,8 +718,8 @@ func TestClaudeSyntheticAssistantKeepsLastRealModel(t *testing.T) {
 	session.handleClaudeStdoutLine(`{"type":"assistant","is_api_error_message":true,"message":{"id":"msg_limit","model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit."}]}}`)
 
 	snapshot := session.Snapshot()
-	if snapshot.Model != "claude-fable-5" {
-		t.Fatalf("model after synthetic limit message = %q, want last real model", snapshot.Model)
+	if snapshot.ReportedModel != "claude-fable-5" {
+		t.Fatalf("model after synthetic limit message = %q, want last real model", snapshot.ReportedModel)
 	}
 	if !strings.Contains(snapshot.Transcript, "You've hit your session limit.") {
 		t.Fatalf("transcript = %q, want limit message preserved", snapshot.Transcript)
@@ -1205,7 +1205,7 @@ func TestClaudeLoadTranscriptRestoresLatestReasoningEffort(t *testing.T) {
 
 func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 	session := &claudeCodeSession{
-		model:        "claude-sonnet-4-6",
+		modelChoice:  "claude-sonnet-4-6",
 		pendingModel: "claude-opus-4-6",
 	}
 
@@ -1241,7 +1241,7 @@ func TestClaudeListModelsIncludesAliasesAndCurrentModel(t *testing.T) {
 
 func TestClaudeListModelsDeduplicatesMatchingPendingAndCurrentModel(t *testing.T) {
 	session := &claudeCodeSession{
-		model:        "claude-fable-5",
+		modelChoice:  "claude-fable-5",
 		pendingModel: "claude-fable-5",
 	}
 

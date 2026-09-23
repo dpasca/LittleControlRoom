@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"lcroom/internal/codexcli"
 )
 
 const claudeModelCatalogHelperEnv = "LCROOM_CLAUDE_MODEL_CATALOG_HELPER"
@@ -129,7 +132,8 @@ func TestClaudeListModelsUsesCatalogWithoutDuplicatingResolvedCurrentModel(t *te
 	useClaudeModelCatalogHelper(t)
 	session := &claudeCodeSession{
 		projectPath:  t.TempDir(),
-		model:        "claude-opus-5-5[1m]",
+		modelChoice:  "default",
+		model:        "claude-opus-5-5",
 		modelCatalog: loadClaudeModelCatalog,
 	}
 
@@ -140,7 +144,7 @@ func TestClaudeListModelsUsesCatalogWithoutDuplicatingResolvedCurrentModel(t *te
 	if models[0].Model != "default" {
 		t.Fatalf("first model = %q, want catalog order without a duplicate current row: %#v", models[0].Model, models)
 	}
-	session.model = "claude-opus-5"
+	session.modelChoice = "claude-opus-5"
 	models, err = session.ListModels()
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +191,8 @@ func TestParseClaudeModelCatalogLineReportsInitializeErrors(t *testing.T) {
 
 func TestClaudeModelStagedMidTurnSurvivesRunningTurnReports(t *testing.T) {
 	session := &claudeCodeSession{
-		model:            "claude-opus-5",
+		modelChoice:      "claude-opus-5",
+		modelChoiceSet:   true,
 		reasoningEffort:  "high",
 		pendingModel:     "opus[1m]",
 		pendingReasoning: "max",
@@ -203,46 +208,96 @@ func TestClaudeModelStagedMidTurnSurvivesRunningTurnReports(t *testing.T) {
 	if snapshot.PendingModel != "opus[1m]" || snapshot.PendingReasoning != "max" {
 		t.Fatalf("pending = %q/%q, want the choice staged after launch kept for the next turn", snapshot.PendingModel, snapshot.PendingReasoning)
 	}
-	if snapshot.Model != "claude-opus-5" || snapshot.ReasoningEffort != "high" {
-		t.Fatalf("current = %q/%q, want the running turn's model and effort", snapshot.Model, snapshot.ReasoningEffort)
+	if snapshot.Model != "claude-opus-5" || snapshot.ReportedModel != "claude-opus-5" || snapshot.ReasoningEffort != "high" {
+		t.Fatalf("current = %q (reported %q) / %q, want the running turn's choice and effort", snapshot.Model, snapshot.ReportedModel, snapshot.ReasoningEffort)
 	}
 }
 
-func TestClaudeModelStagedBeforeLaunchIsConsumedWhenReported(t *testing.T) {
+func TestClaudeLaunchUsesChoiceAndConsumesStagedChoice(t *testing.T) {
+	binDir := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.log")
+	script := `#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
+	printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}'
+	exit 0
+fi
+printf '%s\n' "$*" >> "$CLAUDE_TEST_ARGS"
+IFS= read -r payload || exit 2
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"ses-choice","model":"claude-opus-5-5[1m]"}'
+printf '%s\n' '{"type":"assistant","message":{"id":"msg-final","model":"claude-opus-5-5","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}'
+while IFS= read -r trailing; do :; done
+`
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("CLAUDE_TEST_ARGS", argsPath)
+
 	session := &claudeCodeSession{
-		model:                    "claude-opus-5",
-		pendingModel:             "opus[1m]",
-		pendingReasoning:         "max",
-		launchedPendingModel:     "opus[1m]",
-		launchedPendingReasoning: "max",
-		assistantBlocks:          make(map[string]map[string]struct{}),
-		toolCalls:                make(map[string]claudeToolCall),
-		toolResults:              make(map[string]struct{}),
+		projectPath:      t.TempDir(),
+		claudeHome:       t.TempDir(),
+		preset:           codexcli.PresetSafe,
+		safetySettings:   `{"hooks":{"PreToolUse":[]}}`,
+		status:           claudeFreshReadyStatus,
+		closedCh:         make(chan struct{}),
+		modelChoice:      "claude-opus-5",
+		modelChoiceSet:   true,
+		pendingModel:     "opus[1m]",
+		pendingReasoning: "max",
+		assistantBlocks:  make(map[string]map[string]struct{}),
+		toolCalls:        make(map[string]claudeToolCall),
+		toolResults:      make(map[string]struct{}),
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	for _, prompt := range []string{"first", "second"} {
+		if err := session.Submit(prompt); err != nil {
+			t.Fatalf("Submit(%q) error = %v", prompt, err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for session.Snapshot().Busy && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		snapshot := session.Snapshot()
+		if snapshot.Busy {
+			t.Fatalf("turn %q did not settle", prompt)
+		}
+		if snapshot.Model != "opus[1m]" || snapshot.PendingModel != "" || snapshot.ReasoningEffort != "max" || snapshot.PendingReasoning != "" {
+			t.Fatalf("after %q: model %q pending %q effort %q pending effort %q, want the staged choice in use", prompt, snapshot.Model, snapshot.PendingModel, snapshot.ReasoningEffort, snapshot.PendingReasoning)
+		}
+		if snapshot.ReportedModel != "claude-opus-5-5" {
+			t.Fatalf("reported model = %q, want what Claude last reported", snapshot.ReportedModel)
+		}
 	}
 
-	session.handleClaudeStdoutLine(`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-5-5[1m]"}`)
-
-	snapshot := session.Snapshot()
-	if snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
-		t.Fatalf("pending = %q/%q, want launched choice consumed", snapshot.PendingModel, snapshot.PendingReasoning)
+	data, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if snapshot.Model != "claude-opus-5-5[1m]" || snapshot.ReasoningEffort != "max" {
-		t.Fatalf("current = %q/%q", snapshot.Model, snapshot.ReasoningEffort)
+	launches := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(launches) != 2 {
+		t.Fatalf("launches = %q, want two turns", launches)
+	}
+	for _, launch := range launches {
+		// Later turns keep the choice rather than pinning the reported ID.
+		if !strings.Contains(launch, "--model opus[1m]") {
+			t.Fatalf("launch args = %q, want --model opus[1m]", launch)
+		}
 	}
 }
 
-func TestClaudeModelEquivalenceUsesCatalogResolution(t *testing.T) {
+func TestClaudeModelEquivalenceComparesCatalogResolution(t *testing.T) {
 	useClaudeModelCatalogHelper(t)
-	if ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5", "opus") != true {
-		t.Fatal("without a catalog, family aliases should stay equivalent")
+	if ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5", "opus") {
+		t.Fatal("without a catalog an alias cannot be matched to a pinned version")
 	}
 	if _, err := loadClaudeModelCatalog(context.Background(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
+	if !ModelNamesEquivalent(ProviderClaudeCode, "default", "opus[1m]") {
+		t.Fatal("default and opus[1m] both resolve to claude-opus-5-5[1m]")
+	}
 	if ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5", "opus") {
 		t.Fatal("opus resolves to Opus 5.5, so it must not match a pinned Opus 5")
-	}
-	if !ModelNamesEquivalent(ProviderClaudeCode, "claude-opus-5-5[1m]", "opus[1m]") {
-		t.Fatal("opus[1m] should match the model it resolves to")
 	}
 }
