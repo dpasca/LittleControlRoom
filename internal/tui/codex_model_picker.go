@@ -1205,9 +1205,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			}
 			status += " is staged for the next fresh prompt"
 		}
-		sameModel := strings.EqualFold(strings.TrimSpace(snapshot.Model), modelName) ||
-			(strings.TrimSpace(modelOption.ResolvedModel) != "" && strings.EqualFold(strings.TrimSpace(snapshot.Model), strings.TrimSpace(modelOption.ResolvedModel)))
-		if sameModel &&
+		if strings.EqualFold(strings.TrimSpace(snapshot.Model), modelName) &&
 			(modelProvider == "" || strings.EqualFold(strings.TrimSpace(snapshot.ModelProvider), modelProvider)) &&
 			strings.EqualFold(strings.TrimSpace(snapshot.ReasoningEffort), effort) &&
 			strings.TrimSpace(snapshot.PendingModel) == "" &&
@@ -1519,15 +1517,6 @@ func codexModelOptionIndexForProvider(models []codexapp.ModelOption, desired, de
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(option.Model), desired) || strings.EqualFold(strings.TrimSpace(option.DisplayName), desired) {
-			return i
-		}
-	}
-	// A running session reports the concrete model its alias resolved to.
-	for i, option := range models {
-		if desiredProvider != "" && strings.ToLower(strings.TrimSpace(option.ModelProvider)) != desiredProvider {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(option.ResolvedModel), desired) {
 			return i
 		}
 	}

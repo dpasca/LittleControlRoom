@@ -181,17 +181,18 @@ func TestModelNamesEquivalent(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "Claude Fable alias and resolved model",
+			// Without Claude Code's catalog, "fable" may resolve to a newer version.
+			name:     "Claude alias is not assumed to be a pinned version",
 			provider: ProviderClaudeCode,
 			left:     "claude-fable-5",
 			right:    "fable",
-			want:     true,
+			want:     false,
 		},
 		{
-			name:     "Claude alias comparison is symmetric",
+			name:     "Claude choices compare case-insensitively",
 			provider: ProviderClaudeCode,
 			left:     "OPUS",
-			right:    "claude-opus-5",
+			right:    "opus",
 			want:     true,
 		},
 		{

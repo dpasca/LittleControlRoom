@@ -152,10 +152,10 @@ type claudeCodeSession struct {
 	modeNoticeShown      bool
 	modeFallbackShown    bool
 
-	// launchedPending* hold the staged choices the running CLI process was
-	// started with; only those are applied when that process reports in.
-	launchedPendingModel     string
-	launchedPendingReasoning string
+	// modelChoice is the --model value turns launch with ("" is Claude Code's
+	// default). model is only what Claude reports: it omits aliases and [1m].
+	modelChoice    string
+	modelChoiceSet bool
 
 	assistantBlocks     map[string]map[string]struct{}
 	toolCalls           map[string]claudeToolCall
@@ -362,7 +362,8 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		approvalServer:           approvalServer,
 		claudeHome:               claudeHome,
 		planUsageReader:          claudecli.NewPlanUsageReader(),
-		pendingModel:             concreteClaudeModel(req.PendingModel),
+		modelChoice:              concreteClaudeModel(req.PendingModel),
+		modelChoiceSet:           concreteClaudeModel(req.PendingModel) != "",
 		modelCatalog:             loadClaudeModelCatalog,
 		pendingReasoning:         strings.TrimSpace(req.PendingReasoning),
 		permissionMode:           permissionMode,
@@ -502,7 +503,8 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		LastError:                s.lastError,
 		LastSystemNotice:         s.lastSystemNotice,
 		LastActivityAt:           s.lastActivityAt,
-		Model:                    concreteClaudeModel(s.model),
+		Model:                    s.modelChoiceLabelLocked(),
+		ReportedModel:            concreteClaudeModel(s.model),
 		ReasoningEffort:          s.reasoningEffort,
 		OutputStyle:              s.outputStyle,
 		PendingOutputStyle:       s.pendingOutputStyle,
@@ -668,10 +670,8 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		startStream bool
 	)
 	if s.cmd == nil {
-		model := firstNonEmptyTrimmed(concreteClaudeModel(s.pendingModel), concreteClaudeModel(s.model))
+		model := firstNonEmptyTrimmed(concreteClaudeModel(s.pendingModel), s.modelChoice)
 		reasoning := firstNonEmptyTrimmed(strings.TrimSpace(s.pendingReasoning), strings.TrimSpace(s.reasoningEffort))
-		s.launchedPendingModel = concreteClaudeModel(s.pendingModel)
-		s.launchedPendingReasoning = strings.TrimSpace(s.pendingReasoning)
 		sessionID := strings.TrimSpace(s.sessionID)
 		permissionMode, modeNotice := claudePermissionMode(s.requestedPermissionMode, strings.TrimSpace(s.mcpOptions.PermissionPromptTool) != "")
 		s.permissionMode = permissionMode
@@ -690,6 +690,13 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		s.stdin = stdin
 		s.cancel = cancel
 		s.runningPID = cmd.Process.Pid
+		// Launching consumes staged choices; anything staged from now on
+		// waits for the next turn.
+		s.modelChoice, s.modelChoiceSet, s.pendingModel = model, true, ""
+		if reasoning != "" {
+			s.reasoningEffort = reasoning
+		}
+		s.pendingReasoning = ""
 		s.started = s.started || sessionID != ""
 		s.lastSystemNotice = ""
 		if modeNotice != "" && !s.modeNoticeShown {
@@ -819,11 +826,12 @@ func (s *claudeCodeSession) ShowStatus() error {
 	if sessionID == "" {
 		sessionID = "(not started yet)"
 	}
-	model := concreteClaudeModel(s.model)
-	if model == "" {
-		model = "(default)"
-	} else if label := claudeCatalogModelDisplayName(model); label != model {
-		model = label + " · " + model
+	model := "(default)"
+	if choice := s.modelChoiceLabelLocked(); choice != "" {
+		model = claudeCatalogModelDisplayName(choice) + " · " + choice
+	}
+	if reported := concreteClaudeModel(s.model); reported != "" {
+		model += " · reported " + reported
 	}
 	mode := s.effectivePermissionModeLocked()
 	sessionFile := strings.TrimSpace(s.sessionFile)
@@ -987,7 +995,7 @@ func (s *claudeCodeSession) ListModels() ([]ModelOption, error) {
 	s.mu.Lock()
 	catalog := s.modelCatalog
 	projectPath := s.projectPath
-	current := []string{s.pendingModel, s.model}
+	current := []string{s.pendingModel, s.modelChoice}
 	s.mu.Unlock()
 
 	// Ask the installed CLI outside the session lock: a cold catalog spawns it.
@@ -1130,45 +1138,32 @@ func claudeModelOptionExists(models []ModelOption, id string) bool {
 	id = strings.TrimSpace(id)
 	for _, option := range models {
 		if strings.EqualFold(strings.TrimSpace(option.ID), id) ||
-			strings.EqualFold(strings.TrimSpace(option.Model), id) ||
-			strings.EqualFold(strings.TrimSpace(option.ResolvedModel), id) {
+			strings.EqualFold(strings.TrimSpace(option.Model), id) {
 			return true
 		}
 	}
 	return false
 }
 
+// claudeModelNamesEquivalent treats two choices as the same model when the
+// CLI catalog resolves them to the same concrete model, e.g. default and
+// opus[1m] both running claude-opus-5-5[1m].
 func claudeModelNamesEquivalent(left, right string) bool {
-	// When the CLI catalog says what an alias runs, an older pinned version of
-	// the same family is a different model.
-	if leftResolved, ok := claudeKnownResolvedModel(left); ok {
-		if rightResolved, ok := claudeKnownResolvedModel(right); ok {
-			return strings.EqualFold(leftResolved, rightResolved)
-		}
-	}
-	leftFamily, leftIsAlias := claudeModelAliasFamily(left)
-	rightFamily, rightIsAlias := claudeModelAliasFamily(right)
-	return (leftIsAlias || rightIsAlias) &&
-		leftFamily != "" &&
-		leftFamily == rightFamily
+	leftResolved, leftOK := claudeKnownResolvedModel(left)
+	rightResolved, rightOK := claudeKnownResolvedModel(right)
+	return leftOK && rightOK && strings.EqualFold(leftResolved, rightResolved)
 }
 
-func claudeModelAliasFamily(model string) (string, bool) {
-	model = strings.ToLower(strings.TrimSpace(model))
-	for _, alias := range []string{
-		claudeDefaultModelAlias,
-		claudeFableModelAlias,
-		claudeOpusModelAlias,
-		claudeHaikuModelAlias,
-	} {
-		if model == alias {
-			return alias, true
-		}
-		if strings.HasPrefix(model, "claude-"+alias+"-") {
-			return alias, false
-		}
+// modelChoiceLabelLocked names the session's choice, spelling out Claude
+// Code's default once the session has used it.
+func (s *claudeCodeSession) modelChoiceLabelLocked() string {
+	if s.modelChoice != "" {
+		return s.modelChoice
 	}
-	return "", false
+	if s.modelChoiceSet || concreteClaudeModel(s.model) != "" {
+		return claudeCLIDefaultModelValue
+	}
+	return ""
 }
 
 func (s *claudeCodeSession) consumeClaudeApprovalRequests() {
@@ -1862,14 +1857,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			}
 			s.observeOutputStyleLocked(firstNonEmptyTrimmed(env.OutputStyle, initMsg.OutputStyle))
 			if model := concreteClaudeModel(env.Model); model != "" {
-				s.observeClaudeModelLocked(model)
-			}
-			if effort := s.launchedPendingReasoning; effort != "" {
-				s.reasoningEffort = effort
-				if strings.TrimSpace(s.pendingReasoning) == effort {
-					s.pendingReasoning = ""
-				}
-				s.launchedPendingReasoning = ""
+				s.model = model
 			}
 			if modeRaw := strings.TrimSpace(env.PermissionMode); modeRaw != "" {
 				if mode, err := claudecli.ParsePermissionMode(modeRaw); err == nil {
@@ -1964,25 +1952,13 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	s.notifyAsync()
 }
 
-// observeClaudeModelLocked records the model the running process reports.
-// A choice staged after that process started stays pending for the next turn.
-func (s *claudeCodeSession) observeClaudeModelLocked(model string) {
-	s.model = model
-	if launched := s.launchedPendingModel; launched != "" {
-		if concreteClaudeModel(s.pendingModel) == launched {
-			s.pendingModel = ""
-		}
-		s.launchedPendingModel = ""
-	}
-}
-
 func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string) string {
 	var msg claudeStreamMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return ""
 	}
 	if model := concreteClaudeModel(msg.Model); model != "" {
-		s.observeClaudeModelLocked(model)
+		s.model = model
 	}
 	if msg.ID == "" {
 		msg.ID = firstNonEmptyTrimmed(envelopeUUID, fmt.Sprintf("assistant-%d", len(s.entries)))
@@ -2778,6 +2754,10 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	}
 	if latestModel != "" {
 		s.model = latestModel
+		// A resumed session with no explicit choice stays on what it ran.
+		if !s.modelChoiceSet {
+			s.modelChoice = latestModel
+		}
 	}
 	if sawTokenState {
 		s.tokenUsage = cloneTokenUsageSnapshot(latestUsage)
