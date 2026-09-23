@@ -1115,61 +1115,108 @@ func TestClaudeLoadTranscriptKeepsToolEntriesStructuredOnRefresh(t *testing.T) {
 	}
 }
 
-func TestClaudeLoadTranscriptPresentsServerAPIErrorAsRecoverableInterruption(t *testing.T) {
-	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
-	lines := []string{
-		`{"type":"user","uuid":"msg_user","message":{"role":"user","content":[{"type":"text","text":"let's pause for a few"}]}}`,
-		`{"type":"assistant","uuid":"msg_error","error":"server_error","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Unable to connect to API (ENOTFOUND)"}]}}`,
-		`{"type":"last-prompt","lastPrompt":"let's pause for a few"}`,
-	}
-	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatalf("write session file: %v", err)
-	}
-
-	session := &claudeCodeSession{
-		sessionFile: sessionFile,
-		toolCalls:   make(map[string]claudeToolCall),
-		toolResults: make(map[string]struct{}),
-	}
-	if err := session.loadTranscriptLocked(); err != nil {
-		t.Fatalf("loadTranscriptLocked() error = %v", err)
-	}
-
-	snapshot := session.Snapshot()
-	if len(snapshot.Entries) != 2 {
-		t.Fatalf("entries = %#v, want saved user prompt and provider interruption", snapshot.Entries)
-	}
-	got := snapshot.Entries[1]
-	if got.Kind != TranscriptStatus {
-		t.Fatalf("API error kind = %q, want %q", got.Kind, TranscriptStatus)
-	}
-	if got.Text != "API Error: Unable to connect to API (ENOTFOUND)" {
-		t.Fatalf("raw API error = %q, want diagnostic preserved", got.Text)
-	}
-	if got.DisplayText != claudeRecoverableAPIErrorNotice {
-		t.Fatalf("API error display text = %q, want %q", got.DisplayText, claudeRecoverableAPIErrorNotice)
-	}
-	if !strings.Contains(snapshot.Transcript, claudeRecoverableAPIErrorNotice) {
-		t.Fatalf("transcript = %q, want recoverable interruption notice", snapshot.Transcript)
-	}
-	if strings.Contains(snapshot.Transcript, "ENOTFOUND") {
-		t.Fatalf("transcript = %q, raw provider failure should not be the user-facing text", snapshot.Transcript)
+func TestClaudeAPIErrorsPreserveProviderGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		code    string
+		message string
+	}{
+		{"oauth refresh", "server_error", "Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. This is usually transient; retry in a minute, and if it persists close other Claude Code processes or sign in again"},
+		{"connection", "server_error", "API Error: Unable to connect to API (ENOTFOUND)"},
+		{"overload", "overloaded_error", "Service overloaded; retry shortly"},
+		{"limit", "rate_limit", "You've hit your session limit"},
+		{"unknown", "new_provider_error", "Provider-specific recovery instructions"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line, err := json.Marshal(map[string]any{
+				"type": "assistant", "uuid": "msg_error", "error": tc.code, "isApiErrorMessage": true,
+				"message": map[string]any{
+					"id": "msg_error", "model": "<synthetic>", "role": "assistant",
+					"content": []map[string]string{{"type": "text", "text": tc.message}},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			user := `{"type":"user","uuid":"msg_user","message":{"role":"user","content":[{"type":"text","text":"Draft the episode"}]}}`
+			for _, persisted := range []bool{false, true} {
+				t.Run(fmt.Sprintf("persisted=%t", persisted), func(t *testing.T) {
+					session := &claudeCodeSession{
+						busy:            true,
+						assistantBlocks: make(map[string]map[string]struct{}),
+						toolCalls:       make(map[string]claudeToolCall),
+						toolResults:     make(map[string]struct{}),
+					}
+					if persisted {
+						session.sessionFile = filepath.Join(t.TempDir(), "session.jsonl")
+						if err := os.WriteFile(session.sessionFile, []byte(user+"\n"+string(line)+"\n"), 0o600); err != nil {
+							t.Fatal(err)
+						}
+						if err := session.loadTranscriptLocked(); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						session.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: "Draft the episode"})
+						session.handleClaudeStdoutLine(string(line))
+					}
+					snapshot := session.Snapshot()
+					if len(snapshot.Entries) != 2 {
+						t.Fatalf("entries = %#v", snapshot.Entries)
+					}
+					entry := snapshot.Entries[1]
+					if entry.Kind != TranscriptError || entry.Text != tc.message || entry.DisplayText != "" {
+						t.Fatalf("error guidance hidden or misclassified: %#v", entry)
+					}
+					if !strings.Contains(snapshot.Transcript, tc.message) {
+						t.Fatalf("transcript lost error: %q", snapshot.Transcript)
+					}
+					session.finishClaudeTurn(errors.New("exit status 1"), nil, nil)
+					snapshot = session.Snapshot()
+					if !strings.Contains(snapshot.LastError, tc.message) || !strings.Contains(snapshot.LastError, "exit status 1") {
+						t.Fatalf("failure summary lost cause or exit detail: %q", snapshot.LastError)
+					}
+				})
+			}
+		})
 	}
 }
 
-func TestClaudeAPIErrorClassificationKeepsActionableFailuresAsErrors(t *testing.T) {
-	var conversationTracker claudeartifact.ConversationTracker
-	entries, _, _, _ := parseCCLineEntries(
-		`{"type":"assistant","uuid":"msg_limit","error":"rate_limit","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit"}]}}`,
-		make(map[string]claudeToolCall),
-		make(map[string]struct{}),
-		&conversationTracker,
-	)
-	if len(entries) != 1 || entries[0].Kind != TranscriptError {
-		t.Fatalf("entries = %#v, want actionable API failure rendered as an error", entries)
+func TestClaudeExitErrorDetails(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		entries []TranscriptEntry
+		stderr  string
+		want    string
+	}{
+		{"no details", nil, "", "Claude Code exited with error: exit status 1"},
+		{"stderr", nil, "claude stderr: configuration is invalid", "claude stderr: configuration is invalid\n\nClaude Code exited with error: exit status 1"},
+		{"previous turn", []TranscriptEntry{{Kind: TranscriptError, Text: "Old failure"}, {Kind: TranscriptUser, Text: "Try again"}}, "", "Claude Code exited with error: exit status 1"},
+		{"recovered", []TranscriptEntry{{Kind: TranscriptError, Text: "Old failure"}, {Kind: TranscriptAgent, Text: "Done"}}, "", "Claude Code exited with error: exit status 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := &claudeCodeSession{entries: tc.entries}
+			if tc.stderr != "" {
+				session.appendSystemErrorLocked(tc.stderr)
+			}
+			session.finishClaudeTurn(errors.New("exit status 1"), nil, nil)
+			if got := session.Snapshot().LastError; got != tc.want {
+				t.Fatalf("LastError = %q, want %q", got, tc.want)
+			}
+		})
 	}
-	if entries[0].Text != "You've hit your session limit" || entries[0].DisplayText != "" {
-		t.Fatalf("rate-limit entry = %#v, want provider guidance unchanged", entries[0])
+}
+
+func TestClaudeErrorResultPreservesStructuredErrors(t *testing.T) {
+	// Claude's saved transcript need not include the result envelope.
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(sessionFile, []byte(`{"type":"user","message":{"role":"user","content":"Draft the episode"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := &claudeCodeSession{sessionFile: sessionFile}
+	session.handleClaudeStdoutLine(`{"type":"result","is_error":true,"errors":["Could not refresh credentials", "Retry in a minute"]}`)
+	session.finishClaudeTurn(errors.New("exit status 1"), nil, nil)
+	if got := session.Snapshot().LastError; !strings.Contains(got, "Could not refresh credentials\nRetry in a minute") {
+		t.Fatalf("structured error details lost: %q", got)
 	}
 }
 

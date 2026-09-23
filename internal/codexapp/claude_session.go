@@ -36,7 +36,6 @@ const (
 	claudeSupportStatus                   = "Embedded Claude Code session ready"
 	claudeInterruptNotice                 = "Interrupted embedded Claude Code turn at your request; canceled tool calls were not individually denied."
 	claudeInterruptedCommandResult        = "[interrupted by the explicit Little Control Room stop; this command was not individually denied]"
-	claudeRecoverableAPIErrorNotice       = "Claude Code's API connection ended before the turn completed. Your session and last message are saved; any partial response may be incomplete. Continue when the connection is back."
 	claudeCompactingStatus                = "Claude Code is compacting conversation history..."
 	claudeElicitationUnsupported          = "Embedded Claude Code elicitation responses are not supported yet"
 	claudeAutoModeNotice                  = "Embedded Claude Code is using Auto mode: Claude's classifier reviews risky actions in the background, while explicit permission prompts route to Little Control Room."
@@ -250,6 +249,8 @@ type claudeStreamEnvelope struct {
 	Message           json.RawMessage             `json:"message"`
 	Result            string                      `json:"result"`
 	IsError           bool                        `json:"is_error"`
+	IsAPIErrorMessage bool                        `json:"isApiErrorMessage"`
+	Errors            []string                    `json:"errors"`
 	StopReason        string                      `json:"stop_reason"`
 	LastMessage       string                      `json:"last_message"`
 	ModelUsage        map[string]claudeModelUsage `json:"modelUsage"`
@@ -1628,6 +1629,9 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	if s.sessionID != "" {
 		s.sessionFile = claudeSessionFilePath(s.claudeHome, s.projectPath, s.sessionID)
 	}
+	// Result/stderr details may exist only in the live stream, so retain them
+	// before replacing entries with the persisted conversation.
+	reportedError := latestClaudeTranscriptError(s.entries)
 	transcriptErr := s.loadTranscriptLocked()
 	if s.canUseStreamedTranscriptLocked(transcriptErr) {
 		transcriptErr = nil
@@ -1693,7 +1697,12 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 		case errors.Is(waitErr, ErrClaudeCodeAuthenticationRequired):
 			s.appendSystemErrorLocked(waitErr.Error())
 		case waitErr != nil:
-			s.appendSystemErrorLocked(fmt.Sprintf("Claude Code exited with error: %v", waitErr))
+			message := fmt.Sprintf("Claude Code exited with error: %v", waitErr)
+			detail := firstNonEmptyTrimmed(latestClaudeTranscriptError(s.entries), reportedError)
+			s.appendSystemErrorLocked(message)
+			if detail != "" {
+				s.lastError = detail + "\n\n" + message
+			}
 		case stdoutErr != nil:
 			s.appendSystemErrorLocked(fmt.Sprintf("Could not read Claude Code output: %v", stdoutErr))
 		case stderrErr != nil:
@@ -1886,7 +1895,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.handleClaudeCompactBoundaryLocked(claudeCompactMetadataFromEnvelope(env))
 		}
 	case "assistant":
-		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID)
+		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID, env.IsAPIErrorMessage)
 		if claudeartifact.AssistantTurnCompleted(firstNonEmptyTrimmed(assistantStopReason, env.StopReason)) {
 			stdinToClose = s.finishClaudeSubmissionFromAssistantLocked(time.Now())
 		}
@@ -1903,7 +1912,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			command.resultError = env.IsError
 		}
 		if env.IsError {
-			message := strings.TrimSpace(env.Result)
+			message := firstNonEmptyTrimmed(strings.Join(env.Errors, "\n"), env.Result, s.lastError)
 			if message == "" {
 				message = "Claude Code returned an error result"
 			}
@@ -1952,7 +1961,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	s.notifyAsync()
 }
 
-func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string) string {
+func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string, isAPIError bool) string {
 	var msg claudeStreamMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return ""
@@ -1981,9 +1990,14 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, env
 				continue
 			}
 			seen[key] = struct{}{}
+			kind := TranscriptAgent
+			if isAPIError {
+				kind = TranscriptError
+				s.lastError = text
+			}
 			s.appendEntryLocked(TranscriptEntry{
 				ItemID: msg.ID,
-				Kind:   TranscriptAgent,
+				Kind:   kind,
 				Text:   text,
 			})
 		case "thinking":
@@ -3249,7 +3263,7 @@ func parseCCLineEntriesWithInterruptedTools(
 	case "assistant":
 		entries := extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls)
 		if raw.IsAPIErrorMessage {
-			entries = classifyClaudeAPIErrorEntries(entries, raw.Error)
+			entries = classifyClaudeAPIErrorEntries(entries)
 		}
 		return entries, raw.Type, reasoningEffort, state
 
@@ -3268,25 +3282,33 @@ func parseCCLineEntriesWithInterruptedTools(
 	}
 }
 
-func classifyClaudeAPIErrorEntries(entries []TranscriptEntry, errorType string) []TranscriptEntry {
-	// Claude persists provider failures as synthetic assistant messages. Use its
-	// structured error type instead of interpreting the displayed prose, and
-	// retain that prose in Text for diagnostics while DisplayText carries the
-	// calmer recovery guidance shown in the embedded pane.
-	kind := TranscriptError
-	displayText := ""
-	if strings.EqualFold(strings.TrimSpace(errorType), "server_error") {
-		kind = TranscriptStatus
-		displayText = claudeRecoverableAPIErrorNotice
-	}
+func classifyClaudeAPIErrorEntries(entries []TranscriptEntry) []TranscriptEntry {
+	// server_error also covers local failures such as OAuth refresh contention.
+	// Preserve the provider's explanation and recovery advice for every error;
+	// the structured API-error flag identifies failures without guessing at prose.
 	for i := range entries {
 		if entries[i].Kind != TranscriptAgent {
 			continue
 		}
-		entries[i].Kind = kind
-		entries[i].DisplayText = displayText
+		entries[i].Kind = TranscriptError
 	}
 	return entries
+}
+
+func latestClaudeTranscriptError(entries []TranscriptEntry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		switch entries[i].Kind {
+		case TranscriptUser, TranscriptAgent:
+			// Never attribute an earlier turn's failure (or a recovered failure)
+			// to the process that just exited.
+			return ""
+		case TranscriptError:
+			if text := strings.TrimSpace(entries[i].Text); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
 }
 
 type claudeParsedLineState struct {
