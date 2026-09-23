@@ -11,6 +11,7 @@ import (
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -2543,7 +2544,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	for _, provider := range providers {
 		lines = append(lines, m.renderTodoCopyProviderRow(layout, projectPath, provider, copyDialog.Provider == provider, settings, panelInnerW))
 	}
-	lines = append(lines, layout.renderLabeledRow(
+	lines = append(lines, "", layout.renderLabeledRow(
 		m.renderTodoCopySectionHeader("Options", ""),
 		renderTodoCopyModelOption(copyDialog.Provider, copyDialog.OpenModelFirst),
 		panelInnerW,
@@ -2957,10 +2958,34 @@ func (m Model) todoWorktreeLaunchReadiness(dialog todoCopyDialogState, item mode
 	case model.TodoWorktreeSuggestionQueued, model.TodoWorktreeSuggestionRunning:
 		return todoWorktreeLaunchReady, "Suggested names are still generating; launch will continue with an automatic name."
 	case model.TodoWorktreeSuggestionFailed:
+		if reason := m.todoWorktreeSuggestionFailure(suggestion); reason != "" {
+			return todoWorktreeLaunchReady, "Worktree naming failed (" + reason + "); launch will continue with an automatic name."
+		}
 		return todoWorktreeLaunchReady, "Worktree suggestion is unavailable right now; launch will continue with an automatic name."
 	default:
 		return todoWorktreeLaunchReady, "Worktree name will be generated automatically."
 	}
+}
+
+// todoWorktreeSuggestionFailure says why AI naming failed, so an exhausted
+// provider balance does not look like a broken worktree launch.
+func (m Model) todoWorktreeSuggestionFailure(suggestion *model.TodoWorktreeSuggestion) string {
+	if suggestion == nil {
+		return ""
+	}
+	lastError := strings.TrimSpace(suggestion.LastError)
+	if lastError == "" {
+		return ""
+	}
+	if llm.IsInsufficientBalanceError(errors.New(lastError)) {
+		switch backend := m.currentSettingsBaseline().AIBackend; backend {
+		case config.AIBackendUnset, config.AIBackendDisabled:
+			return aiBalanceErrorStatus
+		default:
+			return backend.Label() + " balance insufficient"
+		}
+	}
+	return strings.TrimRight(firstNonEmptyErrorLine(lastError), " :{")
 }
 
 func todoDialogWaitingLabel(frame int) string {
@@ -3022,8 +3047,12 @@ func (m Model) todoWorktreeLaunchDetails(dialog todoCopyDialogState, item model.
 			detailMutedStyle.Render("Press Enter to launch now with an automatic name, or wait for the preview."),
 		}
 	case model.TodoWorktreeSuggestionFailed:
+		headline := "Worktree suggestion is unavailable right now."
+		if reason := m.todoWorktreeSuggestionFailure(suggestion); reason != "" {
+			headline = "Worktree naming failed: " + reason + "."
+		}
 		return []string{
-			detailWarningStyle.Render("Worktree suggestion is unavailable right now."),
+			detailWarningStyle.Render(truncateText(headline, width)),
 			detailMutedStyle.Render("Press Enter to launch with an automatic name, or e to enter names now."),
 		}
 	default:

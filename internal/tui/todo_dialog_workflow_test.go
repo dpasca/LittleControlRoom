@@ -3051,3 +3051,64 @@ func TestTodoCopyDialogShowsRetryGuidanceForFailedWorktreeSuggestion(t *testing.
 		t.Fatalf("rendered copy dialog should explain the next recovery step, got %q", rendered)
 	}
 }
+
+func TestTodoCopyDialogNamesExhaustedAIBalanceForFailedWorktreeSuggestion(t *testing.T) {
+	m := Model{
+		settingsBaseline: &config.EditableSettings{AIBackend: config.AIBackendOpenAIAPI},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: "/tmp/demo",
+				Text:        "Fix spacing on selected TODO row",
+				WorktreeSuggestion: &model.TodoWorktreeSuggestion{
+					Status:    model.TodoWorktreeSuggestionFailed,
+					LastError: "openai responses api 429 Too Many Requests: {\n  \"error\": {\n    \"message\": \"You have no credits remaining.\",\n    \"type\": \"insufficient_quota\"\n  }\n}",
+				},
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Fix spacing on selected TODO row",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderCodex,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	rendered := ansi.Strip(m.renderTodoCopyDialogOverlay("", 100, 30))
+	if !strings.Contains(rendered, "Worktree naming failed: OpenAI API balance insufficient.") {
+		t.Fatalf("rendered copy dialog should name the exhausted AI balance, got %q", rendered)
+	}
+}
+
+func TestTodoCopyDialogSeparatesOptionsFromAgentRows(t *testing.T) {
+	m := Model{
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Fix spacing on selected TODO row",
+			Provider:    codexapp.ProviderCodex,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	lines := strings.Split(ansi.Strip(m.renderTodoCopyDialogOverlay("", 100, 30)), "\n")
+	for i, line := range lines {
+		inner := strings.TrimSpace(strings.Trim(strings.TrimSpace(line), "│"))
+		if !strings.HasPrefix(inner, "Options") {
+			continue
+		}
+		if i == 0 || strings.TrimSpace(strings.Trim(strings.TrimSpace(lines[i-1]), "│")) != "" {
+			t.Fatalf("Options row should follow a blank line, got:\n%s", strings.Join(lines, "\n"))
+		}
+		return
+	}
+	t.Fatalf("Options row missing:\n%s", strings.Join(lines, "\n"))
+}
