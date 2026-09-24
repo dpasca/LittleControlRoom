@@ -26,6 +26,32 @@ type recordingWriteCloser struct {
 	closed bool
 }
 
+func TestClaudeStateSnapshotDistinguishesStartupFromConversation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	startup := `{"type":"system","subtype":"informational","sessionId":"startup","content":"instructions loaded"}` + "\n"
+	if err := os.WriteFile(path, []byte(startup), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := &claudeCodeSession{sessionFile: path, started: true}
+	if err := session.loadTranscriptLocked(); err != nil {
+		t.Fatal(err)
+	}
+	if !session.stateSnapshotLocked().EmptyConversation {
+		t.Fatal("startup-only session should be explicitly empty")
+	}
+	prompt := `{"type":"user","promptSource":"sdk","message":{"role":"user","content":"continue the task"}}` + "\n"
+	if err := os.WriteFile(path, []byte(startup+prompt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.loadTranscriptLocked(); err != nil {
+		t.Fatal(err)
+	}
+	state := session.stateSnapshotLocked()
+	if state.EmptyConversation || !state.LatestTurnStateKnown || len(state.Entries) != 0 {
+		t.Fatalf("state-only snapshot lost conversation evidence: %#v", state)
+	}
+}
+
 func (r *recordingWriteCloser) Write(p []byte) (int, error) {
 	r.writes = append(r.writes, string(p))
 	return len(p), nil

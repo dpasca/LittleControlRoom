@@ -487,6 +487,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
 		TranscriptRevision:       s.transcriptRevision,
+		EmptyConversation:        len(s.entries) == 0 && !s.latestTurnStateKnown,
 		Phase:                    s.phaseLocked(),
 		Started:                  s.started,
 		Busy:                     s.busy || s.externalTurnActive || s.compacting,

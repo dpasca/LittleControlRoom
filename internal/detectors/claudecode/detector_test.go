@@ -268,6 +268,44 @@ func TestDetectFindsSessionFromJSONL(t *testing.T) {
 	}
 }
 
+func TestDetectSkipsStartupOnlySessionUntilConversationStarts(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "project")
+	claudeHome := filepath.Join(root, ".claude")
+	projectDir := filepath.Join(claudeHome, "projects", claudeartifact.ProjectDirectoryName(projectPath))
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projectDir, "startup.jsonl")
+	lines := []map[string]any{
+		{"type": "mode", "mode": "normal", "sessionId": "startup"},
+		{"type": "system", "subtype": "informational", "cwd": projectPath, "sessionId": "startup"},
+		{"type": "user", "isMeta": true, "uuid": "local-command"},
+		{"type": "user", "parentUuid": "local-command", "uuid": "local-output", "message": map[string]any{"content": "settings changed"}},
+		{"type": "cost-state", "totalCostUSD": 0},
+	}
+	writeJSONLines(t, path, lines)
+	d := New(claudeHome)
+	scope := scanner.NewPathScope([]string{root}, nil)
+	results, err := d.Detect(context.Background(), scope)
+	if err != nil || len(results) != 0 {
+		t.Fatalf("startup-only detection = %#v, %v", results, err)
+	}
+	lines = append(lines, map[string]any{
+		"type": "user", "origin": map[string]any{"kind": "human"}, "promptSource": "typed",
+		"message": map[string]any{"content": "continue working"},
+	})
+	writeJSONLines(t, path, lines)
+	future := time.Now().Add(time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	results, err = d.Detect(context.Background(), scope)
+	if err != nil || results[projectPath] == nil || len(results[projectPath].Sessions) != 1 {
+		t.Fatalf("conversation detection = %#v, %v", results, err)
+	}
+}
+
 func TestDetectTreatsAssistantEndTurnAsCompletedWithoutSystemEntry(t *testing.T) {
 	t.Parallel()
 

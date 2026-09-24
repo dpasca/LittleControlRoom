@@ -5,6 +5,37 @@ import (
 	"testing"
 )
 
+func TestEmptySessionRecoveryRefusesChangedSession(t *testing.T) {
+	for _, change := range []string{"prompt", "busy", "replacement"} {
+		t.Run(change, func(t *testing.T) {
+			manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+				return &fakeSession{projectPath: req.ProjectPath, snapshot: Snapshot{
+					Provider: ProviderClaudeCode, ThreadID: "startup", Started: true, EmptyConversation: true,
+				}}, nil
+			})
+			first, _, err := manager.Open(LaunchRequest{ProjectPath: "/tmp/demo", Provider: ProviderClaudeCode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			session := first.(*fakeSession)
+			switch change {
+			case "prompt":
+				session.snapshot.EmptyConversation = false
+			case "busy":
+				session.snapshot.Busy = true
+			case "replacement":
+				session.snapshot.ThreadID = "different"
+			}
+			_, _, err = manager.Open(LaunchRequest{
+				ProjectPath: "/tmp/demo", Provider: ProviderCodex, ResumeID: "saved-work", ReplaceEmptySessionID: "startup",
+			})
+			if !errors.Is(err, ErrSessionChanged) || session.closed {
+				t.Fatalf("changed session must remain open: error=%v closed=%v", err, session.closed)
+			}
+		})
+	}
+}
+
 func TestBusySessionReplacementRequiresExactConfirmation(t *testing.T) {
 	for _, provider := range []Provider{ProviderCodex, ProviderOpenCode, ProviderClaudeCode, ProviderLCAgent} {
 		t.Run(string(provider), func(t *testing.T) {

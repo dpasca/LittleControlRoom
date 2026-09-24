@@ -923,6 +923,11 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 	if latestTurnStartedAt.IsZero() {
 		latestTurnStartedAt = snapshot.BusySince
 	}
+	if snapshot.EmptyConversation && !embeddedSessionBlocksProviderSwitch(snapshot) {
+		// Preserve the control binding, but opening a startup-only artifact is
+		// not new work. A zero timestamp tells the service to record identity only.
+		lastActivity = time.Time{}
+	}
 	return service.EmbeddedSessionActivity{
 		ProjectPath:          projectPath,
 		Source:               embeddedSessionSource(snapshot.Provider),
@@ -1166,8 +1171,15 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		})
 		return m, nil
 	}
+	replaceEmptySessionID := ""
 	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
-		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
+		recoverEmpty := false
+		if snapshot, ok := m.liveCodexSnapshot(p.Path); ok && emptyEmbeddedSessionCanYield(snapshot, p) && provider == providerForSessionFormat(p.LatestSessionFormat) && options.resumeID == "" {
+			options.resumeID = p.ExternalLatestSessionID()
+			replaceEmptySessionID = snapshot.ThreadID
+			recoverEmpty = true
+		}
+		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok && !recoverEmpty {
 			m.rememberEmbeddedProvider(provider)
 			if !options.reveal {
 				m.status = "Embedded " + provider.Label() + " session is already open in the background"
@@ -1175,7 +1187,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 			}
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
 		}
-		if m.hasRestorableEmbeddedSession(p.Path, provider) {
+		if !recoverEmpty && m.hasRestorableEmbeddedSession(p.Path, provider) {
 			m.rememberEmbeddedProvider(provider)
 			if !options.reveal {
 				m.status = "Embedded " + provider.Label() + " session is already available in the background"
@@ -1186,6 +1198,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 
 	req := m.embeddedLaunchRequest(p, provider, options)
+	req.ReplaceEmptySessionID = replaceEmptySessionID
 	req.PendingModel = options.modelSelection.Model
 	req.PendingReasoning = options.modelSelection.ReasoningEffort
 	if provider == codexapp.ProviderLCAgent && options.modelSelection.Model != "" {
@@ -1579,6 +1592,9 @@ func (m Model) embeddedLaunchBlock(project model.ProjectSummary, requested codex
 		if liveProvider == requested {
 			return embeddedLaunchBlock{}, false
 		}
+		if emptyEmbeddedSessionCanYield(snapshot, project) && requested == providerForSessionFormat(project.LatestSessionFormat) {
+			return embeddedLaunchBlock{}, false
+		}
 		if snapshot.Started && !snapshot.Closed {
 			// A fresh launch may replace LCR's read-only view without touching
 			// the provider process that owns the external session. Keep ordinary
@@ -1765,6 +1781,9 @@ func preferredEmbeddedProviderFromProjectSummary(project model.ProjectSummary) c
 
 func (m Model) preferredEmbeddedProviderForProject(project model.ProjectSummary) codexapp.Provider {
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		if emptyEmbeddedSessionCanYield(snapshot, project) {
+			return providerForSessionFormat(project.LatestSessionFormat)
+		}
 		return embeddedProvider(snapshot)
 	}
 	if provider, ok := m.managedEmbeddedProviderForProject(project.Path); ok {
@@ -1774,6 +1793,16 @@ func (m Model) preferredEmbeddedProviderForProject(project model.ProjectSummary)
 		return provider
 	}
 	return preferredEmbeddedProviderFromProjectSummary(project)
+}
+
+// An idle startup-only artifact must not pin Enter to the wrong session once
+// the scanner has found an actual conversation. Keep fresh, deliberately opened
+// composers and any active or uncertain session under the existing protections.
+func emptyEmbeddedSessionCanYield(snapshot codexapp.Snapshot, project model.ProjectSummary) bool {
+	provider := providerForSessionFormat(project.LatestSessionFormat)
+	return snapshot.CanReplaceEmptyConversation() &&
+		project.LatestTurnStateKnown && project.ExternalLatestSessionID() != "" &&
+		provider != "" && (provider != embeddedProvider(snapshot) || project.ExternalLatestSessionID() != snapshot.ThreadID)
 }
 
 func (m Model) managedEmbeddedProviderForProject(projectPath string) (codexapp.Provider, bool) {

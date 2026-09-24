@@ -563,6 +563,7 @@ func stateSnapshotForCodexSession(session codexapp.Session) (codexapp.Snapshot, 
 func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapshot {
 	cached.Closed = state.Closed
 	cached.Started = state.Started
+	cached.EmptyConversation = state.EmptyConversation
 	cached.Busy = state.Busy
 	cached.BusyExternal = state.BusyExternal
 	cached.Compacting = state.Compacting

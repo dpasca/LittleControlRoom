@@ -835,6 +835,39 @@ func TestPreferredEmbeddedProviderUsesOneShotOverrideBeforeStoredLatest(t *testi
 	}
 }
 
+func TestEmptyEmbeddedSessionYieldPreservesProtectedSessions(t *testing.T) {
+	project := model.ProjectSummary{LatestSessionID: "codex-work", LatestSessionFormat: "modern", LatestTurnStateKnown: true}
+	for _, test := range []struct {
+		name   string
+		change func(*codexapp.Snapshot)
+	}{
+		{"populated", func(s *codexapp.Snapshot) { s.EmptyConversation = false }},
+		{"fresh composer", func(s *codexapp.Snapshot) { s.Started = false }},
+		{"busy", func(s *codexapp.Snapshot) { s.Busy = true }},
+		{"external", func(s *codexapp.Snapshot) { s.BusyExternal = true }},
+		{"approval", func(s *codexapp.Snapshot) { s.PendingApproval = &codexapp.ApprovalRequest{} }},
+		{"reconciling", func(s *codexapp.Snapshot) { s.Phase = codexapp.SessionPhaseReconciling }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := codexapp.Snapshot{Provider: codexapp.ProviderClaudeCode, Started: true, EmptyConversation: true}
+			test.change(&snapshot)
+			if emptyEmbeddedSessionCanYield(snapshot, project) {
+				t.Fatal("protected session yielded to a different provider")
+			}
+		})
+	}
+}
+
+func TestEmptyEmbeddedSessionRecordsIdentityWithoutNewActivity(t *testing.T) {
+	activity, ok := embeddedSessionActivityFromSnapshot("/tmp/demo", codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode, Started: true, ThreadID: "startup",
+		ControlSessionKey: "control", EmptyConversation: true, LastActivityAt: time.Now(),
+	})
+	if !ok || activity.SessionID != "startup" || activity.ControlSessionKey != "control" || !activity.LastActivityAt.IsZero() {
+		t.Fatalf("empty session activity = %#v, %v, want identity only", activity, ok)
+	}
+}
+
 func TestPreferredEmbeddedProviderUsesPersistedPreferredSourceWhenNoSession(t *testing.T) {
 	project := model.ProjectSummary{
 		Path:                   "/tmp/demo",

@@ -35,13 +35,14 @@ type cachedParse struct {
 }
 
 type parseResult struct {
-	sessionID   string
-	cwd         string
-	startedAt   time.Time
-	lastEventAt time.Time
-	turnStarted time.Time
-	turnDone    bool
-	turnKnown   bool
+	sessionID       string
+	cwd             string
+	startedAt       time.Time
+	lastEventAt     time.Time
+	turnStarted     time.Time
+	turnDone        bool
+	turnKnown       bool
+	hasConversation bool
 }
 
 func New(claudeHome string) *Detector {
@@ -82,6 +83,12 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			continue
 		}
 		if parsed.cwd == "" {
+			continue
+		}
+		// Opening Claude for settings or authentication writes a JSONL file
+		// without starting a conversation. Do not let it displace real work
+		// from another provider merely because its bookkeeping is newer.
+		if !parsed.hasConversation {
 			continue
 		}
 		cwd := filepath.Clean(parsed.cwd)
@@ -344,6 +351,9 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 			PromptSource:     entry.PromptSource,
 			OriginKind:       entry.Origin.Kind,
 		})
+		if conversationalUser || entry.Type == "assistant" || entry.IsCompactSummary {
+			res.hasConversation = true
+		}
 		turnTracker.Observe(claudeartifact.TurnObservation{
 			Type:                entry.Type,
 			Subtype:             entry.Subtype,

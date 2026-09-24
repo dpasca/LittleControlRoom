@@ -625,6 +625,7 @@ type Snapshot struct {
 	CurrentBrowserPageURL     string
 	CurrentBrowserPageStale   bool
 	TranscriptRevision        uint64
+	EmptyConversation         bool // Provider-verified emptiness, also present in state-only snapshots.
 	Phase                     SessionPhase
 	Started                   bool
 	Busy                      bool // A turn is currently active, whether local or external.
@@ -704,6 +705,16 @@ type CompactionResult struct {
 	Trigger   string
 }
 
+// CanReplaceEmptyConversation requires affirmative emptiness and an idle state.
+// It is checked again by the manager when an asynchronous recovery open executes.
+func (s Snapshot) CanReplaceEmptyConversation() bool {
+	if !s.Started || s.Closed || !s.EmptyConversation || s.Busy || s.BusyExternal || s.Compacting || s.ActiveTurnID != "" ||
+		s.PendingApproval != nil || s.PendingToolInput != nil || s.PendingElicitation != nil {
+		return false
+	}
+	return s.Phase == "" || s.Phase == SessionPhaseIdle
+}
+
 // InstructionCompactor is implemented by providers that support optional
 // focus instructions and can report whether a compaction actually occurred.
 type InstructionCompactor interface {
@@ -752,6 +763,9 @@ type LaunchRequest struct {
 	// instead of replacing a different live session or falling back to a new
 	// provider session when the target can no longer be resumed.
 	RequireResumeID bool
+	// ReplaceEmptySessionID permits automatic recovery only while this exact
+	// managed session is still empty and idle when the open command executes.
+	ReplaceEmptySessionID string
 
 	// ContinueInterruptedTurn is set only for a turn captured by LCR's
 	// graceful-shutdown journal. Reopening a provider session restores context;
@@ -1156,6 +1170,11 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	if req.RequireLiveIdle && (!ok || existingState.ActiveTurnID != "" || existingState.Busy || existingState.BusyExternal || existingState.Closed || existingState.PendingApproval != nil || existingState.PendingToolInput != nil) {
 		m.mu.Unlock()
 		return nil, false, fmt.Errorf("review delivery requires the exact live idle caller; it will not reopen or steer a session")
+	}
+	if expected := strings.TrimSpace(req.ReplaceEmptySessionID); expected != "" &&
+		(!ok || existingState.ThreadID != expected || !existingState.CanReplaceEmptyConversation()) {
+		m.mu.Unlock()
+		return nil, false, fmt.Errorf("%w: the empty session changed before recovery; reopen the project to review its current conversation", ErrSessionChanged)
 	}
 	if req.ForceNew && ok {
 		confirmedID := strings.TrimSpace(req.ConfirmedReplacementSessionID)

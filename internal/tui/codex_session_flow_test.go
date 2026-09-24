@@ -114,6 +114,53 @@ func TestEnterLaunchesCodexFromFocusedProjectList(t *testing.T) {
 	}
 }
 
+func TestEnterResumesConversationInsteadOfIdleEmptyClaudeSession(t *testing.T) {
+	for _, provider := range []codexapp.Provider{codexapp.ProviderCodex, codexapp.ProviderClaudeCode} {
+		t.Run(string(provider), func(t *testing.T) {
+			var requests []codexapp.LaunchRequest
+			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+				requests = append(requests, req)
+				return &fakeCodexSession{
+					projectPath: req.ProjectPath,
+					snapshot: codexapp.Snapshot{
+						Provider: req.Provider, Started: true, ThreadID: req.ResumeID,
+						EmptyConversation: req.ResumeID == "claude-startup",
+					},
+				}, nil
+			})
+			if _, _, err := manager.Open(codexapp.LaunchRequest{
+				ProjectPath: "/tmp/demo", Provider: codexapp.ProviderClaudeCode, ResumeID: "claude-startup",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			m := Model{
+				codexManager: manager,
+				projects: []model.ProjectSummary{{
+					Path: "/tmp/demo", Name: "demo", PresentOnDisk: true,
+					LatestSessionID: "saved-work", LatestSessionFormat: embeddedSessionFormat(provider),
+					LatestTurnStateKnown: true, LatestTurnCompleted: true,
+				}},
+				focusedPane: focusProjects,
+				codexInput:  newCodexTextarea(), codexDrafts: make(map[string]codexDraft),
+				codexViewport: viewport.New(0, 0), width: 100, height: 24,
+			}
+			updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+			got := updated.(Model)
+			if cmd == nil || got.attentionDialog != nil || got.codexPendingOpen == nil || got.codexPendingOpen.provider != provider {
+				t.Fatalf("Enter did not select saved conversation: pending=%#v attention=%#v", got.codexPendingOpen, got.attentionDialog)
+			}
+			opened, ok := cmd().(codexSessionOpenedMsg)
+			if !ok || opened.err != nil {
+				t.Fatalf("open result = %#v", opened)
+			}
+			if len(requests) != 2 || requests[1].Provider != provider || requests[1].ResumeID != "saved-work" || requests[1].ForceNew {
+				t.Fatalf("requests = %#v, want exact saved-session resume", requests)
+			}
+
+		})
+	}
+}
+
 func TestEnterRestoresHiddenLiveCodexSessionFromFocusedProjectList(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

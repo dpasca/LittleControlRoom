@@ -99,6 +99,10 @@ missing artifact references before queueing an assessment:
 
 - Claude Code uses `<claude-code-home>/projects/<sanitized-cwd>/<session-id>.jsonl`.
   The project-directory sanitizer is shared with the Claude artifact reader.
+  Discovery excludes startup/settings-only files without conversational user,
+  assistant, or compact-summary records, so authentication and local commands
+  cannot displace a populated session from another provider. Detection uses
+  structured event metadata, not message text.
 - OpenCode uses `<opencode-home>/opencode.db#session:<session-id>`.
 - LCAgent uses the logical `thread_id` from `session_meta` as its session identity,
   falling back to `id` for older traces. Its checkpoint at
