@@ -26,6 +26,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: |
+            go.sum
+            **/*.go
 
       - name: Configure git identity for tests
         run: |
