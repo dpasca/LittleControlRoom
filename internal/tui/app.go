@@ -321,6 +321,7 @@ type Model struct {
 	managedBrowserReadsInFlight   map[string]bool
 	questionNotify                *questionNotification
 	codexInputCopyDialog          *inputcomposer.CopyDialogState
+	codexDetailPicker             *codexDetailPickerState
 	codexInputSelection           *codexInputSelectionState
 	codexComposerSelection        textSelection
 	engineerModelCatalogRefresh   map[codexapp.Provider]time.Time
@@ -904,6 +905,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		recentOpenCodeModels:          append([]string(nil), initialSettings.RecentOpenCodeModels...),
 		recentLCAgentModels:           append([]string(nil), initialSettings.RecentLCAgentModels...),
 		hideReasoningSections:         initialSettings.HideReasoningSections,
+		codexDenseBlockMode:           codexDenseBlockNarrative,
 		browserController:             browserctl.NewController(),
 		managedBrowserStates:          make(map[string]browserctl.ManagedPlaywrightState),
 		managedBrowserStateFetchedAt:  make(map[string]time.Time),
@@ -1990,7 +1992,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDiffMode(msg)
 		}
 		if m.codexVisible() {
-			if m.browserAttentionDialogCanTakeFocus() && m.codexInputCopyDialog == nil && m.embeddedSidebarDetail == nil {
+			if m.browserAttentionDialogCanTakeFocus() && m.codexInputCopyDialog == nil && m.codexDetailPicker == nil && m.embeddedSidebarDetail == nil {
 				return m.updateBrowserAttentionMode(msg)
 			}
 			return m.updateCodexMode(msg)

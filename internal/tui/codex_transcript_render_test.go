@@ -92,7 +92,7 @@ func TestVisibleCodexViewShowsBannerAndYoloWarning(t *testing.T) {
 	if strings.Contains(lines[0], "Alt+Down picker") || strings.Contains(lines[0], "Alt+[ prev") || strings.Contains(lines[0], "Alt+] next") {
 		t.Fatalf("embedded Codex view should omit obsolete picker/session shortcuts from the banner line: %q", rendered)
 	}
-	if !strings.Contains(lines[0], "Alt+L blocks") {
+	if !strings.Contains(lines[0], "Alt+L detail") {
 		t.Fatalf("embedded Codex view should keep block controls on the banner line: %q", rendered)
 	}
 	if len(lines) > 1 && strings.Contains(lines[1], "Alt+Down picker") {
@@ -4415,7 +4415,8 @@ func TestCodexAltLDenseModeQueuesDeferredRenderForHeavyTranscript(t *testing.T) 
 	snapshot.Busy = false
 	m.storeCodexSnapshot(projectPath, snapshot)
 
-	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+	updated, cmd := normalizeUpdateModel(updated).updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
 	got := normalizeUpdateModel(updated)
 	if got.codexDenseBlockMode != codexDenseBlockPreview {
 		t.Fatalf("codexDenseBlockMode = %v, want preview", got.codexDenseBlockMode)
@@ -4617,7 +4618,7 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 	if strings.Contains(rendered, "Esc hide") {
 		t.Fatalf("renderCodexFooter() should keep Esc as a silent fallback, not advertise it: %q", rendered)
 	}
-	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks", "Alt+S sidebar"} {
+	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L detail", "Alt+S sidebar"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("renderCodexFooter() should promote %q out of the footer: %q", hidden, rendered)
 		}
@@ -4861,7 +4862,7 @@ func TestRenderCodexBannerPromotesLinksAndBlocks(t *testing.T) {
 	m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 140)
 	rendered := ansi.Strip(m.renderCodexBanner(snapshot, 140))
 
-	for _, expected := range []string{"Codex | demo", "Alt+O links", "Alt+L blocks", "Alt+S sidebar"} {
+	for _, expected := range []string{"Codex | demo", "Alt+O links", "Alt+L detail", "Alt+S sidebar"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("renderCodexBanner() missing %q: %q", expected, rendered)
 		}

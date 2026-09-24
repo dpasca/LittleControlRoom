@@ -49,6 +49,10 @@ const (
 	codexDenseBlockSummary codexDenseBlockMode = iota
 	codexDenseBlockPreview
 	codexDenseBlockFull
+	// codexDenseBlockNarrative folds each run of tool traffic into one
+	// intent-level activity line under the engineer's prose. It is the default
+	// for new models; the zero value stays the per-call summary.
+	codexDenseBlockNarrative
 )
 
 type embeddedPermissionSession interface {
@@ -58,7 +62,7 @@ type embeddedPermissionSession interface {
 
 func (mode codexDenseBlockMode) normalized() codexDenseBlockMode {
 	switch mode {
-	case codexDenseBlockPreview, codexDenseBlockFull:
+	case codexDenseBlockPreview, codexDenseBlockFull, codexDenseBlockNarrative:
 		return mode
 	default:
 		return codexDenseBlockSummary
@@ -69,34 +73,31 @@ func (mode codexDenseBlockMode) full() bool {
 	return mode.normalized() == codexDenseBlockFull
 }
 
-func (mode codexDenseBlockMode) next() codexDenseBlockMode {
-	switch mode.normalized() {
-	case codexDenseBlockSummary:
-		return codexDenseBlockPreview
-	case codexDenseBlockPreview:
-		return codexDenseBlockFull
-	default:
-		return codexDenseBlockSummary
-	}
+func (mode codexDenseBlockMode) narrative() bool {
+	return mode.normalized() == codexDenseBlockNarrative
 }
 
 func (mode codexDenseBlockMode) statusText() string {
 	switch mode.normalized() {
+	case codexDenseBlockNarrative:
+		return "Showing engineer steps with activity summaries"
 	case codexDenseBlockPreview:
 		return "Showing short transcript block previews"
 	case codexDenseBlockFull:
 		return "Showing full transcript blocks"
 	default:
-		return "Hiding transcript block output"
+		return "Showing each tool call with output hidden"
 	}
 }
 
 func (mode codexDenseBlockMode) bannerText() string {
 	switch mode.normalized() {
+	case codexDenseBlockSummary:
+		return "Tool calls"
 	case codexDenseBlockPreview:
-		return "Blocks preview"
+		return "Previews"
 	case codexDenseBlockFull:
-		return "Blocks full"
+		return "Full output"
 	default:
 		return ""
 	}
@@ -1014,6 +1015,7 @@ func codexTranscriptEntryEqual(left, right codexapp.TranscriptEntry) bool {
 		left.ToolName == right.ToolName &&
 		left.ToolPath == right.ToolPath &&
 		left.CommandText == right.CommandText &&
+		left.Failed == right.Failed &&
 		codexGeneratedImageArtifactsEqual(left.GeneratedImage, right.GeneratedImage)
 }
 
@@ -2526,6 +2528,7 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	if !m.codexVisible() {
 		return m, nil
 	}
+	m.codexDetailPicker = nil
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	label := "Embedded session"
 	refreshCmd := tea.Cmd(nil)

@@ -165,6 +165,9 @@ func (m Model) view() string {
 		if m.codexInputCopyDialog != nil {
 			return m.renderCodexInputCopyDialogOverlay(body, width, height)
 		}
+		if m.codexDetailPicker != nil {
+			return m.renderCodexDetailPickerOverlay(body, width, height)
+		}
 		if m.embeddedSidebarDetail != nil {
 			return m.renderEmbeddedSidebarDetailOverlay(body, width, height)
 		}
