@@ -430,7 +430,7 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 	if !strings.Contains(systemText, "Use needs_follow_up for assistant-proposed implementation milestones that are ready to start next") {
 		t.Fatalf("system prompt = %q, want implementation milestone guidance", systemText)
 	}
-	if !strings.Contains(systemText, "If the latest assistant message asks the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question, prefer waiting_for_user over completed.") {
+	if !strings.Contains(systemText, "If the latest assistant message needs the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question to finish the agreed task, prefer waiting_for_user over completed.") {
 		t.Fatalf("system prompt = %q, want explicit proposal-handoff guidance", systemText)
 	}
 	if !strings.Contains(systemText, "Proposal handoffs count as waiting_for_user when the next meaningful action depends on the user's choice, even if the assistant includes a recommendation like “I’d go with 2”.") {

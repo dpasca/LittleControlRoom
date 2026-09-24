@@ -15,18 +15,26 @@ func TestCodexClassifierPostMergeFollowupsLive(t *testing.T) {
 	if strings.TrimSpace(os.Getenv("LCROOM_RUN_LIVE_CODEX_HELPER_TEST")) == "" {
 		t.Skip("set LCROOM_RUN_LIVE_CODEX_HELPER_TEST=1 to test post-merge assessment semantics")
 	}
-	client := NewCodexClientWithUsageTracker(nil)
+	client := NewCodexClientWithUsageTrackerInDataDir(t.TempDir(), nil)
 	for _, tc := range []struct {
-		name, handoff string
-		publication   WorktreePublicationStatus
-		want          model.SessionCategory
+		name, request, handoff string
+		publication            WorktreePublicationStatus
+		want                   model.SessionCategory
 	}{
-		{"merge_done", "Implementation and tests are complete. Please commit and merge the work into master.", WorktreePublicationUnknown, model.SessionCategoryCompleted},
-		{"push_done", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationPublished, model.SessionCategoryCompleted},
-		{"push_pending", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationPending, model.SessionCategoryNeedsFollowUp},
-		{"push_unknown", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationUnknown, model.SessionCategoryNeedsFollowUp},
-		{"restart_pending", "Fix validated. Commit and merge the changes, then rebuild and restart LCR to activate the fix.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
-		{"verification_pending", "Changes and automated tests are complete. Merge and push, then launch the game and manually verify the new controls.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
+		{"merge_done", "Implement the fix and merge it.", "Implementation and tests are complete. Please commit and merge the work into master.", WorktreePublicationUnknown, model.SessionCategoryCompleted},
+		{"push_done", "Implement the fix, merge and push master.", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationPublished, model.SessionCategoryCompleted},
+		{"push_pending", "Implement the fix, merge and push master.", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationPending, model.SessionCategoryNeedsFollowUp},
+		{"push_unknown", "Implement the fix, merge and push master.", "Implementation and tests are complete. Please commit, merge into master, and push master.", WorktreePublicationUnknown, model.SessionCategoryNeedsFollowUp},
+		{"restart_pending", "Implement the fix, merge it, and rebuild and restart LCR for me.", "Fix validated. Commit and merge the changes, then rebuild and restart LCR to activate the fix.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
+		{"verification_pending", "Implement the controls, merge and push, then launch the game and manually verify them.", "Changes and automated tests are complete. Merge and push, then launch the game and manually verify the new controls.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
+		{"restart_reminder", "Fix session selection and run the tests.", "Session-selection fix implemented; tests and TUI smoke pass. Rebuild and restart LCR to activate the fix; the running app has not been updated.", WorktreePublicationPublished, model.SessionCategoryCompleted},
+		{"visual_check_reminder", "Improve the Start TODO dialog's model and reasoning display.", "Full model and reasoning now shown per row; automated tests pass. Still needs a live make tui visual check after rebuild/restart.", WorktreePublicationPublished, model.SessionCategoryCompleted},
+		{"optional_polish", "Implement the activity picker.", "Activity picker implemented, tests pass. If you want, I can add search next. Shall I do that?", WorktreePublicationPublished, model.SessionCategoryCompleted},
+		{"known_defect", "Implement the activity picker and update its shortcut labels.", "Picker implemented and tests pass, but block titles still incorrectly say Alt+L expands. Those labels still need fixing.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
+		{"verification_failed", "Fix the layout gap.", "Fix merged and tests pass, but live TUI verification still reproduces the gap. The layout needs another correction.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
+		{"required_approval", "Implement the fix and deploy it after I approve the production release.", "Fix implemented and tests pass. Ready for production deployment; please approve before I deploy.", WorktreePublicationPublished, model.SessionCategoryWaitingForUser},
+		{"provider_blocker", "Fix the model selector and restore AI worktree naming.", "Model selector fixed and tested, but AI worktree naming remains blocked by exhausted API credits.", WorktreePublicationPublished, model.SessionCategoryBlocked},
+		{"source_push_pending", "Implement the fix, merge and publish master, and push this feature branch too.", "Implementation and tests complete. Master is published; the separate feature-branch push still needs doing.", WorktreePublicationPublished, model.SessionCategoryNeedsFollowUp},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -39,7 +47,7 @@ func TestCodexClassifierPostMergeFollowupsLive(t *testing.T) {
 					PublicationStatus: tc.publication,
 				}},
 				Transcript: []TranscriptItem{
-					{Role: "user", Text: "Implement the requested fix and run the automated tests."},
+					{Role: "user", Text: tc.request},
 					{Role: "assistant", Text: tc.handoff},
 				},
 			})

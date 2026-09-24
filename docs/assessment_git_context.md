@@ -19,16 +19,32 @@ of the source branch is separate from publishing the merge target.
 
 The model reconciles old commit/merge/push handoffs with these current facts using
 the existing structured category, summary, and confidence schema. There are no
-text-matching rules that mark a follow-up done. Rebuild, restart, deployment,
-manual verification, and remaining implementation requests survive a merge.
+text-matching rules that mark a follow-up done. Explicitly requested rebuilds,
+restarts, deployments, acceptance checks, and remaining implementation work
+survive a merge, as do known defects and failed checks.
+
+Routine closing reminders to restart the parent application or try the UI do not
+keep an otherwise finished implementation task open. In particular, clean,
+merged and published worktrees should not each retain a follow-up for the same
+parent-application activation. The model distinguishes required work from these
+reminders using task context, not phrases such as "still needs" or "must restart".
+Optional offers to do extra work also do not require a user reply. A completed
+assessment describes the delivered task; it does not claim that an unobserved
+restart, deployment, or manual check happened. Genuine unfinished implementation
+milestones and required user decisions retain their existing attention states.
 
 Integration and target publication participate in the assessment snapshot hash.
 Unchanged snapshots reuse the completed assessment, while changed evidence queues
-a new attempt. If inference is unavailable or fails, existing classification
-failure handling applies; Git actions do not fabricate a completed assessment.
+a new attempt. Classifier policy versions also invalidate cached assessments, so
+this policy applies to existing sessions without editing their transcripts or
+manually clearing their assessments. If inference is unavailable or fails,
+existing classification failure handling applies; Git actions do not fabricate a
+completed assessment.
 
 Regression coverage includes real local Git merge/push transitions and refresh /
-scan hash consistency. Optional live semantic checks run with:
+scan hash consistency. Live semantic cases pair routine restart/visual-check
+reminders with explicit requirements and cover unfinished labels, failed checks,
+optional offers, required approvals, and provider blockers. Run them with:
 
 ```sh
 LCROOM_RUN_LIVE_CODEX_HELPER_TEST=1 go test ./internal/sessionclassify -run '^TestCodexClassifierPostMergeFollowupsLive$' -count=1 -v

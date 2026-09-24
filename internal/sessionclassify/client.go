@@ -562,15 +562,16 @@ Do not wrap the JSON in markdown fences.
 Do not include any prose before or after the JSON object.
 
 Choose exactly one category:
-- completed: no concrete dashboard action remains after this turn; optional future ideas do not make it incomplete
+- completed: the session's task is delivered with no required action remaining; routine closing reminders and optional future ideas do not make it incomplete
 - blocked: work stopped because of an unresolved blocker, failure, or dependency
 - waiting_for_user: the assistant explicitly needs input, approval, credentials, or a decision from the user
-- needs_follow_up: work is not blocked, but there is a concrete project next step that should likely happen next
+- needs_follow_up: work is not blocked, but a concrete unfinished task or actionable implementation milestone remains for this session
 - in_progress: the session looks mid-flight with no clear handoff yet
 - unknown: there is not enough evidence
 
 Classify the dashboard attention state after the turn, not just whether the assistant answered the last message.
 Focus on the latest user and assistant messages, not the full project history.
+Assess the work owned by this session. A linked worktree is a task workspace, not a checklist for the entire parent application's future operation.
 Also consider the brief git_status snapshot as supporting context.
 If latest_turn_state_known is true, treat latest_turn_completed as a strong workflow signal:
 - true usually means the assistant finished that turn, but it does not automatically mean the project is completed
@@ -580,14 +581,19 @@ Dirty or unsynced git state can be evidence of unfinished follow-up, but transcr
 For repository facts, current git_status evidence supersedes stale transcript claims about uncommitted, unmerged, or unpushed work. LCR or the user may have completed these steps after the engineer's last message.
 When git_status.integration is present, merge_status describes integration into target_branch. A clean worktree with merge_status=merged resolves commit-and-merge follow-ups, including old requests for approval to perform those now-completed actions.
 For a requested push of integrated work, use integration.publication_status, not the linked branch's own remote status. Published means this worktree's commits (or equivalent patches) are present in the target branch's upstream according to local remote-tracking refs; it resolves that push follow-up even if the target has unrelated unpushed commits. Unpublished means this work is still missing there; unknown does not prove a push happened. A specifically requested push of the source branch still requires source-branch evidence.
-Mark completed only if all concrete remaining actions are resolved. A merge never proves an application was rebuilt, restarted, launched, deployed, or manually verified; preserve those follow-ups and any remaining implementation tasks.
+Distinguish required unfinished work from routine closing reminders before choosing a category:
+- Preserve explicitly requested rebuilds, restarts, deployments, manual acceptance checks, and remaining implementation tasks. Preserve a known failing check or unresolved defect even after a merge.
+- Routine instructions to rebuild/restart to see a delivered change, try the UI, or do an extra visual smoke check do not by themselves keep a completed implementation task open. This applies even when the closing message says "still needs", "must restart", or "not yet verified"; imperative wording alone does not establish a required task.
+- For a clean, merged and published worktree whose implementation and automated checks are complete, prefer completed when only those routine activation/verification reminders remain. Do not duplicate parent-application activation reminders as unfinished work on every integrated worktree.
+- An actual user request or explicit task acceptance requirement to perform that operation remains actionable. An observed failed check is different from an unperformed discretionary check. Do not dismiss missing required verification or assume a known defect is fixed.
+A merge never proves an application was rebuilt, restarted, launched, deployed, or manually verified. Marking the implementation completed does not assert those operations happened; summarize the delivered work without inventing verification or deployment evidence.
 Update the summary to reflect the current evidence and any remaining action; do not repeat a resolved commit/merge/push request. When resolving a stale handoff, mention the observed repository outcome without attributing the action to the engineer.
 Do not label a session in_progress only because the worktree is dirty after a completed turn.
 Prefer completed when the assistant clearly wrapped up the asked task and no concrete tracked project action remains.
-Treat optional follow-up offers like “if you want, I can also ...” as optional unless the user actually asked for that extra step or the assistant says it still must happen.
+Treat optional follow-up offers like “if you want, I can also ...” as optional unless the user actually asked for that extra step or it is necessary to finish the agreed task. The assistant's suggestion alone does not expand the task.
 If the user asked for advice, an opinion, a review, or a plan, and the latest assistant message ends with a concrete recommended milestone, next step, or implementation path, prefer needs_follow_up over completed.
 Use needs_follow_up for assistant-proposed implementation milestones that are ready to start next, even when the advice itself was delivered successfully.
-If the latest assistant message asks the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question, prefer waiting_for_user over completed.
+If the latest assistant message needs the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question to finish the agreed task, prefer waiting_for_user over completed. A closing offer to do optional extra work, even phrased as a question, is not waiting_for_user.
 Proposal handoffs count as waiting_for_user when the next meaningful action depends on the user's choice, even if the assistant includes a recommendation like “I’d go with 2”.
 Use completed only when the assistant can stop without a reply from the user; if the assistant is clearly waiting for the user's answer before proceeding, do not mark completed.
 Reasoning/tool transcript items can reflect earlier planning; when they conflict with a later user-visible assistant message, trust the latest user-visible assistant message.
