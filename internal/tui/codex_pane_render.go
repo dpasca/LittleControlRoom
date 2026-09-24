@@ -365,7 +365,7 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
 		actions = append(actions, footerNavAction("Alt+O", "links"))
 	}
-	actions = append(actions, footerLowAction("Alt+L", "blocks"))
+	actions = append(actions, footerLowAction("Alt+L", "detail"))
 	if m.embeddedCodexSidebarAvailable() {
 		label := "sidebar"
 		if m.codexPanelFocus == embeddedCodexFocusSidebar {

@@ -998,9 +998,10 @@ func TestBackgroundTodoWorktreeLaunchDoesNotInterruptVisibleEngineerSession(t *t
 
 	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
 	got = updated.(Model)
-	if got.codexDenseBlockMode != codexDenseBlockPreview {
-		t.Fatalf("visible session input was captured by hidden TODO launch; block mode = %v", got.codexDenseBlockMode)
+	if got.codexDetailPicker == nil {
+		t.Fatalf("visible session input was captured by hidden TODO launch; alt+l did not open the detail picker")
 	}
+	got.codexDetailPicker = nil
 
 	var opened codexSessionOpenedMsg
 	foundOpen := false

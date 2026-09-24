@@ -89,6 +89,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexInputCopyDialogMode(msg)
 	}
 
+	if m.codexDetailPicker != nil {
+		return m.updateCodexDetailPickerMode(msg)
+	}
+
 	if m.codexInputSelectionActive() {
 		return m.updateCodexInputSelectionMode(msg)
 	}
@@ -119,10 +123,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+[", "alt+]":
 		return m, nil
 	case "alt+l":
-		m.codexDenseBlockMode = m.codexDenseBlockMode.next()
-		m.status = m.codexDenseBlockMode.statusText()
-		m.syncCodexViewport(false)
-		return m, m.requestVisibleCodexTranscriptRenderCmd()
+		m.openCodexDetailPicker()
+		return m, nil
 	case "alt+o":
 		return m.openCodexArtifactPicker(snapshot)
 	case "ctrl+c":

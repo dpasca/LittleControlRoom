@@ -121,6 +121,7 @@ type TranscriptEntry struct {
 	ToolName       string // optional structured tool name supplied by the provider
 	ToolPath       string // optional structured local path supplied to a file tool
 	CommandText    string // optional command input, kept separate from its rendered result
+	Failed         bool   // optional; the provider reported this command as failed
 	GeneratedImage *GeneratedImageArtifact
 }
 

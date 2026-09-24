@@ -2242,12 +2242,14 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 			continue
 		}
 		text := strings.TrimSpace(flattenClaudeToolResultContent(block.Content))
+		failed := block.IsError
 		if s.interruptPending && block.IsError {
 			if s.interruptedTools == nil {
 				s.interruptedTools = make(map[string]struct{})
 			}
 			s.interruptedTools[toolUseID] = struct{}{}
 			text = claudeInterruptedCommandResult
+			failed = false
 		} else if text == "" {
 			text = "[command completed]"
 		}
@@ -2263,6 +2265,7 @@ func (s *claudeCodeSession) handleClaudeUserLocked(raw json.RawMessage) {
 			Kind:        TranscriptCommand,
 			Text:        text,
 			CommandText: command,
+			Failed:      failed,
 		})
 	}
 }
@@ -3456,8 +3459,10 @@ func extractCCUserEntries(
 			continue
 		}
 		result := flattenClaudeToolResultRaw(block.Content)
+		failed := block.IsError
 		if _, interrupted := interruptedTools[toolUseID]; interrupted && block.IsError {
 			result = claudeInterruptedCommandResult
+			failed = false
 		} else if result == "" {
 			result = "[command completed]"
 		}
@@ -3473,6 +3478,7 @@ func extractCCUserEntries(
 			Kind:        TranscriptCommand,
 			Text:        result,
 			CommandText: command,
+			Failed:      failed,
 		})
 	}
 	return entries

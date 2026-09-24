@@ -91,7 +91,8 @@ func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapsh
 	if !options.fullHistory {
 		entries = limitCodexTranscriptEntriesForLiveView(entries, blockMode)
 	}
-	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode {
+	narrative := blockMode.narrative()
+	if snapshot.Provider.Normalized() == codexapp.ProviderOpenCode && !narrative {
 		entries = collapseOpenCodeToolRuns(entries, blockMode.full())
 	}
 	entries = collapseMassiveTranscriptEntries(entries, blockMode.full())
@@ -126,8 +127,55 @@ func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapsh
 		hasPrevious = true
 		reasoningLineCount = 0
 	}
+	appendBlock := func(block string, kind codexapp.TranscriptKind, linkEntries, anchorEntries []codexapp.TranscriptEntry) {
+		if strings.TrimSpace(block) == "" {
+			return
+		}
+		if hasPrevious {
+			separator := codexTranscriptEntrySeparator(previousKind, kind)
+			if narrative && kind == codexapp.TranscriptTool && previousKind == codexapp.TranscriptAgent {
+				// Activity reads as a caption of the prose it follows.
+				separator = "\n"
+			}
+			blocks = append(blocks, separator)
+			lineIndex += strings.Count(separator, "\n")
+		}
+		startLine := lineIndex
+		blocks = append(blocks, block)
+		endLine := startLine + strings.Count(block, "\n") + 1
+		lineIndex += strings.Count(block, "\n")
+		for _, linkEntry := range linkEntries {
+			for _, target := range codexOpenTargetsFromTranscriptEntryForBlockModeInProject(linkEntry, blockMode, projectPath) {
+				links = append(links, codexTranscriptLinkSpan{
+					Target:    target,
+					StartLine: startLine,
+					EndLine:   endLine,
+				})
+			}
+		}
+		for _, runEntry := range anchorEntries {
+			if turnID := strings.TrimSpace(runEntry.TurnID); turnID != "" {
+				if _, exists := anchoredTurns[turnID]; !exists {
+					anchoredTurns[turnID] = struct{}{}
+					turnAnchors = append(turnAnchors, codexTranscriptTurnAnchor{TurnID: turnID, Line: startLine})
+				}
+			}
+		}
+		previousKind = kind
+		hasPrevious = true
+	}
 	for index := 0; index < len(entries); {
 		entry := entries[index]
+		if narrative {
+			if runEnd := codexNarrativeActivityRunEnd(entries, index, options.hideReasoningSections); runEnd > index {
+				flushReasoning()
+				liveTail := snapshot.Busy && runEnd == len(entries)
+				group := entries[index:runEnd]
+				appendBlock(renderCodexActivityGroup(group, contentWidth, projectPath, liveTail), codexapp.TranscriptTool, group, group)
+				index = runEnd
+				continue
+			}
+		}
 		runLength := consecutiveDenseTranscriptEntryRunLength(entries, index, blockMode.full())
 		runEnd := index + runLength
 		if options.hideReasoningSections && !blockMode.full() && entry.Kind == codexapp.TranscriptReasoning {
@@ -146,34 +194,7 @@ func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapsh
 			projectPath:          projectPath,
 			occurrenceCount:      runLength,
 		})
-		if strings.TrimSpace(block) != "" {
-			if hasPrevious {
-				separator := codexTranscriptEntrySeparator(previousKind, entry.Kind)
-				blocks = append(blocks, separator)
-				lineIndex += strings.Count(separator, "\n")
-			}
-			startLine := lineIndex
-			blocks = append(blocks, block)
-			endLine := startLine + strings.Count(block, "\n") + 1
-			lineIndex += strings.Count(block, "\n")
-			for _, target := range codexOpenTargetsFromTranscriptEntryForBlockModeInProject(entry, blockMode, projectPath) {
-				links = append(links, codexTranscriptLinkSpan{
-					Target:    target,
-					StartLine: startLine,
-					EndLine:   endLine,
-				})
-			}
-			for _, runEntry := range entries[index:runEnd] {
-				if turnID := strings.TrimSpace(runEntry.TurnID); turnID != "" {
-					if _, exists := anchoredTurns[turnID]; !exists {
-						anchoredTurns[turnID] = struct{}{}
-						turnAnchors = append(turnAnchors, codexTranscriptTurnAnchor{TurnID: turnID, Line: startLine})
-					}
-				}
-			}
-			previousKind = entry.Kind
-			hasPrevious = true
-		}
+		appendBlock(block, entry.Kind, entries[index:index+1], entries[index:runEnd])
 		index = runEnd
 	}
 	// Flush trailing reasoning (model still thinking)

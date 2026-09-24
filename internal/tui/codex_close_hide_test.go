@@ -1546,7 +1546,7 @@ func TestNormalModeAltBracketDoesNotCycleLiveSessions(t *testing.T) {
 	}
 }
 
-func TestVisibleCodexAltLCyclesDenseBlockModes(t *testing.T) {
+func TestVisibleCodexAltLOpensDetailPicker(t *testing.T) {
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
 		codexHiddenProject:  "/tmp/demo",
@@ -1566,26 +1566,48 @@ func TestVisibleCodexAltLCyclesDenseBlockModes(t *testing.T) {
 		height:        24,
 	}
 
-	for _, want := range []struct {
-		mode   codexDenseBlockMode
-		status string
-	}{
-		{codexDenseBlockPreview, "Showing short transcript block previews"},
-		{codexDenseBlockFull, "Showing full transcript blocks"},
-		{codexDenseBlockSummary, "Hiding transcript block output"},
-	} {
-		updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
-		if cmd != nil {
-			t.Fatalf("alt+l should not return an async command")
+	m.codexDenseBlockMode = codexDenseBlockNarrative
+	altL := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true}
+	press := func(m Model, msg tea.KeyMsg) Model {
+		t.Helper()
+		updated, _ := m.updateCodexMode(msg)
+		return updated.(Model)
+	}
+
+	got := press(m, altL)
+	if got.codexDetailPicker == nil || got.codexDetailPicker.Selected != 0 {
+		t.Fatalf("alt+l should open the detail picker on the current level, got %#v", got.codexDetailPicker)
+	}
+	if got.codexDenseBlockMode != codexDenseBlockNarrative {
+		t.Fatalf("opening the picker must not change the level, got %v", got.codexDenseBlockMode)
+	}
+	panel := ansi.Strip(got.renderCodexDetailPickerContent(60))
+	for _, want := range []string{"Transcript detail", "1  Steps  (current)", "2  Tool calls", "3  Previews", "4  Full output", "About"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("detail picker missing %q:\n%s", want, panel)
 		}
-		got := updated.(Model)
-		if got.codexDenseBlockMode != want.mode {
-			t.Fatalf("codexDenseBlockMode = %v, want %v", got.codexDenseBlockMode, want.mode)
-		}
-		if got.status != want.status {
-			t.Fatalf("status = %q, want %q", got.status, want.status)
-		}
-		m = got
+	}
+
+	// alt+l inside the picker steps down, like the old cycle; Enter applies.
+	got = press(press(got, altL), tea.KeyMsg{Type: tea.KeyDown})
+	got = press(got, tea.KeyMsg{Type: tea.KeyEnter})
+	if got.codexDetailPicker != nil || got.codexDenseBlockMode != codexDenseBlockPreview {
+		t.Fatalf("Enter should apply Previews and close, got mode %v picker %#v", got.codexDenseBlockMode, got.codexDetailPicker)
+	}
+	if got.status != "Showing short transcript block previews" {
+		t.Fatalf("status = %q", got.status)
+	}
+
+	// Number keys choose directly.
+	got = press(press(got, altL), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
+	if got.codexDetailPicker != nil || got.codexDenseBlockMode != codexDenseBlockFull {
+		t.Fatalf("4 should choose Full output, got mode %v picker %#v", got.codexDenseBlockMode, got.codexDetailPicker)
+	}
+
+	// Esc leaves the level alone.
+	got = press(press(press(got, altL), tea.KeyMsg{Type: tea.KeyUp}), tea.KeyMsg{Type: tea.KeyEsc})
+	if got.codexDetailPicker != nil || got.codexDenseBlockMode != codexDenseBlockFull {
+		t.Fatalf("Esc should close without changing the level, got mode %v picker %#v", got.codexDenseBlockMode, got.codexDetailPicker)
 	}
 }
 
