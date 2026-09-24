@@ -41,14 +41,15 @@ automatically.
 ## Before tagging
 
 ```bash
-make release-check
 make release-snapshot
 ```
 
-`make release-snapshot` builds all four platform archives, verifies their
-checksums, and confirms that every archive contains `lcroom`, `lcagent`,
-`README.md`, and `LICENSE`. Snapshot archives under `dist/` are for local
-verification only, not public distribution.
+`make release-snapshot` embeds the full preflight (it depends on
+`release-check`), so run it alone; running `make release-check` first would
+execute the test suite twice. The target builds all four platform archives,
+verifies their checksums, and confirms that every archive contains `lcroom`,
+`lcagent`, `README.md`, and `LICENSE`. Snapshot archives under `dist/` are for
+local verification only, not public distribution.
 
 ## In-app updater
 

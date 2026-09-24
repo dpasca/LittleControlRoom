@@ -74,7 +74,7 @@ help:
 	@echo "  make doctor-scan     - refresh state, then print detected artifacts/reasons"
 	@echo "  make release-check   - run the shared local/CI release preflight"
 	@echo "  make release-verify  - verify existing GoReleaser archives under dist/"
-	@echo "  make release-snapshot - preflight, build, and verify local release archives"
+	@echo "  make release-snapshot - preflight, build, and verify local release archives (includes release-check)"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
 	@echo "  make readme-preview  - render a Markdown file to HTML and open it (needs pandoc)"
