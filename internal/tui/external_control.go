@@ -259,6 +259,9 @@ func (m Model) recordExternalControlResultCmd(msg bossui.ControlInvocationResult
 			status = control.OperationFailed
 		}
 		resultPayload := map[string]any{"status": strings.TrimSpace(msg.Status)}
+		if msg.WorktreeResult != nil {
+			resultPayload["worktree"] = msg.WorktreeResult
+		}
 		if msg.IntegrationResult != nil {
 			resultPayload["integration_result"] = msg.IntegrationResult
 		}

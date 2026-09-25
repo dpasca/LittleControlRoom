@@ -590,6 +590,7 @@ type todoWorktreeLaunchMsg struct {
 }
 
 type worktreeActionMsg struct {
+	controlRemovalResult   *control.WorktreeRemoveResult
 	mergeConfirm           *worktreeMergeConfirmState
 	projectPath            string
 	removedProjectPath     string

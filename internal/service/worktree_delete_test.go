@@ -86,6 +86,33 @@ func TestExplicitDeletionPreservesSharedSubmoduleStores(t *testing.T) {
 	}
 }
 
+func TestExplicitDeletionCleansForgottenMissingWorktree(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	ctx := t.Context()
+	if err := os.RemoveAll(f.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.Store().SetForgotten(ctx, f.path, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := scanner.ListGitWorktrees(ctx, f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if samePath(entry.Path, f.path) {
+			t.Fatal("forgotten missing worktree kept its Git registration")
+		}
+	}
+	project, err := f.svc.Store().GetTrackedProjectSummary(ctx, f.path)
+	if err != nil || project.PresentOnDisk || !project.Forgotten {
+		t.Fatalf("cleanup state=%#v err=%v", project, err)
+	}
+}
+
 func TestExplicitDeletionRejectsPrimaryAndSymlink(t *testing.T) {
 	f := newRemovalFixture(t, nil)
 	if err := f.svc.RemoveWorktree(context.Background(), f.root, true); err == nil {

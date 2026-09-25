@@ -431,6 +431,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return capabilityWithCatalogMetadata(ProjectArchiveCapability()), true
 	case CapabilityScratchTaskArchive:
 		return capabilityWithCatalogMetadata(ScratchTaskArchiveCapability()), true
+	case CapabilityWorktreeRemove:
+		return WorktreeRemoveCapability(), true
 	case CapabilityTodoAdd:
 		return capabilityWithCatalogMetadata(TodoAddCapability()), true
 	case CapabilityTodoCreateWorktreeAndStartEngineer:

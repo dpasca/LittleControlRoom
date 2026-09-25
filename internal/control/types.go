@@ -21,6 +21,7 @@ const (
 	CapabilityProjectSetCategory                 CapabilityName = "project.set_category"
 	CapabilityProjectArchive                     CapabilityName = "project.set_archive_state"
 	CapabilityScratchTaskArchive                 CapabilityName = "scratch_task.archive"
+	CapabilityWorktreeRemove                     CapabilityName = "worktree.remove"
 	CapabilityTodoAdd                            CapabilityName = "todo.add"
 	CapabilityTodoCreateWorktreeAndStartEngineer CapabilityName = "todo.create_worktree_and_start_engineer"
 	CapabilityTodoComplete                       CapabilityName = "todo.complete"
@@ -41,6 +42,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityProjectSetCategory,
 		CapabilityProjectArchive,
 		CapabilityScratchTaskArchive,
+		CapabilityWorktreeRemove,
 		CapabilityTodoAdd,
 		CapabilityTodoCreateWorktreeAndStartEngineer,
 		CapabilityTodoComplete,
@@ -60,6 +62,7 @@ const (
 	CapabilityDomainEngineer     CapabilityDomain = "engineer"
 	CapabilityDomainTask         CapabilityDomain = "agent_task"
 	CapabilityDomainProject      CapabilityDomain = "project"
+	CapabilityDomainWorktree     CapabilityDomain = "worktree"
 	CapabilityDomainTodo         CapabilityDomain = "todo"
 	CapabilityDomainSettings     CapabilityDomain = "settings"
 	CapabilityDomainGit          CapabilityDomain = "git"
@@ -71,6 +74,7 @@ func CapabilityDomainValues() []CapabilityDomain {
 		CapabilityDomainEngineer,
 		CapabilityDomainTask,
 		CapabilityDomainProject,
+		CapabilityDomainWorktree,
 		CapabilityDomainTodo,
 		CapabilityDomainSettings,
 		CapabilityDomainGit,
@@ -91,6 +95,8 @@ func NormalizeCapabilityDomain(value string) CapabilityDomain {
 		return CapabilityDomainTask
 	case CapabilityDomainProject:
 		return CapabilityDomainProject
+	case CapabilityDomainWorktree:
+		return CapabilityDomainWorktree
 	case CapabilityDomainTodo:
 		return CapabilityDomainTodo
 	case CapabilityDomainSettings:
@@ -355,6 +361,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateProjectArchiveInvocation(inv)
 	case CapabilityScratchTaskArchive:
 		return validateScratchTaskArchiveInvocation(inv)
+	case CapabilityWorktreeRemove:
+		return validateWorktreeRemoveInvocation(inv)
 	case CapabilityTodoAdd:
 		return validateTodoAddInvocation(inv)
 	case CapabilityTodoCreateWorktreeAndStartEngineer:

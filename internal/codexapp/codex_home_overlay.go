@@ -133,6 +133,8 @@ Opt coding delegations into structured_results=true. This authorizes bounded res
 
 ## Progressive LCR control discovery
 
+For linked worktree cleanup, discover the worktree control domain and describe worktree.remove. Resolve the exact absolute path with project queries, then propose removal through LCR. Confirmation permanently deletes all checkout contents, cleans Git registrations and LCR work state, and refreshes the TUI on completion. Branches and conversation history are retained. Removing a directory outside LCR is only reconciled by a later scan and can leave Git registrations or visible residue behind.
+
 For an LCR action beyond the direct runtime and repository-scoped TODO tools:
 
 1. Call ` + "`list_control_capabilities`" + `, optionally with one exact domain.

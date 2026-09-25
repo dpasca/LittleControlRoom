@@ -140,6 +140,38 @@ For a request such as creating a project, the embedded agent:
 The generated `runtime` skill teaches this sequence. It contains the workflow,
 not the capability schemas; the registry remains the schema source of truth.
 
+## Linked worktree removal
+
+Agents can remove a tracked linked worktree with `worktree.remove` through the
+same four control tools. Discover `domain: "worktree"`, describe
+`worktree.remove`, then propose `{"worktree_path":"/absolute/path/to/worktree"}`
+with a stable request ID. Resolve the exact path with project queries first;
+the operation never infers a target from a branch name or the TUI selection.
+Each proposal targets one worktree and requires operator confirmation, including
+when project collaboration is enabled. A proposal alone deletes nothing.
+
+After confirmation, the host runs the existing removal service asynchronously.
+This permanently deletes the directory and all its contents, including dirty,
+untracked, and ignored files, without creating a recovery archive. The service
+protects primary checkouts, shared Git stores, symlink targets, and mounted
+filesystems. It removes the target's Git registrations (including owned nested
+submodule registrations), clears TODO work/session links and LCR cached state,
+and immediately removes the row and refreshes the project list when complete.
+Branches, global conversation history, and TODO done/open state are retained.
+Idle embedded sessions close; active engineers and runtimes are not stopped and
+can recreate files. Stop ongoing work before requesting cleanup when appropriate.
+
+`get_control_operation` returns the terminal status and a structured `worktree`
+receipt with `worktree_path`, `root_path`, `worktree_removed`, and
+`idle_session_closed`. Failure reports the underlying error; it never claims
+removal completed. A tracked checkout that is already missing can still use
+this operation to clean up Git and LCR state.
+
+Deleting a directory outside LCR has no immediate TUI notification. The next
+scan reconciles missing checkouts and clears their TODO work links. Leftover or
+recreated directories can remain visible as orphaned worktrees. Prefer the
+dedicated operation for prompt display updates and coordinated cleanup.
+
 ## Session-to-session handoffs
 
 An embedded engineer can hand work to another embedded engineer through the

@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/uistyle"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // RenderControlConfirmationDialog renders a validated control proposal without
@@ -88,6 +89,8 @@ func (m Model) controlConfirmationTitle() string {
 		return "Control Action"
 	}
 	switch m.pendingControl.Invocation.Capability {
+	case control.CapabilityWorktreeRemove:
+		return "Delete Worktree"
 	case control.CapabilityEngineerSendPrompt:
 		return "Engineer Handoff"
 	case control.CapabilityProjectCreateAndStartEngineer:
@@ -235,6 +238,11 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				}, "   "),
 			}
 			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityWorktreeRemove:
+		var input control.WorktreeRemoveInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			return renderWorktreeRemoveConfirmation(input, width)
 		}
 	case control.CapabilityProjectArchive:
 		var input control.ProjectArchiveInput
@@ -448,6 +456,29 @@ func (m Model) renderFallbackControlConfirmationContent(width int) string {
 			renderBossControlAction("Enter", "send", uistyle.DialogActionPrimary),
 			renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 		}, "   "),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderWorktreeRemoveConfirmation(input control.WorktreeRemoveInput, width int) string {
+	lines := []string{
+		bossControlNoticeStyle.Render("Permanently delete linked worktree"),
+		"",
+		ansi.Hardwrap(input.WorktreePath, width, true),
+		"",
+		strings.Join([]string{
+			renderBossControlAction("Enter", "delete", uistyle.DialogActionCancel),
+			renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+		}, "   "),
+		"",
+	}
+	for _, text := range []string{
+		"Deletes all contents: uncommitted files, untracked files, and build output. There is no recovery archive.",
+		"Keeps branches, conversation history, and TODO completion state.",
+		"Cleans Git registrations and LCR work state; closes idle embedded sessions.",
+		"Active engineers and runtimes are not stopped and may recreate files.",
+	} {
+		lines = append(lines, wrappedBlockLines(text, width)...)
 	}
 	return strings.Join(lines, "\n")
 }

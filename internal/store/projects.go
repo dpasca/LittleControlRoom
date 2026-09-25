@@ -332,6 +332,13 @@ func (s *Store) GetProjectSummary(ctx context.Context, projectPath string, inclu
 	return summary, nil
 }
 
+// GetTrackedProjectSummary reads an exact persisted record even if it is hidden
+// from project lists. Explicit cleanup must still see forgotten worktrees.
+func (s *Store) GetTrackedProjectSummary(ctx context.Context, projectPath string) (model.ProjectSummary, error) {
+	row := s.db.QueryRowContext(ctx, projectSummaryBaseQuery()+` WHERE p.path = ?`, projectPath)
+	return scanSummaryRow(row)
+}
+
 func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {

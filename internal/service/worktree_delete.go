@@ -32,7 +32,7 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 		return err
 	}
 	defer unlock()
-	summary, err := s.store.GetProjectSummary(ctx, path, true)
+	summary, err := s.store.GetTrackedProjectSummary(ctx, path)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}

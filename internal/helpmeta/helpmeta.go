@@ -461,6 +461,8 @@ func capabilityRelatedTopics(capability control.Capability) []string {
 		return []string{CommandTopicID(SurfaceMainTUI, "todo")}
 	case control.CapabilityGitPrepareCommit:
 		return []string{CommandTopicID(SurfaceMainTUI, "commit")}
+	case control.CapabilityWorktreeRemove:
+		return []string{CommandTopicID(SurfaceMainTUI, "remove")}
 	case control.CapabilitySettingsUpdate:
 		return []string{CommandTopicID(SurfaceMainTUI, "settings"), CommandTopicID(SurfaceMainTUI, "setup")}
 	case control.CapabilityProjectArchive, control.CapabilityScratchTaskArchive:

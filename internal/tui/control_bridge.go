@@ -221,6 +221,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 func (m Model) executeValidatedControlInvocation(normalized control.Invocation) controlInvocationOutcome {
 
 	switch normalized.Capability {
+	case control.CapabilityWorktreeRemove:
+		var input control.WorktreeRemoveInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeWorktreeRemoveControl(input)
 	case control.CapabilityIntegrationsManage:
 		return m.executeIntegrationsControl(normalized)
 	case control.CapabilityEngineerSendPrompt:
@@ -419,6 +426,9 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 			Err:            err,
 			AnnounceInChat: true,
 		}
+		if removed, ok := msg.(worktreeActionMsg); ok {
+			result.WorktreeResult = removed.controlRemovalResult
+		}
 		if msg == nil {
 			return result
 		}
@@ -447,6 +457,8 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 		return bossGitPrepareCommitStatus(inv, preview), preview.err
 	}
 	switch result := msg.(type) {
+	case worktreeActionMsg:
+		return result.status, result.err
 	case bossAgentTaskClosedMsg:
 		return result.status, result.err
 	case bossScratchTaskArchivedMsg:

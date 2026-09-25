@@ -28,6 +28,7 @@ type ControlInvocationCanceledMsg struct {
 }
 
 type ControlInvocationResultMsg struct {
+	WorktreeResult    *control.WorktreeRemoveResult
 	IntegrationResult *integrations.Result
 	Invocation        control.Invocation
 	Status            string
@@ -375,6 +376,19 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		return integrations.Preview(input.Change), nil
 	}
 	switch inv.Capability {
+	case control.CapabilityWorktreeRemove:
+		var input control.WorktreeRemoveInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		return strings.Join([]string{
+			"Permanently delete linked worktree?",
+			input.WorktreePath,
+			"All contents, including uncommitted files and build output, will be deleted without a recovery archive.",
+			"Git registrations and LCR work state will be cleaned up. Branches, conversation history, and TODO completion state are preserved.",
+			"Idle embedded sessions will close. Active engineers and runtimes are not stopped and may recreate files.",
+			"Enter deletes; Esc cancels.",
+		}, "\n"), nil
 	case control.CapabilityEngineerSendPrompt:
 		var input control.EngineerSendPromptInput
 		if err := json.Unmarshal(inv.Args, &input); err != nil {
@@ -815,6 +829,8 @@ func controlProposalFooterHint(inv control.Invocation) string {
 
 func ControlProposalSubmittingStatus(inv control.Invocation) string {
 	switch inv.Capability {
+	case control.CapabilityWorktreeRemove:
+		return "Removing linked worktree..."
 	case control.CapabilityEngineerSendPrompt:
 		return "Sending request to engineer session..."
 	case control.CapabilityProjectCreateAndStartEngineer:

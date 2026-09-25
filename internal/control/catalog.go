@@ -27,6 +27,7 @@ func DomainSummaries() []DomainSummary {
 		{Domain: CapabilityDomainEngineer, Description: "Embedded engineer messages, handoffs, turn starts, and active-turn steering."},
 		{Domain: CapabilityDomainTask, Description: "Temporary delegated agent tasks and their lifecycle."},
 		{Domain: CapabilityDomainProject, Description: "Repository creation, registration, organization, and archive state."},
+		{Domain: CapabilityDomainWorktree, Description: "Operator-confirmed linked worktree removal and LCR cleanup."},
 		{Domain: CapabilityDomainTodo, Description: "Project TODO capture, completion, worktrees, and tracked engineer work."},
 		{Domain: CapabilityDomainSettings, Description: "Little Control Room application settings."},
 		{Domain: CapabilityDomainGit, Description: "Git review and operator-confirmed commit preparation."},
