@@ -533,7 +533,7 @@ func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
 	m := NewEmbeddedHelp(context.Background(), nil)
 	m.width = 112
 	m.height = 24
-	m.input.SetValue("/sessions")
+	m.input.SetValue("/skills")
 	m.syncLayout(true)
 
 	if m.SlashActive() {
@@ -544,7 +544,7 @@ func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
 	if got.sessionPickerVisible {
 		t.Fatalf("chat slash-looking input should not open the Boss session picker")
 	}
-	if len(got.messages) != 1 || got.messages[0].Role != "user" || got.messages[0].Content != "/sessions" {
+	if len(got.messages) != 1 || got.messages[0].Role != "user" || got.messages[0].Content != "/skills" {
 		t.Fatalf("chat should submit slash-looking text as a user question, got %#v", got.messages)
 	}
 	if cmd == nil {

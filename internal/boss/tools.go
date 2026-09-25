@@ -236,6 +236,9 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	}
 	kind := normalizeBossActionKind(action.Kind)
 	if kind == bossActionSearchBossSessions {
+		if view.PrivacyMode {
+			return bossToolResult{}, fmt.Errorf("saved Chat history is unavailable in privacy mode because transcripts can contain private projects")
+		}
 		return e.searchBossSessions(ctx, action)
 	}
 	if kind == bossActionContextCommand {
@@ -654,7 +657,9 @@ func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossActio
 	if err != nil {
 		return bossToolResult{}, err
 	}
-	return clippedToolResult(bossActionSearchBossSessions, formatBossSessionSearchXML(query, results, e.now())), nil
+	// Search count and per-message previews are already bounded. Clipping the
+	// serialized XML can sever source references and hide truncation markers.
+	return bossToolResult{Name: bossActionSearchBossSessions, Text: formatBossSessionSearchXML(query, results, e.now())}, nil
 }
 
 func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
@@ -1449,6 +1454,9 @@ func (e *QueryExecutor) contextCommand(ctx context.Context, action bossAction, v
 	case "search":
 		switch normalizeContextCommandDomain(parsed.Domain) {
 		case "boss":
+			if view.PrivacyMode {
+				return bossToolResult{}, fmt.Errorf("saved Chat history is unavailable in privacy mode because transcripts can contain private projects")
+			}
 			return e.contextCommandSearchBoss(ctx, parsed)
 		case "engineer":
 			return e.contextCommandSearchEngineer(ctx, parsed, view)
@@ -1479,7 +1487,7 @@ func (e *QueryExecutor) contextCommandSearchBoss(ctx context.Context, parsed par
 	if err != nil {
 		return bossToolResult{}, err
 	}
-	return clippedToolResult(bossActionContextCommand, formatBossSessionSearchXML(query, results, e.now())), nil
+	return bossToolResult{Name: bossActionContextCommand, Text: formatBossSessionSearchXML(query, results, e.now())}, nil
 }
 
 func (e *QueryExecutor) contextCommandSearchEngineer(ctx context.Context, parsed parsedContextCommand, view ViewContext) (bossToolResult, error) {

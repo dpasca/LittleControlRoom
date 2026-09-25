@@ -198,7 +198,7 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerPrimaryAction("Enter", "send"),
 		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("Ctrl+V", "paste"),
-		footerNavAction("Alt+Enter", "newline"),
+		footerLowAction("/sessions", "history"),
 		footerLowAction("/log", "events"),
 		footerLowAction("/new", "clear"),
 		footerHideAction("Esc", "hide"),
@@ -220,6 +220,13 @@ func (m Model) renderHelpChatFooter(width int) string {
 		actions = []footerAction{
 			footerNavAction("PgUp/PgDn", "scroll"),
 			footerNavAction("Home/End", "jump"),
+			footerExitAction("Esc", "close"),
+		}
+	}
+	if m.helpChatModel.SessionPickerActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "open"),
+			footerNavAction("Up/Down", "select"),
 			footerExitAction("Esc", "close"),
 		}
 	}

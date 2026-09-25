@@ -199,6 +199,7 @@ func bossContextCompactionSystemPrompt() string {
 		"You compact older Chat turns for Little Control Room.",
 		"Return a concise durable summary for future Chat context.",
 		"Preserve user decisions, preferences, constraints, project/task names, unresolved questions, and promises or follow-ups.",
+		"Preserve History source citations with their exact source directory, session ID, date, message indices, and file link so follow-ups can reopen the original evidence.",
 		"Omit raw system/flow notices, filler, and implementation telemetry unless it changes a decision.",
 		"Do not invent facts. Return only the structured summary.",
 	}, "\n")

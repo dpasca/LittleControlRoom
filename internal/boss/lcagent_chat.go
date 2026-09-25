@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"lcroom/internal/agentquery"
@@ -44,13 +45,15 @@ func (a *Assistant) replyWithLCAgent(ctx context.Context, req AssistantRequest, 
 
 	prepared, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
 	if err != nil {
-		return AssistantResponse{}, err
+		return AssistantResponse{Usage: contextUsage, Model: contextModel}, chatReplyError{Stage: "preparing conversation context", Err: err}
 	}
 	req = prepared
 	tools, err := a.helpChatAgentTools(req)
 	if err != nil {
 		return AssistantResponse{}, err
 	}
+	var stageMu sync.Mutex
+	stage := "starting the chat model"
 	runtime, err := lcagent.NewAgentRuntime(lcagent.AgentRuntimeConfig{
 		Model:            a.agentModel,
 		Provider:         a.agentProvider,
@@ -59,6 +62,14 @@ func (a *Assistant) replyWithLCAgent(ctx context.Context, req AssistantRequest, 
 		ProgressInterval: helpChatAgentProgressInterval,
 		Completion:       helpChatAgentCompletionOptions(a.agentProvider, a.agentModel.Model(), a.mainReasoningEffort()),
 		Emit: func(event lcagent.AgentRuntimeEvent) {
+			stageMu.Lock()
+			switch event.Kind {
+			case lcagent.AgentRuntimeModelStarted:
+				stage = fmt.Sprintf("waiting for the chat model (turn %d)", event.Turn)
+			case lcagent.AgentRuntimeToolStarted:
+				stage = helpChatAgentToolLabel(event.Tool)
+			}
+			stageMu.Unlock()
 			emitHelpChatAgentEvent(emit, event)
 		},
 	})
@@ -70,10 +81,17 @@ func (a *Assistant) replyWithLCAgent(ctx context.Context, req AssistantRequest, 
 		SystemPrompt: helpChatAgentSystemPrompt(req),
 		Messages:     helpChatAgentMessages(req),
 	})
-	if err != nil {
-		return AssistantResponse{}, err
-	}
 	addLLMUsage(&agentResponse.Usage, contextUsage)
+	if err != nil {
+		stageMu.Lock()
+		failedStage := stage
+		stageMu.Unlock()
+		return AssistantResponse{
+			Content: appendHelpChatAgentReceipts("", agentResponse.Receipts),
+			Model:   firstNonEmpty(agentResponse.Model, contextModel, a.model),
+			Usage:   agentResponse.Usage, PromptContext: req.PromptContext,
+		}, chatReplyError{Stage: failedStage, Err: err}
+	}
 	content := appendHelpChatAgentReceipts(agentResponse.Content, agentResponse.Receipts)
 	if content == "" {
 		return AssistantResponse{}, errors.New("Chat returned an empty LCAgent response")
@@ -133,6 +151,9 @@ func helpChatAgentSystemPrompt(req AssistantRequest) string {
 		"For a past or completed delegated task, discover the work query domain and use work.agent_task_list with include_historical=true and its optional query filter, then work.agent_task_get for the exact candidate ID. Use returned IDs and session/resource references for agent_task.continue. If the task is instead a scratch-task project or project engineer session, resolve it with project queries or search_lcr_context (include_historical=true), inspect its sessions, and use engineer.send_prompt for the same-task follow-up; a transcript title is not a delegated task ID.",
 		"If several candidates remain, ask the user to disambiguate by the returned titles and distinguishing details in Chat. If lookup fails, explain the concrete lookup failure or missing record. Do not invent a Tasks view or navigation steps; any necessary UI instructions must be verified with lookup_lcr_help.",
 		"For live TUI state, processes, Chat recall, linked transcript context, or fresh repository inspection, use the matching Help Chat inspection tool.",
+		"Chat has saved local conversation history, separate from project and engineer sessions. search_chat_sessions finds historical messages; read_chat_session opens the complete exchange. Read the exchange before concluding where work happened, especially when a match is truncated. Include nearby messages and include_events=true when work receipts may identify a project, draft, or artifact. Follow the returned next continuation if necessary.",
+		"A saved assistant message is a historical claim, not proof of present state. Search misses only establish that the inspected inventory or query returned no match; never infer that the work was Chat-only, never belonged to a project, or was deleted. Follow historical project/session references before making those claims. Distinguish what the history records from what you verified now.",
+		"History source citations are appended by the host and retained in this conversation. When the user asks where a prior finding came from, answer from its citation (Chat date, saved session and messages) without repeating discovery. Use read_chat_session with that exact reference if more detail is needed. Do not treat a history file as an engineer task or switch the user's Chat session.",
 		"For skills, plugins, and MCP setup, discover the integrations query and control domains. Inspect integrations.list for the chosen provider and user/project scope; use integrations.catalog for available sources, then propose integrations.manage with the inspected revision. Configuration saved on disk is not proof that the running engineer can use it. Never request or submit literal credentials; use environment-variable references and native authentication.",
 		"For an app mutation or engineer handoff, use list_control_capabilities, describe_control_capability, then propose_control_operation. A proposal is terminal and is not execution: the host will show the existing confirmation UI, and you must never claim it already ran.",
 		"Use project.set_category for registering or organizing an existing folder in an LCR category. Use todo.add only to park explicit backlog work. Use todo.create_worktree_and_start_engineer for loaded-project implementation requested now. Use project.create_and_start_engineer for a new or untracked repository that should be worked on now.",
@@ -206,6 +227,8 @@ func helpChatAgentToolLabel(name string) string {
 		return "searching LCR context"
 	case "search_chat_sessions":
 		return "searching Chat sessions"
+	case "read_chat_session":
+		return "reading saved Chat history"
 	case "inspect_linked_context":
 		return "reading linked task context"
 	case "inspect_lcr_skills":
@@ -610,6 +633,7 @@ func (a *Assistant) helpChatInspectionTools(req AssistantRequest) []lcagent.Agen
 		}
 	}
 	return []lcagent.AgentRuntimeTool{
+		a.helpChatReadSessionTool(req),
 		tool("lookup_lcr_help", "Search the generated Little Control Room command, keybinding, capability, and workflow corpus. Use only when the user asks how to use LCR or asks for a command, keybinding, setting, or workflow; do not use it for the current status of a project, worktree, task, session, process, or dashboard item.", map[string]any{
 			"query": map[string]any{"type": "string", "minLength": 1},
 			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},

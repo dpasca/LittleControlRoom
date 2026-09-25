@@ -22,6 +22,7 @@ type scriptedHelpChatModel struct {
 	requests    [][]modeladapter.Message
 	tools       [][]modeladapter.ToolDefinition
 	options     []modeladapter.CompletionOptions
+	err         error
 }
 
 func (m *scriptedHelpChatModel) Model() string {
@@ -39,6 +40,9 @@ func (m *scriptedHelpChatModel) CompleteWithOptions(_ context.Context, messages 
 	m.tools = append(m.tools, append([]modeladapter.ToolDefinition(nil), tools...))
 	m.options = append(m.options, opts)
 	if len(m.completions) == 0 {
+		if m.err != nil {
+			return modeladapter.Completion{}, m.err
+		}
 		return modeladapter.Completion{}, context.Canceled
 	}
 	completion := m.completions[0]

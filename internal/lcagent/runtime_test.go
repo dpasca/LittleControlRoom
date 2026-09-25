@@ -3,6 +3,8 @@ package lcagent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -255,5 +257,38 @@ func testAgentRuntimeToolDefinition(name string) modeladapter.ToolDefinition {
 				"properties":           map[string]any{},
 			},
 		},
+	}
+}
+
+func TestAgentRuntimeCancellationStopsRemainingToolsAndPreservesEvidence(t *testing.T) {
+	for _, extraTool := range []bool{false, true} {
+		t.Run(fmt.Sprintf("extra_tool_%t", extraTool), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			calls := []modeladapter.ToolCall{{ID: "first", Type: "function", Function: modeladapter.FunctionCall{Name: "read_state", Arguments: json.RawMessage(`{}`)}}}
+			if extraTool {
+				calls = append(calls, modeladapter.ToolCall{ID: "second", Type: "function", Function: modeladapter.FunctionCall{Name: "read_state", Arguments: json.RawMessage(`{}`)}})
+			}
+			client := &scriptedConversationModel{model: "test-model", completions: []modeladapter.Completion{{Model: "test-model", Message: modeladapter.Message{Role: "assistant", ToolCalls: calls}, UsageSummary: model.LLMUsage{InputTokens: 10}}}}
+			invoked := 0
+			runtime, err := NewAgentRuntime(AgentRuntimeConfig{Model: client, ProgressInterval: -1, Tools: []AgentRuntimeTool{{
+				Definition: testAgentRuntimeToolDefinition("read_state"),
+				Run: func(context.Context, json.RawMessage) (AgentRuntimeToolOutcome, error) {
+					invoked++
+					cancel()
+					return AgentRuntimeToolOutcome{Result: map[string]any{"found": true}, Receipt: "Source found before cancellation."}, nil
+				},
+			}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := runtime.Run(ctx, AgentRuntimeRequest{Messages: []modeladapter.Message{{Role: "user", Content: "Look up earlier work."}}})
+			if !errors.Is(err, context.Canceled) || invoked != 1 || len(client.requests) != 1 {
+				t.Fatalf("continued after cancellation: calls=%d model requests=%d err=%v", invoked, len(client.requests), err)
+			}
+			if len(response.Receipts) != 1 || response.Usage.InputTokens != 10 {
+				t.Fatalf("lost evidence: %#v", response)
+			}
+		})
 	}
 }

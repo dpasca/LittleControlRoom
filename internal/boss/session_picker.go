@@ -54,7 +54,7 @@ func (m Model) applyBossSessionsListed(msg bossSessionsListedMsg) (tea.Model, te
 	if len(m.sessionPickerSessions) == 0 {
 		m.status = "No saved Chat sessions"
 	} else {
-		m.status = "Boss session picker open"
+		m.status = "Chat session picker open"
 	}
 	m.syncLayout(false)
 	return m, nil
@@ -65,7 +65,7 @@ func (m Model) updateBossSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, m.exitCmd()
 	case "esc", "alt+down":
-		m.closeBossSessionPicker("Boss session picker closed")
+		m.closeBossSessionPicker("Chat session picker closed")
 		return m, nil
 	}
 	if m.sessionPickerLoading {
@@ -73,7 +73,7 @@ func (m Model) updateBossSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.sessionPickerErr != nil {
 		if msg.String() == "enter" {
-			m.closeBossSessionPicker("Boss session picker closed")
+			m.closeBossSessionPicker("Chat session picker closed")
 		}
 		return m, nil
 	}
@@ -178,7 +178,11 @@ func (m Model) renderBossSessionPicker(bodyW, bodyH int) string {
 	panelInnerWidth := maxInt(28, panelWidth-4)
 	content := m.renderBossSessionPickerContent(panelInnerWidth, bodyH)
 	panelHeight := minInt(maxInt(8, countBlockLines(content)+4), maxInt(8, bodyH-2))
-	return m.renderRawPanel("Boss Sessions", content, panelWidth, panelHeight)
+	title := "Boss Sessions"
+	if m.helpChat {
+		title = "Chat History"
+	}
+	return m.renderRawPanel(title, content, panelWidth, panelHeight)
 }
 
 func (m Model) renderBossSessionPickerContent(width, bodyH int) string {
@@ -190,11 +194,11 @@ func (m Model) renderBossSessionPickerContent(width, bodyH int) string {
 		"",
 	}
 	if m.sessionPickerLoading {
-		lines = append(lines, bossMutedStyle.Render(fitLine("Loading saved boss sessions"+spinnerDots(m.spinnerFrame), width)))
+		lines = append(lines, bossMutedStyle.Render(fitLine("Loading saved Chat sessions"+spinnerDots(m.spinnerFrame), width)))
 		return strings.Join(lines, "\n")
 	}
 	if m.sessionPickerErr != nil {
-		lines = append(lines, bossMutedStyle.Render(fitLine("Could not load saved boss sessions: "+m.sessionPickerErr.Error(), width)))
+		lines = append(lines, bossMutedStyle.Render(fitLine("Could not load saved Chat sessions: "+m.sessionPickerErr.Error(), width)))
 		return strings.Join(lines, "\n")
 	}
 	sessions := m.currentBossSessionPickerSessions()

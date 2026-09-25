@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -99,22 +100,24 @@ func formatBossSessionSearchXML(query string, matches []bossSessionSearchMatch, 
 	}
 	for _, match := range matches {
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf(`<boss_session id="%s" title="%s" path="%s" updated_at="%s" age_at_query="%s">`,
+		b.WriteString(fmt.Sprintf(`<boss_session id="%s" title="%s" path="%s" updated_at="%s" age_at_query="%s" source="%s">`,
 			bossXMLAttr(match.Session.SessionID),
 			bossXMLAttr(match.Session.Title),
 			bossXMLAttr(match.Session.Path),
 			bossXMLAttr(formatBossTimestamp(match.Session.UpdatedAt)),
 			bossXMLAttr(ageAtTime(now, match.Session.UpdatedAt)),
+			bossXMLAttr(filepath.Base(filepath.Dir(match.Session.Path))),
 		))
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf(`<turn index="%d" role="%s" at="%s">`,
+		b.WriteString(fmt.Sprintf(`<turn index="%d" role="%s" at="%s" truncated="%t">`,
 			match.TurnIndex,
 			bossXMLAttr(normalizeChatRole(match.Turn.Role)),
 			bossXMLAttr(formatBossTimestamp(match.Turn.At)),
+			strings.TrimSpace(match.Turn.Content) != match.Snippet,
 		))
 		b.WriteString("\n")
 		b.WriteString(bossXMLCDATA(match.Snippet))
-		b.WriteString("\n</turn>\n</boss_session>")
+		b.WriteString("\n</turn>\n<note>Use read_chat_session with this source, session_id and start_turn to read the exchange before drawing conclusions. Set include_events=true to inspect nearby work receipts. This is historical evidence, not current project state.</note>\n</boss_session>")
 	}
 	b.WriteString("\n</boss_session_search>")
 	return b.String()
@@ -124,6 +127,12 @@ func bossSessionSearchSnippet(content, query string, limit int) string {
 	content = strings.TrimSpace(strings.ReplaceAll(content, "\r\n", "\n"))
 	if content == "" {
 		return ""
+	}
+	// Preserve references above a match whenever the complete message fits.
+	// Longer messages remain discovery previews; read_chat_session pages the
+	// original exchange without discarding its surrounding context.
+	if len([]rune(content)) <= limit {
+		return content
 	}
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {

@@ -746,8 +746,9 @@ func (m Model) clearHelpChat(prompt string) (tea.Model, tea.Cmd) {
 type helpChatLocalCommand string
 
 const (
-	helpChatCommandNew helpChatLocalCommand = "new"
-	helpChatCommandLog helpChatLocalCommand = "log"
+	helpChatCommandNew      helpChatLocalCommand = "new"
+	helpChatCommandLog      helpChatLocalCommand = "log"
+	helpChatCommandSessions helpChatLocalCommand = "sessions"
 )
 
 func parseHelpChatLocalCommand(text string) (helpChatLocalCommand, string, bool) {
@@ -761,6 +762,8 @@ func parseHelpChatLocalCommand(text string) (helpChatLocalCommand, string, bool)
 		return helpChatCommandNew, strings.TrimSpace(rawArgs), true
 	case string(helpChatCommandLog):
 		return helpChatCommandLog, strings.TrimSpace(rawArgs), true
+	case string(helpChatCommandSessions):
+		return helpChatCommandSessions, strings.TrimSpace(rawArgs), true
 	default:
 		return "", "", false
 	}
@@ -832,6 +835,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionID = strings.TrimSpace(msg.session.SessionID)
 			m.sessionTitle = strings.TrimSpace(msg.session.Title)
 			m.messages = chatMessagesFromBossMessages(msg.messages)
+			m.haveLastAssistantUsage = false
+			m.lastAssistantUsage = model.LLMUsage{}
+			m.lastAssistantModel = ""
+			m.haveLastAssistantTime = false
+			m.lastAssistantTime = 0
+			m.haveLastContextReport = false
 			if msg.created {
 				m.status = m.chatSurfaceLabel() + " session ready"
 			} else if len(m.messages) > 0 {
@@ -992,10 +1001,10 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	m.cancelAssistantRun()
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
-	if err == nil {
-		m.recordAssistantUsage(response)
-		m.recordAssistantContext(response)
-	}
+	m.haveLastAssistantUsage = false
+	m.lastAssistantUsage = model.LLMUsage{}
+	m.recordAssistantUsage(response)
+	m.recordAssistantContext(response)
 	if stateRefreshed {
 		m.syncSummaryFlashes(snapshot)
 		m.snapshot = snapshot
@@ -1009,8 +1018,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	if err != nil {
 		m.pendingControl = nil
 		m.pendingGoal = nil
-		content := "I could not reach my chat backend yet: " + err.Error()
-		status := "Chat could not answer"
+		content, status := chatReplyFailure(err, m.lastAssistantTime)
 		var proposalErr controlProposalError
 		if errors.As(err, &proposalErr) {
 			content = "I could not prepare that control action: " + proposalErr.Unwrap().Error()
@@ -1020,6 +1028,9 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		if errors.As(err, &goalErr) {
 			content = "I could not prepare that goal run: " + goalProposalDetail(goalErr)
 			status = "Goal run proposal failed"
+		}
+		if partial := strings.TrimSpace(response.Content); partial != "" {
+			content += "\n\nEvidence gathered before this reply stopped:\n" + partial
 		}
 		saved = ChatMessage{
 			Role:    "assistant",
@@ -1218,6 +1229,8 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 			switch command {
 			case helpChatCommandNew:
 				return m.clearHelpChat(args)
+			case helpChatCommandSessions:
+				return m.openHelpChatSessions(args)
 			case helpChatCommandLog:
 				if args != "" {
 					m.status = "usage: /log"
@@ -1305,10 +1318,7 @@ func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messa
 				HelpChat:   m.helpChat,
 			}
 			if resp, handled, err := assistant.replyStructuredHandle(ctx, request, emit); handled || err != nil {
-				select {
-				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
-				case <-ctx.Done():
-				}
+				sendAssistantStreamReply(runCtx, events, assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true})
 				return
 			}
 			if m.helpChat {
@@ -1323,10 +1333,7 @@ func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messa
 				emitProgress(emit, "routing request", state)
 			}
 			if handled || err != nil {
-				select {
-				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
-				case <-ctx.Done():
-				}
+				sendAssistantStreamReply(runCtx, events, assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true})
 				return
 			}
 			request = preparedRequest
@@ -1356,6 +1363,13 @@ func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messa
 			if m.helpChat {
 				emitProgress(emit, "planning response", "running")
 			}
+			if ctx.Err() != nil && stateErr != nil {
+				sendAssistantStreamReply(runCtx, events, assistantStreamEnvelope{
+					err:      chatReplyError{Stage: "refreshing LCR state", Err: stateErr},
+					snapshot: snapshot, stateErr: stateErr, done: true,
+				})
+				return
+			}
 			resp, err = assistant.ReplyStream(ctx, request, emit)
 			if m.helpChat {
 				state := "done"
@@ -1364,14 +1378,7 @@ func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messa
 				}
 				emitProgress(emit, "planning response", state)
 			}
-			select {
-			case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:
-			case <-ctx.Done():
-				select {
-				case events <- assistantStreamEnvelope{err: ctx.Err(), snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:
-				default:
-				}
-			}
+			sendAssistantStreamReply(runCtx, events, assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true})
 		}()
 		return assistantStreamStartedMsg{streamID: streamID, events: events}
 	}

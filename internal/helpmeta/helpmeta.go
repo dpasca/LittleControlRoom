@@ -134,6 +134,20 @@ func CuratedTopics() []Topic {
 			SourceRefs: []string{"docs/agent_integrations.md", "tui.skills_dialog", "integrations.Manager"},
 		},
 		{
+			ID:   TopicID(SurfaceChat, TopicKindWorkflow, "chat-history"),
+			Kind: TopicKindWorkflow, Surface: SurfaceChat,
+			Title:   "Browse saved Chat history",
+			Summary: "Inside Chat, use /sessions to browse saved conversations or /sessions <session-id> to open one directly. History source links in replies open the saved Markdown transcript.",
+			Usage:   []string{"/sessions", "/sessions <session-id>", "/log"},
+			ManualSteps: []string{
+				"Open Chat with the backtick key or /chat, then type /sessions and press Enter.",
+				"Choose a conversation with Up/Down and press Enter to open it. Esc closes the picker.",
+				"Wait for an active reply to finish, or stop it with Ctrl+C, before switching history.",
+				"Use /log inside Chat to read saved work receipts. /new starts a fresh conversation and preserves earlier sessions.",
+			},
+			SourceRefs: []string{"boss.openHelpChatSessions", "boss.session_store", "boss.session_picker"},
+		},
+		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindKeybinding, "chat"),
 			Kind:    TopicKindKeybinding,
 			Surface: SurfaceMainTUI,

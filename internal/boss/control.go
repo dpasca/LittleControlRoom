@@ -956,7 +956,7 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 	if msg.AnnounceInChat {
 		var saved ChatMessage
 		var ok bool
-		if m.helpChat && controlResultIsEngineerEvent(msg) {
+		if m.helpChat && (controlResultIsEngineerEvent(msg) || msg.Invocation.Capability == control.CapabilityWorktreeRemove) {
 			saved, ok = m.appendAssistantEventMessage(content)
 		} else {
 			saved, ok = m.appendAssistantChatMessage(content)

@@ -48,6 +48,13 @@ seconds, so a slow request does not leave the overlay blank. Tool arguments and
 provider internals are not rendered. The final answer is emitted once after the
 host appends any evidence receipts.
 
+Timeouts identify the last model/tool stage instead of asserting a backend
+connection failure. Completed-call usage and retrieved source receipts survive
+an interrupted run. Final result delivery uses the host cancellation context,
+so exhausting the reply deadline does not discard that evidence. Token counts
+reset for each submitted reply instead of showing the previous successful turn
+beside a new failure.
+
 ## State, privacy, and evidence
 
 The compact app-state brief and current Chat tail remain explicit conversation
@@ -66,6 +73,35 @@ Live TUI state, Chat recall, exact linked transcript excerpts, processes, and
 repository-file evidence use separately named host tools. Repository Scout keeps
 its workspace-only read policy, durable trace, mechanical evidence ranges, usage
 accounting, and host-appended route receipt.
+
+### Saved Chat history
+
+Inside the Help Chat overlay, `/sessions [session-id]` opens the existing saved
+session picker or one exact conversation locally, without inference. Switching
+waits until the current reply has finished or the user has stopped it.
+
+`search_chat_sessions` returns bounded discovery results from
+`help-chat-sessions/`, followed by legacy `boss-sessions/`. Short matching
+messages remain whole, including project references above the matching line;
+long previews explicitly report truncation. Search envelopes retain the source
+directory, session ID, message index and timestamp.
+
+`read_chat_session` reads the original exchange from those exact references.
+It returns labelled turns with a bounded character/message budget and an exact
+continuation for long messages. `include_events=true` explicitly includes nearby
+log/flow receipts, allowing historical draft and artifact references to be
+recovered without adding events to ordinary conversational context. Both
+history tools refuse mixed transcripts in privacy mode.
+
+Each read appends a host-authored source citation to the answer. The citation is
+saved in the ordinary Markdown transcript, survives reloads, and is available to
+follow-ups; the compaction prompt preserves its exact source references. The
+model is instructed to open exchanges before drawing historical conclusions,
+distinguish old assistant claims from verified current state, and never turn an
+inventory search miss into a claim that work was Chat-only or deleted.
+
+Worktree-removal receipts, like engineer lifecycle receipts, are saved as log
+events and displayed in `/log`, outside ordinary Chat recall.
 
 ## Control and goal boundary
 

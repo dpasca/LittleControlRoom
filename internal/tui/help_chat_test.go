@@ -179,7 +179,7 @@ func TestHelpChatFooterOffersCopyPasteAndSelectionControls(t *testing.T) {
 	help := bossui.NewEmbeddedHelp(context.Background(), nil)
 	m := Model{helpChatModel: help}
 	footer := ansi.Strip(m.renderHelpChatFooter(120))
-	for _, want := range []string{"Ctrl+V paste", "Alt+C copy menu", "/log events"} {
+	for _, want := range []string{"Ctrl+V paste", "Alt+C copy menu", "/log events", "/sessions history"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("Chat footer missing %q: %q", want, footer)
 		}

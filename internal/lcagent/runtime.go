@@ -300,6 +300,9 @@ func (r *AgentRuntime) Run(ctx context.Context, req AgentRuntimeRequest) (AgentR
 	}
 	response := AgentRuntimeResponse{}
 	for turn := 1; turn <= r.maxTurns; turn++ {
+		if err := ctx.Err(); err != nil {
+			return response, err
+		}
 		requestMessages := messages
 		requestTools := definitions
 		if turn == r.maxTurns && response.ToolCalls > 0 {
@@ -333,6 +336,9 @@ func (r *AgentRuntime) Run(ctx context.Context, req AgentRuntimeRequest) (AgentR
 		}
 
 		for _, call := range message.ToolCalls {
+			if err := ctx.Err(); err != nil {
+				return response, err
+			}
 			name := strings.TrimSpace(call.Function.Name)
 			response.ToolCalls++
 			r.emitEvent(AgentRuntimeEvent{Kind: AgentRuntimeToolStarted, Turn: turn, Model: response.Model, Tool: name})

@@ -13,6 +13,29 @@ func (m Model) hasPersistentSessions() bool {
 	return m.sessionStore != nil
 }
 
+func (m Model) openHelpChatSessions(args string) (tea.Model, tea.Cmd) {
+	fields := strings.Fields(args)
+	if len(fields) > 1 || (len(fields) == 1 && !validBossSessionID(fields[0])) {
+		m.status = "usage: /sessions [session-id]"
+		return m, nil
+	}
+	if !m.hasPersistentSessions() {
+		m.status = "Chat history is unavailable without an app data directory"
+		return m, nil
+	}
+	if m.sending || !m.sessionLoaded || m.sessionPickerLoading {
+		m.status = "Chat is busy; wait or stop the current reply with Ctrl+C before opening history"
+		return m, nil
+	}
+	m.input.Reset()
+	if len(fields) == 0 {
+		return m.openBossSessionPicker()
+	}
+	m.sessionLoaded = false
+	m.status = "Opening Chat session " + shortBossSessionID(fields[0]) + "..."
+	return m, m.loadBossSessionCmd(fields[0])
+}
+
 func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -44,6 +67,7 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	m.assistantStartedAt = m.now()
 	m.haveLastAssistantTime = false
 	m.lastAssistantTime = 0
+	m.haveLastAssistantUsage = false
 	m.haveLastContextReport = false
 	m.status = m.chatSurfaceLabel() + " is thinking..."
 	m.syncLayout(true)

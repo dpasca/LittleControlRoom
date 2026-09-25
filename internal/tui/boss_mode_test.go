@@ -1148,7 +1148,7 @@ func TestHelpChatReplyContinuesAfterOverlayHidden(t *testing.T) {
 	view := bossChatOnlyText(got.helpChatModel)
 	for _, want := range []string{
 		"answer this while hidden",
-		"I could not reach my chat backend yet",
+		"Chat could not finish the reply",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("hidden Chat reply did not finish with %q:\n%s", want, view)
