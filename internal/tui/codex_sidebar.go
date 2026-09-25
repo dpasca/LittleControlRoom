@@ -945,7 +945,7 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 	if detail {
 		rows = append(rows, embeddedSidebarUsageWindowDetailRows(snapshot, width)...)
 	} else if usage := embeddedSidebarUsageWindowSummary(snapshot, now); usage != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Limits", usage, embeddedSidebarUsageWindowStyle(snapshot), width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Limits", usage, embeddedSidebarUsageWindowStyle(snapshot), width, 0)...)
 	}
 	if commands := embeddedSidebarModelCommands(snapshot); commands != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Commands", commands, embeddedSidebarMutedStyle, width))
@@ -979,9 +979,13 @@ func embeddedSidebarUsageWindowSummary(snapshot codexapp.Snapshot, now time.Time
 			if label == "" {
 				label = "window"
 			}
-			parts = append(parts, fmt.Sprintf("%s %d%%", label, window.LeftPercent))
+			part := fmt.Sprintf("%s %d%% left", label, window.LeftPercent)
+			if !window.ResetsAt.IsZero() {
+				part += " reset " + formatEmbeddedSidebarResetTimeCompact(window.ResetsAt, now)
+			}
+			parts = append(parts, part)
 		}
-		return strings.Join(parts, " · ") + " left"
+		return strings.Join(parts, " · ")
 	}
 	window := windows[0]
 	parts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
@@ -1118,13 +1122,14 @@ func formatEmbeddedSidebarResetTimeCompact(resetAt, now time.Time) string {
 			return formatEmbeddedSidebarResetDuration(until)
 		}
 	}
-	return resetAt.Format("Jan2")
+	return resetAt.Local().Format("Mon Jan2")
 }
 
 func formatEmbeddedSidebarResetTime(resetAt, now time.Time) string {
 	if resetAt.IsZero() {
 		return ""
 	}
+	resetAt = resetAt.Local()
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -1140,9 +1145,9 @@ func formatEmbeddedSidebarResetTime(resetAt, now time.Time) string {
 		if days <= 1 {
 			return "tomorrow " + resetAt.Format("15:04")
 		}
-		return resetAt.Format("Jan 2 15:04")
+		return resetAt.Format("Mon Jan 2 15:04")
 	}
-	return resetAt.Format("Jan 2 15:04")
+	return resetAt.Format("Mon Jan 2 15:04")
 }
 
 func formatEmbeddedSidebarResetDuration(d time.Duration) string {

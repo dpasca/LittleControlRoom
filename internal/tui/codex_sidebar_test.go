@@ -394,13 +394,13 @@ func TestEmbeddedSidebarUsageSummaryPrefersOrdinaryCodexAccountLimit(t *testing.
 	}
 
 	got := embeddedSidebarUsageWindowSummary(snapshot, now)
-	if got != "24% left weekly reset Jul28" {
+	if got != "24% left weekly reset Tue Jul28" {
 		t.Fatalf("usage summary = %q, want ordinary Codex account limit", got)
 	}
 }
 
 func TestEmbeddedSidebarShowsClaudeFiveHourAndWeeklyLimits(t *testing.T) {
-	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.Local)
+	now := time.Date(2026, 8, 1, 1, 0, 0, 0, time.Local)
 	snapshot := codexapp.Snapshot{
 		Provider: codexapp.ProviderClaudeCode,
 		UsageWindows: []codexapp.UsageWindowSnapshot{
@@ -414,19 +414,29 @@ func TestEmbeddedSidebarShowsClaudeFiveHourAndWeeklyLimits(t *testing.T) {
 				Limit:       "Claude",
 				Window:      "weekly",
 				LeftPercent: 97,
-				ResetsAt:    now.Add(6 * 24 * time.Hour),
+				ResetsAt:    now.Add(6 * 24 * time.Hour).UTC(),
 			},
 		},
 	}
 
-	if got, want := embeddedSidebarUsageWindowSummary(snapshot, now), "5h 83% · week 97% left"; got != want {
+	if got, want := embeddedSidebarUsageWindowSummary(snapshot, now), "5h 83% left reset 2h · week 97% left reset Fri Aug7"; got != want {
 		t.Fatalf("usage summary = %q, want %q", got, want)
 	}
 	detail := ansi.Strip(strings.Join(embeddedSidebarUsageWindowDetailRows(snapshot, 48), "\n"))
-	for _, want := range []string{"5h limit", "83% left", "weekly limit", "97% left"} {
+	for _, want := range []string{"5h limit", "83% left", "weekly limit", "97% left", "Fri Aug 7 01:00"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("Claude usage detail missing %q:\n%s", want, detail)
 		}
+	}
+	rows := embeddedSidebarSessionRows(snapshot, 32, false, now)
+	for _, row := range rows {
+		if got := ansi.StringWidth(row); got > 32 {
+			t.Fatalf("Claude usage row width = %d, want <= 32: %q", got, row)
+		}
+	}
+	sidebar := strings.Join(strings.Fields(ansi.Strip(strings.Join(rows, "\n"))), " ")
+	if !strings.Contains(sidebar, "week 97% left reset Fri Aug7") {
+		t.Fatalf("narrow Claude sidebar missing weekly reset: %s", sidebar)
 	}
 }
 
