@@ -213,6 +213,28 @@ still uses the existing exact-target mailbox and confirmation policy. Legacy
 records are only repaired from exact recorded identity; ambiguous queued attempts
 are retained as failures and require explicit redelivery to a verified caller.
 
+### Dispatched-engineer reports
+
+When an embedded session's `todo.create_worktree_and_start_engineer` (or
+`project.create_and_start_engineer`) launches an engineer, LCR records an
+`engineer_dispatches` row: the worker's worktree, provider, and session, plus the
+caller's worktree, provider, and control key. This lets one session hand out
+work across several worktrees and hear back without polling.
+
+Reports are request-scoped. The launch turn is armed. Each later
+`engineer.send_prompt` from the same caller control key that is delivered to that
+worker re-arms it. When an armed worker turn settles, LCR stores a report with the
+worker's bounded final message (or the last error when there is none), the TODO,
+the branch, and the exact follow-up target, then queues it through the mailbox to
+the caller's exact session. Turns the operator starts in the worker, messages
+from other sessions, and LCR's own callbacks do not arm reports. Launches from
+the TUI or Chat create no row; those surfaces already show completion.
+
+Caller identity uses the same bindings as delegated tasks. If the caller has not
+announced its provider session yet, the report waits with a visible
+`reply_error` and is queued when the binding arrives. A report does not authorize
+merges, pushes, or worktree removal.
+
 ### Approve collaboration once per project pair
 
 At an eligible engineer handoff, open review with **Ctrl+G**. **Enter** sends

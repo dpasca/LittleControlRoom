@@ -382,5 +382,14 @@ func (s *Service) RecordEmbeddedSessionIdentity(ctx context.Context, activity Em
 			return err
 		}
 	}
+	dispatchIDs, err := s.store.EngineerDispatchIDsAwaitingCaller(ctx, activity.ProjectPath, activity.Source, activity.ControlSessionKey)
+	if err != nil {
+		return err
+	}
+	for _, id := range dispatchIDs {
+		if _, err := s.QueueEngineerDispatchReply(ctx, id); err != nil {
+			return err
+		}
+	}
 	return nil
 }

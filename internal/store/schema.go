@@ -417,6 +417,29 @@ func (s *Store) initSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_engineer_messages_operation
 			ON engineer_messages(operation_id)
 			WHERE operation_id <> '';`,
+		`CREATE TABLE IF NOT EXISTS engineer_dispatches (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			origin_operation_id TEXT NOT NULL,
+			todo_id INTEGER NOT NULL DEFAULT 0,
+			todo_text TEXT NOT NULL DEFAULT '',
+			worker_project_path TEXT NOT NULL,
+			worker_provider TEXT NOT NULL,
+			worker_session_id TEXT NOT NULL DEFAULT '',
+			caller_project_path TEXT NOT NULL,
+			caller_provider TEXT NOT NULL,
+			caller_session_key TEXT NOT NULL,
+			caller_session_id TEXT NOT NULL DEFAULT '',
+			reply_state TEXT NOT NULL,
+			reply_seq INTEGER NOT NULL DEFAULT 1,
+			reply_prompt TEXT NOT NULL DEFAULT '',
+			reply_message_id TEXT NOT NULL DEFAULT '',
+			reply_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_engineer_dispatches_operation ON engineer_dispatches(origin_operation_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_engineer_dispatches_worker ON engineer_dispatches(worker_project_path, worker_provider);`,
+		`CREATE INDEX IF NOT EXISTS idx_engineer_dispatches_caller ON engineer_dispatches(caller_project_path, caller_provider, caller_session_key);`,
 		`CREATE TABLE IF NOT EXISTS agent_task_resources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id TEXT NOT NULL,

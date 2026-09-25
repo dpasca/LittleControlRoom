@@ -619,7 +619,7 @@ func TodoAddCapability() Capability {
 func TodoCreateWorktreeAndStartEngineerCapability() Capability {
 	return Capability{
 		Name:         CapabilityTodoCreateWorktreeAndStartEngineer,
-		Description:  "Create a tracked project TODO, prepare a dedicated Git worktree, and start an engineer session there.",
+		Description:  "Create a tracked project TODO, prepare a dedicated Git worktree, and start an engineer session there. When an embedded session proposes it, that engineer's launch turn and its replies to the same session's later engineer.send_prompt messages are reported back to that exact session.",
 		InputSchema:  todoCreateWorktreeAndStartEngineerInputSchema(),
 		OutputSchema: todoCreateWorktreeAndStartEngineerOutputSchema(),
 		Risk:         RiskExternal,

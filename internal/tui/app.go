@@ -1717,6 +1717,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyEngineerMessageDeliveryRecorded(msg)
 	case engineerMessageReceiptRetryMsg:
 		return m.applyEngineerMessageReceiptRetry(msg)
+	case engineerDispatchReplyRoutedMsg:
+		return m.applyEngineerDispatchReplyRouted(msg)
 	case codexClipboardPasteMsg:
 		return m.applyCodexClipboardPasteMsg(msg)
 	case todoClipboardPasteMsg:

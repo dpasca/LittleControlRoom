@@ -480,14 +480,16 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	if isAgentTask && m.svc != nil {
 		return m, m.markAgentTaskReadyForReviewCmd(projectPath, task, snapshot, session)
 	}
+	dispatchCmd := m.routeEngineerDispatchReplyCmd(projectPath, snapshot, session)
 	if latestEngineerTranscriptOutput(snapshot) == "" && session != nil {
-		return m, m.bossEngineerCompletionNoticeCmd(projectPath, snapshot, session)
+		return m, batchCmds(dispatchCmd, m.bossEngineerCompletionNoticeCmd(projectPath, snapshot, session))
 	}
 	notice := m.bossEngineerTurnCompletionHostNotice(projectPath, hadPrev, prevSnapshot, snapshot)
 	if strings.TrimSpace(notice.Content) == "" {
-		return m, nil
+		return m, dispatchCmd
 	}
-	return m.recordBossHostNotice(notice)
+	m, noticeCmd := m.recordBossHostNotice(notice)
+	return m, batchCmds(dispatchCmd, noticeCmd)
 }
 
 func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot, session codexapp.Session) tea.Cmd {

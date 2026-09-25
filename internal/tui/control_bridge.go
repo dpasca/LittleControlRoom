@@ -2251,6 +2251,20 @@ func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWo
 		if err := svc.MarkTodoWorkStarted(ctx, opened.projectPath, todo.ID, source, opened.snapshot.ThreadID, at); err != nil {
 			opened.status += " The engineer is running, but TODO session tracking failed: " + err.Error()
 		}
+		_, dispatched, err := svc.RecordEngineerDispatch(ctx, service.EngineerDispatchLaunch{
+			OperationID:       input.RequestID,
+			TodoID:            todo.ID,
+			TodoText:          firstNonEmptyTrimmed(todo.Text, input.TodoText),
+			WorkerProjectPath: opened.projectPath,
+			WorkerProvider:    source,
+			WorkerSessionID:   opened.snapshot.ThreadID,
+		})
+		switch {
+		case err != nil:
+			opened.status += " The engineer is running, but its completed turn cannot be reported back to the requesting session: " + err.Error()
+		case dispatched:
+			opened.status += " Its completed turn will be reported back to the requesting session."
+		}
 		return opened
 	})
 }

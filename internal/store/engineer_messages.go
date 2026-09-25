@@ -344,6 +344,11 @@ func (s *Store) RecordEngineerMessageState(
 	if targetSessionID != "" {
 		current.TargetSessionID = targetSessionID
 	}
+	if state == control.EngineerMessageDelivered {
+		if err := armEngineerDispatchForDelivery(ctx, tx, current, now); err != nil {
+			return control.EngineerMessage{}, err
+		}
+	}
 	receipt := control.EngineerMessageReceipt{
 		MessageID:       current.ID,
 		State:           state,
