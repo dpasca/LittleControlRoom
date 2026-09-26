@@ -46,3 +46,34 @@ func TestEngineerModelsQueryDiscoveryAndPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestEngineerModelsQueryExposesClaudeLaunchAndResolvedIDs(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	catalog := control.EngineerModelCatalog{Provider: control.ProviderClaudeCode, Source: "claude_code_cli_with_alias_fallback", Models: []control.EngineerModel{
+		{Model: "opus[1m]", ResolvedModel: "claude-opus-5-5[1m]", ReasoningEfforts: []string{"xhigh"}},
+	}}
+	if err := st.SaveEngineerModelCatalog(t.Context(), catalog); err != nil {
+		t.Fatal(err)
+	}
+	executor := mustExecutor(t, st, "/repo", ScopeProject)
+	result, err := executor.Execute(t.Context(), QueryEngineerModels, json.RawMessage(`{"provider":"claude_code"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Check the wire response, not just the in-memory catalog type.
+	raw, err := json.Marshal(result["models"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models []map[string]any
+	if err := json.Unmarshal(raw, &models); err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0]["model"] != "opus[1m]" || models[0]["resolved_model"] != "claude-opus-5-5[1m]" {
+		t.Fatalf("discovery lost usable Claude IDs: %s", raw)
+	}
+}

@@ -1101,7 +1101,7 @@ func (s *claudeCodeSession) Interrupt() error {
 }
 
 func claudeEmbeddedModelOptions() []ModelOption {
-	return []ModelOption{
+	options := []ModelOption{
 		{
 			ID:                        claudeDefaultModelAlias,
 			Model:                     claudeDefaultModelAlias,
@@ -1136,6 +1136,21 @@ func claudeEmbeddedModelOptions() []ModelOption {
 			DefaultReasoningEffort:    claudeDefaultReasoningEffort,
 		},
 	}
+	// These are native CLI aliases even when the current picker only lists
+	// the base model (for example, when it already has a 1M context window).
+	// Keep the requested suffix intact; the CLI checks account availability.
+	for _, option := range options {
+		if option.Model != claudeOpusModelAlias && option.Model != claudeDefaultModelAlias {
+			continue
+		}
+		option.ID += "[1m]"
+		option.Model += "[1m]"
+		option.DisplayName += " (1M)"
+		option.Description = "Native Claude Code alias requesting a 1M context window; availability is checked by Claude Code."
+		option.IsDefault = false
+		options = append(options, option)
+	}
+	return options
 }
 
 func ClaudeCodeModelOptions() []ModelOption {

@@ -83,6 +83,43 @@ func TestControlModelValidationRejectsBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestClaudeDiscoveredChoicesReachEngineerLaunchUnchanged(t *testing.T) {
+	for _, id := range []string{"opus[1m]", "sonnet[1m]", "claude-opus-5-5", "claude-opus-5-5[1m]", "default"} {
+		t.Run(id, func(t *testing.T) {
+			svc := newControlTestService(t)
+			options := codexapp.ClaudeCodeModelOptions()
+			for i := range options {
+				switch options[i].Model {
+				case "opus":
+					options[i].ResolvedModel = "claude-opus-5-5"
+				case "opus[1m]":
+					options[i].ResolvedModel = "claude-opus-5-5[1m]"
+				}
+			}
+			options = append(options, codexapp.ModelOption{ID: "default", Model: "default", ResolvedModel: "claude-opus-5-5", SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{{ReasoningEffort: "xhigh"}}})
+			m := Model{svc: svc, allProjects: []model.ProjectSummary{{Path: "/repo", Name: "repo", PresentOnDisk: true}}}
+			m.saveEngineerCatalog(t.Context(), codexapp.ProviderClaudeCode, options, "test")
+			inv := controlInvocationForTest(t, control.EngineerSendPromptInput{EngineerModelSelection: control.EngineerModelSelection{Model: id, ReasoningEffort: "xhigh"}, ProjectPath: "/repo", Provider: control.ProviderClaudeCode, SessionMode: control.SessionModeNew, Prompt: "work"})
+			outcome := m.executeControlInvocationWithOutcome(inv)
+			validated, ok := outcome.cmd().(controlEngineerModelValidatedMsg)
+			if !ok || validated.err != nil {
+				t.Fatalf("discovered choice rejected: %#v", validated)
+			}
+			var request codexapp.LaunchRequest
+			m = outcome.model
+			m.codexManager = codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+				request = req
+				return &fakeCodexSession{projectPath: req.ProjectPath, snapshot: codexapp.Snapshot{Provider: req.Provider, ThreadID: "claude-worker", Started: true}}, nil
+			})
+			updated, cmd := m.applyControlEngineerModelValidated(validated)
+			_, _ = runEngineerMailboxForTest(t, updated.(Model), cmd)
+			if request.Provider != codexapp.ProviderClaudeCode || request.PendingModel != id || request.PendingReasoning != "xhigh" {
+				t.Fatalf("launch substituted requested Claude choice: %+v", request)
+			}
+		})
+	}
+}
+
 func TestModelChoiceWaitsForActiveCodexTurn(t *testing.T) {
 	projectPath := "/repo"
 	session := &fakeCodexSession{projectPath: projectPath, snapshot: codexapp.Snapshot{Provider: codexapp.ProviderCodex, ThreadID: "thread", Started: true, Busy: true, ActiveTurnID: "turn", Phase: codexapp.SessionPhaseRunning}}

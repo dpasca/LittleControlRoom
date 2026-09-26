@@ -120,6 +120,9 @@ func (m *Model) openPrelaunchCodexModelPickerCmd(provider codexapp.Provider, tar
 		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 		models, err := m.prelaunchEmbeddedModelOptions(ctx, provider)
+		if provider == codexapp.ProviderClaudeCode {
+			models = claudePrelaunchModelOptions(models)
+		}
 		return codexModelListMsg{
 			target:       target,
 			provider:     provider,
@@ -155,7 +158,7 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 		// stored catalog that may predate a model release.
 		if listed, err := m.codexManager.ClaudeCodeModelCatalog(ctx); err == nil && len(listed) > 0 {
 			m.saveEngineerCatalog(ctx, provider, listed, engineerCatalogSource(provider))
-			return mergePrelaunchModelOptions(claudePrelaunchModelOptions(listed), m.recentPrelaunchModelOptions(provider)), nil
+			return mergePrelaunchModelOptions(listed, m.recentPrelaunchModelOptions(provider)), nil
 		}
 	}
 	if m.svc != nil && m.svc.Store() != nil {
@@ -163,7 +166,7 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 		if err == nil && len(catalog.Models) > 0 {
 			models := []codexapp.ModelOption{providerDefaultModelOption(provider)}
 			for _, item := range catalog.Models {
-				option := codexapp.ModelOption{ID: item.Model, Model: item.Model, ModelProvider: item.ModelProvider, DisplayName: item.DisplayName, IsDefault: item.IsDefault, DefaultReasoningEffort: item.DefaultReasoningEffort}
+				option := codexapp.ModelOption{ID: item.Model, Model: item.Model, ResolvedModel: item.ResolvedModel, ModelProvider: item.ModelProvider, DisplayName: item.DisplayName, IsDefault: item.IsDefault, DefaultReasoningEffort: item.DefaultReasoningEffort}
 				for _, effort := range item.ReasoningEfforts {
 					option.SupportedReasoningEfforts = append(option.SupportedReasoningEfforts, codexapp.ReasoningEffortOption{ReasoningEffort: effort})
 				}
@@ -180,6 +183,9 @@ func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codex
 func claudePrelaunchModelOptions(listed []codexapp.ModelOption) []codexapp.ModelOption {
 	options := []codexapp.ModelOption{providerDefaultModelOption(codexapp.ProviderClaudeCode)}
 	for _, option := range listed {
+		if option.Model == "" {
+			continue
+		}
 		if strings.EqualFold(strings.TrimSpace(option.Model), "default") {
 			if label := strings.TrimSpace(option.DisplayName); label != "" {
 				options[0].DisplayName += " · " + label

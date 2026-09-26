@@ -10,7 +10,7 @@ import (
 
 func engineerModelsCapability() Capability {
 	c := collectionCapability(QueryEngineerModels, DomainEngineer, ScopeProject,
-		"Discover exact model and reasoning-effort IDs for engineer launch controls. Catalogs are saved when the host opens a session or loads its model picker; source and observed_at identify the evidence. Provider listings do not guarantee current account access. Empty results mean discovery is unavailable: open a provider session or use select_model, never guess an ID.", SensitivityMetadata,
+		"Discover model and reasoning-effort IDs before any engineer launch or model change. Use model, or resolved_model for a concrete Claude Code ID; Claude's native context aliases such as opus[1m] remain launch choices even when omitted by its picker. Catalogs are saved when the host opens a session or loads its model picker; source and observed_at identify the evidence. Provider listings do not guarantee current account access. Empty results mean discovery is unavailable: open a provider session or use select_model, never guess an ID.", SensitivityMetadata,
 		objectSchema(map[string]any{
 			"provider": map[string]any{"type": "string", "enum": control.EngineerProviderStrings(false)},
 			"limit":    integerProperty("Maximum models to return.", 1, 50),

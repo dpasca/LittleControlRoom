@@ -274,9 +274,27 @@ func claudeModelOptionsFromCLI(models []claudeCLIModel) []ModelOption {
 			continue
 		}
 		alias.IsDefault = false
+		// A context suffix changes the requested window, not effort support.
+		// Prefer the CLI's metadata over the curated fallback's effort list.
+		base, suffix := splitClaudeContextSuffix(alias.Model)
+		for _, option := range options {
+			if option.Model != base {
+				continue
+			}
+			alias.SupportedReasoningEfforts = option.SupportedReasoningEfforts
+			alias.DefaultReasoningEffort = option.DefaultReasoningEffort
+			if resolvedBase, _ := splitClaudeContextSuffix(option.ResolvedModel); resolvedBase != "" {
+				alias.ResolvedModel = resolvedBase + suffix
+			}
+			break
+		}
 		if resolved := claudeAliasResolvedModel(options, alias.Model); resolved != "" {
-			alias.ResolvedModel = resolved
-			alias.DisplayName = claudeModelDisplayName(resolved)
+			if alias.ResolvedModel == "" {
+				alias.ResolvedModel = resolved
+			}
+		}
+		if alias.ResolvedModel != "" {
+			alias.DisplayName = claudeModelDisplayName(alias.ResolvedModel)
 		}
 		options = append(options, alias)
 	}

@@ -86,6 +86,7 @@ func TestLoadClaudeModelCatalogReadsInitializeModels(t *testing.T) {
 		"haiku=Haiku 4.5",
 		"fable=Fable 5.1",
 		"opus=Opus 5.5",
+		"sonnet[1m]=Sonnet 5 (1M)",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("catalog options =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -104,6 +105,43 @@ func TestLoadClaudeModelCatalogReadsInitializeModels(t *testing.T) {
 	}
 	if got := ModelDisplayName(ProviderClaudeCode, "default"); got != "Opus 5.5 (1M)" {
 		t.Fatalf("ModelDisplayName(default) = %q", got)
+	}
+}
+
+func TestClaudeCatalogPreservesNativeContextAliasesWhenPickerOmitsThem(t *testing.T) {
+	// New CLI versions can show only the base alias for a model with native
+	// 1M context. That does not invalidate an earlier opus[1m] launch choice.
+	models := []claudeCLIModel{
+		{Value: "default", ResolvedModel: "claude-opus-5-5", SupportedEffortLevels: []string{"medium", "xhigh"}},
+		{Value: "opus", ResolvedModel: "claude-opus-5-5", SupportedEffortLevels: []string{"medium", "xhigh"}},
+		{Value: "sonnet", ResolvedModel: "claude-sonnet-5", SupportedEffortLevels: []string{"medium", "high"}},
+	}
+	options := claudeModelOptionsFromCLI(models)
+	for _, tc := range []struct {
+		id       string
+		resolved string
+		efforts  string
+	}{
+		{"opus[1m]", "claude-opus-5-5[1m]", "medium,xhigh"},
+		{"sonnet[1m]", "claude-sonnet-5[1m]", "medium,high"},
+	} {
+		found := false
+		for _, option := range options {
+			if option.Model != tc.id {
+				continue
+			}
+			found = true
+			var efforts []string
+			for _, effort := range option.SupportedReasoningEfforts {
+				efforts = append(efforts, effort.ReasoningEffort)
+			}
+			if option.ResolvedModel != tc.resolved || strings.Join(efforts, ",") != tc.efforts || option.IsDefault {
+				t.Fatalf("native alias metadata = %#v", option)
+			}
+		}
+		if !found {
+			t.Fatalf("native alias %q disappeared with its picker row", tc.id)
+		}
 	}
 }
 

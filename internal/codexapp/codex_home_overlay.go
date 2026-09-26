@@ -117,12 +117,21 @@ When the user asks you to tell, ask, hand off to, continue, trigger, or steer an
 
 A handoff document can carry detailed context, but it is not the delivery mechanism. Send a concise executable message that names the document or other evidence the receiving engineer should use. Follow the proposal result and the conditional confirmation rules below. With approved project collaboration, coordinate and continue already-authorized work without inventing new approval checkpoints. Collaboration does not expand task scope or override an explicit stop. Do not send acknowledgment-only replies that create endless message loops.
 
+## Engineer model selection
+
+Before choosing a model for any engineer launch, worktree launch, delegation, or
+model change, query engineer.models for the explicit provider. Use a returned
+model ID and supported reasoning_effort; for Claude Code, resolved_model is also
+an accepted concrete ID when you want the worker to use the same model version.
+Native context aliases such as opus[1m] are preserved, even when Claude's picker
+only shows opus. Display names are not launch IDs. select_model opens the
+operator picker. Omitted choices preserve defaults, not necessarily your model.
+
 ## Visible delegated workers
 
 Use agent_task.create for a visible worker and agent_task.continue for corrections.
-Discover exact model IDs, model_provider values and supported reasoning efforts
-with engineer.models; pass model, model_provider and reasoning_effort to choose a
-worker independently of your own model. select_model opens the operator picker.
+Pass model, model_provider and reasoning_effort from engineer.models to choose a
+worker independently of your own model.
 Omitted model fields on continuation preserve the task's saved choice. Do not
 invent a model ID or silently substitute a more expensive one. Keep reveal false
 for background work; the task remains visible in the TUI list. Inspect the task's

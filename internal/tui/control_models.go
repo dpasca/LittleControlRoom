@@ -37,7 +37,7 @@ func engineerCatalog(provider codexapp.Provider, models []codexapp.ModelOption, 
 		if option.Model == "" || option.Hidden {
 			continue
 		}
-		item := control.EngineerModel{Model: option.Model, ModelProvider: option.ModelProvider, DisplayName: option.DisplayName, DefaultReasoningEffort: option.DefaultReasoningEffort, IsDefault: option.IsDefault, ReasoningEfforts: []string{}}
+		item := control.EngineerModel{Model: option.Model, ResolvedModel: option.ResolvedModel, ModelProvider: option.ModelProvider, DisplayName: option.DisplayName, DefaultReasoningEffort: option.DefaultReasoningEffort, IsDefault: option.IsDefault, ReasoningEfforts: []string{}}
 		for _, effort := range option.SupportedReasoningEfforts {
 			item.ReasoningEfforts = append(item.ReasoningEfforts, effort.ReasoningEffort)
 		}

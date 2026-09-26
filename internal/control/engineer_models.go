@@ -35,6 +35,7 @@ func (s *EngineerModelSelection) Normalize(provider Provider) error {
 
 type EngineerModel struct {
 	Model                  string   `json:"model"`
+	ResolvedModel          string   `json:"resolved_model,omitempty"`
 	ModelProvider          string   `json:"model_provider,omitempty"`
 	DisplayName            string   `json:"display_name"`
 	ReasoningEfforts       []string `json:"reasoning_efforts"`
@@ -49,7 +50,8 @@ type EngineerModelCatalog struct {
 	Models     []EngineerModel `json:"models"`
 }
 
-// Validate checks exact protocol identifiers, not natural-language aliases.
+// Validate checks protocol identifiers, including concrete Claude model IDs
+// reported by the CLI behind its native aliases. It never rewrites a choice.
 func (c EngineerModelCatalog) Validate(s EngineerModelSelection) error {
 	if s.Model == "" {
 		return nil
@@ -58,21 +60,32 @@ func (c EngineerModelCatalog) Validate(s EngineerModelSelection) error {
 		if option.Model != s.Model || option.ModelProvider != s.ModelProvider {
 			continue
 		}
-		if s.ReasoningEffort == "" {
-			return nil
-		}
-		for _, effort := range option.ReasoningEfforts {
-			if effort == s.ReasoningEffort {
-				return nil
+		return option.validateEffort(s)
+	}
+	if c.Provider == ProviderClaudeCode && s.ModelProvider == "" {
+		for _, option := range c.Models {
+			if option.ResolvedModel == s.Model {
+				return option.validateEffort(s)
 			}
 		}
-		return fmt.Errorf("reasoning effort %q is unsupported for %q; supported: %s", s.ReasoningEffort, s.Model, strings.Join(option.ReasoningEfforts, ", "))
 	}
 	return fmt.Errorf("model %q was not found in the %s catalog; query engineer.models or use select_model", s.Model, c.Provider)
 }
 
+func (m EngineerModel) validateEffort(s EngineerModelSelection) error {
+	if s.ReasoningEffort == "" {
+		return nil
+	}
+	for _, effort := range m.ReasoningEfforts {
+		if effort == s.ReasoningEffort {
+			return nil
+		}
+	}
+	return fmt.Errorf("reasoning effort %q is unsupported for %q; supported: %s", s.ReasoningEffort, s.Model, strings.Join(m.ReasoningEfforts, ", "))
+}
+
 func engineerModelProperty() map[string]any {
-	return map[string]any{"type": "string", "description": "Optional exact model ID from the engineer.models query. Requires explicit provider. Omit to preserve defaults."}
+	return map[string]any{"type": "string", "description": "Optional exact model ID from engineer.models (model, or resolved_model for Claude Code). Native Claude aliases such as opus[1m] are preserved. Requires explicit provider. Omit to preserve defaults."}
 }
 func engineerModelProviderProperty() map[string]any {
 	return map[string]any{"type": "string", "description": "For lcagent, exact model_provider returned by engineer.models."}

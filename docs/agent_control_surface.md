@@ -47,6 +47,15 @@ and LCAgent's combined curated/provider routes. A listing is evidence, not a
 guarantee of current account access; an empty catalog means discovery has not
 completed. Pagination uses `limit` and `offset`.
 
+For Claude Code, discovery also returns `resolved_model` when the CLI reports
+the concrete ID behind an alias. Both the listed `model` and `resolved_model`
+are accepted launch IDs, so an engineer can delegate to the same concrete model.
+Native `opus[1m]` and `sonnet[1m]` aliases remain discoverable even when a newer
+CLI picker lists only the base aliases. Their effort metadata follows the base
+choice. LCR preserves the exact requested ID and context suffix when launching;
+Claude Code still enforces account access and model restrictions. The picker is
+discovery evidence, not an exhaustive list of valid native Claude spellings.
+
 Explicit choices are validated asynchronously before repository/TODO mutations.
 They override saved model preferences for this operation only. Omitted choices
 preserve existing defaults. A model-changing follow-up waits for the active turn

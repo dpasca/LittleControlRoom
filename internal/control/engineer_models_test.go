@@ -31,6 +31,37 @@ func TestEngineerModelSelectionValidation(t *testing.T) {
 	}
 }
 
+func TestClaudeEngineerModelValidationAcceptsReportedConcreteIDs(t *testing.T) {
+	catalog := EngineerModelCatalog{Provider: ProviderClaudeCode, Models: []EngineerModel{
+		{Model: "opus", ResolvedModel: "claude-opus-5-5", ReasoningEfforts: []string{"medium", "xhigh"}},
+		{Model: "opus[1m]", ResolvedModel: "claude-opus-5-5[1m]", ReasoningEfforts: []string{"medium", "xhigh"}},
+	}}
+	for _, id := range []string{"opus", "opus[1m]", "claude-opus-5-5", "claude-opus-5-5[1m]"} {
+		if err := catalog.Validate(EngineerModelSelection{Model: id, ReasoningEffort: "xhigh"}); err != nil {
+			t.Errorf("known Claude choice %q rejected: %v", id, err)
+		}
+	}
+	for _, selection := range []EngineerModelSelection{
+		{Model: "claude-opus-5-5[1m]", ReasoningEffort: "unknown"},
+		{Model: "opus[2m]"},
+		{Model: "claude-invented-model"},
+		{Model: "claude-opus-5-5", ModelProvider: "another-provider"},
+	} {
+		if err := catalog.Validate(selection); err == nil {
+			t.Errorf("unsupported selection accepted: %+v", selection)
+		}
+	}
+	// An exact entry's effort support wins over an alias resolving to it.
+	catalog.Models = append(catalog.Models, EngineerModel{Model: "claude-opus-5-5", ReasoningEfforts: []string{"medium"}})
+	if err := catalog.Validate(EngineerModelSelection{Model: "claude-opus-5-5", ReasoningEffort: "xhigh"}); err == nil {
+		t.Fatal("resolved alias overrode exact entry's effort support")
+	}
+	catalog.Provider = ProviderCodex
+	if err := catalog.Validate(EngineerModelSelection{Model: "claude-opus-5-5[1m]"}); err == nil {
+		t.Fatal("Claude resolution changed another provider's exact-ID validation")
+	}
+}
+
 func TestEngineerControlChoicesSurviveNormalization(t *testing.T) {
 	for _, name := range []CapabilityName{CapabilityEngineerSendPrompt, CapabilityProjectCreateAndStartEngineer, CapabilityTodoCreateWorktreeAndStartEngineer} {
 		args := map[string]any{"project_path": "/repo", "project_name": "repo", "provider": "codex", "prompt": "work", "reveal": true, "model": "exact-id", "reasoning_effort": "medium"}
