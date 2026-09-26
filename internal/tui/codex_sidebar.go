@@ -1204,7 +1204,7 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 	showPendingAsCurrent := codexSnapshotShowsPendingModelAsCurrent(snapshot)
 	pendingMatchesCurrent := embeddedSidebarPendingModelMatchesCurrent(snapshot)
 	if showPendingAsCurrent {
-		model = strings.TrimSpace(snapshot.PendingModel)
+		model = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModel), model)
 		modelProvider = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModelProvider), modelProvider)
 		reasoning = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), reasoning)
 	}
@@ -1223,7 +1223,9 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 	if style, _ := claudeOutputStyleSidebarLabel(snapshot); style != "" {
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Style", style, claudeOutputStyleSidebarValueStyle(snapshot), width, maxLines)...)
 	}
-	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent && !pendingMatchesCurrent {
+	hasPendingChoice := strings.TrimSpace(snapshot.PendingModel) != "" || strings.TrimSpace(snapshot.PendingReasoning) != ""
+	if hasPendingChoice && !showPendingAsCurrent && !pendingMatchesCurrent {
+		nextModel := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModel), model)
 		if codexapp.ModelNamesEquivalent(snapshot.Provider, model, nextModel) {
 			nextModel = model
 		}
@@ -1235,7 +1237,10 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 			}
 		}
 		if nextReasoning != "" {
-			next += " / " + nextReasoning
+			if next != "" {
+				next += " / "
+			}
+			next += nextReasoning
 		}
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Next", next, detailWarningStyle, width, maxLines)...)
 	}
@@ -1244,7 +1249,7 @@ func embeddedSidebarModelRowsWithLimitAt(snapshot codexapp.Snapshot, width, maxL
 
 func embeddedSidebarPendingModelMatchesCurrent(snapshot codexapp.Snapshot) bool {
 	currentModel := strings.TrimSpace(snapshot.Model)
-	pendingModel := strings.TrimSpace(snapshot.PendingModel)
+	pendingModel := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingModel), currentModel)
 	if !codexapp.ModelNamesEquivalent(snapshot.Provider, currentModel, pendingModel) {
 		return false
 	}

@@ -493,7 +493,10 @@ func codexSnapshotPermissionLabel(snapshot codexapp.Snapshot) string {
 }
 
 func codexSnapshotShowsPendingModelAsCurrent(snapshot codexapp.Snapshot) bool {
-	if strings.TrimSpace(snapshot.PendingModel) == "" || snapshot.Busy || snapshot.BusyExternal || snapshot.Closed {
+	if strings.TrimSpace(snapshot.PendingModel) == "" && strings.TrimSpace(snapshot.PendingReasoning) == "" {
+		return false
+	}
+	if snapshot.Busy || snapshot.BusyExternal || snapshot.Closed {
 		return false
 	}
 	for _, entry := range snapshot.Entries {
