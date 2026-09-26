@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/control"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -34,16 +35,54 @@ func (m Model) routeEngineerDispatchReplyCmd(projectPath string, snapshot codexa
 	}
 	return func() tea.Msg {
 		snapshot := freshEngineerCompletionSnapshot(projectPath, snapshot, session)
+		if bossEngineerSnapshotActive(snapshot) {
+			return engineerDispatchReplyRoutedMsg{projectPath: projectPath}
+		}
 		ctx, cancel := context.WithTimeout(parent, engineerMessageStoreTimeout)
 		defer cancel()
-		dispatch, routed, err := svc.RouteEngineerTurnCompletion(ctx, service.EngineerTurnCompletion{
+		completion := service.EngineerTurnCompletion{
 			ProjectPath: projectPath,
 			Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
 			SessionID:   strings.TrimSpace(snapshot.ThreadID),
 			Summary:     latestEngineerTranscriptReviewOutput(snapshot),
 			Problem:     strings.TrimSpace(snapshot.LastError),
-		})
-		return engineerDispatchReplyRoutedMsg{projectPath: projectPath, dispatch: dispatch, routed: routed, err: err}
+		}
+		dispatches, err := svc.RouteEngineerTurnCompletion(ctx, completion)
+		var replies []tea.Cmd
+		for _, dispatch := range dispatches {
+			msg := engineerDispatchReplyRoutedMsg{projectPath: projectPath, dispatch: dispatch, routed: true}
+			replies = append(replies, func() tea.Msg { return msg })
+		}
+		if err != nil {
+			replies = append(replies, func() tea.Msg { return engineerDispatchReplyRoutedMsg{projectPath: projectPath, err: err} })
+		}
+		return tea.BatchMsg(replies)
+	}
+}
+
+// A short turn can settle before its delivery receipt arms the return address.
+// Recheck after the receipt is saved; all live session reads stay off the UI
+// thread, and a busy or replaced worker is left to its normal completion path.
+func (m Model) reconcileEngineerMessageReplyCmd(message control.EngineerMessage) tea.Cmd {
+	manager := m.codexManager
+	if manager == nil || message.AgentTaskID != "" || !control.IsExternalOperationID(message.OperationID) {
+		return nil
+	}
+	return func() tea.Msg {
+		session, ok := manager.Session(message.ProjectPath)
+		if !ok || session == nil {
+			return nil
+		}
+		snapshot := session.Snapshot()
+		if embeddedProvider(snapshot) != codexProviderFromControlProvider(message.Provider) ||
+			strings.TrimSpace(snapshot.ThreadID) != strings.TrimSpace(message.TargetSessionID) ||
+			!snapshot.Started || snapshot.Closed || bossEngineerSnapshotActive(snapshot) {
+			return nil
+		}
+		if cmd := m.routeEngineerDispatchReplyCmd(message.ProjectPath, snapshot, session); cmd != nil {
+			return cmd()
+		}
+		return nil
 	}
 }
 
@@ -64,6 +103,6 @@ func (m Model) applyEngineerDispatchReplyRouted(msg engineerDispatchReplyRoutedM
 		m.status = label + " finished; its report is waiting: " + firstNonEmptyTrimmed(msg.dispatch.ReplyError, "the requesting session is not ready")
 		return m, nil
 	}
-	m.status = label + " finished; its report is queued for the session that launched it."
+	m.status = label + " finished; its report is queued for the requesting session."
 	return m, m.requestEngineerMessagesPollCmd()
 }

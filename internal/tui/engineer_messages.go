@@ -412,6 +412,12 @@ func (m Model) engineerMessageDeliveryCmd(message control.EngineerMessage, cmd t
 			state = control.EngineerMessageFailed
 			status = "Engineer message delivery failed: " + stateErr.Error()
 		}
+		if state == control.EngineerMessageDelivered && strings.TrimSpace(opened.snapshot.ThreadID) != "" {
+			// A resume alias (notably an LCAgent run ID) can name the same
+			// conversation. Completion routing needs the host-observed thread;
+			// RequestedTargetSessionID retains the original address for retries.
+			targetSessionID = strings.TrimSpace(opened.snapshot.ThreadID)
+		}
 
 		recorded, recordErr := persistEngineerMessageState(parent, svc, message, state, targetSessionID, status, stateErr)
 		if recordErr != nil {
@@ -523,6 +529,9 @@ func (m Model) applyEngineerMessageDeliveryRecorded(msg engineerMessageDeliveryR
 	}
 	if msg.message.State == control.EngineerMessageQueued {
 		return m, nil
+	}
+	if msg.message.State == control.EngineerMessageDelivered {
+		return m, batchCmds(m.requestEngineerMessagesPollCmd(), m.reconcileEngineerMessageReplyCmd(msg.message))
 	}
 	return m, m.requestEngineerMessagesPollCmd()
 }

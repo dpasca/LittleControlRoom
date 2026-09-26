@@ -17,9 +17,9 @@ const (
 	EngineerDispatchReplySent EngineerDispatchReplyState = "sent"
 )
 
-// EngineerDispatch is the return address of an engineer that another embedded
-// session launched into a TODO worktree. Only turns the dispatcher requested
-// are reported back; turns the operator starts in the worker are not.
+// EngineerDispatch is the return address of work requested by an embedded
+// session through a launch or message. Only requested turns are reported back;
+// turns the operator starts in the worker are not.
 type EngineerDispatch struct {
 	ID                int64
 	OriginOperationID string

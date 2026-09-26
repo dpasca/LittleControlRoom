@@ -64,31 +64,36 @@ func (s *Store) GetEngineerDispatch(ctx context.Context, id int64) (model.Engine
 	return scanEngineerDispatch(s.db.QueryRowContext(ctx, engineerDispatchSelect+` WHERE id = ?`, id))
 }
 
-// FindAwaitingEngineerDispatch returns the dispatch waiting for this worker's
+// ListAwaitingEngineerDispatches snapshots the requests waiting for this worker's
 // turn to end. A different session in the same worktree does not match once
 // the worker's identity is known.
-func (s *Store) FindAwaitingEngineerDispatch(ctx context.Context, workerProjectPath string, provider model.SessionSource, sessionID string) (model.EngineerDispatch, bool, error) {
+func (s *Store) ListAwaitingEngineerDispatches(ctx context.Context, workerProjectPath string, provider model.SessionSource, sessionID string) ([]model.EngineerDispatch, error) {
 	if s == nil || s.db == nil {
-		return model.EngineerDispatch{}, false, errors.New("store unavailable")
+		return nil, errors.New("store unavailable")
 	}
 	workerProjectPath = cleanDispatchPath(workerProjectPath)
 	sessionID = strings.TrimSpace(sessionID)
 	if workerProjectPath == "" {
-		return model.EngineerDispatch{}, false, nil
+		return nil, nil
 	}
-	dispatch, err := scanEngineerDispatch(s.db.QueryRowContext(ctx, engineerDispatchSelect+`
+	rows, err := s.db.QueryContext(ctx, engineerDispatchSelect+`
 		WHERE worker_project_path = ? AND worker_provider = ? AND reply_state = ?
-		  AND (worker_session_id = '' OR ? = '' OR worker_session_id = ?)
-		ORDER BY updated_at DESC, id DESC
-		LIMIT 1
-	`, workerProjectPath, string(model.NormalizeSessionSource(provider)), string(model.EngineerDispatchReplyAwaiting), sessionID, sessionID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return model.EngineerDispatch{}, false, nil
-	}
+		  AND (worker_session_id = '' OR worker_session_id = ?)
+		ORDER BY id
+	`, workerProjectPath, string(model.NormalizeSessionSource(provider)), string(model.EngineerDispatchReplyAwaiting), sessionID)
 	if err != nil {
-		return model.EngineerDispatch{}, false, err
+		return nil, err
 	}
-	return dispatch, true, nil
+	defer rows.Close()
+	var dispatches []model.EngineerDispatch
+	for rows.Next() {
+		dispatch, err := scanEngineerDispatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		dispatches = append(dispatches, dispatch)
+	}
+	return dispatches, rows.Err()
 }
 
 // MarkEngineerDispatchReplyReady stores the reply for the exact request
@@ -193,16 +198,17 @@ func (s *Store) EngineerDispatchIDsAwaitingCaller(ctx context.Context, callerPro
 	return ids, rows.Err()
 }
 
-// armEngineerDispatchForDelivery re-arms a dispatch when its own caller's
-// follow-up reaches the worker, so the worker's reply goes back to that caller.
-// Messages from anyone else, including the operator and LCR callbacks, do not.
+// armEngineerDispatchForDelivery records the return address of a delivered
+// embedded-session request, even when the caller did not launch the worker.
+// Receipt retries are idempotent in the surrounding message transaction.
+// Operator messages and LCR callbacks do not create return addresses.
 func armEngineerDispatchForDelivery(ctx context.Context, tx *sql.Tx, message control.EngineerMessage, now time.Time) error {
 	if strings.TrimSpace(message.AgentTaskID) != "" || !control.IsExternalOperationID(message.OperationID) {
 		return nil
 	}
-	var provider, key, projectPath string
-	err := tx.QueryRowContext(ctx, `SELECT provider, session_key, project_path FROM control_operations WHERE id = ?`, message.OperationID).
-		Scan(&provider, &key, &projectPath)
+	var provider, key, projectPath, capability string
+	err := tx.QueryRowContext(ctx, `SELECT provider, session_key, project_path, capability FROM control_operations WHERE id = ?`, message.OperationID).
+		Scan(&provider, &key, &projectPath, &capability)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -210,22 +216,62 @@ func armEngineerDispatchForDelivery(ctx context.Context, tx *sql.Tx, message con
 		return fmt.Errorf("load engineer message caller: %w", err)
 	}
 	key = strings.TrimSpace(key)
+	projectPath = cleanDispatchPath(projectPath)
 	callerProvider := sessionSourceFromControlProvider(control.NormalizeProvider(provider))
-	if key == "" || callerProvider == model.SessionSourceUnknown {
+	if key == "" || projectPath == "" || callerProvider == model.SessionSourceUnknown || control.CapabilityName(capability) != control.CapabilityEngineerSendPrompt {
 		return nil
 	}
+	workerPath := cleanDispatchPath(message.ProjectPath)
+	workerProvider := sessionSourceFromControlProvider(message.Provider)
 	targetSessionID := strings.TrimSpace(message.TargetSessionID)
-	if _, err := tx.ExecContext(ctx, `
+	var callerSessionID string
+	err = tx.QueryRowContext(ctx, `SELECT provider_session_id FROM engineer_session_bindings
+		WHERE project_path = ? AND provider = ? AND control_session_key = ?`, projectPath, string(callerProvider), key).Scan(&callerSessionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("resolve engineer message caller: %w", err)
+	}
+	if projectPath == workerPath && callerProvider == workerProvider && callerSessionID != "" && callerSessionID == targetSessionID {
+		return nil
+	}
+	// Reuse only this caller's exact worker exchange. A stored report waiting
+	// for caller identity must survive a later request, as must other sessions'
+	// return addresses in the same worktree.
+	result, err := tx.ExecContext(ctx, `
 		UPDATE engineer_dispatches
 		SET reply_state = ?, reply_seq = reply_seq + 1, reply_prompt = '', reply_message_id = '', reply_error = '',
 			worker_session_id = CASE WHEN ? <> '' THEN ? ELSE worker_session_id END,
 			updated_at = ?
-		WHERE worker_project_path = ? AND worker_provider = ?
-		  AND caller_project_path = ? AND caller_provider = ? AND caller_session_key = ?
+		WHERE id = (
+			SELECT id FROM engineer_dispatches
+			WHERE worker_project_path = ? AND worker_provider = ?
+			  AND (worker_session_id = '' OR worker_session_id = ?)
+			  AND caller_project_path = ? AND caller_provider = ? AND caller_session_key = ?
+			  AND reply_state IN (?, ?)
+			ORDER BY updated_at DESC, id DESC LIMIT 1
+		)
 	`, string(model.EngineerDispatchReplyAwaiting), targetSessionID, targetSessionID, now.Unix(),
-		cleanDispatchPath(message.ProjectPath), string(sessionSourceFromControlProvider(message.Provider)),
-		cleanDispatchPath(projectPath), string(callerProvider), key); err != nil {
+		workerPath, string(workerProvider), targetSessionID, projectPath, string(callerProvider), key,
+		string(model.EngineerDispatchReplyAwaiting), string(model.EngineerDispatchReplySent))
+	if err != nil {
 		return fmt.Errorf("arm engineer dispatch reply: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed > 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO engineer_dispatches(
+			origin_operation_id, todo_id, todo_text, worker_project_path, worker_provider, worker_session_id,
+			caller_project_path, caller_provider, caller_session_key, caller_session_id,
+			reply_state, reply_seq, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		ON CONFLICT(origin_operation_id) DO NOTHING
+	`, message.OperationID, message.TodoID, message.TodoText, workerPath, string(workerProvider), targetSessionID,
+		projectPath, string(callerProvider), key, callerSessionID, string(model.EngineerDispatchReplyAwaiting), now.Unix(), now.Unix()); err != nil {
+		return fmt.Errorf("record engineer message return address: %w", err)
 	}
 	return nil
 }

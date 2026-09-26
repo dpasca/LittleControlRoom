@@ -451,7 +451,7 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 func EngineerSendPromptCapability() Capability {
 	return Capability{
 		Name:         CapabilityEngineerSendPrompt,
-		Description:  "Send a message to an embedded engineer session through a durable queue. Requires confirmation unless the operator already approved collaboration between these exact project paths. Automatic collaboration requires resume_or_new, an explicit provider and target_session_id, no TODO redirect, and no model change. LCR resumes an idle target, steers an eligible active target, or delivers after the exact target becomes idle.",
+		Description:  "Send a message to an embedded engineer session through a durable queue. Requires confirmation unless the operator already approved collaboration between these exact project paths. Automatic collaboration requires resume_or_new, an explicit provider and target_session_id, no TODO redirect, and no model change. LCR resumes an idle target, steers an eligible active target, or delivers after the exact target becomes idle. When an embedded session sends the request, the worker's completed turn is reported back to that exact calling session, including workers it did not launch.",
 		InputSchema:  engineerSendPromptInputSchema(),
 		OutputSchema: engineerSendPromptOutputSchema(),
 		Risk:         RiskExternal,

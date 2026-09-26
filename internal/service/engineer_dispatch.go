@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -74,28 +75,39 @@ func (s *Service) RecordEngineerDispatch(ctx context.Context, launch EngineerDis
 	return dispatch, true, nil
 }
 
-// RouteEngineerTurnCompletion reports an ended worker turn to the session that
-// requested it. It reports false when no request is waiting on this worker.
-func (s *Service) RouteEngineerTurnCompletion(ctx context.Context, completion EngineerTurnCompletion) (model.EngineerDispatch, bool, error) {
+// RouteEngineerTurnCompletion reports an ended worker turn to every session
+// waiting on it. The captured request sequences keep a concurrent follow-up
+// from receiving the preceding turn's report.
+func (s *Service) RouteEngineerTurnCompletion(ctx context.Context, completion EngineerTurnCompletion) ([]model.EngineerDispatch, error) {
 	if s == nil || s.store == nil {
-		return model.EngineerDispatch{}, false, nil
+		return nil, nil
 	}
-	dispatch, found, err := s.store.FindAwaitingEngineerDispatch(ctx, completion.ProjectPath, completion.Provider, completion.SessionID)
-	if err != nil || !found {
-		return model.EngineerDispatch{}, false, err
+	dispatches, err := s.store.ListAwaitingEngineerDispatches(ctx, completion.ProjectPath, completion.Provider, completion.SessionID)
+	if err != nil || len(dispatches) == 0 {
+		return nil, err
 	}
-	sessionID := firstNonEmpty(completion.SessionID, dispatch.WorkerSessionID)
 	branch := ""
-	if summary, err := s.store.GetProjectSummary(ctx, dispatch.WorkerProjectPath, true); err == nil {
+	if summary, err := s.store.GetProjectSummary(ctx, completion.ProjectPath, true); err == nil {
 		branch = strings.TrimSpace(summary.RepoBranch)
 	}
-	prompt := engineerDispatchReplyPrompt(dispatch, sessionID, branch, completion)
-	dispatch, claimed, err := s.store.MarkEngineerDispatchReplyReady(ctx, dispatch.ID, dispatch.ReplySeq, sessionID, prompt)
-	if err != nil || !claimed {
-		return dispatch, false, err
+	var replies []model.EngineerDispatch
+	var routeErr error
+	for _, dispatch := range dispatches {
+		sessionID := firstNonEmpty(completion.SessionID, dispatch.WorkerSessionID)
+		prompt := engineerDispatchReplyPrompt(dispatch, sessionID, branch, completion)
+		dispatch, claimed, err := s.store.MarkEngineerDispatchReplyReady(ctx, dispatch.ID, dispatch.ReplySeq, sessionID, prompt)
+		if err != nil {
+			routeErr = errors.Join(routeErr, err)
+			continue
+		}
+		if !claimed {
+			continue
+		}
+		dispatch, err = s.QueueEngineerDispatchReply(ctx, dispatch.ID)
+		replies = append(replies, dispatch)
+		routeErr = errors.Join(routeErr, err)
 	}
-	dispatch, err = s.QueueEngineerDispatchReply(ctx, dispatch.ID)
-	return dispatch, true, err
+	return replies, routeErr
 }
 
 // QueueEngineerDispatchReply moves a stored reply into the exact caller's
