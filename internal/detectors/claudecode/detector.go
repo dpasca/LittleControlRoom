@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -36,6 +37,8 @@ type cachedParse struct {
 
 type parseResult struct {
 	sessionID       string
+	agentID         string
+	isSidechain     bool
 	cwd             string
 	startedAt       time.Time
 	lastEventAt     time.Time
@@ -95,6 +98,28 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		if !scope.Allows(cwd) {
 			continue
 		}
+		sessionID := parsed.sessionID
+		artifactKind := "claude_code_session_jsonl"
+		artifactNote := "Claude Code session JSONL"
+		if f.parentPath != "" {
+			parentID := strings.TrimSuffix(filepath.Base(f.parentPath), ".jsonl")
+			if !parsed.isSidechain || parsed.sessionID != parentID ||
+				filepath.Base(f.path) != "agent-"+parsed.agentID+".jsonl" {
+				continue
+			}
+			sessionID = claudeartifact.SubagentSessionID(parentID, parsed.agentID)
+			if sessionID == "" {
+				continue
+			}
+			// Same-checkout helpers already contribute activity to the parent.
+			// They must not displace its resumable conversation in that row.
+			parent, err := d.parseWithCache(f.parentPath)
+			if err == nil && parent.cwd != "" && filepath.Clean(parent.cwd) == cwd {
+				continue
+			}
+			artifactKind = "claude_code_subagent_jsonl"
+			artifactNote = fmt.Sprintf("Claude Code subagent %s (parent session %s; read-only)", parsed.agentID, parentID)
+		}
 
 		entry, ok := results[cwd]
 		if !ok {
@@ -112,7 +137,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		turnDone := parsed.turnDone
 		turnKnown := parsed.turnKnown
 		turnStarted := parsed.turnStarted
-		if active, ok := activeSessions[parsed.sessionID]; ok && (active.cwd == "" || active.cwd == cwd) {
+		if active, ok := activeSessions[parsed.sessionID]; f.parentPath == "" && ok && (active.cwd == "" || active.cwd == cwd) {
 			if !turnKnown {
 				turnKnown = true
 				turnDone = false
@@ -123,7 +148,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		}
 
 		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
-			SessionID:            parsed.sessionID,
+			SessionID:            sessionID,
 			ProjectPath:          cwd,
 			DetectedProjectPath:  cwd,
 			SessionFile:          f.path,
@@ -137,9 +162,9 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		entry.Sessions = append(entry.Sessions, session)
 		entry.Artifacts = append(entry.Artifacts, model.ArtifactEvidence{
 			Path:      f.path,
-			Kind:      "claude_code_session_jsonl",
+			Kind:      artifactKind,
 			UpdatedAt: f.modTime,
-			Note:      "Claude Code session JSONL",
+			Note:      artifactNote,
 		})
 		if parsed.lastEventAt.After(entry.LastActivity) {
 			entry.LastActivity = parsed.lastEventAt
@@ -216,8 +241,9 @@ func (d *Detector) collectActiveSessions() map[string]activeSession {
 }
 
 type sessionFile struct {
-	path    string
-	modTime time.Time
+	path       string
+	parentPath string
+	modTime    time.Time
 }
 
 func (d *Detector) collectSessionFiles() ([]sessionFile, error) {
@@ -234,10 +260,11 @@ func (d *Detector) collectSessionFiles() ([]sessionFile, error) {
 		if walkErr != nil {
 			return nil
 		}
+		rel, _ := filepath.Rel(projectsDir, path)
+		parts := strings.Split(rel, string(os.PathSeparator))
 		if dir.IsDir() {
-			// Only walk one level of subdirectories under projects/.
-			rel, _ := filepath.Rel(projectsDir, path)
-			if rel != "." && strings.Count(rel, string(os.PathSeparator)) > 0 {
+			// Top-level conversations plus the exact <session>/subagents layout.
+			if len(parts) > 3 || (len(parts) == 3 && parts[2] != "subagents") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -245,11 +272,19 @@ func (d *Detector) collectSessionFiles() ([]sessionFile, error) {
 		if filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
+		parentPath := ""
+		switch {
+		case len(parts) == 2:
+		case len(parts) == 4 && parts[2] == "subagents":
+			parentPath = filepath.Join(projectsDir, parts[0], parts[1]+".jsonl")
+		default:
+			return nil
+		}
 		info, err := dir.Info()
 		if err != nil {
 			return nil
 		}
-		files = append(files, sessionFile{path: path, modTime: info.ModTime()})
+		files = append(files, sessionFile{path: path, parentPath: parentPath, modTime: info.ModTime()})
 		return nil
 	})
 	if err != nil {
@@ -324,6 +359,10 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 		if res.sessionID == "" && entry.SessionID != "" {
 			res.sessionID = entry.SessionID
 		}
+		if res.agentID == "" && entry.AgentID != "" {
+			res.agentID = entry.AgentID
+			res.isSidechain = entry.IsSidechain
+		}
 		if res.cwd == "" && entry.CWD != "" {
 			res.cwd = entry.CWD
 		}
@@ -385,6 +424,8 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 type claudeSessionEntry struct {
 	Type             string `json:"type"`
 	SessionID        string `json:"sessionId"`
+	AgentID          string `json:"agentId"`
+	IsSidechain      bool   `json:"isSidechain"`
 	CWD              string `json:"cwd"`
 	Timestamp        string `json:"timestamp"`
 	Subtype          string `json:"subtype"`
@@ -415,6 +456,9 @@ func (e claudeSessionEntry) parsedTimestamp() time.Time {
 }
 
 func claudeAuxiliaryActivity(path string) time.Time {
+	if filepath.Base(filepath.Dir(path)) == "subagents" {
+		return time.Time{}
+	}
 	sessionID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if sessionID == "" {
 		return time.Time{}
@@ -538,6 +582,10 @@ func (d *Detector) SessionFileForProject(projectPath string) (path string, sessi
 	var best *candidate
 
 	for _, f := range files {
+		// This API supplies resumable conversations, never delegated children.
+		if f.parentPath != "" {
+			continue
+		}
 		parsed, err := d.parseWithCache(f.path)
 		if err != nil {
 			continue

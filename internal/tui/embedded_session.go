@@ -843,6 +843,9 @@ func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.S
 }
 
 func (m *Model) markClosedEmbeddedSessionSettled(projectPath string, snapshot codexapp.Snapshot) {
+	if snapshot.IsClaudeSubagent() {
+		return
+	}
 	projectPath = normalizeProjectPath(projectPath)
 	if projectPath == "" || strings.TrimSpace(snapshot.ThreadID) == "" {
 		return
@@ -901,6 +904,11 @@ func closedEmbeddedSnapshotMatchesProject(project model.ProjectSummary, projectP
 
 func embeddedSessionSettledActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
 	if !snapshot.Started {
+		return service.EmbeddedSessionActivity{}, false
+	}
+	// A read-only observer may report a recorded terminal turn, but closing or
+	// losing the observer must never synthesize a completion for external work.
+	if snapshot.IsClaudeSubagent() && (snapshot.Closed || !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted) {
 		return service.EmbeddedSessionActivity{}, false
 	}
 	return embeddedSessionActivityFromSnapshotWithTurnState(projectPath, snapshot, true, true)

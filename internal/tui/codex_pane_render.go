@@ -287,6 +287,9 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 }
 
 func (m Model) codexBrowserPolicyMismatch(snapshot codexapp.Snapshot) bool {
+	if snapshot.IsClaudeSubagent() {
+		return false
+	}
 	currentPolicy := m.currentPlaywrightPolicy()
 	sessionPolicy := snapshot.BrowserActivity.Policy.Normalize()
 	if currentPolicy != sessionPolicy {

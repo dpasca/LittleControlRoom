@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/imagereview"
@@ -1782,6 +1783,9 @@ func (m *Model) openCodexSessionCmdPreparedWithModelPreference(
 			err:              errClaudeAPIKeyLaunchCanceled,
 		}
 	}
+	if _, _, ok := claudeartifact.ParseSubagentSessionID(req.ResumeID); ok && provider == codexapp.ProviderClaudeCode && !req.ForceNew {
+		return launchCmd
+	}
 	return m.deferClaudeLaunchForAPIKeyWarning(provider, req.ProjectPath, launchCmd, cancelCmd)
 }
 
@@ -1821,6 +1825,9 @@ func forceNewMatchedExistingThread(threadIDsToAvoid map[string]struct{}, snapsho
 }
 
 func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[string]struct{}, reused bool, snapshot codexapp.Snapshot, revealOnOpen bool) string {
+	if snapshot.IsClaudeSubagent() {
+		return embeddedSessionOpenedStatus("Opened read-only Claude Code subagent transcript", revealOnOpen)
+	}
 	provider := req.Provider.Normalized()
 	if provider == "" {
 		provider = embeddedProvider(snapshot)
@@ -1887,6 +1894,9 @@ func embeddedSessionOpenStatusAlongsideExternal(status string, provider codexapp
 }
 
 func embeddedSessionReconnectStatus(req codexapp.LaunchRequest, snapshot codexapp.Snapshot) string {
+	if snapshot.IsClaudeSubagent() {
+		return "Reopened read-only Claude Code subagent transcript. Alt+Up hides it."
+	}
 	provider := req.Provider.Normalized()
 	if provider == "" {
 		provider = embeddedProvider(snapshot)

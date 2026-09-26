@@ -99,6 +99,11 @@ missing artifact references before queueing an assessment:
 
 - Claude Code uses `<claude-code-home>/projects/<sanitized-cwd>/<session-id>.jsonl`.
   The project-directory sanitizer is shared with the Claude artifact reader.
+  Worktree subagents can instead live under the parent's project directory at
+  `<parent-session-id>/subagents/agent-<agent-id>.jsonl`. LCR maps their structured
+  `cwd` independently, uses a parent/agent composite identity, and opens them
+  read-only. See [Claude Code footprint](claude_code_footprint.md) for activity
+  and resume limitations.
   Discovery excludes startup/settings-only files without conversational user,
   assistant, or compact-summary records, so authentication and local commands
   cannot displace a populated session from another provider. Detection uses

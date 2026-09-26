@@ -128,6 +128,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+o":
 		return m.openCodexArtifactPicker(snapshot)
 	case "ctrl+c":
+		if snapshot.IsClaudeSubagent() {
+			m.status = "Manage this Claude Code subagent from its parent conversation. Alt+Up hides this read-only view."
+			return m, nil
+		}
 		if snapshot.BusyExternal {
 			m.status = "This " + label + " session belongs to another process, so Ctrl+C here cannot stop it. Interrupt it there or hide the read-only view with Alt+Up."
 			return m, nil
@@ -479,6 +483,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			refreshCmd = m.deferredCodexSnapshotCmd(m.codexVisibleProject)
 		}
 		if snapshot.BusyExternal {
+			if snapshot.IsClaudeSubagent() {
+				m.status = "This Claude Code subagent transcript is read-only. Send instructions through its parent conversation."
+				return m, batchCmds(focusCmd, refreshCmd)
+			}
 			if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
 				m.status = "This " + label + " session is already active in another process, so the embedded view cannot steer it. Use " + cmd + " for a separate session."
 			} else {

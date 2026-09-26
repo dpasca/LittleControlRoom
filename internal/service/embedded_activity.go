@@ -239,6 +239,10 @@ func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessio
 		}
 	case model.SessionSourceClaudeCode:
 		if rawSessionID != "" && strings.TrimSpace(cfg.ClaudeCodeHome) != "" && strings.TrimSpace(projectPath) != "" {
+			if _, _, ok := claudeartifact.ParseSubagentSessionID(rawSessionID); ok {
+				path, _ := claudeartifact.FindSubagentTranscript(cfg.ClaudeCodeHome, projectPath, rawSessionID)
+				return path
+			}
 			path := filepath.Join(cfg.ClaudeCodeHome, "projects", claudeartifact.ProjectDirectoryName(projectPath), rawSessionID+".jsonl")
 			if info, err := os.Stat(path); err == nil && !info.IsDir() {
 				return path

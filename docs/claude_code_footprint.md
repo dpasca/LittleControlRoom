@@ -287,6 +287,35 @@ Recommended filesystem-first approach:
 
 ## 8. Notes
 
+### Worktree subagents (verified 2026-09-27)
+
+Claude Code 2.1.282 stores worktree-isolated agents below the **parent's**
+project directory at `<parent-session-id>/subagents/agent-<agent-id>.jsonl`.
+Their records carry `isSidechain: true`, `agentId`, the parent's `sessionId`,
+and the child's actual worktree `cwd`. The worktree need not have a top-level
+conversation in its own encoded project directory. Directory names such as
+`.claude/worktrees/agent-*` alone do not establish Claude ownership.
+
+LCR scans these exact nested transcript locations and associates each child
+with its recorded `cwd`. Its internal raw session identity is
+`<parent-session-id>/agent-<agent-id>` so siblings cannot overwrite one another
+or move the parent conversation into a worktree. Same-checkout helpers continue
+to contribute auxiliary activity to the parent without replacing its resumable
+conversation. A scope containing only the child can still discover its log.
+
+Child timestamps, structured turn state, and transcript content supply the CC
+badge, activity timer, and ordinary session assessments. Dashboard changes arrive
+on scans; opening the child uses the existing background transcript refresh.
+This is recorded activity, not a guarantee that an external process is alive.
+The parent's PID or busy status does not prove an individual child is running.
+
+Enter opens a read-only child transcript with its parent and agent identifiers,
+model, tool activity, and available usage. The composite identity is never
+passed to `claude --resume`. Input and compaction remain unavailable even after
+completion; manage the agent through the parent conversation. Closing the local
+viewer does not complete or interrupt external work. An explicit new-session
+command can still create a separate conversation in that checkout.
+
 - Prefer structured Claude fields over regex or keyword heuristics.
 - Treat subagent and background-task artifacts as source-of-truth activity signals for Claude when they are present.
 - If Claude CLI artifact layouts change, update this note in the same change as the detector logic.

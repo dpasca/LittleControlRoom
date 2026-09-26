@@ -97,6 +97,7 @@ type claudeCodeSession struct {
 	claudeHome           string
 	sessionFile          string
 	sessionID            string
+	readOnlySubagent     bool
 	started              bool
 	closed               bool
 	busy                 bool
@@ -142,6 +143,7 @@ type claudeCodeSession struct {
 	lastSystemNotice     string
 	entries              []TranscriptEntry
 	lastFileSize         int64
+	lastFileModTime      time.Time
 	runningPID           int
 	cmd                  *exec.Cmd
 	stdin                io.WriteCloser
@@ -287,6 +289,13 @@ type claudeActivePIDSession struct {
 }
 
 func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
+	if _, _, ok := claudeartifact.ParseSubagentSessionID(req.ResumeID); ok && !req.ForceNew {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("resolve home directory: %w", err)
+		}
+		return newClaudeSubagentSession(req, filepath.Join(home, ".claude"), notify)
+	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		return nil, fmt.Errorf("claude executable not found: %w", err)
 	}
@@ -476,12 +485,16 @@ func (s *claudeCodeSession) TryStateSnapshot() (Snapshot, bool) {
 }
 
 func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
+	permissionLevel := string(s.effectivePermissionModeLocked())
+	if s.readOnlySubagent {
+		permissionLevel = ""
+	}
 	return Snapshot{
 		Provider:                 ProviderClaudeCode,
 		ProjectPath:              s.projectPath,
 		ThreadID:                 s.sessionID,
 		Preset:                   s.preset,
-		PermissionLevel:          string(s.effectivePermissionModeLocked()),
+		PermissionLevel:          permissionLevel,
 		BrowserActivity:          s.browserActivity.Normalize(),
 		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
@@ -785,6 +798,9 @@ func (s *claudeCodeSession) authenticationError(ctx context.Context) error {
 }
 
 func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
+	if s.readOnlySubagent {
+		return fmt.Errorf("%s", claudeSubagentReadOnly)
+	}
 	if s.closed {
 		return fmt.Errorf("Claude Code session is closed")
 	}
@@ -2602,6 +2618,12 @@ func (s *claudeCodeSession) updateStatusLocked() {
 	switch {
 	case s.closed:
 		s.status = "Claude Code session closed"
+	case s.readOnlySubagent && !s.latestTurnStateKnown:
+		s.status = "Claude Code subagent · turn state unknown · read-only"
+	case s.readOnlySubagent && s.latestTurnCompleted:
+		s.status = "Claude Code subagent · completed · read-only"
+	case s.readOnlySubagent:
+		s.status = "Claude Code subagent · unfinished · read-only"
 	case s.externalTurnActive:
 		s.status = "Claude Code session active in another terminal"
 	case s.compacting:
@@ -2705,7 +2727,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	if err != nil {
 		return err
 	}
-	if stat.Size() == s.lastFileSize {
+	if stat.Size() == s.lastFileSize && stat.ModTime().Equal(s.lastFileModTime) {
 		return nil
 	}
 
@@ -2786,6 +2808,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	s.tokenUsageTracker = usageTracker
 	s.invalidateTranscriptCacheLocked()
 	s.lastFileSize = stat.Size()
+	s.lastFileModTime = stat.ModTime()
 	turnState := turnTracker.State()
 	s.latestTurnStartedAt = turnState.StartedAt
 	s.latestTurnStateAt = turnState.UpdatedAt
@@ -2823,6 +2846,10 @@ func (s *claudeCodeSession) canUseStreamedTranscriptLocked(err error) bool {
 }
 
 func (s *claudeCodeSession) refreshActiveLocked() {
+	if s.readOnlySubagent {
+		s.refreshSubagentActivityLocked()
+		return
+	}
 	if strings.TrimSpace(s.sessionID) == "" {
 		s.busyExternal = false
 		s.externalTurnActive = false

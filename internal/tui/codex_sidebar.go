@@ -1652,6 +1652,9 @@ func (m Model) embeddedSidebarBrowserRowsWithMode(snapshot codexapp.Snapshot, wi
 }
 
 func embeddedSidebarBrowserRelevant(snapshot codexapp.Snapshot) bool {
+	if snapshot.IsClaudeSubagent() {
+		return false
+	}
 	if request := snapshot.PendingElicitation; request != nil && request.Mode == codexapp.ElicitationModeURL {
 		return true
 	}
