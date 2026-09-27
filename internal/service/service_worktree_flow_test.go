@@ -1900,25 +1900,25 @@ func TestRemoveWorktreeWinsOverStaleProjectStatusRefresh(t *testing.T) {
 	}
 }
 
-func TestRemoveWorktreeHonorsContextWhileWaitingForMutationLock(t *testing.T) {
+func TestRemoveWorktreeHonorsContextWhileWaitingForGitLock(t *testing.T) {
 	t.Parallel()
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	f := newRemovalFixture(t, nil)
+	unlock, err := f.svc.lockGitWrite(t.Context(), f.root)
 	if err != nil {
-		t.Fatalf("open store: %v", err)
+		t.Fatal(err)
 	}
-	defer st.Close()
-
-	svc := New(config.Default(), st, events.NewBus(), nil)
-	svc.mu.Lock()
-	defer svc.mu.Unlock()
+	defer unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 
-	err = svc.RemoveWorktree(ctx, filepath.Join(t.TempDir(), "repo--blocked"), false)
+	err = f.svc.RemoveWorktree(ctx, f.path, false)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("RemoveWorktree() error = %v, want context deadline exceeded", err)
+	}
+	if _, err := os.Stat(f.path); err != nil {
+		t.Fatalf("waiting for repository lock changed the worktree: %v", err)
 	}
 }
 

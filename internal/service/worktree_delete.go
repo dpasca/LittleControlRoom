@@ -27,11 +27,9 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 	if !filepath.IsAbs(path) || path == string(filepath.Separator) {
 		return fmt.Errorf("an absolute linked worktree path is required")
 	}
-	unlock, err := s.lockMutation(ctx)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	defer unlock()
 	summary, err := s.store.GetTrackedProjectSummary(ctx, path)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -63,6 +61,11 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 	if samePath(root, target) || removalPathWithin(root, target) {
 		return fmt.Errorf("refusing to delete the primary checkout or its ancestor: %s", target)
 	}
+	s.publishWorktreeRemovalProgress(path, "Waiting for repository operations...")
+	// Creation and merge refresh project state while holding this repository
+	// lock. Never hold s.mu here: those refreshes need it for runtimeSnapshot.
+	// Filesystem work is serialized per repository; persisted project state
+	// has its own short, context-aware critical section below.
 	unlockGit, err := s.lockGitWrite(ctx, root)
 	if err != nil {
 		return err
@@ -190,7 +193,7 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 	}
 	s.publishWorktreeRemovalProgress(path, "Removing this worktree's Git registration...")
 	for _, registration := range registrations {
-		if err := unregisterDeletedWorktree(registration); err != nil {
+		if err := unregisterDeletedWorktree(ctx, registration); err != nil {
 			return err
 		}
 	}
@@ -206,7 +209,11 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 			return fmt.Errorf("directory deleted but Git still registers %s", target)
 		}
 	}
-	release := s.lockProjectStateMutation(path)
+	s.publishWorktreeRemovalProgress(path, "Updating worktree state...")
+	release, err := s.lockProjectStateMutationContext(ctx, path)
+	if err != nil {
+		return fmt.Errorf("directory deleted; cannot update worktree state: %w", err)
+	}
 	defer release()
 	if err := s.store.SetForgotten(ctx, path, true); err != nil {
 		return err
@@ -342,7 +349,10 @@ func deletionRegistrations(parent, target string) ([]deletionRegistration, error
 	return result, nil
 }
 
-func unregisterDeletedWorktree(registration deletionRegistration) error {
+func unregisterDeletedWorktree(ctx context.Context, registration deletionRegistration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r, err := os.OpenRoot(registration.path)
 	if os.IsNotExist(err) {
 		return nil
@@ -386,7 +396,7 @@ func unregisterDeletedWorktree(registration deletionRegistration) error {
 	if err != nil {
 		return err
 	}
-	if err := walkDeletionTree(context.Background(), r, device, "", true, func(string, os.FileInfo) error { return nil }); err != nil {
+	if err := walkDeletionTree(ctx, r, device, "", true, func(string, os.FileInfo) error { return nil }); err != nil {
 		return err
 	}
 	return os.Remove(registration.path)

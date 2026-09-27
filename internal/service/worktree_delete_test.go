@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +10,107 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/events"
 	"lcroom/internal/scanner"
 )
+
+func TestExplicitDeletionWaitingForGitAllowsServiceReads(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	unlock, err := f.svc.lockGitWrite(ctx, f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	progress, unsubscribe := f.svc.bus.Subscribe(32)
+	defer unsubscribe()
+	done := make(chan error, 1)
+	go func() { done <- f.svc.RemoveWorktree(ctx, f.path, false) }()
+
+	select {
+	case event := <-progress:
+		if event.Type != events.WorktreeRemovalProgress || !strings.Contains(event.Payload["detail"], "Waiting for repository") {
+			t.Fatalf("missing repository wait progress: %#v", event)
+		}
+	case <-ctx.Done():
+		t.Fatal("removal did not report waiting for the repository")
+	}
+
+	// Creation and merge hold the repository lock while refreshing project
+	// state, which reads the service configuration. Removal must allow that
+	// read to finish so the earlier operation can release the repository.
+	readDone := make(chan struct{})
+	go func() {
+		f.svc.runtimeSnapshot()
+		close(readDone)
+	}()
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		<-readDone
+		t.Fatal("removal blocked the service read needed to finish the repository operation")
+	}
+	if _, err := os.Stat(f.path); err != nil {
+		t.Fatalf("removed directory before acquiring repository lock: %v", err)
+	}
+	unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f.path); !os.IsNotExist(err) {
+		t.Fatalf("worktree remains after repository operation finished: %v", err)
+	}
+}
+
+func TestExplicitDeletionHonorsCancellationWaitingForProjectState(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	unlock := f.svc.lockProjectStateMutation(f.path)
+	defer unlock()
+	progress, unsubscribe := f.svc.bus.Subscribe(32)
+	defer unsubscribe()
+	done := make(chan error, 1)
+	go func() { done <- f.svc.RemoveWorktree(ctx, f.path, false) }()
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+waitForState:
+	for {
+		select {
+		case event := <-progress:
+			if event.Type == events.WorktreeRemovalProgress && event.Payload["detail"] == "Updating worktree state..." {
+				break waitForState
+			}
+		case err := <-done:
+			t.Fatalf("removal finished before acquiring project state lock: %v", err)
+		case <-deadline.C:
+			t.Fatal("removal did not reach project state update")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "directory deleted") {
+			t.Fatalf("canceled removal must report partial completion: %v", err)
+		}
+	case <-time.After(time.Second):
+		unlock()
+		<-done
+		t.Fatal("removal ignored cancellation while waiting for project state")
+	}
+	unlock()
+	if err := f.svc.RemoveWorktree(t.Context(), f.path, false); err != nil {
+		t.Fatalf("retry did not finish cleanup after cancellation: %v", err)
+	}
+	project, err := f.st.GetTrackedProjectSummary(t.Context(), f.path)
+	if err != nil || project.PresentOnDisk || !project.Forgotten {
+		t.Fatalf("retry left stale project state: project=%#v err=%v", project, err)
+	}
+}
 
 func TestExplicitDeletionDiscardsContentsWithoutArchive(t *testing.T) {
 	f := newRemovalFixture(t, nil)

@@ -11,6 +11,20 @@ import (
 	"lcroom/internal/viewportnav"
 )
 
+func TestTodoShortcutOpensWhileWorktreeRemovalPending(t *testing.T) {
+	m, root, path := newWorktreeControlFixture(t)
+	m.beginAsyncWorktreeAction(path, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	got := normalizeUpdateModel(updated)
+	if got.todoDialog == nil || got.todoDialog.ProjectPath != root {
+		t.Fatalf("TODO shortcut did not open repository TODOs during removal: dialog=%#v status=%q", got.todoDialog, got.status)
+	}
+	if cmd == nil {
+		t.Fatal("TODO shortcut did not schedule its detail load")
+	}
+}
+
 func TestNormalizeTodoTextPreservesBlankLines(t *testing.T) {
 	t.Parallel()
 
