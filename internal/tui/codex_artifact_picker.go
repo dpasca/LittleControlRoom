@@ -24,6 +24,10 @@ type codexArtifactOpenTarget struct {
 	sourceLocated           bool
 	implicitProjectRelative bool
 	resolvedProjectRelative bool
+	// Inferred paths need filesystem evidence from the background link scan.
+	// Markdown links, file URLs, and structured tool artifacts are explicit.
+	inferredLocalPath bool
+	verifiedPath      string
 }
 
 type codexArtifactPickerState struct {
@@ -41,9 +45,14 @@ type codexArtifactPickerState struct {
 
 func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, tea.Cmd) {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
-	targets := m.codexOpenTargetsForPicker(snapshot)
+	visibleTargets := m.visibleCodexOpenTargets(snapshot)
+	progressiveTargets, complete := m.cachedProgressiveCodexOpenTargetsWithState(snapshot)
+	targets := combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets, complete, projectPath)
+	var scanCmd tea.Cmd
+	if len(targets) == 0 || len(confirmedCodexArtifactOpenTargets(visibleTargets)) < len(visibleTargets) {
+		scanCmd = m.maybeStartCodexArtifactLinkScanForPicker(projectPath, snapshot)
+	}
 	if len(targets) == 0 {
-		scanCmd := m.maybeStartCodexArtifactLinkScanForPicker(projectPath, snapshot)
 		if scanCmd == nil && !m.codexArtifactLinkScanInFlight(projectPath, m.codexTranscriptRevision(projectPath)) {
 			m.status = "No openable links in this embedded transcript"
 			return m, nil
@@ -72,7 +81,7 @@ func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, t
 		PreviewErrors:   make(map[string]string),
 	}
 	m.status = "Link picker open"
-	return m, m.codexArtifactPickerPreviewCmd()
+	return m, batchCmds(m.codexArtifactPickerPreviewCmd(), scanCmd)
 }
 
 func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -80,7 +89,7 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 	if picker == nil {
 		return m, nil
 	}
-	if len(picker.Targets) == 0 {
+	if len(picker.Targets) == 0 && !m.codexArtifactLinkScanInFlight(picker.ProjectPath, m.codexTranscriptRevision(picker.ProjectPath)) {
 		m.closeCodexArtifactPicker("No openable links in this embedded transcript")
 		return m, nil
 	}
@@ -184,9 +193,8 @@ func (m Model) cachedCodexOpenTargetsForPicker(snapshot codexapp.Snapshot) []cod
 }
 
 func combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets []codexArtifactOpenTarget, progressiveComplete bool, projectPath string) []codexArtifactOpenTarget {
-	if len(progressiveTargets) == 0 {
-		return normalizeCodexArtifactOpenTargetsForProject(visibleTargets, projectPath)
-	}
+	visibleTargets = confirmedCodexArtifactOpenTargets(visibleTargets)
+	progressiveTargets = confirmedCodexArtifactOpenTargets(progressiveTargets)
 	if progressiveComplete {
 		return normalizeCodexArtifactOpenTargetsForProject(progressiveTargets, projectPath)
 	}
@@ -204,10 +212,10 @@ func (m Model) cachedProgressiveCodexOpenTargetsWithState(snapshot codexapp.Snap
 		return nil, false
 	}
 	state, ok := m.codexArtifactLinkScans[projectPath]
-	if !ok || state.transcriptRev != m.codexTranscriptRevision(projectPath) || len(state.targets) == 0 {
+	if !ok || state.transcriptRev != m.codexTranscriptRevision(projectPath) {
 		return nil, false
 	}
-	return append([]codexArtifactOpenTarget(nil), state.targets...), state.complete
+	return confirmedCodexArtifactOpenTargets(state.targets), state.complete
 }
 
 func (m Model) codexArtifactLinkScanInFlight(projectPath string, transcriptRev uint64) bool {
@@ -394,21 +402,54 @@ func codexArtifactLinkScanCmd(
 			)
 		}
 		targets, pathEvidence, nextEntry, nextTextOffset, complete := scanCodexArtifactLinksChunk(projectPath, entries, startEntry, startTextOffset)
+		pathEvidence = normalizeCodexArtifactOpenTargets(append(basePathEvidence, pathEvidence...))
+		targets = normalizeCodexArtifactOpenTargetsForProjectWithPathEvidence(append(baseTargets, targets...), pathEvidence, projectPath)
+		targets = verifyCodexInferredArtifactPaths(targets)
 		return codexArtifactLinkScanMsg{
-			projectPath:      projectPath,
-			scanSeq:          scanSeq,
-			transcriptRev:    transcriptRev,
-			nextEntry:        nextEntry,
-			nextTextOffset:   nextTextOffset,
-			complete:         complete,
-			rebased:          rebased,
-			baseTargets:      baseTargets,
-			basePathEvidence: basePathEvidence,
-			targets:          targets,
-			pathEvidence:     pathEvidence,
-			sourceEntries:    entries,
+			projectPath:    projectPath,
+			scanSeq:        scanSeq,
+			transcriptRev:  transcriptRev,
+			nextEntry:      nextEntry,
+			nextTextOffset: nextTextOffset,
+			complete:       complete,
+			targets:        targets,
+			pathEvidence:   pathEvidence,
+			sourceEntries:  entries,
 		}
 	}
+}
+
+// Only call from a background command. Keep unconfirmed candidates in the scan
+// state so later command output can resolve a project-relative path correctly.
+func verifyCodexInferredArtifactPaths(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
+	out := append([]codexArtifactOpenTarget(nil), targets...)
+	checked := make(map[string]bool)
+	for i := range out {
+		target := &out[i]
+		if !target.inferredLocalPath || target.verifiedPath == target.Path {
+			continue
+		}
+		valid, ok := checked[target.Path]
+		if !ok {
+			info, err := os.Stat(target.Path)
+			valid = err == nil && (info.Mode().IsRegular() || info.IsDir())
+			checked[target.Path] = valid
+		}
+		if valid {
+			target.verifiedPath = target.Path
+		}
+	}
+	return out
+}
+
+func confirmedCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
+	out := make([]codexArtifactOpenTarget, 0, len(targets))
+	for _, target := range targets {
+		if !target.inferredLocalPath || target.verifiedPath == target.Path {
+			out = append(out, target)
+		}
+	}
+	return out
 }
 
 func rebaseCodexArtifactLinkScan(
@@ -541,16 +582,8 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 	if state.transcriptRev != msg.transcriptRev || state.scanSeq != msg.scanSeq || !state.inFlight {
 		return m, nil
 	}
-	if msg.rebased {
-		state.targets = msg.baseTargets
-		state.pathEvidence = msg.basePathEvidence
-	}
-	state.pathEvidence = normalizeCodexArtifactOpenTargets(append(state.pathEvidence, msg.pathEvidence...))
-	state.targets = normalizeCodexArtifactOpenTargetsForProjectWithPathEvidence(
-		append(state.targets, msg.targets...),
-		state.pathEvidence,
-		projectPath,
-	)
+	state.pathEvidence = msg.pathEvidence
+	state.targets = msg.targets
 	state.nextEntry = max(0, msg.nextEntry)
 	state.nextTextOffset = max(0, msg.nextTextOffset)
 	state.complete = msg.complete
@@ -564,7 +597,7 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 		previousCount := len(picker.Targets)
 		previousFilteredCount := codexArtifactPickerFilteredCount(picker)
 		selectionAnchor := codexArtifactPickerSelectionAnchorForCurrent(picker)
-		picker.Targets = reconcileCodexArtifactPickerTargets(state.targets, picker.Targets, state.complete, projectPath)
+		picker.Targets = reconcileCodexArtifactPickerTargets(confirmedCodexArtifactOpenTargets(state.targets), picker.Targets, state.complete, projectPath)
 		filteredCount := codexArtifactPickerFilteredCount(picker)
 		if selected, ok := codexArtifactPickerSelectionForAnchor(picker, selectionAnchor); ok {
 			picker.Selected = selected
@@ -904,7 +937,11 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 		"",
 	}
 	if len(picker.Targets) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No links found."))
+		message := "No links found."
+		if m.codexArtifactLinkScanInFlight(picker.ProjectPath, m.codexTranscriptRevision(picker.ProjectPath)) {
+			message = "Checking transcript links..."
+		}
+		lines = append(lines, commandPaletteHintStyle.Render(message))
 		return strings.Join(lines, "\n")
 	}
 	indexes := codexArtifactPickerFilteredIndexes(picker)
@@ -1516,9 +1553,10 @@ func codexStandaloneLocalArtifactPathTargets(text string) []codexArtifactOpenTar
 		}
 		if artifactPath, kind, ok := codexLocalArtifactOpenTarget("", line); ok {
 			targets = append(targets, codexArtifactOpenTarget{
-				Kind:  kind,
-				Label: filepath.Base(artifactPath),
-				Path:  artifactPath,
+				Kind:              kind,
+				Label:             filepath.Base(artifactPath),
+				Path:              artifactPath,
+				inferredLocalPath: true,
 			})
 		}
 	}
@@ -1610,6 +1648,7 @@ func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (cod
 		return codexArtifactOpenTarget{}, false
 	}
 	if localPath, resolution, ok := codexLocalLinkTextForProjectResolution(rawPath, projectPath); ok {
+		inferred := !strings.HasPrefix(rawPath, "file://")
 		label := codexLocalLinkLabel("", localPath)
 		if artifactPath, kind, ok := codexLocalArtifactOpenTarget(label, localPath); ok {
 			return codexArtifactOpenTarget{
@@ -1617,6 +1656,7 @@ func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (cod
 				Label:                   label,
 				Path:                    artifactPath,
 				implicitProjectRelative: resolution.implicitProjectRelative,
+				inferredLocalPath:       inferred,
 			}, true
 		}
 		if openPath, _ := codexLocalOpenPath(localPath); strings.TrimSpace(openPath) != "" {
@@ -1625,6 +1665,7 @@ func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (cod
 				Label:                   label,
 				Path:                    openPath,
 				implicitProjectRelative: resolution.implicitProjectRelative,
+				inferredLocalPath:       inferred,
 			}, true
 		}
 	}
@@ -1895,6 +1936,10 @@ func mergeCodexArtifactOpenTarget(existing, next codexArtifactOpenTarget) codexA
 		existing.sourceEntry = next.sourceEntry
 	}
 	existing.implicitProjectRelative = existing.implicitProjectRelative && next.implicitProjectRelative
+	existing.inferredLocalPath = existing.inferredLocalPath && next.inferredLocalPath
+	if next.verifiedPath == existing.Path {
+		existing.verifiedPath = next.verifiedPath
+	}
 	return existing
 }
 

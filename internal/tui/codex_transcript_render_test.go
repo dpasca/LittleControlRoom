@@ -2137,12 +2137,18 @@ func TestCodexLinkPickerOpensRelativeMarkdownArtifactLinksAgainstProjectPath(t *
 	_ = updated
 }
 
-func TestCodexLinkPickerListsVisibleRelativeInlineCodeArtifactPaths(t *testing.T) {
+func TestCodexLinkPickerValidatesRelativeInlineCodeArtifactPaths(t *testing.T) {
 	projectPath := t.TempDir()
 	oldRel := "data/bjung/storyboard_openai/debug/scene02_current_order/current_order_contact.png"
 	visibleRel := "data/bjung/storyboard_openai/debug/scene02_current_order/interleaved_order_contact.png"
 	oldPath := filepath.Join(projectPath, filepath.FromSlash(oldRel))
 	visiblePath := filepath.Join(projectPath, filepath.FromSlash(visibleRel))
+	if err := os.MkdirAll(filepath.Dir(visiblePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(visiblePath, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := codexapp.Snapshot{
 		ProjectPath: projectPath,
 		Entries: []codexapp.TranscriptEntry{
@@ -2168,8 +2174,8 @@ func TestCodexLinkPickerListsVisibleRelativeInlineCodeArtifactPaths(t *testing.T
 	m.codexViewport.SetContent(rendered)
 	m.codexViewport.SetYOffset(3)
 
-	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	got := normalizeUpdateModel(updated)
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("visible inline-code path picker state = %#v, want exactly one target", got.codexArtifactPicker)
 	}
@@ -2178,7 +2184,7 @@ func TestCodexLinkPickerListsVisibleRelativeInlineCodeArtifactPaths(t *testing.T
 		t.Fatalf("visible inline-code target = %#v, want image path %q", target, visiblePath)
 	}
 	if target.Path == oldPath {
-		t.Fatalf("off-screen inline-code path should not be listed: %#v", target)
+		t.Fatalf("missing inline-code path should not be listed: %#v", target)
 	}
 }
 
@@ -2265,10 +2271,10 @@ func TestCodexArtifactPickerExposesDirectoryForAsteriskPath(t *testing.T) {
 		},
 	}
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("asterisk path should expose a directory without queuing an image preview, got %T", cmd)
+	if cmd == nil {
+		t.Fatal("asterisk path should queue a background filesystem check")
 	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("asterisk path picker state = %#v, want one directory target", got.codexArtifactPicker)
 	}
@@ -2362,6 +2368,12 @@ func TestCodexProgressiveLinkScanResolvesImplicitProjectRelativeVideoFromToolOut
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "FractalMech")
 	absolutePath := filepath.Join(root, "Dropbox (NEWTYPE)", "OYK", "PublishKit", "FractalMech", "videos", "fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4")
+	if err := os.MkdirAll(filepath.Dir(absolutePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(absolutePath, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	relativePath := "PublishKit/FractalMech/videos/fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4"
 	snapshot := codexapp.Snapshot{
 		ProjectPath: projectPath,
@@ -2396,7 +2408,7 @@ func TestCodexProgressiveLinkScanResolvesImplicitProjectRelativeVideoFromToolOut
 	}
 }
 
-func TestCodexLinkPickerReportsMissingGuessedArtifactOnOpen(t *testing.T) {
+func TestCodexLinkPickerReportsMissingExplicitArtifactOnOpen(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "FractalMech")
 	if err := os.MkdirAll(projectPath, 0o755); err != nil {
@@ -2409,7 +2421,7 @@ func TestCodexLinkPickerReportsMissingGuessedArtifactOnOpen(t *testing.T) {
 		Entries: []codexapp.TranscriptEntry{
 			{
 				Kind: codexapp.TranscriptAgent,
-				Text: "Google Play video prepared here: `" + relativePath + "`",
+				Text: "Google Play video prepared here: [video](" + relativePath + ")",
 			},
 		},
 	}
