@@ -308,6 +308,76 @@ func TestReadGitRepoStatusAllowsExistingIndexLock(t *testing.T) {
 	}
 }
 
+func TestReadGitRepoStatusSubmodulePublication(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"tracking", "detached", "no-upstream"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			origin := filepath.Join(root, "origin")
+			parent := filepath.Join(root, "parent")
+			scannerInitGitRepo(t, origin)
+			scannerInitGitRepo(t, parent)
+			scannerRunGit(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", origin, "assets")
+			scannerRunGit(t, parent, "commit", "-m", "add assets")
+			child := filepath.Join(parent, "assets")
+			scannerRunGit(t, child, "commit", "--allow-empty", "-m", "unpublished assets")
+			scannerRunGit(t, child, "tag", "local-only")
+			switch mode {
+			case "detached":
+				scannerRunGit(t, child, "switch", "--detach")
+			case "no-upstream":
+				scannerRunGit(t, child, "branch", "--unset-upstream")
+			}
+
+			check := func(want int) {
+				t.Helper()
+				status, err := ReadGitRepoStatus(context.Background(), parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := status.SubmoduleUnpushedCount(); got != want {
+					t.Fatalf("unpushed count = %d, want %d; submodules = %#v", got, want, status.Submodules)
+				}
+				if mode == "tracking" && status.Submodules[0].Ahead != 1 {
+					t.Fatalf("upstream ahead count must remain independent of publication: %#v", status.Submodules)
+				}
+			}
+			check(1) // A local tag is not evidence of publication.
+			scannerRunGit(t, child, "push", "origin", "HEAD:refs/heads/published")
+			check(0)
+
+			// A remote descendant also makes the pinned commit available.
+			scannerRunGit(t, child, "commit", "--allow-empty", "-m", "later assets")
+			scannerRunGit(t, child, "push", "origin", "HEAD:refs/heads/published")
+			scannerRunGit(t, child, "reset", "--hard", "HEAD^")
+			check(0)
+		})
+	}
+}
+
+func TestReadGitRepoStatusSkipsUninitializedSubmodule(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	origin := filepath.Join(root, "origin")
+	parent := filepath.Join(root, "parent")
+	scannerInitGitRepo(t, origin)
+	scannerInitGitRepo(t, parent)
+	scannerRunGit(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", origin, "assets")
+	scannerRunGit(t, parent, "commit", "-m", "add assets")
+	scannerRunGit(t, parent, "submodule", "deinit", "assets")
+	scannerRunGit(t, parent, "remote", "add", "origin", origin)
+
+	status, err := ReadGitRepoStatus(context.Background(), parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Submodules) != 0 {
+		t.Fatalf("uninitialized submodule inherited parent state: %#v", status.Submodules)
+	}
+}
+
 func TestReadGitRepoStatusIncludesGitStderr(t *testing.T) {
 	t.Parallel()
 

@@ -154,11 +154,11 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 
 	included := filterParentCommitEligible(status.Changes)
 	if len(included) == 0 {
-		needsDetachedPublish, publishErr := detachedSubmoduleHeadNeedsPublish(ctx, repoPath, status)
+		needsPublish, publishErr := submoduleHeadNeedsPublish(ctx, repoPath, status)
 		if publishErr != nil {
-			return nil, fmt.Errorf("check whether detached submodule %s needs publishing: %w", displayPath, publishErr)
+			return nil, fmt.Errorf("check whether submodule %s needs publishing: %w", displayPath, publishErr)
 		}
-		if status.Ahead > 0 || needsSubmoduleUpstream(status) || needsDetachedPublish {
+		if needsPublish {
 			pushPlan, pushErr := s.ensureSubmodulePushPlan(ctx, repoPath, displayPath, parentBranch, status)
 			if pushErr != nil {
 				return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, pushErr)
@@ -383,20 +383,15 @@ func gitRemotePushURL(ctx context.Context, repoPath, remote string) (string, err
 	return strings.TrimSpace(string(fallbackOut)), nil
 }
 
-func needsSubmoduleUpstream(status scanner.GitRepoStatus) bool {
-	return status.HasRemote && !status.HasUpstream && cleanResolvedBranchName(status.Branch) != ""
-}
-
-func detachedSubmoduleHeadNeedsPublish(ctx context.Context, repoPath string, status scanner.GitRepoStatus) (bool, error) {
-	if !status.HasRemote || status.HasUpstream || cleanResolvedBranchName(status.Branch) != "" {
+func submoduleHeadNeedsPublish(ctx context.Context, repoPath string, status scanner.GitRepoStatus) (bool, error) {
+	if !status.HasRemote || (status.HasUpstream && status.Ahead == 0) {
 		return false, nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "for-each-ref", "--contains", "HEAD", "--format=%(refname)", "refs/remotes", "refs/tags")
-	out, err := cmd.CombinedOutput()
+	published, err := scanner.GitHeadPublished(ctx, repoPath)
 	if err != nil {
-		return false, fmt.Errorf("list refs containing detached HEAD in %s: %w: %s", repoPath, err, strings.TrimSpace(string(out)))
+		return false, err
 	}
-	return strings.TrimSpace(string(out)) == "", nil
+	return !published, nil
 }
 
 func cleanResolvedBranchName(branch string) string {

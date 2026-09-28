@@ -35,6 +35,8 @@ type GitSubmoduleStatus struct {
 	Ahead       int
 	Behind      int
 	Branch      string
+	// Unpushed is independent of Ahead: another remote branch may contain HEAD.
+	Unpushed bool
 }
 
 type GitWorktreeKind string
@@ -150,7 +152,7 @@ func (s GitRepoStatus) SubmoduleDirtyCount() int {
 func (s GitRepoStatus) SubmoduleUnpushedCount() int {
 	count := 0
 	for _, submodule := range s.Submodules {
-		if submodule.Ahead > 0 {
+		if submodule.Unpushed {
 			count++
 		}
 	}
@@ -212,12 +214,21 @@ func readGitSubmoduleStatuses(ctx context.Context, path string) []GitSubmoduleSt
 	out := make([]GitSubmoduleStatus, 0, len(paths))
 	for _, submodulePath := range paths {
 		childPath := filepath.Join(path, filepath.FromSlash(submodulePath))
-		if info, err := os.Stat(childPath); err != nil || !info.IsDir() {
+		// An uninitialized submodule must not inherit its parent's Git status.
+		if _, err := os.Lstat(filepath.Join(childPath, ".git")); err != nil {
 			continue
 		}
 		status, err := readGitRepoStatusDirect(ctx, childPath)
 		if err != nil {
 			continue
+		}
+		unpushed := status.Ahead > 0
+		if status.HasRemote && (status.Ahead > 0 || !status.HasUpstream) {
+			// Keep the upstream warning if publication cannot be checked. This
+			// uses cached remote refs only; scanning never fetches from the network.
+			if published, err := GitHeadPublished(ctx, childPath); err == nil {
+				unpushed = !published
+			}
 		}
 		out = append(out, GitSubmoduleStatus{
 			Path:        submodulePath,
@@ -227,9 +238,21 @@ func readGitSubmoduleStatuses(ctx context.Context, path string) []GitSubmoduleSt
 			Ahead:       status.Ahead,
 			Behind:      status.Behind,
 			Branch:      status.Branch,
+			Unpushed:    unpushed,
 		})
 	}
 	return out
+}
+
+// GitHeadPublished reports whether a cached remote-tracking ref contains HEAD.
+// Local branches and tags do not establish that a commit has been published.
+func GitHeadPublished(ctx context.Context, path string) (bool, error) {
+	cmd := gitReadOnlyCommand(ctx, "-C", path, "for-each-ref", "--contains", "HEAD", "--count=1", "--format=%(refname)", "refs/remotes")
+	out, err := gitReadOnlyOutput(cmd)
+	if err != nil {
+		return false, fmt.Errorf("check published HEAD for %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 func readConfiguredSubmodulePaths(ctx context.Context, path string) []string {

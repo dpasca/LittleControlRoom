@@ -226,6 +226,14 @@ currently detected sessions, pins, TODO history/origin, and run commands preserv
 independently tracked submodule projects. Ordinary repositories named `Assets`
 are unaffected.
 
+Submodule publication warnings compare the checked-out commit with cached
+remote-tracking refs, independently of the current branch's ahead count. A commit
+available through another remote branch is already published, including when a
+sibling nested worktree published it. Local tags alone do not prove publication.
+Detached and untracked branches with a configured remote are checked too;
+uninitialized submodule directories are skipped rather than inheriting the parent
+repository's status. These checks do not fetch from the network.
+
 `/clean` accepts these sessionless worktrees only when present, unpinned, merged
 into the recorded parent, conflict-free, clean, and older than 24 hours. Git age
 is refreshed before removal, and the host still excludes active engineers,

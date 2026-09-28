@@ -776,6 +776,15 @@ func TestResolveSubmodulesAndPrepareCommitPushesUnpushedSubmoduleWithoutParentCo
 	runGit(t, projectPath, "git", "add", "assets_src")
 	runGit(t, projectPath, "git", "commit", "-m", "record local submodule commit")
 
+	// LCR reuses submodules as nested linked worktrees. The sibling branch
+	// still tracks the old upstream after the root publishes these commits.
+	runGit(t, submodulePath, "git", "push", "origin", "HEAD^:refs/heads/feature/assets")
+	linkedPath := filepath.Join(root, "linked")
+	runGit(t, projectPath, "git", "worktree", "add", "--detach", linkedPath)
+	linkedSubmodule := filepath.Join(linkedPath, "assets_src")
+	runGit(t, submodulePath, "git", "worktree", "add", "-b", "feature/assets", linkedSubmodule, "HEAD")
+	runGit(t, linkedSubmodule, "git", "branch", "--set-upstream-to=origin/feature/assets")
+
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -808,6 +817,58 @@ func TestResolveSubmodulesAndPrepareCommitPushesUnpushedSubmoduleWithoutParentCo
 	remoteHead := strings.TrimSpace(gitOutput(t, filepath.Join(submoduleRootPath, "origin.git"), "git", "rev-parse", "master"))
 	if remoteHead != currentSubmoduleHead {
 		t.Fatalf("expected pushed submodule HEAD %q to match remote %q", currentSubmoduleHead, remoteHead)
+	}
+	linkedStatus, err := scanner.ReadGitRepoStatus(ctx, linkedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkedStatus.SubmoduleUnpushedCount() != 0 || len(linkedStatus.Submodules) != 1 || linkedStatus.Submodules[0].Ahead != 1 {
+		t.Fatalf("publishing from root should clear sibling warning despite its older upstream: %#v", linkedStatus)
+	}
+}
+
+func TestPublishedSubmoduleDoesNotRequireResolution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	submodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	originalUpstream := gitOutput(t, submodulePath, "git", "rev-parse", "origin/master")
+	runGit(t, submodulePath, "git", "commit", "--allow-empty", "-m", "published assets")
+	runGit(t, submodulePath, "git", "push", "origin", "HEAD:refs/heads/published")
+	runGit(t, projectPath, "git", "add", "assets_src")
+	runGit(t, projectPath, "git", "commit", "-m", "record published assets")
+
+	st, err := store.Open(filepath.Join(root, "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path: projectPath, Name: "repo", PresentOnDisk: true, InScope: true, UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	_, err = svc.PrepareCommit(ctx, projectPath, GitActionCommit, "")
+	var noChanges NoChangesToCommitError
+	if !errors.As(err, &noChanges) {
+		t.Fatalf("published submodule should not open resolution dialog: %v", err)
+	}
+	status, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warnings := unpushedSubmodulePaths(status); len(warnings) != 0 {
+		t.Fatalf("published submodule should not warn in commit preview: %v", warnings)
+	}
+	resolved, err := svc.ensureMergeBackSubmodulesPublished(ctx, projectPath, projectPath, "master", status)
+	if err != nil || len(resolved) != 0 {
+		t.Fatalf("merge should not republish existing commits: resolved=%v, err=%v", resolved, err)
+	}
+	if got := gitOutput(t, filepath.Join(submoduleRootPath, "origin.git"), "git", "rev-parse", "master"); got != originalUpstream {
+		t.Fatalf("publication check unexpectedly advanced upstream: %s", got)
 	}
 }
 

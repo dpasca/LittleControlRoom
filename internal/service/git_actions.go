@@ -841,7 +841,7 @@ func submoduleAttentionPaths(status scanner.GitRepoStatus) (dirty []string, unpu
 		if submodule.Dirty {
 			dirty = append(dirty, path)
 		}
-		if submodule.Ahead > 0 {
+		if submodule.Unpushed {
 			unpushed = append(unpushed, path)
 		}
 	}
@@ -878,7 +878,7 @@ func dirtyIncludedSubmodulePaths(changes []scanner.GitChange) []string {
 func unpushedSubmodulePaths(status scanner.GitRepoStatus) []string {
 	var paths []string
 	for _, submodule := range status.Submodules {
-		if submodule.Ahead > 0 {
+		if submodule.Unpushed {
 			paths = append(paths, submodule.Path)
 		}
 	}
