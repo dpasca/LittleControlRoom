@@ -684,6 +684,7 @@ func (s *Store) ensureCommitTodoCheckRetryColumns(ctx context.Context) error {
 		name string
 		sql  string
 	}{
+		{name: "candidates_json", sql: `ALTER TABLE commit_todo_checks ADD COLUMN candidates_json TEXT NOT NULL DEFAULT ''`},
 		{name: "decision_json", sql: `ALTER TABLE commit_todo_checks ADD COLUMN decision_json TEXT NOT NULL DEFAULT ''`},
 		{name: "evidence_json", sql: `ALTER TABLE commit_todo_checks ADD COLUMN evidence_json TEXT NOT NULL DEFAULT ''`},
 		{name: "attempt_count", sql: `ALTER TABLE commit_todo_checks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`},

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,7 +284,7 @@ func TestRunExecShadowsPlaywrightSkillWhenBrowserUnavailable(t *testing.T) {
 func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -372,7 +371,7 @@ func TestRunExecOpenRouterEmitsModelRequestProgress(t *testing.T) {
 	t.Cleanup(func() {
 		modelRequestProgressInterval = previousInterval
 	})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -435,7 +434,7 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
@@ -534,7 +533,7 @@ func TestRunExecOpenRouterRequireFinalResponseToolAcceptsPlainNoWorkContinuation
 	}
 
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`
@@ -604,7 +603,7 @@ func TestRunExecLeadModelOwnsPlanningForSizableWork(t *testing.T) {
 	root := t.TempDir()
 	requests := 0
 	sawLeadPlanningGuidance := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
@@ -698,7 +697,7 @@ func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
 	var providerRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerRequests++
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
@@ -812,7 +811,7 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 	root := t.TempDir()
 	dataDir := t.TempDir()
 	var providerRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		providerRequests++
 		var body struct {
 			Messages []struct {
@@ -984,7 +983,7 @@ func TestRunExecOpenRouterRetriesTransientProviderFailure(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
@@ -1045,7 +1044,7 @@ func TestRunExecOpenRouterRetriesEmptyProviderCompletion(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
@@ -1119,7 +1118,7 @@ func TestRunExecOpenRouterRetriesMalformedProviderResponse(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		if requests == 1 {
@@ -1182,7 +1181,7 @@ func TestRunExecOpenRouterStabilizesThreadAfterMalformedProviderAbort(t *testing
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":`))
@@ -1298,7 +1297,7 @@ func TestLiveEvalRoutePresetAppliesBalancedReasoning(t *testing.T) {
 func TestRunExecRoutePresetAppliesMimoMaxDirectXiaomi(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -1372,7 +1371,7 @@ func TestRunExecRoutePresetAppliesMimoMaxDirectXiaomi(t *testing.T) {
 func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
 			t.Fatalf("request path = %s, want /responses", r.URL.Path)
 		}
@@ -1447,7 +1446,7 @@ func TestRunScoutUsesCheapScoutDefaultsAndPromptContract(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	var capturedPrompt string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -1523,7 +1522,7 @@ func TestRunScoutUsesCheapScoutDefaultsAndPromptContract(t *testing.T) {
 func TestRunExecRoutePresetAllowsExplicitOverrides(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
@@ -1672,7 +1671,7 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 		t.Fatalf("write thread state: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`
 		}
@@ -1757,7 +1756,7 @@ func TestRunExecOpenRouterResumesCanonicalThreadState(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`
@@ -1930,7 +1929,7 @@ func TestRunExecRejectsConflictingContinuationFlags(t *testing.T) {
 func TestRunExecOpenRouterUsesGenerousToolProfile(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Messages []struct {
 				Role    string `json:"role"`
@@ -2014,7 +2013,7 @@ func TestRunExecOpenRouterUsesGenerousToolProfile(t *testing.T) {
 func TestRunExecDeepSeekUsesDirectProviderEnv(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -2110,7 +2109,7 @@ func TestSearchRefineProfileUsesXiaomiUtilityDefaultForSameAsMain(t *testing.T) 
 func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -2179,7 +2178,7 @@ func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 func TestRunExecMoonshotSkipsUnsupportedReasoningEffort(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
@@ -2248,7 +2247,7 @@ func TestRunExecMoonshotSkipsUnsupportedReasoningEffort(t *testing.T) {
 func TestRunExecOpenRouterPassesReasoningEffort(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
@@ -2299,7 +2298,7 @@ func TestRunExecOpenRouterPassesReasoningEffort(t *testing.T) {
 func TestRunExecOpenRouterPassesProviderOnlyAndTemperature(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Temperature float64 `json:"temperature"`
 			Provider    struct {
@@ -2363,7 +2362,7 @@ func TestRunExecOpenRouterPassesProviderOnlyAndTemperature(t *testing.T) {
 func TestRunExecOpenRouterCanOmitTemperature(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
@@ -2425,7 +2424,7 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -2532,7 +2531,7 @@ func TestRunExecOpenRouterCompactsLargeToolHistoryBeforeNextRequest(t *testing.T
 	}
 
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -2649,7 +2648,7 @@ func TestRunExecOpenRouterCompactionKeepsCurrentPromptAfterResume(t *testing.T) 
 
 	currentPrompt := "build and run original FF, then FF with the new sprites"
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`
@@ -2760,7 +2759,7 @@ func TestRunExecCompactsOversizedResumeForSelectedModel(t *testing.T) {
 
 	currentPrompt := "continue with the smaller model"
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`
@@ -2837,7 +2836,7 @@ func TestRunExecCompactsOversizedResumeForSelectedModel(t *testing.T) {
 func TestRunExecOpenRouterFinalResponseToolIsCanonical(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_final_tool",
@@ -2901,7 +2900,7 @@ func TestRunExecOpenRouterFeedsFailedVerificationBackToModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -3009,7 +3008,7 @@ func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -3116,7 +3115,7 @@ func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -3204,7 +3203,7 @@ func TestRunExecOpenRouterSuppressesDuplicatePatchFeedback(t *testing.T) {
 	}
 	stalePatch := "*** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n keep\n*** End Patch\n"
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -3301,7 +3300,7 @@ func TestRunExecOpenRouterStripsProviderToolMarkupFromToolTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -3376,7 +3375,7 @@ func TestRunExecOpenRouterStripsProviderToolMarkupFromToolTurn(t *testing.T) {
 func TestRunExecOpenRouterAbortsProviderMarkupWithoutStructuredToolCalls(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_bad_markup",
@@ -3434,7 +3433,7 @@ func TestRunExecOpenRouterFinalizesGracefullyAtMaxTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3520,7 +3519,7 @@ func TestRunExecOpenRouterFinalHandoffPreservesFilesTouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3607,7 +3606,7 @@ func TestRunExecOpenRouterFinalHandoffToolCallFallsBackToPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3687,7 +3686,7 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []struct {
@@ -3831,7 +3830,7 @@ func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -3947,7 +3946,7 @@ func TestRunExecOpenRouterSynthesisWithRequiredFinalResponseExposesOnlyFinalTool
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -4045,7 +4044,7 @@ func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -4161,7 +4160,7 @@ func TestRunExecOpenRouterSynthesisToolCallAtHardLimitFallsBackToPartialFinal(t 
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -4242,7 +4241,7 @@ func TestRunExecOpenRouterMalformedFinalResponseArgumentsReturnToolResult(t *tes
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -4354,7 +4353,7 @@ func TestRunExecLongRequestTimeoutExpandsDefaultMaxTurns(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -4756,7 +4755,7 @@ func TestRunExecQualityPhaseCompletionPreservesContext(t *testing.T) {
 	// comfortably below the ordinary context budget.
 	evidence := strings.Repeat("inspected evidence ", 1000)
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`

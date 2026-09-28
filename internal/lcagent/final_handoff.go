@@ -73,6 +73,9 @@ type openRouterCompactionOptions struct {
 }
 
 type openRouterContextOptions struct {
+	// Catalog capacities are scoped to this provider session and reused for final models.
+	ModelContextWindows map[string]int64 `json:"-"`
+
 	FinalHandoffTranscriptMaxChars   int   `json:"final_handoff_transcript_max_chars"`
 	FinalHandoffAssistantMaxChars    int   `json:"final_handoff_assistant_max_chars"`
 	FinalHandoffArgsMaxChars         int   `json:"final_handoff_args_max_chars"`
@@ -130,6 +133,9 @@ func openRouterContextOptionsForProfileAndModel(profile openRouterContextProfile
 
 func contextOptionsForModel(opts openRouterContextOptions, provider, model string) openRouterContextOptions {
 	budget, ok := contextPackingBudgetForModel(provider, model)
+	if window := opts.ModelContextWindows[model]; window > 0 {
+		budget, ok = contextPackingBudgetForWindow(provider, model, window)
+	}
 	if !ok {
 		return opts
 	}
@@ -179,7 +185,14 @@ func contextPackingBudgetForModel(provider, model string) (contextPackingBudget,
 	if !ok {
 		window, ok = defaultModelContextWindowTokens(provider, model)
 	}
-	if !ok || window <= 0 {
+	if !ok {
+		return contextPackingBudget{}, false
+	}
+	return contextPackingBudgetForWindow(provider, model, window)
+}
+
+func contextPackingBudgetForWindow(provider, model string, window int64) (contextPackingBudget, bool) {
+	if window <= 0 {
 		return contextPackingBudget{}, false
 	}
 	utilization := contextPackingMaxUtilizationPercent

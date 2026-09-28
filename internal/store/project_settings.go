@@ -687,6 +687,7 @@ func scanCommitTodoCheck(row rowScanner) (model.CommitTodoCheck, error) {
 		&autoRetry,
 		&createdAt,
 		&updatedAt,
+		&check.CandidatesJSON,
 	); err != nil {
 		return model.CommitTodoCheck{}, err
 	}

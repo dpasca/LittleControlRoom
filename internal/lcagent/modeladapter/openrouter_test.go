@@ -812,7 +812,7 @@ func TestOpenRouterClientListModels(t *testing.T) {
 			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro","description":"coding route"},{"id":"openai/gpt-5.5"},{"id":"deepseek/deepseek-v4-pro"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro","description":"coding route","context_length":1048576},{"id":"openai/gpt-5.5"},{"id":"deepseek/deepseek-v4-pro"}]}`))
 	}))
 	defer server.Close()
 
@@ -830,7 +830,7 @@ func TestOpenRouterClientListModels(t *testing.T) {
 	if len(models) != 2 {
 		t.Fatalf("ListModels() returned %d models, want 2: %#v", len(models), models)
 	}
-	if models[0].ID != "deepseek/deepseek-v4-pro" || models[0].Name != "DeepSeek V4 Pro" || models[0].Description != "coding route" {
+	if models[0].ID != "deepseek/deepseek-v4-pro" || models[0].Name != "DeepSeek V4 Pro" || models[0].Description != "coding route" || models[0].ContextLength != 1048576 {
 		t.Fatalf("first model = %#v", models[0])
 	}
 	if models[1].ID != "openai/gpt-5.5" {

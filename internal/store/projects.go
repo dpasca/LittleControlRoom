@@ -917,10 +917,17 @@ func (s *Store) QueueCommitTodoCheck(ctx context.Context, check model.CommitTodo
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO commit_todo_checks(
-			project_path, head_hash, base_hash, status, auto_retry, created_at, updated_at
+			project_path, head_hash, base_hash, status, auto_retry, created_at, updated_at, candidates_json
 		)
-		VALUES (?, ?, ?, ?, 1, ?, ?)
-	`, projectPath, headHash, baseHash, string(model.CommitTodoCheckQueued), now.Unix(), now.Unix())
+		VALUES (?, ?, ?, ?, 1, ?, ?, (
+			SELECT json_group_array(json_object(
+				'id', id, 'project_path', project_path, 'text', text, 'updated_at', updated_at))
+			FROM project_todos
+			WHERE done = 0 AND (project_path = ? OR id = (
+				SELECT worktree_origin_todo_id FROM projects WHERE path = ?
+			))
+		))
+	`, projectPath, headHash, baseHash, string(model.CommitTodoCheckQueued), now.Unix(), now.Unix(), projectPath, projectPath)
 	return err == nil, err
 }
 
@@ -933,7 +940,7 @@ func (s *Store) GetCommitTodoCheck(ctx context.Context, projectPath, headHash st
 	return scanCommitTodoCheck(s.db.QueryRowContext(ctx, `
 		SELECT project_path, base_hash, head_hash, status, model,
 			completed_todo_ids, decision_json, evidence_json, last_error,
-			attempt_count, next_attempt_at, auto_retry, created_at, updated_at
+			attempt_count, next_attempt_at, auto_retry, created_at, updated_at, candidates_json
 		FROM commit_todo_checks
 		WHERE project_path = ? AND head_hash = ?
 	`, projectPath, headHash))
@@ -966,7 +973,7 @@ func (s *Store) ClaimNextQueuedCommitTodoCheck(ctx context.Context, staleAfter t
 		)
 		RETURNING project_path, base_hash, head_hash, status, model,
 			completed_todo_ids, decision_json, evidence_json, last_error,
-			attempt_count, next_attempt_at, auto_retry, created_at, updated_at
+			attempt_count, next_attempt_at, auto_retry, created_at, updated_at, candidates_json
 	`,
 		string(model.CommitTodoCheckQueued),
 		string(model.CommitTodoCheckRunning),

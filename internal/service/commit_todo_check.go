@@ -70,7 +70,34 @@ func (s *Service) processOneCommitTodoCheck(ctx context.Context) error {
 		s.failCommitTodoCheck(ctx, check, err.Error(), "")
 		return nil
 	}
-	openTodos, todoItems := s.commitTodoRefsForDetail(ctx, detail, check.CreatedAt)
+	// Legacy checks have no trustworthy queue-time snapshot. They finish without
+	// changing TODOs; a later commit can queue a new, fully snapshotted check.
+	var candidates []model.CommitTodoCandidate
+	if check.CandidatesJSON != "" {
+		if err := json.Unmarshal([]byte(check.CandidatesJSON), &candidates); err != nil {
+			s.failCommitTodoCheck(ctx, check, "decode queued TODO candidates: "+err.Error(), "")
+			return nil
+		}
+	}
+	var openTodos []gitops.CommitTodoRef
+	var todoItems []model.TodoItem
+	candidateByID := make(map[int64]model.CommitTodoCandidate, len(candidates))
+	for _, candidate := range candidates {
+		todo, err := s.store.GetTodo(ctx, candidate.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			s.failCommitTodoCheck(ctx, check, err.Error(), "")
+			return nil
+		}
+		if todo.Done || todo.ProjectPath != candidate.ProjectPath || todo.Text != candidate.Text || todo.UpdatedAt.Unix() != candidate.UpdatedAt {
+			continue
+		}
+		candidateByID[todo.ID] = candidate
+		todoItems = append(todoItems, todo)
+		openTodos = append(openTodos, gitops.CommitTodoRef{ID: todo.ID, Text: todo.Text})
+	}
 	if len(openTodos) == 0 {
 		check.Status = model.CommitTodoCheckCompleted
 		check.UpdatedAt = time.Now()
@@ -113,10 +140,15 @@ func (s *Service) processOneCommitTodoCheck(ctx context.Context) error {
 		if _, alreadyCompleted := completedIDSet[todo.ID]; alreadyCompleted {
 			continue
 		}
-		if err := s.ToggleTodoDone(ctx, todo.ProjectPath, todo.ID, true); err != nil {
+		updated, err := s.store.CompleteCommitTodoCandidate(ctx, check, candidateByID[todo.ID])
+		if err != nil {
 			s.failCommitTodoCheck(ctx, check, fmt.Sprintf("mark TODO %d complete: %v", todo.ID, err), check.Model)
 			return nil
 		}
+		if !updated {
+			continue
+		}
+		s.refreshProjectStatusAsync(todo.ProjectPath)
 		completedIDs = append(completedIDs, todo.ID)
 		completedIDSet[todo.ID] = struct{}{}
 		check.CompletedTodoIDs = append([]int64(nil), completedIDs...)

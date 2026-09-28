@@ -208,6 +208,14 @@ replacing conversation occupancy. `context_usage` trace events preserve these
 values for replay. Unknown capacity is shown as tokens used, without presenting a
 fallback as a model specification.
 
+OpenRouter runs fetch `/models` once during worker startup, with a three-second
+deadline, and retain each model's `context_length` for that run. Catalog capacities
+take precedence over the known-model table for both the tool-loop and final
+models; the same utilization policy and practical caps still apply. The
+`model_context_catalog` trace event records missing capacities or lookup failures.
+This lookup never runs on the TUI update/render path. Other providers continue
+using the existing model table and fallbacks.
+
 Unknown named hosted models retain a 250k assumed window for budgeting (212.5k
 compaction threshold). Unknown local models and unnamed models use profile
 fallbacks: balanced uses a 50k-token working budget; `--context-profile large` uses 150k. These

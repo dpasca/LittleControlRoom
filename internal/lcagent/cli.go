@@ -999,6 +999,22 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		})
 		return err
 	}
+	// This runs in the engineer worker, never the TUI update/render path. Fetch
+	// once per session and keep the pure budgeting functions free of network I/O.
+	if providerLabel == "openrouter" {
+		catalogCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		windows, catalogErr := loadModelContextWindows(catalogCtx, client)
+		cancel()
+		contextOptions.ModelContextWindows = windows
+		contextOptions = contextOptionsForModel(contextOptions, providerLabel, client.Model())
+		event := session.Event{"type": "model_context_catalog", "session_id": runner.SessionID, "model": client.Model(), "context_window": windows[client.Model()]}
+		if catalogErr != nil {
+			event["fallback_reason"] = catalogErr.Error()
+		} else if windows[client.Model()] <= 0 {
+			event["fallback_reason"] = "model capacity unavailable in catalog"
+		}
+		_ = writer.Write(event)
+	}
 	searchRefine := newSearchRefineProfile(utilityProvider, utilityCfg, searchRefineMinBytes, providerLabel, client.Model())
 	if searchRefine.Enabled {
 		runner.SearchRefiner = searchRefine.Refiner

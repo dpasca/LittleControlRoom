@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,7 +145,7 @@ func TestProviderTokenUsageTriggersLoopCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Messages []modeladapter.Message `json:"messages"`

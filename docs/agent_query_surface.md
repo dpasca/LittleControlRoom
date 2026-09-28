@@ -36,10 +36,10 @@ the query the agent intends to run.
 | `knowledge.list` | `project` | Index of built-in LCR operating guidance topics. |
 | `knowledge.get` | `project` | One versioned documentation topic by exact id, with Markdown content and source reference. |
 | `portfolio.overview` | `portfolio` | Portfolio counts and highest-attention visible projects. |
-| `project.list` | `project` | Attention-ordered visible project summaries. Project scope returns only the originating project. |
+| `project.list` | `project` | Visible project summaries, ordered by attention by default or newest activity with `order_by: "last_activity"`. Optional `since`/`until` bound last activity. Project scope returns only the originating project. |
 | `project.search` | `portfolio` | Project metadata and persisted-summary search, never transcript search. |
 | `project.detail` | `project` | One structured project snapshot with bounded TODO, session, and assessment state. |
-| `project.todo_list` | `project` | Bounded TODO state for one visible project. |
+| `project.todo_list` | `project` | Bounded TODO state for one visible project, optionally filtered by `updated_at` with `since`/`until`. |
 | `project.session_list` | `project` | Persisted session metadata without transcript text or artifact paths. |
 | `assessment.list` | `project` | Bounded persisted session assessments. Portfolio scope can span visible projects. |
 | `work.agent_task_list` | `portfolio` | Delegated task summaries and resource references. |
@@ -49,6 +49,13 @@ the query the agent intends to run.
 | `demo_recording.latest` | `project` | The active demo recording, or latest finalized package, with conditional package-path disclosure. |
 | `integrations.list` | `project` (user inventory requires `portfolio`) | Bounded native skill/plugin/MCP inventory with source, supported actions, revision, and activation warnings. |
 | `integrations.catalog` | `portfolio` | Curated skill sources or available native Codex marketplace plugins. |
+
+Date bounds are inclusive RFC3339 timestamps. Unknown timestamps are excluded
+when either bound is supplied; unbounded activity ordering puts them last, with
+project path breaking ties. Filtering and ordering happen after privacy checks
+and before pagination. Omit the new arguments to retain the existing behavior.
+Keep filters and ordering unchanged when following a cursor. These remain
+persisted snapshots, not a historical event feed.
 
 The internal CLI defaults query access to `project` scope. LCR's managed
 embedded-session launchers explicitly grant `portfolio` scope so an agent can

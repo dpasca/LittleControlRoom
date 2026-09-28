@@ -202,9 +202,10 @@ type Completion struct {
 }
 
 type ListedModel struct {
-	ID          string
-	Name        string
-	Description string
+	ContextLength int64
+	ID            string
+	Name          string
+	Description   string
 }
 
 type CompletionOptions struct {
@@ -572,9 +573,10 @@ func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
 		}
 		seen[key] = struct{}{}
 		models = append(models, ListedModel{
-			ID:          id,
-			Name:        strings.TrimSpace(item.Name),
-			Description: strings.TrimSpace(item.Description),
+			ID:            id,
+			Name:          strings.TrimSpace(item.Name),
+			Description:   strings.TrimSpace(item.Description),
+			ContextLength: item.ContextLength,
 		})
 	}
 	if len(models) == 0 {
@@ -585,9 +587,10 @@ func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
 
 type modelListResponse struct {
 	Data []struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		Description   string `json:"description"`
+		ContextLength int64  `json:"context_length"`
 	} `json:"data"`
 	Error *struct {
 		Message string `json:"message"`

@@ -283,6 +283,9 @@ func (e *Executor) portfolioOverview(ctx context.Context, raw json.RawMessage) (
 }
 
 type projectListArgs struct {
+	Since             string `json:"since"`
+	Until             string `json:"until"`
+	OrderBy           string `json:"order_by"`
 	IncludeHistorical bool   `json:"include_historical"`
 	Limit             int    `json:"limit"`
 	Cursor            string `json:"cursor"`
@@ -293,13 +296,30 @@ func (e *Executor) projectList(ctx context.Context, raw json.RawMessage) (map[st
 	if err := decodeStrict(raw, &args); err != nil {
 		return nil, err
 	}
+	since, until, err := parseQueryTimeRange(args.Since, args.Until)
+	if err != nil {
+		return nil, err
+	}
+	if args.OrderBy != "" && args.OrderBy != "attention" && args.OrderBy != "last_activity" {
+		return nil, errors.New("order_by must be attention or last_activity")
+	}
 	projects, err := e.visibleProjects(ctx, args.IncludeHistorical)
 	if err != nil {
 		return nil, err
 	}
+	if args.OrderBy == "last_activity" {
+		sort.SliceStable(projects, func(i, j int) bool {
+			if projects[i].LastActivity.Equal(projects[j].LastActivity) {
+				return projects[i].Path < projects[j].Path
+			}
+			return projects[i].LastActivity.After(projects[j].LastActivity)
+		})
+	}
 	records := make([]map[string]any, 0, len(projects))
 	for _, project := range projects {
-		records = append(records, projectSummaryRecord(project))
+		if queryTimeInRange(project.LastActivity, since, until) {
+			records = append(records, projectSummaryRecord(project))
+		}
 	}
 	return pageResult("projects", records, args.Cursor, args.Limit)
 }
@@ -406,6 +426,8 @@ func (e *Executor) projectDetail(ctx context.Context, raw json.RawMessage) (map[
 }
 
 type projectPageArgs struct {
+	Since            string `json:"since"`
+	Until            string `json:"until"`
 	ProjectPath      string `json:"project_path"`
 	IncludeCompleted bool   `json:"include_completed"`
 	Limit            int    `json:"limit"`
@@ -423,6 +445,10 @@ func (e *Executor) todoList(ctx context.Context, raw json.RawMessage) (map[strin
 	if err := decodeStrict(raw, &args); err != nil {
 		return nil, err
 	}
+	since, until, err := parseQueryTimeRange(args.Since, args.Until)
+	if err != nil {
+		return nil, err
+	}
 	path, project, err := e.resolveProject(ctx, args.ProjectPath)
 	if err != nil {
 		return nil, err
@@ -434,7 +460,13 @@ func (e *Executor) todoList(ctx context.Context, raw json.RawMessage) (map[strin
 	if !e.projectVisible(detail.Summary) {
 		return nil, errors.New("project became hidden by the private-category disclosure policy")
 	}
-	result, err := pageResult("todos", todoRecords(detail.Todos, args.IncludeCompleted), args.Cursor, args.Limit)
+	todos := make([]model.TodoItem, 0, len(detail.Todos))
+	for _, todo := range detail.Todos {
+		if queryTimeInRange(todo.UpdatedAt, since, until) {
+			todos = append(todos, todo)
+		}
+	}
+	result, err := pageResult("todos", todoRecords(todos, args.IncludeCompleted), args.Cursor, args.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -862,4 +894,34 @@ func take(records []map[string]any, limit int) ([]map[string]any, bool) {
 		return records, false
 	}
 	return records[:limit], true
+}
+
+// Query time bounds are inclusive RFC3339 instants. Unknown timestamps are
+// excluded from bounded queries, but retained in the unfiltered default view.
+func parseQueryTimeRange(sinceText, untilText string) (time.Time, time.Time, error) {
+	var since, until time.Time
+	var err error
+	if sinceText != "" {
+		since, err = time.Parse(time.RFC3339, sinceText)
+		if err != nil {
+			return since, until, fmt.Errorf("since must be RFC3339: %w", err)
+		}
+	}
+	if untilText != "" {
+		until, err = time.Parse(time.RFC3339, untilText)
+		if err != nil {
+			return since, until, fmt.Errorf("until must be RFC3339: %w", err)
+		}
+	}
+	if !since.IsZero() && !until.IsZero() && since.After(until) {
+		return since, until, errors.New("since must not be after until")
+	}
+	return since, until, nil
+}
+
+func queryTimeInRange(at, since, until time.Time) bool {
+	if since.IsZero() && until.IsZero() {
+		return true
+	}
+	return !at.IsZero() && (since.IsZero() || !at.Before(since)) && (until.IsZero() || !at.After(until))
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +26,7 @@ func TestRunScoutWithRouteUsesReadOnlyHarnessAndReturnsEvidence(t *testing.T) {
 	}
 
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body struct {
 			Tools []struct {
@@ -123,7 +122,7 @@ func TestScoutServiceFallsBackAndReportsAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	working := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	working := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		if requests == 1 {

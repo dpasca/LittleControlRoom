@@ -171,9 +171,12 @@ func Capabilities() []Capability {
 			QueryProjectList,
 			DomainProject,
 			ScopeProject,
-			"List visible LCR projects in attention order. Project-scoped callers receive only their originating project.",
+			"List visible LCR projects in attention order by default, optionally filtered or ordered by last activity. Project-scoped callers receive only their originating project.",
 			SensitivityContent,
 			pagedSchema(map[string]any{
+				"since":              stringProperty("Inclusive lower bound on last_activity, as RFC3339. Unknown activity is excluded when a bound is supplied.", 1),
+				"until":              stringProperty("Inclusive upper bound on last_activity, as RFC3339.", 1),
+				"order_by":           map[string]any{"type": "string", "enum": []string{"attention", "last_activity"}, "description": "Default attention; last_activity sorts newest first, unknown times last."},
 				"include_historical": booleanProperty("Include archived and out-of-scope projects. Defaults to false."),
 			}, nil),
 		),
@@ -208,6 +211,8 @@ func Capabilities() []Capability {
 			"List bounded TODO state for one visible project.",
 			SensitivityContent,
 			pagedSchema(map[string]any{
+				"since":             stringProperty("Inclusive lower bound on TODO updated_at, as RFC3339.", 1),
+				"until":             stringProperty("Inclusive upper bound on TODO updated_at, as RFC3339.", 1),
 				"project_path":      stringProperty("Exact project path. Defaults to the originating project.", 1),
 				"include_completed": booleanProperty("Include completed TODOs. Defaults to false."),
 			}, nil),

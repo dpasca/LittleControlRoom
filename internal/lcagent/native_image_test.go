@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"image/color"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,7 +107,7 @@ func TestNativeImageConversationAcrossProviders(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			runner, trace := imageHarnessRunner(t)
 			mainRequests, qaRequests := 0, 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 					t.Error(err)
@@ -183,7 +182,7 @@ func TestViewImageFallsBackForSeparateVisionModel(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			runner, trace := imageHarnessRunner(t)
 			mainRequests, visionRequests := 0, 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				if string(body["model"]) == `"vision-only"` {
@@ -253,7 +252,7 @@ func TestNativeImageHistorySurvivesCheckpointAndCompaction(t *testing.T) {
 			if !native {
 				visionModel, wantImages = "vision-only", 0
 			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var body map[string]json.RawMessage
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				if got := requestImageCount(t, body, provider); got != wantImages {

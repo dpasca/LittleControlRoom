@@ -223,7 +223,15 @@ const (
 	CommitTodoCheckFailed    CommitTodoCheckStatus = "failed"
 )
 
+type CommitTodoCandidate struct {
+	ID          int64  `json:"id"`
+	ProjectPath string `json:"project_path"`
+	Text        string `json:"text"`
+	UpdatedAt   int64  `json:"updated_at"`
+}
+
 type CommitTodoCheck struct {
+	CandidatesJSON   string
 	ProjectPath      string
 	BaseHash         string
 	HeadHash         string

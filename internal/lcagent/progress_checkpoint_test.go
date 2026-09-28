@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -90,7 +89,7 @@ func TestHarnessCheckpointAndHandoffAcrossProviders(t *testing.T) {
 		t.Run(provider, func(t *testing.T) {
 			requests := 0
 			const handoff = "Please flip the document and tell me when it is ready. Only the front side has been acquired."
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
 				var body map[string]json.RawMessage
 				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -141,7 +140,7 @@ func TestHarnessCheckpointAndHandoffAcrossProviders(t *testing.T) {
 func TestSteeringRequiresAssessmentBeforeFurtherExecution(t *testing.T) {
 	steer := make(chan string, 1)
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		var body map[string]json.RawMessage
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -204,7 +203,7 @@ func TestInvalidCheckpointStopsWithoutExecutingTools(t *testing.T) {
 	steer := make(chan string, 1)
 	steer <- "Avoid foreground interaction."
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		replyHarnessTest(w, "deepseek", requests, "", harnessTestCall("run_command", map[string]any{"argv": []string{"printf", "unwanted action"}}))
 	}))
@@ -220,7 +219,7 @@ func TestInvalidCheckpointStopsWithoutExecutingTools(t *testing.T) {
 
 func TestFinalizationRetainsAuditRepairPath(t *testing.T) {
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		switch requests {
 		case 1:
@@ -264,7 +263,7 @@ func TestMalformedCheckpointArgumentsRemainAuditable(t *testing.T) {
 
 func TestFinalizationRejectsAdditionalExecutionWithoutLosingHandoff(t *testing.T) {
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		switch requests {
 		case 1:
