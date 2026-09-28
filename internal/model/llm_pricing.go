@@ -39,6 +39,7 @@ func EstimateLLMCostUSD(modelName string, usage LLMUsage) (float64, bool) {
 
 func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 	name := strings.ToLower(strings.TrimSpace(modelName))
+	deepSeekName := strings.TrimPrefix(name, "deepseek/")
 	switch {
 	case name == "gpt-5.6-luna" || name == "openai/gpt-5.6-luna" || strings.HasPrefix(name, "gpt-5.6-luna-") || strings.HasPrefix(name, "openai/gpt-5.6-luna-"):
 		return llmPriceCard{
@@ -88,11 +89,17 @@ func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 			CachedInputUSDPerMTokens: 0.02,
 			OutputUSDPerMTokens:      1.25,
 		}, true
-	case name == "deepseek-v4-flash" || name == "deepseek-chat":
+	case deepSeekName == "deepseek-flash" || deepSeekName == "deepseek-v4-flash" ||
+		deepSeekName == "deepseek-v4-flash-vision-exp" || deepSeekName == "deepseek-chat":
+		// DeepSeek's published peak rates, checked 2026-09-28:
+		// https://api-docs.deepseek.com/quick_start/pricing/
+		// Retired V4 Flash aliases are billed as V4.1 Flash. Use peak rates
+		// conservatively: aggregate usage has no billing-time/holiday context,
+		// and the provider's off-peak rates are half these prices.
 		return llmPriceCard{
-			InputUSDPerMTokens:       0.14,
-			CachedInputUSDPerMTokens: 0.0028,
-			OutputUSDPerMTokens:      0.28,
+			InputUSDPerMTokens:       0.30,
+			CachedInputUSDPerMTokens: 0.006,
+			OutputUSDPerMTokens:      1.20,
 		}, true
 	case name == "deepseek-v4-pro" || name == "deepseek-reasoner":
 		return llmPriceCard{

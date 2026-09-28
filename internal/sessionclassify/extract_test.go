@@ -1,6 +1,9 @@
 package sessionclassify
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +30,7 @@ func TestExtractClaudeCodeTranscriptHidesGeneratedLocalCommandRecords(t *testing
 		t.Fatalf("write session file: %v", err)
 	}
 
-	items, err := extractClaudeCodeTranscript(sessionFile)
+	items, err := extractClaudeCodeTranscript(context.Background(), sessionFile)
 	if err != nil {
 		t.Fatalf("extractClaudeCodeTranscript() error = %v", err)
 	}
@@ -41,6 +44,104 @@ func TestExtractClaudeCodeTranscriptHidesGeneratedLocalCommandRecords(t *testing
 	}
 	if items[1].Role != "user" || items[1].Text != "which one you think is more improtant at this point" {
 		t.Fatalf("user prompt item = %#v", items[1])
+	}
+}
+
+func TestExtractSnapshotClaudeCodeRecoversRecentConversationBeforeImage(t *testing.T) {
+	t.Parallel()
+
+	imageResult := fmt.Sprintf(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":%q}}]}]}}`, strings.Repeat("A", 2*codexTailBytes))
+	for _, leadingImage := range []bool{false, true} {
+		t.Run(fmt.Sprintf("leading_image=%t", leadingImage), func(t *testing.T) {
+			lines := []string{}
+			if leadingImage {
+				lines = append(lines, imageResult)
+			}
+			for i := 0; i < maxTranscriptItems; i++ {
+				lines = append(lines,
+					fmt.Sprintf(`{"type":"user","promptSource":"sdk","message":{"content":"Previous request %d"}}`, i),
+					fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"text","text":"Previous response %d"}]}}`, i),
+				)
+			}
+			lines = append(lines,
+				`{"type":"user","promptSource":"sdk","message":{"content":"Inspect the latest screenshot."}}`,
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"Checking the updated cockpit."}]}}`,
+				`{"type":"user","isMeta":true,"uuid":"command","message":{"content":"Generated command context"}}`,
+				`{"type":"user","uuid":"command-output","parentUuid":"command","message":{"content":"Generated command output"}}`,
+				`{"type":"user","isCompactSummary":true,"message":{"content":"Generated compact summary"}}`,
+				imageResult,
+				`{"type":"attachment"}`,
+				`{"type":"last-prompt"}`,
+			)
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			classification := model.SessionClassification{
+				SessionID:     "image-session",
+				SessionFormat: "claude_code",
+				SessionFile:   path,
+			}
+			snapshot, err := ExtractSnapshot(context.Background(), classification, model.SessionEvidence{}, GitStatusSnapshot{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			items := snapshot.Transcript
+			if len(items) != maxTranscriptItems {
+				t.Fatalf("recovered %d items, want %d", len(items), maxTranscriptItems)
+			}
+			if items[len(items)-2].Text != "Inspect the latest screenshot." || items[len(items)-1].Text != "Checking the updated cockpit." {
+				t.Fatalf("did not retain the most recent conversation: %#v", items)
+			}
+			for _, item := range items {
+				if strings.Contains(item.Text, "Generated") || strings.Contains(item.Text, "AAAA") {
+					t.Fatalf("non-conversational record leaked: %#v", item)
+				}
+			}
+
+			preview, err := ExtractPreview(context.Background(), model.SessionEvidence{Format: "claude_code", SessionFile: path})
+			if err != nil || preview.Summary != "Checking the updated cockpit." {
+				t.Fatalf("preview = %#v, error = %v", preview, err)
+			}
+
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, writeErr := file.WriteString(`{"type":"assistant","message":{"content":[{"type":"text","text":"The new layout is verified."}]}}` + "\n")
+			closeErr := file.Close()
+			if writeErr != nil || closeErr != nil {
+				t.Fatalf("append assistant update: %v, close: %v", writeErr, closeErr)
+			}
+			snapshot, err = ExtractSnapshot(context.Background(), classification, model.SessionEvidence{}, GitStatusSnapshot{})
+			if err != nil || len(snapshot.Transcript) != 1 || snapshot.Transcript[0].Text != "The new layout is verified." {
+				t.Fatalf("new tail conversation = %#v, error = %v", snapshot.Transcript, err)
+			}
+		})
+	}
+}
+
+func TestExtractClaudeCodeTranscriptWithoutConversation(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	content := `{"type":"user","isMeta":true,"message":{"content":"Startup settings"}}` + "\n" +
+		`{"type":"user","isCompactSummary":true,"message":{"content":"Generated context"}}` + "\n" +
+		`{"type":"user","message":{"content":[{"type":"tool_result","content":"Tool output"}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		SessionFormat: "claude_code",
+		SessionFile:   path,
+	}, model.SessionEvidence{}, GitStatusSnapshot{})
+	if err == nil || err.Error() != "no conversational transcript found" {
+		t.Fatalf("error = %v, want missing conversation", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := extractClaudeCodeTranscript(ctx, path); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want canceled", err)
 	}
 }
 
