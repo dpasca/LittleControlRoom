@@ -1014,7 +1014,11 @@ func (s *Service) refreshClassificationForCommit(ctx context.Context, projectPat
 	// Classification is completed (or failed).  Compute the current snapshot
 	// hash and compare it with the classification's hash to detect staleness.
 	gitStatus := sessionclassify.GitStatusForSummary(ctx, detail.Summary)
-	currentHash, err := sessionclassify.ComputeSnapshotHash(ctx, projectPath, latestSession, gitStatus)
+	operations, err := sessionclassify.ControlOperationsForSession(ctx, s.store, projectPath, latestSession)
+	if err != nil {
+		return false
+	}
+	currentHash, err := sessionclassify.ComputeSnapshotHash(ctx, projectPath, latestSession, gitStatus, operations...)
 	if err != nil {
 		return false
 	}

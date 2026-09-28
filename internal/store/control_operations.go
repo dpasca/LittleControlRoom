@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 )
 
 func (s *Store) CreateControlOperation(ctx context.Context, operation control.Operation) (control.Operation, error) {
@@ -123,6 +124,33 @@ func (s *Store) GetControlOperation(ctx context.Context, id string) (control.Ope
 		return control.Operation{}, errors.New("control operation id is required")
 	}
 	return scanControlOperation(s.db.QueryRowContext(ctx, controlOperationSelect+` WHERE id = ?`, id))
+}
+
+// ListSessionControlOperations uses host-observed bindings, never the newest
+// conversation in a project. Resumed channels can belong to the same session.
+func (s *Store) ListSessionControlOperations(ctx context.Context, projectPath string, source model.SessionSource, sessionID string, limit int) ([]control.Operation, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 16
+	}
+	rows, err := s.db.QueryContext(ctx, controlOperationSelect+`
+		WHERE project_path = ? AND provider = ? AND session_key IN (
+			SELECT control_session_key FROM engineer_session_bindings
+			WHERE project_path = ? AND provider = ? AND provider_session_id = ?
+		)
+		ORDER BY updated_at DESC, id DESC LIMIT ?`, projectPath, string(source), projectPath, string(source), sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var operations []control.Operation
+	for rows.Next() {
+		operation, err := scanControlOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, operation)
+	}
+	return operations, rows.Err()
 }
 
 func (s *Store) FindControlOperationByClientRequest(ctx context.Context, source, sessionKey, clientRequestID string) (control.Operation, bool, error) {

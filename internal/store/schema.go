@@ -388,6 +388,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			completed_at INTEGER
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_control_operations_status_created ON control_operations(status, created_at, id);`,
+		`CREATE INDEX IF NOT EXISTS idx_control_operations_session_updated ON control_operations(project_path, provider, session_key, updated_at DESC, id DESC);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_control_operations_client_request
 			ON control_operations(source, session_key, client_request_id)
 			WHERE client_request_id <> '';`,

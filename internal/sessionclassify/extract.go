@@ -32,14 +32,15 @@ const (
 )
 
 type SessionSnapshot struct {
-	ProjectPath          string            `json:"project_path"`
-	SessionID            string            `json:"session_id"`
-	SessionFormat        string            `json:"session_format"`
-	LastEventAt          string            `json:"last_event_at"`
-	LatestTurnStateKnown bool              `json:"latest_turn_state_known"`
-	LatestTurnCompleted  bool              `json:"latest_turn_completed"`
-	GitStatus            GitStatusSnapshot `json:"git_status,omitempty"`
-	Transcript           []TranscriptItem  `json:"transcript"`
+	ProjectPath          string                     `json:"project_path"`
+	SessionID            string                     `json:"session_id"`
+	SessionFormat        string                     `json:"session_format"`
+	LastEventAt          string                     `json:"last_event_at"`
+	LatestTurnStateKnown bool                       `json:"latest_turn_state_known"`
+	LatestTurnCompleted  bool                       `json:"latest_turn_completed"`
+	GitStatus            GitStatusSnapshot          `json:"git_status,omitempty"`
+	Transcript           []TranscriptItem           `json:"transcript"`
+	ControlOperations    []ControlOperationSnapshot `json:"control_operations,omitempty"`
 }
 
 type SessionPreview struct {

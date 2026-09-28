@@ -1897,7 +1897,10 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 				reuseLatestSessionTurnState(old, &sessions[0])
 				ensureLatestSessionTurnState(&sessions[0])
 				reuseLatestSessionSnapshotHash(old, &sessions[0], gitStatus)
-				ensureSessionSnapshotHash(ctx, path, &sessions[0], gitStatus)
+				if err := s.ensureSessionSnapshotHash(ctx, path, &sessions[0], gitStatus); err != nil {
+					unlockProjectState()
+					return ScanReport{}, progress.wrapTimeout(err)
+				}
 			}
 		}
 		if haveCurrentState {
@@ -3287,17 +3290,25 @@ func ensureLatestSessionTurnState(session *model.SessionEvidence) {
 	_ = sessionclassify.RecoverSessionTurnState(session)
 }
 
-func ensureSessionSnapshotHash(ctx context.Context, projectPath string, session *model.SessionEvidence, gitStatus sessionclassify.GitStatusSnapshot) {
+func (s *Service) ensureSessionSnapshotHash(ctx context.Context, projectPath string, session *model.SessionEvidence, gitStatus sessionclassify.GitStatusSnapshot) error {
 	if session == nil || session.SessionID == "" || session.SessionFile == "" {
-		return
+		return nil
 	}
-	if strings.TrimSpace(session.SnapshotHash) != "" {
-		return
+	operations, err := sessionclassify.ControlOperationsForSession(ctx, s.store, projectPath, *session)
+	if err != nil {
+		return fmt.Errorf("load assessment control operations: %w", err)
 	}
-	hash, err := sessionclassify.ComputeSnapshotHash(ctx, projectPath, *session, gitStatus)
+	// Host actions can change with no new transcript or Git activity. A cached
+	// artifact hash cannot establish freshness for sessions with these actions.
+	if len(operations) == 0 && strings.TrimSpace(session.SnapshotHash) != "" {
+		return nil
+	}
+	session.SnapshotHash = ""
+	hash, err := sessionclassify.ComputeSnapshotHash(ctx, projectPath, *session, gitStatus, operations...)
 	if err == nil && strings.TrimSpace(hash) != "" {
 		session.SnapshotHash = hash
 	}
+	return nil
 }
 
 func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) error {
@@ -3418,7 +3429,9 @@ func (s *Service) refreshProjectStatusWithOptions(ctx context.Context, projectPa
 			if !projectSummaryMatchesGitStatus(detail.Summary, gitStatus) {
 				detail.Sessions[0].SnapshotHash = ""
 			}
-			ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], gitStatus)
+			if err := s.ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], gitStatus); err != nil {
+				return err
+			}
 		}
 		if _, err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
 			presentOnDisk:              metadata.presentOnDisk,

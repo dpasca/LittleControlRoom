@@ -20,7 +20,7 @@ import (
 
 const (
 	DefaultModel      = config.DefaultOpenAIProjectModel
-	ClassifierVersion = "session-v9"
+	ClassifierVersion = "session-v10"
 )
 
 type Result struct {
@@ -209,10 +209,21 @@ func (m *Manager) QueueProject(ctx context.Context, state model.ProjectState) (b
 func (m *Manager) QueueProjectRetry(ctx context.Context, state model.ProjectState, retryAfter time.Duration) (bool, error) {
 	client, modelName, unavailableReason := m.currentClientState()
 	prepared := state
-	if len(prepared.Sessions) > 0 && strings.TrimSpace(prepared.Sessions[0].SnapshotHash) == "" {
+	prepared.Sessions = append([]model.SessionEvidence(nil), state.Sessions...)
+	var operations []ControlOperationSnapshot
+	if len(prepared.Sessions) > 0 {
+		var err error
+		operations, err = ControlOperationsForSession(ctx, m.store, prepared.Path, prepared.Sessions[0])
+		if err != nil {
+			return false, err
+		}
+	}
+	if len(prepared.Sessions) > 0 && (len(operations) > 0 || strings.TrimSpace(prepared.Sessions[0].SnapshotHash) == "") {
 		gitStatus := GitStatusForState(ctx, prepared)
-		if hash, err := ComputeSnapshotHash(ctx, prepared.Path, prepared.Sessions[0], gitStatus); err == nil && strings.TrimSpace(hash) != "" {
+		if hash, err := ComputeSnapshotHash(ctx, prepared.Path, prepared.Sessions[0], gitStatus, operations...); err == nil && strings.TrimSpace(hash) != "" {
 			prepared.Sessions[0].SnapshotHash = hash
+		} else if err != nil && len(operations) > 0 {
+			return false, err
 		}
 	}
 	classification, ok := BuildClassificationRequest(prepared)
@@ -300,7 +311,7 @@ func legacySnapshotHashForSession(session model.SessionEvidence, projectPath str
 	return hex.EncodeToString(sum[:])
 }
 
-func ComputeSnapshotHash(ctx context.Context, projectPath string, session model.SessionEvidence, gitStatus GitStatusSnapshot) (string, error) {
+func ComputeSnapshotHash(ctx context.Context, projectPath string, session model.SessionEvidence, gitStatus GitStatusSnapshot, operations ...ControlOperationSnapshot) (string, error) {
 	snapshot, err := ExtractSnapshot(ctx, model.SessionClassification{
 		Source:          session.Source,
 		SessionID:       session.SessionID,
@@ -313,18 +324,20 @@ func ComputeSnapshotHash(ctx context.Context, projectPath string, session model.
 	if err != nil {
 		return "", err
 	}
+	snapshot.ControlOperations = operations
 	return SnapshotHashForSnapshot(snapshot), nil
 }
 
 func SnapshotHashForSnapshot(snapshot SessionSnapshot) string {
 	payload := struct {
-		ProjectPath          string            `json:"project_path"`
-		SessionID            string            `json:"session_id"`
-		SessionFormat        string            `json:"session_format"`
-		LatestTurnStateKnown bool              `json:"latest_turn_state_known"`
-		LatestTurnCompleted  bool              `json:"latest_turn_completed"`
-		GitStatus            GitStatusSnapshot `json:"git_status,omitempty"`
-		Transcript           []TranscriptItem  `json:"transcript"`
+		ProjectPath          string                     `json:"project_path"`
+		SessionID            string                     `json:"session_id"`
+		SessionFormat        string                     `json:"session_format"`
+		LatestTurnStateKnown bool                       `json:"latest_turn_state_known"`
+		LatestTurnCompleted  bool                       `json:"latest_turn_completed"`
+		GitStatus            GitStatusSnapshot          `json:"git_status,omitempty"`
+		Transcript           []TranscriptItem           `json:"transcript"`
+		ControlOperations    []ControlOperationSnapshot `json:"control_operations,omitempty"`
 	}{
 		ProjectPath:          snapshot.ProjectPath,
 		SessionID:            snapshot.SessionID,
@@ -333,6 +346,7 @@ func SnapshotHashForSnapshot(snapshot SessionSnapshot) string {
 		LatestTurnCompleted:  snapshot.LatestTurnCompleted,
 		GitStatus:            snapshot.GitStatus,
 		Transcript:           snapshot.Transcript,
+		ControlOperations:    snapshot.ControlOperations,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -480,6 +494,9 @@ func (m *Manager) processOne(ctx context.Context) (processed bool, err error) {
 	_ = RecoverSessionTurnState(&sessionEvidence)
 
 	snapshot, err := ExtractSnapshot(ctx, classification, sessionEvidence, gitStatus)
+	if err == nil {
+		snapshot.ControlOperations, err = ControlOperationsForSession(ctx, m.store, classification.ProjectPath, sessionEvidence)
+	}
 	if err != nil {
 		m.failClassification(ctx, &classification, err)
 		return true, nil

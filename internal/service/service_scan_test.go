@@ -2792,7 +2792,10 @@ func TestScanOnceRepairsOriginTodoFromExplicitWorktreeAssignment(t *testing.T) {
 	}
 	defer st.Close()
 
-	svc := New(config.Default(), st, events.NewBus(), nil)
+	// Keep this scan inside its fixture instead of discovering the developer's repositories.
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), nil)
 	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
 		ParentPath: root,
 		Name:       "repo",

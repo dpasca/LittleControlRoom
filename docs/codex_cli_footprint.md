@@ -91,6 +91,15 @@ and early assistant updates when multi-megabyte structured tool results push
 all conversational events outside the tail window; any newer conversational
 tail events still take precedence.
 
+Assessments also include up to 16 recent LCR control-operation records linked to
+the exact provider conversation through host-observed session bindings. These
+bounded records supplement the transcript with confirmation, execution, failure,
+and cancellation outcomes that may occur after the agent's last message. Their
+state participates in the assessment hash on scans and targeted refreshes, so an
+unchanged transcript cannot keep an already resolved Ctrl+G approval request
+cached as waiting. The classifier still assesses remaining work from all the
+evidence; a completed operation does not mean the entire task is complete.
+
 ### Assessment artifacts for other providers
 
 Assessments also accept Claude Code JSONL, OpenCode SQLite sessions, and LCAgent

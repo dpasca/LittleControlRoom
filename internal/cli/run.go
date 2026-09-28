@@ -761,6 +761,9 @@ func runSnapshot(ctx context.Context, svc *service.Service, cfg config.AppConfig
 			SessionFormat:   choice.Session.Format,
 			SourceUpdatedAt: choice.Session.LastEventAt,
 		}, choice.Session, gitStatus)
+		if err == nil {
+			snapshot.ControlOperations, err = sessionclassify.ControlOperationsForSession(ctx, svc.Store(), choice.State.Path, choice.Session)
+		}
 		if err != nil {
 			entry.ExtractError = err.Error()
 		} else {
