@@ -606,17 +606,7 @@ func (c *OpenAICompatibleChatTextClient) RunTextStream(ctx context.Context, req 
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error"`
-			Usage *struct {
-				PromptTokens        int64 `json:"prompt_tokens"`
-				PromptTokensDetails struct {
-					CachedTokens int64 `json:"cached_tokens"`
-				} `json:"prompt_tokens_details"`
-				CompletionTokens        int64 `json:"completion_tokens"`
-				CompletionTokensDetails struct {
-					ReasoningTokens int64 `json:"reasoning_tokens"`
-				} `json:"completion_tokens_details"`
-				TotalTokens int64 `json:"total_tokens"`
-			} `json:"usage"`
+			Usage   *chatCompletionUsage `json:"usage"`
 			Choices []struct {
 				Delta struct {
 					Content string `json:"content"`
@@ -634,13 +624,7 @@ func (c *OpenAICompatibleChatTextClient) RunTextStream(ctx context.Context, req 
 			result.Model = strings.TrimSpace(chunk.Model)
 		}
 		if chunk.Usage != nil {
-			result.Usage = model.LLMUsage{
-				InputTokens:       chunk.Usage.PromptTokens,
-				OutputTokens:      chunk.Usage.CompletionTokens,
-				TotalTokens:       chunk.Usage.TotalTokens,
-				CachedInputTokens: chunk.Usage.PromptTokensDetails.CachedTokens,
-				ReasoningTokens:   chunk.Usage.CompletionTokensDetails.ReasoningTokens,
-			}
+			result.Usage = chunk.Usage.llmUsage()
 		}
 		for _, choice := range chunk.Choices {
 			if reason := strings.TrimSpace(choice.FinishReason); reason != "" {
@@ -871,17 +855,7 @@ func decodeChatTextEnvelope(body []byte) (TextResponse, error) {
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
-		Usage *struct {
-			PromptTokens        int64 `json:"prompt_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int64 `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			CompletionTokens        int64 `json:"completion_tokens"`
-			CompletionTokensDetails struct {
-				ReasoningTokens int64 `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-			TotalTokens int64 `json:"total_tokens"`
-		} `json:"usage"`
+		Usage   *chatCompletionUsage `json:"usage"`
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -905,13 +879,7 @@ func decodeChatTextEnvelope(body []byte) (TextResponse, error) {
 		result.IncompleteReason = strings.TrimSpace(envelope.Choices[0].FinishReason)
 	}
 	if envelope.Usage != nil {
-		result.Usage = model.LLMUsage{
-			InputTokens:       envelope.Usage.PromptTokens,
-			OutputTokens:      envelope.Usage.CompletionTokens,
-			TotalTokens:       envelope.Usage.TotalTokens,
-			CachedInputTokens: envelope.Usage.PromptTokensDetails.CachedTokens,
-			ReasoningTokens:   envelope.Usage.CompletionTokensDetails.ReasoningTokens,
-		}
+		result.Usage = envelope.Usage.llmUsage()
 		if estimatedCostUSD, ok := model.EstimateLLMCostUSD(result.Model, result.Usage); ok {
 			result.Usage.EstimatedCostUSD = estimatedCostUSD
 		}

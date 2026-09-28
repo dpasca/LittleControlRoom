@@ -91,7 +91,7 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 	case "opencode_db":
 		items, err = extractOpenCodeTranscript(ctx, classification.SessionFile)
 	case "claude_code":
-		items, err = extractClaudeCodeTranscript(classification.SessionFile)
+		items, err = extractClaudeCodeTranscript(ctx, classification.SessionFile)
 	case "lcagent_jsonl":
 		items, err = extractLCAgentTranscript(classification.SessionFile)
 	default:
@@ -146,7 +146,7 @@ func ExtractPreview(ctx context.Context, session model.SessionEvidence) (Session
 	case "opencode_db":
 		return extractOpenCodePreview(ctx, session.SessionFile)
 	case "claude_code":
-		return extractClaudeCodePreview(session.SessionFile)
+		return extractClaudeCodePreview(ctx, session.SessionFile)
 	case "lcagent_jsonl":
 		return extractLCAgentPreview(session.SessionFile)
 	default:
@@ -1179,7 +1179,10 @@ func truncatePreviewLine(text string) string {
 	return text[:maxPreviewBytes-3] + "..."
 }
 
-func extractClaudeCodeTranscript(path string) ([]TranscriptItem, error) {
+func extractClaudeCodeTranscript(ctx context.Context, path string) ([]TranscriptItem, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	lines, err := readTailLines(path, codexTailBytes)
 	if err != nil {
 		return nil, err
@@ -1191,7 +1194,35 @@ func extractClaudeCodeTranscript(path string) ([]TranscriptItem, error) {
 			items = append(items, item)
 		}
 	}
-	return finalizeTranscript(items), nil
+	items = finalizeTranscript(items)
+	if len(items) > 0 {
+		return items, nil
+	}
+
+	// An image or tool-result record can fill the entire tail window. Recover
+	// the most recent conversation from complete records instead of treating
+	// that window as an empty session. Keep only a bounded transcript while
+	// streaming, and observe ancestry from the start to exclude generated input.
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open session file: %w", err)
+	}
+	defer file.Close()
+
+	conversationTracker = claudeartifact.ConversationTracker{}
+	scanner := newSessionScanner(file)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if item, ok := extractClaudeCodeTranscriptItem(scanner.Text(), &conversationTracker); ok {
+			items = finalizeTranscript(append(items, item))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan session file: %w", err)
+	}
+	return items, nil
 }
 
 func extractLCAgentTranscript(path string) ([]TranscriptItem, error) {
@@ -1564,12 +1595,12 @@ func lcagentFirstNonEmpty(values ...string) string {
 	return ""
 }
 
-func extractClaudeCodePreview(path string) (SessionPreview, error) {
+func extractClaudeCodePreview(ctx context.Context, path string) (SessionPreview, error) {
 	headItems, err := extractClaudeCodeHeadTranscript(path)
 	if err != nil {
 		return SessionPreview{}, err
 	}
-	tailItems, err := extractClaudeCodeTranscript(path)
+	tailItems, err := extractClaudeCodeTranscript(ctx, path)
 	if err != nil {
 		return SessionPreview{}, err
 	}
@@ -1602,12 +1633,13 @@ func extractClaudeCodeHeadTranscript(path string) ([]TranscriptItem, error) {
 
 func extractClaudeCodeTranscriptItem(line string, conversationTracker *claudeartifact.ConversationTracker) (TranscriptItem, bool) {
 	var raw struct {
-		Type         string `json:"type"`
-		IsMeta       bool   `json:"isMeta"`
-		UUID         string `json:"uuid"`
-		ParentUUID   string `json:"parentUuid"`
-		PromptSource string `json:"promptSource"`
-		Origin       struct {
+		Type             string `json:"type"`
+		IsMeta           bool   `json:"isMeta"`
+		IsCompactSummary bool   `json:"isCompactSummary"`
+		UUID             string `json:"uuid"`
+		ParentUUID       string `json:"parentUuid"`
+		PromptSource     string `json:"promptSource"`
+		Origin           struct {
 			Kind string `json:"kind"`
 		} `json:"origin"`
 		Message struct {
@@ -1621,12 +1653,13 @@ func extractClaudeCodeTranscriptItem(line string, conversationTracker *claudeart
 	conversationalUser := true
 	if conversationTracker != nil {
 		conversationalUser = conversationTracker.Observe(claudeartifact.TranscriptEntry{
-			Type:         raw.Type,
-			UUID:         raw.UUID,
-			ParentUUID:   raw.ParentUUID,
-			IsMeta:       raw.IsMeta,
-			PromptSource: raw.PromptSource,
-			OriginKind:   raw.Origin.Kind,
+			Type:             raw.Type,
+			UUID:             raw.UUID,
+			ParentUUID:       raw.ParentUUID,
+			IsMeta:           raw.IsMeta,
+			IsCompactSummary: raw.IsCompactSummary,
+			PromptSource:     raw.PromptSource,
+			OriginKind:       raw.Origin.Kind,
 		})
 	}
 	if raw.IsMeta {

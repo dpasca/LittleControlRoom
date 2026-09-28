@@ -678,6 +678,12 @@ same tracked TODO, worktree, and engineer launch.
 
 ## Notes
 
+- The dashboard footer shows estimated API cost when a model has a known price
+  card, falling back to token counts otherwise. `deepseek-flash` and its retired
+  V4 Flash aliases use the [published DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/)
+  checked on 2026-09-28: $0.30 per million uncached input tokens, $0.006 cached,
+  and $1.20 output. These are conservative peak-rate estimates; off-peak billing
+  is half that amount. Recorded costs take precedence over token-based estimates.
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room; fresh items use any assistant chosen during creation, otherwise Codex.
 - `/open` opens the selected project's folder in the system browser.
 - `/archive` moves the selected regular project to the Archived tab, or moves the selected scratch task into the scratch archive folder and out of the active task list. `/unarchive` restores an archived regular project to Active when the project is still in scope. The `a` key and `/tab [active|archived|toggle]` switch between the Active and Archived tabs.

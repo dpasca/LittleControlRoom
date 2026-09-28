@@ -74,6 +74,27 @@ func TestEstimateLLMCostUSDGPT56Family(t *testing.T) {
 	}
 }
 
+func TestEstimateLLMCostUSDDeepSeekFlash(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"deepseek-flash", "deepseek/deepseek-flash", "deepseek-v4-flash", "deepseek/deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat", " DeepSeek-Flash "} {
+		t.Run(name, func(t *testing.T) {
+			cost, ok := EstimateLLMCostUSD(name, LLMUsage{
+				InputTokens:       1_000_000,
+				CachedInputTokens: 900_000,
+				OutputTokens:      10_000,
+			})
+			// $0.03 uncached + $0.0054 cached + $0.012 output, at peak rates.
+			if !ok || math.Abs(cost-0.0474) > 1e-12 {
+				t.Fatalf("EstimateLLMCostUSD(%q) = (%f, %v), want (0.0474, true)", name, cost, ok)
+			}
+		})
+	}
+	if _, ok := EstimateLLMCostUSD("deepseek-flash-unknown", LLMUsage{InputTokens: 100}); ok {
+		t.Fatal("unknown model must not inherit Flash pricing")
+	}
+}
+
 func TestEstimateLLMCostUSDDeepSeekV4Pro(t *testing.T) {
 	t.Parallel()
 

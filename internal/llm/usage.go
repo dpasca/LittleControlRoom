@@ -8,6 +8,34 @@ import (
 	"lcroom/internal/model"
 )
 
+type chatCompletionUsage struct {
+	PromptTokens        int64 `json:"prompt_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	PromptCacheHitTokens    int64 `json:"prompt_cache_hit_tokens"`
+	CompletionTokens        int64 `json:"completion_tokens"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int64 `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+	TotalTokens int64 `json:"total_tokens"`
+}
+
+func (u chatCompletionUsage) llmUsage() model.LLMUsage {
+	cachedTokens := u.PromptTokensDetails.CachedTokens
+	if cachedTokens == 0 {
+		// DeepSeek reports cache reads outside prompt_tokens_details.
+		cachedTokens = u.PromptCacheHitTokens
+	}
+	return model.LLMUsage{
+		InputTokens:       u.PromptTokens,
+		OutputTokens:      u.CompletionTokens,
+		TotalTokens:       u.TotalTokens,
+		CachedInputTokens: cachedTokens,
+		ReasoningTokens:   u.CompletionTokensDetails.ReasoningTokens,
+	}
+}
+
 type UsageTracker struct {
 	mu           sync.Mutex
 	snapshot     model.LLMSessionUsage

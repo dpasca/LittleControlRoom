@@ -214,18 +214,8 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 	}
 
 	var envelope struct {
-		Model string `json:"model"`
-		Usage *struct {
-			PromptTokens        int64 `json:"prompt_tokens"`
-			PromptTokensDetails struct {
-				CachedTokens int64 `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			CompletionTokens        int64 `json:"completion_tokens"`
-			CompletionTokensDetails struct {
-				ReasoningTokens int64 `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-			TotalTokens int64 `json:"total_tokens"`
-		} `json:"usage"`
+		Model   string               `json:"model"`
+		Usage   *chatCompletionUsage `json:"usage"`
 		Choices []struct {
 			FinishReason string `json:"finish_reason"`
 			Message      struct {
@@ -255,13 +245,7 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 		}
 	}
 	if envelope.Usage != nil {
-		result.Usage = model.LLMUsage{
-			InputTokens:       envelope.Usage.PromptTokens,
-			OutputTokens:      envelope.Usage.CompletionTokens,
-			TotalTokens:       envelope.Usage.TotalTokens,
-			CachedInputTokens: envelope.Usage.PromptTokensDetails.CachedTokens,
-			ReasoningTokens:   envelope.Usage.CompletionTokensDetails.ReasoningTokens,
-		}
+		result.Usage = envelope.Usage.llmUsage()
 		if estimatedCostUSD, ok := model.EstimateLLMCostUSD(result.Model, result.Usage); ok {
 			result.Usage.EstimatedCostUSD = estimatedCostUSD
 		}

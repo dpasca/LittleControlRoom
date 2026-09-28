@@ -108,6 +108,10 @@ missing artifact references before queueing an assessment:
   assistant, or compact-summary records, so authentication and local commands
   cannot displace a populated session from another provider. Detection uses
   structured event metadata, not message text.
+  Assessment normally reads the final 1 MiB. If an oversized image or tool result
+  hides all conversation there, it streams complete records from the beginning,
+  retaining only the most recent bounded transcript and honoring cancellation.
+  Local-command descendants and compact summaries remain excluded using metadata.
 - OpenCode uses `<opencode-home>/opencode.db#session:<session-id>`.
 - LCAgent uses the logical `thread_id` from `session_meta` as its session identity,
   falling back to `id` for older traces. Its checkpoint at

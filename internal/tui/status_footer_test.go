@@ -43,6 +43,26 @@ func TestCompactUsageLabel(t *testing.T) {
 	}
 }
 
+func TestCompactUsageLabelDeepSeekFlash(t *testing.T) {
+	usage := model.LLMSessionUsage{
+		Enabled: true,
+		Model:   "deepseek-flash",
+		Totals: model.LLMUsage{
+			InputTokens:       1_000_000,
+			CachedInputTokens: 900_000,
+			OutputTokens:      10_000,
+		},
+	}
+	if got := compactUsageLabel(usage); got != "cost $0.047" {
+		t.Fatalf("compactUsageLabel(deepseek-flash) = %q, want cost $0.047", got)
+	}
+
+	usage.Totals.EstimatedCostUSD = 0.0237
+	if got := compactUsageLabel(usage); got != "cost $0.024" {
+		t.Fatalf("recorded cost should take precedence over token estimates: %q", got)
+	}
+}
+
 func TestCompactUsageLabelFallsBackToModelAndTokensWhenCostUnknown(t *testing.T) {
 	usage := model.LLMSessionUsage{
 		Enabled: true,
