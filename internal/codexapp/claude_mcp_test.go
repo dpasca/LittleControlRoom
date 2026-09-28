@@ -42,6 +42,8 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 		"extensions.worktreeConfig",
 		"Little Control Room managed-browser contract",
 		"lcr_runtime/request_browser_attention",
+		"lcr_runtime/list_processes",
+		"lcr_runtime/start_process",
 	} {
 		if !strings.Contains(options.Prompt, want) {
 			t.Fatalf("MCP prompt = %q, want %q", options.Prompt, want)
@@ -55,6 +57,8 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 		claudeRuntimeMCPRunQueryTool,
 		claudeRuntimeMCPListTODOsTool,
 		claudeRuntimeMCPAddTODOTool,
+		claudeRuntimeMCPListProcessesTool,
+		claudeRuntimeMCPReadProcessOutputTool,
 	} {
 		if !slices.Contains(options.AllowedTools, want) {
 			t.Fatalf("allowed tools = %#v, want %q", options.AllowedTools, want)
@@ -128,8 +132,8 @@ func TestClaudeRuntimeMCPConfigKeepsProcessToolsWhenTODOCaptureIsOff(t *testing.
 	if options.Config == "" {
 		t.Fatal("buildClaudeMCPOptions() config is empty; process tools should remain available")
 	}
-	if options.Prompt != agentquery.KnowledgeInstructions {
-		t.Fatalf("buildClaudeMCPOptions() prompt = %q, want knowledge guidance without TODO or browser instructions", options.Prompt)
+	if options.Prompt != agentquery.KnowledgeInstructions+"\n\n"+claudeRuntimeProcessInstructions {
+		t.Fatalf("buildClaudeMCPOptions() prompt = %q, want knowledge and process guidance without TODO or browser instructions", options.Prompt)
 	}
 	if slices.Contains(options.AllowedTools, claudePlaywrightMCPAllowedTools) {
 		t.Fatalf("classic browser allowed tools = %#v, want no Playwright wildcard", options.AllowedTools)

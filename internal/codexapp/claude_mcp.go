@@ -11,6 +11,12 @@ import (
 
 const claudeRuntimeMCPApprovalTool = "mcp__lcr_runtime__" + claudeapproval.PermissionToolName
 
+const claudeRuntimeProcessInstructions = `Little Control Room tracks this project's long-running app/server/watch processes through the lcr_runtime MCP tools.
+- Call lcr_runtime/list_processes before starting a local server or watcher when a matching process may already be active.
+- Prefer lcr_runtime/start_process for long-running server/watch commands; it reuses a matching command/cwd process by default. Set create_new=true only for an intentional parallel copy, and replace_existing=true only when a fresh instance is needed.
+- Call lcr_runtime/read_process_output to check the tail output or exit state of a managed process.
+- Call lcr_runtime/stop_process only when the user asks or to clean up a temporary process you started.`
+
 type claudeMCPConfig struct {
 	Servers map[string]claudeMCPServer `json:"mcpServers"`
 }
@@ -51,7 +57,7 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 	runtimeEnabled := false
 	if executablePath, args, ok := runtimeMCPCommand(req); ok {
 		runtimeEnabled = true
-		promptParts = append(promptParts, agentquery.KnowledgeInstructions)
+		promptParts = append(promptParts, agentquery.KnowledgeInstructions, claudeRuntimeProcessInstructions)
 		servers["lcr_runtime"] = claudeMCPServer{
 			Type:    "stdio",
 			Command: executablePath,
@@ -65,6 +71,8 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 			claudeRuntimeMCPDescribeControlTool,
 			claudeRuntimeMCPProposeControlTool,
 			claudeRuntimeMCPGetControlTool,
+			claudeRuntimeMCPListProcessesTool,
+			claudeRuntimeMCPReadProcessOutputTool,
 		)
 		if req.TodoCaptureMode.Enabled() {
 			allowedTools = append(allowedTools, claudeRuntimeMCPListTODOsTool, claudeRuntimeMCPAddTODOTool)

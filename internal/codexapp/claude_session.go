@@ -23,7 +23,6 @@ import (
 	"lcroom/internal/claudecli"
 	"lcroom/internal/claudestyle"
 	"lcroom/internal/codexcli"
-	"lcroom/internal/projectrun"
 )
 
 const (
@@ -64,6 +63,8 @@ const (
 	claudeRuntimeMCPListTODOsTool         = "mcp__lcr_runtime__list_project_todos"
 	claudeRuntimeMCPAddTODOTool           = "mcp__lcr_runtime__add_project_todo"
 	claudeRuntimeMCPBrowserAttentionTool  = "mcp__lcr_runtime__request_browser_attention"
+	claudeRuntimeMCPListProcessesTool     = "mcp__lcr_runtime__list_processes"
+	claudeRuntimeMCPReadProcessOutputTool = "mcp__lcr_runtime__read_process_output"
 	claudePlaywrightMCPAllowedTools       = "mcp__playwright__*"
 	claudeRestartCompletedNotice          = "The captured Claude Code turn completed before restart recovery; no continuation prompt was sent."
 	claudePIDStatusBusy                   = "busy"
@@ -88,7 +89,6 @@ type claudeCodeSession struct {
 	browserHandoffAt         time.Time
 	browserAttentionMessage  string
 	currentBrowserPageURL    string
-	runtimeManager           *projectrun.Manager
 	mcpOptions               claudeMCPOptions
 	safetySettings           string
 	approvalServer           *claudeapproval.Server
@@ -363,7 +363,6 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                  browserctl.EffectiveDataDir(req.AppDataDir),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
-		runtimeManager:           req.RuntimeManager,
 		mcpOptions:               mcpOptions,
 		safetySettings:           safetySettings,
 		safetyExecutable:         safetyExecutable,
@@ -634,11 +633,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		return fmt.Errorf("Claude Code prompt required")
 	}
 
-	modelInput := input
-	if mode == claudeSubmissionNormal {
-		modelInput = augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
-	}
-	payload, err := buildClaudeStreamInput(modelInput)
+	payload, err := buildClaudeStreamInput(input)
 	if err != nil {
 		return fmt.Errorf("prepare Claude Code prompt: %w", err)
 	}
