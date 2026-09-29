@@ -944,8 +944,8 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 	}
 	if detail {
 		rows = append(rows, embeddedSidebarUsageWindowDetailRows(snapshot, width)...)
-	} else if usage := embeddedSidebarUsageWindowSummary(snapshot, now); usage != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Limits", usage, embeddedSidebarUsageWindowStyle(snapshot), width, 0)...)
+	} else {
+		rows = append(rows, embeddedSidebarUsageWindowRows(snapshot, width, now)...)
 	}
 	if commands := embeddedSidebarModelCommands(snapshot); commands != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Commands", commands, embeddedSidebarMutedStyle, width))
@@ -967,49 +967,36 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 	return rows
 }
 
-func embeddedSidebarUsageWindowSummary(snapshot codexapp.Snapshot, now time.Time) string {
+// Keep each window on its own row so its remaining quota and reset stay together.
+// The ordinary 5h/week rows fit even the sidebar's minimum content width (32).
+func embeddedSidebarUsageWindowRows(snapshot codexapp.Snapshot, width int, now time.Time) []string {
 	windows := embeddedSidebarUsageWindows(snapshot)
-	if len(windows) == 0 {
-		return ""
+	if len(windows) == 0 || width <= 0 {
+		return nil
 	}
-	if len(windows) > 1 {
-		parts := make([]string, 0, len(windows))
-		for _, window := range windows {
-			label := compactEmbeddedUsageWindowLabel(window.Window)
-			if label == "" {
-				label = "window"
-			}
-			part := fmt.Sprintf("%s %d%% left", label, window.LeftPercent)
-			if !window.ResetsAt.IsZero() {
-				part += " reset " + formatEmbeddedSidebarResetTimeCompact(window.ResetsAt, now)
-			}
-			parts = append(parts, part)
+	labelWidth := 4
+	for _, window := range windows {
+		label := firstNonEmptyTrimmed(compactEmbeddedUsageWindowLabel(window.Window), "window")
+		labelWidth = max(labelWidth, ansi.StringWidth(label))
+	}
+	rows := []string{embeddedSidebarMutedStyle.Render(fitLine("Limits", width))}
+	for _, window := range windows {
+		label := firstNonEmptyTrimmed(compactEmbeddedUsageWindowLabel(window.Window), "window")
+		prefix := "  " + label + strings.Repeat(" ", labelWidth-ansi.StringWidth(label)+1)
+		row := embeddedSidebarMutedStyle.Render(prefix) +
+			embeddedSidebarUsageWindowStyle(window.LeftPercent).Render(fmt.Sprintf("%3d%% left", window.LeftPercent))
+		if !window.ResetsAt.IsZero() {
+			row += embeddedSidebarMutedStyle.Render(" reset " + formatEmbeddedSidebarResetTimeCompact(window.ResetsAt, now))
 		}
-		return strings.Join(parts, " · ")
+		rows = append(rows, strings.Split(ansi.Wrap(row, width, ""), "\n")...)
+		if credit := embeddedSidebarUsageWindowCreditCompact(window); credit != "" {
+			rows = append(rows, strings.Split(ansi.Wrap(embeddedSidebarMutedStyle.Render("  "+credit), width, ""), "\n")...)
+		}
 	}
-	window := windows[0]
-	parts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
-	if label := strings.TrimSpace(window.Window); label != "" {
-		parts = append(parts, label)
-	}
-	if !window.ResetsAt.IsZero() {
-		parts = append(parts, "reset "+formatEmbeddedSidebarResetTimeCompact(window.ResetsAt, now))
-	}
-	if credit := embeddedSidebarUsageWindowCreditCompact(window); credit != "" {
-		parts = append(parts, credit)
-	}
-	return strings.Join(parts, " ")
+	return rows
 }
 
-func embeddedSidebarUsageWindowStyle(snapshot codexapp.Snapshot) lipgloss.Style {
-	windows := embeddedSidebarUsageWindows(snapshot)
-	if len(windows) == 0 {
-		return detailValueStyle
-	}
-	left := windows[0].LeftPercent
-	for _, window := range windows[1:] {
-		left = min(left, window.LeftPercent)
-	}
+func embeddedSidebarUsageWindowStyle(left int) lipgloss.Style {
 	switch {
 	case left <= 10:
 		return detailDangerStyle
@@ -1039,12 +1026,7 @@ func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int)
 		if credit := embeddedSidebarUsageWindowCredit(window); credit != "" {
 			valueParts = append(valueParts, credit)
 		}
-		style := detailValueStyle
-		if window.LeftPercent <= 10 {
-			style = detailDangerStyle
-		} else if window.LeftPercent <= 25 {
-			style = detailWarningStyle
-		}
+		style := embeddedSidebarUsageWindowStyle(window.LeftPercent)
 		rows = append(rows, embeddedSidebarWrappedFieldRows(label+" limit", strings.Join(valueParts, " | "), style, width, 0)...)
 	}
 	return rows

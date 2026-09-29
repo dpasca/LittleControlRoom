@@ -337,7 +337,9 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 		"Next gpt-5 / medium",
 		"Context 6% of 200k",
 		"Tokens i10k c0% o2.0k",
-		"Limits 85% left 5h reset 5h credit $4.25",
+		"Limits",
+		"5h    85% left reset 5h",
+		"credit $4.25",
 		"Goal active 1,200/5,000 tok",
 		"ship conditional sidebar sections",
 		"Browser",
@@ -393,8 +395,8 @@ func TestEmbeddedSidebarUsageSummaryPrefersOrdinaryCodexAccountLimit(t *testing.
 		},
 	}
 
-	got := embeddedSidebarUsageWindowSummary(snapshot, now)
-	if got != "24% left weekly reset Tue Jul28" {
+	got := ansi.Strip(strings.Join(embeddedSidebarUsageWindowRows(snapshot, 32, now), "\n"))
+	if got != "Limits\n  week  24% left reset Tue Jul28" {
 		t.Fatalf("usage summary = %q, want ordinary Codex account limit", got)
 	}
 }
@@ -419,7 +421,7 @@ func TestEmbeddedSidebarShowsClaudeFiveHourAndWeeklyLimits(t *testing.T) {
 		},
 	}
 
-	if got, want := embeddedSidebarUsageWindowSummary(snapshot, now), "5h 83% left reset 2h · week 97% left reset Fri Aug7"; got != want {
+	if got, want := ansi.Strip(strings.Join(embeddedSidebarUsageWindowRows(snapshot, 32, now), "\n")), "Limits\n  5h    83% left reset 2h\n  week  97% left reset Fri Aug7"; got != want {
 		t.Fatalf("usage summary = %q, want %q", got, want)
 	}
 	detail := ansi.Strip(strings.Join(embeddedSidebarUsageWindowDetailRows(snapshot, 48), "\n"))
@@ -437,6 +439,30 @@ func TestEmbeddedSidebarShowsClaudeFiveHourAndWeeklyLimits(t *testing.T) {
 	sidebar := strings.Join(strings.Fields(ansi.Strip(strings.Join(rows, "\n"))), " ")
 	if !strings.Contains(sidebar, "week 97% left reset Fri Aug7") {
 		t.Fatalf("narrow Claude sidebar missing weekly reset: %s", sidebar)
+	}
+}
+
+func TestEmbeddedSidebarUsageWindowsStayOnSeparateLines(t *testing.T) {
+	now := time.Date(2026, 9, 29, 10, 0, 0, 0, time.Local)
+	for _, provider := range []codexapp.Provider{codexapp.ProviderClaudeCode, codexapp.ProviderCodex} {
+		t.Run(string(provider), func(t *testing.T) {
+			snapshot := codexapp.Snapshot{
+				Provider: provider,
+				UsageWindows: []codexapp.UsageWindowSnapshot{
+					{Window: "5h", LeftPercent: 0, ResetsAt: now.Add(113 * time.Minute)},
+					{Window: "weekly", LeftPercent: 100, ResetsAt: now.Add(25 * time.Hour)},
+				},
+			}
+			for _, width := range []int{32, 38, 44} {
+				rows := embeddedSidebarUsageWindowRows(snapshot, width, now)
+				got := ansi.Strip(strings.Join(rows, "\n"))
+				want := "Limits\n  5h     0% left reset 1h53m\n  week 100% left reset Wed Sep30"
+				if got != want {
+					t.Fatalf("width %d: usage rows = %q, want %q", width, got, want)
+				}
+				assertSidebarLinesWithinWidth(t, got, width)
+			}
+		})
 	}
 }
 
