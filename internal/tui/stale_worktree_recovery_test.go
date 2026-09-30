@@ -135,13 +135,14 @@ func TestCleanupReportSummaryNavigationAndFullDetails(t *testing.T) {
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
-	if m.staleWorktreeCleanupVisible() {
-		t.Fatal("report not hidden")
+	if m.staleWorktreeCleanup != nil {
+		t.Fatal("report not dismissed")
 	}
-	updated, _ = m.openStaleWorktreeCleanup()
+	updated, cmd := m.openStaleWorktreeCleanup()
 	m = updated.(Model)
-	if !m.staleWorktreeCleanup.Finished || len(m.staleWorktreeCleanup.Results) != 20 {
-		t.Fatal("report lost on reopen")
+	defer m.staleWorktreeCleanup.Cancel()
+	if cmd == nil || !m.staleWorktreeCleanup.Loading || m.staleWorktreeCleanup.Finished || len(m.staleWorktreeCleanup.Results) != 0 {
+		t.Fatal("reopening cleanup did not start a fresh audit")
 	}
 }
 

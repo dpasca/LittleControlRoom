@@ -410,8 +410,11 @@ func (m Model) updateStaleWorktreeCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			}
 			return m, nil
 		case "esc", "enter":
-			dialog.Backgrounded = true
-			m.status = "Cleanup report hidden; /clean reopens results and recovery actions"
+			if dialog.Cancel != nil {
+				dialog.Cancel()
+			}
+			m.staleWorktreeCleanup = nil
+			m.status = "Cleanup report closed"
 		case "up", "k":
 			dialog.Selected = max(0, dialog.Selected-1)
 			dialog.DetailOffset = 0
@@ -918,7 +921,7 @@ func renderStaleWorktreeCleanupResults(dialog *staleWorktreeCleanupDialogState, 
 		lines = append(lines, renderDialogAction("e", "Ask Engineer", commitActionKeyStyle, commitActionTextStyle))
 	}
 	lines = append(lines, renderDialogAction("r", "retry remaining / audit again", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("d", "details", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Enter/Esc", "close report", navigateActionKeyStyle, navigateActionTextStyle))
+		renderDialogAction("d", "details", navigateActionKeyStyle, navigateActionTextStyle)+"   "+renderDialogAction("Enter/Esc", "close report", cancelActionKeyStyle, cancelActionTextStyle))
 	return strings.Join(lines, "\n")
 }
 

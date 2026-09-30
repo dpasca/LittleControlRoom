@@ -584,3 +584,48 @@ func TestWorktreeCleanupCompletesInBackground(t *testing.T) {
 		t.Fatal("completed report did not reopen")
 	}
 }
+
+func TestStaleWorktreeCleanupCloseReportStartsFreshAudit(t *testing.T) {
+	candidate := staleWorktreeCleanupTestCandidate("/tmp/completed", "completed", time.Now())
+	for _, outcome := range []struct {
+		name   string
+		result staleWorktreeCleanupResult
+	}{
+		{name: "removed", result: staleWorktreeCleanupResult{Finalize: service.FinalizeMergedWorktreeResult{WorktreeRemoved: true}}},
+		{name: "skipped", result: staleWorktreeCleanupResult{SkippedReason: "cleanup canceled before removal"}},
+		{name: "failed", result: staleWorktreeCleanupResult{Err: fmt.Errorf("removal failed")}},
+		{name: "recovery", result: staleWorktreeCleanupResult{Finalize: service.FinalizeMergedWorktreeResult{Recovery: &service.WorktreeRecovery{Phase: "removed"}}}},
+	} {
+		for _, key := range []tea.KeyType{tea.KeyEsc, tea.KeyEnter} {
+			t.Run(outcome.name+"/"+tea.KeyMsg{Type: key}.String(), func(t *testing.T) {
+				result := outcome.result
+				result.Candidate = candidate
+				dialog := &staleWorktreeCleanupDialogState{Finished: true, Results: []staleWorktreeCleanupResult{result}}
+				m := Model{staleWorktreeCleanup: dialog}
+				m.resetStaleWorktreeCleanupContext()
+
+				updated, cmd := m.Update(tea.KeyMsg{Type: key})
+				m = updated.(Model)
+				if cmd != nil || m.staleWorktreeCleanup != nil || m.staleWorktreeCleanupVisible() {
+					t.Fatalf("closing report retained cleanup state: %#v", m.staleWorktreeCleanup)
+				}
+				if dialog.Context.Err() != context.Canceled {
+					t.Fatal("closing report did not release its context")
+				}
+				if segment := m.renderFooterWorktreeCleanupSegment(); segment != "" {
+					t.Fatalf("closed report still advertised in footer: %q", segment)
+				}
+				if m.status != "Cleanup report closed" {
+					t.Fatalf("closing report left stale status: %q", m.status)
+				}
+
+				updated, cmd = m.dispatchCommand(commands.Invocation{Kind: commands.KindClean})
+				m = updated.(Model)
+				defer m.staleWorktreeCleanup.Cancel()
+				if cmd == nil || m.staleWorktreeCleanup == dialog || !m.staleWorktreeCleanup.Loading || m.staleWorktreeCleanup.Finished || len(m.staleWorktreeCleanup.Results) != 0 {
+					t.Fatalf("/clean did not start a fresh audit: %#v", m.staleWorktreeCleanup)
+				}
+			})
+		}
+	}
+}
