@@ -649,6 +649,11 @@ type Snapshot struct {
 	BackgroundTasks           []BackgroundTaskSnapshot          // Provider-declared background work still awaiting a terminal notification.
 	Subagents                 []claudeartifact.SubagentProgress // Cached child activity; does not establish turn ownership.
 	SubagentProgressError     string
+	BackgroundInputSupported  bool // The owned provider stream accepts input while workers run.
+	ParentStatus              string
+	ParentTurnActive          bool
+	ParentActivityAt          time.Time
+	MessageDeliveries         []MessageDeliverySnapshot
 	ActivityPreview           []TranscriptEntry // Bounded text-only tail for lightweight state snapshots.
 	Entries                   []TranscriptEntry
 	Transcript                string

@@ -15,6 +15,38 @@ type fakeResumeAliasSession struct {
 	resumeIDs map[string]struct{}
 }
 
+func TestEngineerMessageCanReachManagedClaudeWithRunningWorker(t *testing.T) {
+	path := t.TempDir()
+	live := &fakeCodexSession{projectPath: path, snapshot: codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode, ThreadID: "claude-parent", Started: true, Busy: true,
+		Phase: codexapp.SessionPhaseRunning, BackgroundInputSupported: true,
+		BackgroundTasks: []codexapp.BackgroundTaskSnapshot{{ID: "worker"}},
+	}}
+	manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) { return live, nil })
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: path, Provider: codexapp.ProviderClaudeCode}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{codexManager: manager, allProjects: []model.ProjectSummary{{Path: path, PresentOnDisk: true}}}
+	message := control.EngineerMessage{ProjectPath: path, Provider: control.ProviderClaudeCode, SessionMode: control.SessionModeResumeOrNew, TargetSessionID: "claude-parent"}
+	if got := m.engineerMessageDisposition(message); !got.deliver || got.wait || got.failure != nil {
+		t.Fatalf("responsive parent rejected: %#v", got)
+	}
+	message.AgentTaskRevision = 1
+	if got := m.engineerMessageDisposition(message); !got.wait {
+		t.Fatal("task review must still wait for idle")
+	}
+	message.AgentTaskRevision = 0
+	live.snapshot.BackgroundInputSupported = false
+	if got := m.engineerMessageDisposition(message); !got.wait {
+		t.Fatal("legacy Claude cannot accept busy mailbox input")
+	}
+	live.snapshot.BackgroundInputSupported = true
+	message.TargetSessionID = "replaced-session"
+	if got := m.engineerMessageDisposition(message); !errors.Is(got.failure, codexapp.ErrSessionChanged) {
+		t.Fatal("delivery crossed to a replacement session")
+	}
+}
+
 func (s *fakeResumeAliasSession) MatchesResumeID(resumeID string) bool {
 	if s == nil || s.fakeCodexSession == nil {
 		return false

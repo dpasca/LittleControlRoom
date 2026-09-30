@@ -77,6 +77,7 @@ type mobileLiveStreamRevision struct {
 	goalUpdatedAt      time.Time
 	mobileInputEnabled bool
 	subagentProgress   string
+	messageDelivery    string
 }
 
 func (s *Server) WithLiveSessions(source LiveSessionSource) *Server {
@@ -352,6 +353,12 @@ func buildMobileLiveStreamRevision(snapshot codexapp.Snapshot, mobileInputEnable
 	if len(snapshot.Subagents) > 0 || snapshot.SubagentProgressError != "" {
 		data, _ := json.Marshal(snapshot.Subagents)
 		revision.subagentProgress = string(data) + snapshot.SubagentActivitySummary(time.Now())
+	}
+	if len(snapshot.MessageDeliveries) > 0 || snapshot.ParentStatus != "" {
+		data, _ := json.Marshal(snapshot.MessageDeliveries)
+		summary, _ := snapshot.MessageDeliverySummary(time.Now())
+		parent, _ := snapshot.ParentActivitySummary(time.Now())
+		revision.messageDelivery = string(data) + summary + parent
 	}
 	return revision
 }

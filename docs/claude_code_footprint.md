@@ -141,6 +141,7 @@ Observed completion statuses worth treating as terminal:
 - `cancelled` / `canceled`
 - `interrupted`
 - `stopped`
+- `killed` (stream `task_updated.patch.status`)
 
 `stopped` is how a later Claude process reports a background command for which
 the previous process left no completion record. It is terminal for turn
@@ -160,26 +161,47 @@ Because of that, latest-turn detection should not rely only on the final top-lev
 
 The same distinction applies to an embedded stream-JSON process. A `result`
 record closes one model-response boundary; it does not prove that
-provider-declared background work finished. However, keeping stream input open
-is not sufficient to retain ownership: Claude Code can emit its final result,
-exit the headless `claude -p` process, and clean up a child background task
-before it records a terminal notification.
+provider-declared background work finished. Older/uninitialized headless runs
+could exit after that result and clean up a background task before recording
+its terminal notification. LCR must own the protocol lifecycle, not just keep
+an arbitrary pipe open.
 
 Conversely, the headless process can remain alive after the durable session
 JSONL records an explicit terminal assistant stop, without emitting the matching
-terminal boundary on stdout. LCR periodically reloads the transcript and may
+terminal boundary on stdout. In foreground compatibility mode, LCR periodically reloads the transcript and may
 release its final submitted turn only when that verified terminal record is not
 older than the locally captured submission. A terminal record from an earlier
 turn must not close a newer prompt that has not reached the JSONL yet.
 
-For that reason, every LCR-owned embedded Claude process is launched with
-`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`. Bash commands and tests then remain
-foreground work owned by the Claude turn, so LCR does not mistake an
-intermediate model response for durable process ownership. Structured async
-tracking remains a defensive detector for restored transcripts, externally
-owned sessions, and any task evidence a future Claude version still emits. If
-the owning Claude process exits with such a task unresolved, LCR shows the task
-as lost instead of treating the session as ready.
+LCR uses initialized managed streams with Claude Code **2.1.284 or later**,
+the minimum verified version for this integration. It enables
+`CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`, clears the background-task disable
+setting, and sets `CLAUDE_CODE_FORK_SUBAGENT=1` so the main conversation's
+subagents run in the background. The parent can accept follow-ups while its
+workers remain owned by the same process. Native permission callbacks and
+LCR's destructive-command hook remain installed.
+
+Ownership is released only on a fresh `session_state_changed` `idle` event
+when every submitted message has a terminal receipt and no tracked task or
+permission request remains. `task_started`, `task_progress`,
+`task_updated.patch.status`, and `task_notification` supply task evidence;
+`background_tasks_changed` supplies positive ownership evidence but its
+omissions do not finish foreground tasks. Explicit `ambient` housekeeping is
+excluded. Late launch evidence cannot revive a terminal task; an explicit
+new `task_started` can resume it. A task completion alone never closes stdin:
+its notification may still wake another parent turn. Parent results, child
+messages, and old disk snapshots cannot release that stream.
+
+Older or unidentified executables retain
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` and show an upgrade notice. Their
+foreground turn recovery remains unchanged. If any owning process exits with
+unresolved tasks, LCR reports lost ownership rather than claiming success.
+
+Verified on 2026-09-30 with Claude Code 2.1.284: an initialized process accepted
+and answered another input while a 15-second background shell task ran, then
+processed its completion notification before returning to idle. The parent
+reported idle between user turns while that shell task was still running;
+both parent state and task ownership therefore matter.
 
 ## 6. Embedded stream input and permission callbacks
 
@@ -191,6 +213,27 @@ the existing stream; it must not synthesize an interrupt first. Only an explicit
 tool results using denial-shaped provider text after an interrupt, so LCR records
 the explicit interruption source and does not present those canceled tools as
 individually denied by the user.
+
+Each submitted message now has a UUID. `command_lifecycle.command_uuid`
+correlates `queued`, `started`, `completed`, `cancelled`, `discarded`, and
+`refused` receipts to that exact input; `--replay-user-messages` supplies an
+acknowledgment fallback. Writing stdin only means **sent**, never processed.
+Automatic task-notification results do not consume user messages. Pending
+receipts become unconfirmed on unexpected process exit, or interrupted on an
+explicit stop; LCR does not automatically resend them. Receipt history is a
+bounded live-session projection, not a replacement for durable provider logs
+or the engineer-message mailbox.
+
+The TUI and mobile session surface show message delivery separately from
+worker activity. Input waiting two minutes gets a warning. A running parent
+with no parent event for five minutes gets a separate inactivity notice;
+worker traffic cannot reset that clock. Neither condition claims a deadlock
+or automatically stops work. Available parents waiting on background work
+are not warned for silence.
+
+Protocol references: [streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode),
+[subagent foreground/background rules](https://code.claude.com/docs/en/sub-agents#run-subagents-in-foreground-or-background),
+and the [official SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md).
 
 LCR creates a private, per-session Unix socket for permission modes that may
 need interaction and registers `mcp__lcr_runtime__request_tool_approval` through

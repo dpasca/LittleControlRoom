@@ -94,6 +94,12 @@ type claudeCodeSession struct {
 	approvalServer           *claudeapproval.Server
 
 	mu                   sync.Mutex
+	submitMu             sync.Mutex // Serialize submissions and initialization, without blocking snapshots.
+	managedStream        bool
+	streamState          string
+	streamInitResult     chan error
+	messageDeliveries    []MessageDeliverySnapshot
+	lastParentActivityAt time.Time
 	claudeHome           string
 	sessionFile          string
 	sessionID            string
@@ -165,6 +171,7 @@ type claudeCodeSession struct {
 	mcpUsageItemIDs     map[string]struct{}
 	backgroundTasks     map[string]BackgroundTaskSnapshot
 	backgroundTaskOrder []string
+	finishedTaskIDs     map[string]time.Time
 	transcriptRevision  uint64
 	transcriptCache     transcriptExportCache
 
@@ -251,6 +258,11 @@ type claudeStreamEnvelope struct {
 	Subtype           string                      `json:"subtype"`
 	SessionID         string                      `json:"session_id"`
 	UUID              string                      `json:"uuid"`
+	CommandUUID       string                      `json:"command_uuid"`
+	State             string                      `json:"state"`
+	ParentToolUseID   string                      `json:"parent_tool_use_id"`
+	IsReplay          bool                        `json:"isReplay"`
+	Response          json.RawMessage             `json:"response"`
 	Model             string                      `json:"model"`
 	PermissionMode    string                      `json:"permissionMode"`
 	Effort            string                      `json:"effort"`
@@ -359,6 +371,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 
 	s := &claudeCodeSession{
+		managedStream:            claudecli.SupportsManagedStream(context.Background()),
 		turnAdmission:            turnAdmissionForLaunch(req),
 		projectPath:              req.ProjectPath,
 		preset:                   preset,
@@ -539,6 +552,11 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		BackgroundTasks:          s.backgroundTaskSnapshotsLocked(),
 		Subagents:                append([]claudeartifact.SubagentProgress(nil), s.subagentProgress...),
 		SubagentProgressError:    s.subagentProgressError,
+		BackgroundInputSupported: s.managedStream && s.stdin != nil && !s.interruptPending,
+		ParentStatus:             s.claudeParentStatusLocked(),
+		ParentTurnActive:         s.cmd != nil && s.managedStream && s.streamState == "running",
+		ParentActivityAt:         s.lastParentActivityAt,
+		MessageDeliveries:        append([]MessageDeliverySnapshot(nil), s.messageDeliveries...),
 	}
 }
 
@@ -562,7 +580,7 @@ func (s *claudeCodeSession) phaseLocked() SessionPhase {
 	case s.compacting:
 		phase = SessionPhaseReconciling
 	case s.busy:
-		if s.pendingSubmissions > 0 || s.runningBackgroundTaskCountLocked() > 0 {
+		if s.pendingSubmissions > 0 || s.runningBackgroundTaskCountLocked() > 0 || (s.managedStream && s.streamState != "idle") {
 			phase = SessionPhaseRunning
 		} else {
 			phase = SessionPhaseFinishing
@@ -629,6 +647,8 @@ func (s *claudeCodeSession) continueInterruptedTurn(capturedStartedAt time.Time,
 }
 
 func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionMode, compactCommand *claudeCompactCommand) error {
+	s.submitMu.Lock()
+	defer s.submitMu.Unlock()
 
 	input = normalizeSubmission(input)
 	if input.Empty() {
@@ -645,7 +665,8 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		return fmt.Errorf("Claude Code prompt required")
 	}
 
-	payload, err := buildClaudeStreamInput(input)
+	messageID := newClaudeMessageID()
+	payload, err := buildClaudeStreamInputWithID(input, messageID)
 	if err != nil {
 		return fmt.Errorf("prepare Claude Code prompt: %w", err)
 	}
@@ -701,7 +722,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
 		s.applyPendingOutputStyleLocked()
-		cmd, stdin, stdout, stderr, err = startClaudeTurnWithMCP(ctx, s.projectPath, sessionID, model, reasoning, string(permissionMode), s.playwrightPolicy, s.mcpOptions, s.safetySettings)
+		cmd, stdin, stdout, stderr, err = startClaudeTurnWithMCP(ctx, s.projectPath, sessionID, model, reasoning, string(permissionMode), s.playwrightPolicy, s.mcpOptions, s.safetySettings, s.managedStream)
 		if err != nil {
 			cancel()
 			s.mu.Unlock()
@@ -712,6 +733,10 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		s.stdin = stdin
 		s.cancel = cancel
 		s.runningPID = cmd.Process.Pid
+		s.streamState = "starting"
+		if s.managedStream {
+			s.streamInitResult = make(chan error, 1)
+		}
 		// Launching consumes staged choices; anything staged from now on
 		// waits for the next turn.
 		s.modelChoice, s.modelChoiceSet, s.pendingModel = model, true, ""
@@ -724,6 +749,9 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		if modeNotice != "" && !s.modeNoticeShown {
 			s.appendSystemNoticeLocked(modeNotice)
 			s.modeNoticeShown = true
+			if !s.managedStream {
+				s.appendSystemNoticeLocked("Foreground delegation: upgrade Claude Code to " + claudecli.ManagedStreamMinimumVersion + " or later and reopen this session to keep the parent responsive while workers run.")
+			}
 		}
 		startStream = true
 	} else {
@@ -745,6 +773,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	s.busy = true
 	s.busyExternal = false
 	s.pendingSubmissions++
+	s.addClaudeDeliveryLocked(messageID, displayText, submittedAt)
 	if mode == claudeSubmissionCompact {
 		s.status = claudeCompactingStatus
 	} else {
@@ -758,23 +787,39 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		s.latestTurnStateKnown = true
 		s.latestTurnCompleted = false
 		s.latestTurnVerified = true
-		s.appendEntryLocked(TranscriptEntry{Kind: TranscriptUser, Text: displayText})
+		s.appendEntryLocked(TranscriptEntry{ItemID: messageID, Kind: TranscriptUser, Text: displayText})
 	}
 	s.touchLocked()
+	initResult := s.streamInitResult
 	s.mu.Unlock()
 
 	if startStream {
 		go s.consumeClaudeTurn(ctx, cmd, stdout, stderr)
+		if initResult != nil {
+			if err := initializeClaudeStream(ctx, stdin, initResult); err != nil {
+				s.mu.Lock()
+				s.updateClaudeDeliveryLocked(messageID, "failed", time.Now())
+				s.appendSystemErrorLocked(err.Error())
+				s.mu.Unlock()
+				_ = terminateAppServerCommand(cmd)
+				_ = stdin.Close()
+				s.notifyAsync()
+				return err
+			}
+		}
 	}
 
 	if _, err := io.WriteString(stdin, payload+"\n"); err != nil {
+		s.mu.Lock()
+		s.updateClaudeDeliveryLocked(messageID, "failed", time.Now())
+		s.appendSystemErrorLocked(fmt.Sprintf("Claude Code could not receive your message: %v", err))
+		s.mu.Unlock()
 		if startStream {
 			_ = terminateAppServerCommand(cmd)
 			_ = stdin.Close()
-			s.finishClaudeTurn(fmt.Errorf("write Claude input: %w", err), nil, nil)
 		} else {
 			s.mu.Lock()
-			if s.pendingSubmissions > 0 {
+			if !s.managedStream && s.pendingSubmissions > 0 {
 				s.pendingSubmissions--
 			}
 			if s.pendingSubmissions > 0 {
@@ -785,8 +830,12 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			s.updateStatusLocked()
 			s.mu.Unlock()
 		}
+		s.notifyAsync()
 		return err
 	}
+	s.mu.Lock()
+	s.updateClaudeDeliveryLocked(messageID, "sent", time.Now())
+	s.mu.Unlock()
 	if mode == claudeSubmissionNormal {
 		s.mu.Lock()
 		s.clearClaudeBrowserHandoffLocked()
@@ -825,9 +874,9 @@ func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode
 		return fmt.Errorf("this Claude Code session is already busy in another process; Little Control Room is read-only until it finishes")
 	case mode == claudeSubmissionCompact && s.busy:
 		return fmt.Errorf("Claude Code cannot compact while a turn is active")
-	case s.busy && s.pendingSubmissions == 0 && s.runningBackgroundTaskCountLocked() > 0:
+	case s.busy && s.pendingSubmissions == 0 && s.runningBackgroundTaskCountLocked() > 0 && !s.managedStream:
 		return fmt.Errorf("Claude Code background work is still running")
-	case s.busy && s.pendingSubmissions == 0:
+	case s.busy && s.pendingSubmissions == 0 && (!s.managedStream || s.stdin == nil):
 		return fmt.Errorf("Claude Code is finishing the current turn")
 	default:
 		return nil
@@ -1070,7 +1119,7 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 	if s.pendingReasoning != "" {
 		parts = append(parts, "effort "+s.pendingReasoning)
 	}
-	s.lastSystemNotice = "Claude Code will use " + strings.Join(parts, ", ") + " on the next prompt."
+	s.lastSystemNotice = "Claude Code will use " + strings.Join(parts, ", ") + " " + s.claudeStagedChangeTimingLocked() + "."
 	s.updateStatusLocked()
 	s.notifyAsync()
 	return nil
@@ -1650,6 +1699,15 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	defer s.mu.Unlock()
 
 	compactCommand := s.compactCommand
+	s.finishClaudeDeliveriesLocked(s.interruptPending)
+	if s.streamInitResult != nil {
+		select {
+		case s.streamInitResult <- fmt.Errorf("Claude Code exited before stream initialization"):
+		default:
+		}
+		s.streamInitResult = nil
+	}
+	liveBackgroundTasks, liveBackgroundTaskOrder := s.backgroundTasks, s.backgroundTaskOrder
 	s.busy = false
 	s.pendingSubmissions = 0
 	s.latestSubmittedAt = time.Time{}
@@ -1672,6 +1730,11 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	// before replacing entries with the persisted conversation.
 	reportedError := latestClaudeTranscriptError(s.entries)
 	transcriptErr := s.loadTranscriptLocked()
+	if s.managedStream {
+		// Disk can lag the stream or omit task lifecycle frames altogether.
+		// Preserve unresolved owned work when its process exits unexpectedly.
+		s.backgroundTasks, s.backgroundTaskOrder = liveBackgroundTasks, liveBackgroundTaskOrder
+	}
 	if s.canUseStreamedTranscriptLocked(transcriptErr) {
 		transcriptErr = nil
 	}
@@ -1880,14 +1943,32 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	refreshPlanUsage := false
 	s.mu.Lock()
 	backgroundTaskStateChanged := s.observeClaudeBackgroundTaskEventsLocked(line, time.Now())
+	if env.ParentToolUseID != "" {
+		// Nested messages are worker activity, never parent replies or turn
+		// boundaries. Their transcripts are exposed through the child panel.
+		if backgroundTaskStateChanged {
+			s.updateStatusLocked()
+		}
+		s.mu.Unlock()
+		s.notifyAsync()
+		return
+	}
 
 	if effort := strings.TrimSpace(env.Effort); effort != "" {
 		s.reasoningEffort = effort
 	}
 
 	switch env.Type {
+	case "control_response":
+		s.handleClaudeControlResponseLocked(env.Response)
+	case "command_lifecycle":
+		s.updateClaudeDeliveryLocked(env.CommandUUID, env.State, time.Now())
 	case "system":
 		switch env.Subtype {
+		case "session_state_changed":
+			stdinToClose = s.handleClaudeSessionStateLocked(env.State, time.Now())
+		case "thinking_tokens":
+			s.lastParentActivityAt = time.Now()
 		case "init":
 			if sessionID := strings.TrimSpace(env.SessionID); sessionID != "" {
 				s.sessionID = sessionID
@@ -1934,11 +2015,17 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.handleClaudeCompactBoundaryLocked(claudeCompactMetadataFromEnvelope(env))
 		}
 	case "assistant":
+		s.lastParentActivityAt = time.Now()
 		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID, env.IsAPIErrorMessage)
 		if claudeartifact.AssistantTurnCompleted(firstNonEmptyTrimmed(assistantStopReason, env.StopReason)) {
 			stdinToClose = s.finishClaudeSubmissionFromAssistantLocked(time.Now())
 		}
 	case "user":
+		if env.IsReplay {
+			s.updateClaudeDeliveryLocked(env.UUID, "received", time.Now())
+		} else {
+			s.lastParentActivityAt = time.Now()
+		}
 		s.handleClaudeUserLocked(env.Message)
 	case "rate_limit_event":
 		s.applyClaudeRateLimitInfoLocked(env.RateLimitInfo)
@@ -1959,7 +2046,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 				s.appendSystemErrorLocked(message)
 			}
 		}
-		if s.pendingSubmissions > 0 {
+		if !s.managedStream && s.pendingSubmissions > 0 {
 			s.pendingSubmissions--
 		}
 		if s.pendingSubmissions == 0 {
@@ -1969,7 +2056,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.lastError = ""
 			s.lastSystemNotice = claudeInterruptNotice
 		}
-		if s.pendingSubmissions == 0 && s.stdin != nil && s.runningBackgroundTaskCountLocked() == 0 {
+		if !s.managedStream && s.pendingSubmissions == 0 && s.stdin != nil && s.runningBackgroundTaskCountLocked() == 0 {
 			if s.browserHandoffPending {
 				// Keep Claude and its stdio MCP children alive while the user
 				// completes the requested browser step. The next message reuses
@@ -1985,7 +2072,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 		s.updateStatusLocked()
 	default:
 	}
-	if backgroundTaskStateChanged {
+	if backgroundTaskStateChanged || s.managedStream {
 		s.updateStatusLocked()
 	}
 
@@ -2101,7 +2188,7 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromAssistantLocked(completedA
 	// boundary so Claude receives EOF and can exit. A queued submission, browser
 	// handoff, compaction, or provider-declared background task still owns the
 	// stream and must settle through its normal lifecycle.
-	if s.compactCommand != nil ||
+	if s.managedStream || s.compactCommand != nil ||
 		s.browserHandoffPending ||
 		s.pendingSubmissions != 1 ||
 		s.runningBackgroundTaskCountLocked() > 0 ||
@@ -2135,7 +2222,7 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromTranscriptLocked() io.Writ
 	// the newest local submission stable across reloads prevents an older
 	// completed turn from closing a queued prompt that Claude has accepted but not
 	// persisted yet.
-	if !s.busy ||
+	if s.managedStream || !s.busy ||
 		s.pendingSubmissions <= 0 ||
 		s.latestSubmittedAt.IsZero() {
 		return nil
@@ -2505,7 +2592,27 @@ func (s *claudeCodeSession) observeClaudeBackgroundTaskEventsLocked(line string,
 	if s.backgroundTasks == nil {
 		s.backgroundTasks = make(map[string]BackgroundTaskSnapshot)
 	}
-	return applyClaudeBackgroundTaskEvents(s.backgroundTasks, &s.backgroundTaskOrder, s.toolCalls, line, fallback)
+	events := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+	if s.finishedTaskIDs == nil {
+		s.finishedTaskIDs = make(map[string]time.Time)
+	}
+	filtered := events[:0]
+	for _, event := range events {
+		if event.NewRun {
+			delete(s.finishedTaskIDs, event.TaskID)
+		} else if _, finished := s.finishedTaskIDs[event.TaskID]; finished {
+			continue
+		}
+		if claudeartifact.IsTerminalTaskStatus(event.Status) {
+			at := event.At
+			if at.IsZero() {
+				at = fallback
+			}
+			s.finishedTaskIDs[event.TaskID] = at
+		}
+		filtered = append(filtered, event)
+	}
+	return applyClaudeTaskEvents(s.backgroundTasks, &s.backgroundTaskOrder, s.toolCalls, filtered, fallback)
 }
 
 func applyClaudeBackgroundTaskEvents(
@@ -2516,6 +2623,10 @@ func applyClaudeBackgroundTaskEvents(
 	fallback time.Time,
 ) bool {
 	events := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+	return applyClaudeTaskEvents(tasks, order, toolCalls, events, fallback)
+}
+
+func applyClaudeTaskEvents(tasks map[string]BackgroundTaskSnapshot, order *[]string, toolCalls map[string]claudeToolCall, events []claudeartifact.AsyncTaskEvent, fallback time.Time) bool {
 	if len(events) == 0 {
 		return false
 	}
@@ -2540,6 +2651,7 @@ func applyClaudeBackgroundTaskEvents(
 			task.ToolUseID = firstNonEmptyTrimmed(event.ToolUseID, task.ToolUseID)
 			task.Source = firstNonEmptyTrimmed(event.Source, task.Source)
 			task.Status = firstNonEmptyTrimmed(event.Status, "running")
+			task.Summary = firstNonEmptyTrimmed(event.Summary, task.Summary)
 			task.UpdatedAt = at
 			if call, ok := toolCalls[task.ToolUseID]; ok {
 				task.Tool = firstNonEmptyTrimmed(call.Name, task.Tool)
@@ -2563,6 +2675,8 @@ func applyClaudeBackgroundTaskEvents(
 				*order = append(*order, taskID)
 			}
 			task.Status = firstNonEmptyTrimmed(event.Status, task.Status, "running")
+			task.ToolUseID = firstNonEmptyTrimmed(event.ToolUseID, task.ToolUseID)
+			task.Source = firstNonEmptyTrimmed(event.Source, task.Source)
 			task.OutputPath = firstNonEmptyTrimmed(event.OutputPath, task.OutputPath)
 			task.Summary = firstNonEmptyTrimmed(event.Summary, task.Summary)
 			task.UpdatedAt = at
@@ -2661,7 +2775,9 @@ func (s *claudeCodeSession) updateStatusLocked() {
 	case s.browserHandoffPending:
 		s.status = "Browser needs attention"
 	case s.busy:
-		if s.pendingSubmissions > 0 {
+		if s.managedStream && s.streamState == "idle" && s.runningBackgroundTaskCountLocked() > 0 {
+			s.status = "Claude Code parent available · " + formatBackgroundTaskCount(s.runningBackgroundTaskCountLocked()) + " running"
+		} else if s.pendingSubmissions > 0 || (s.managedStream && s.streamState == "running") {
 			s.status = claudeThinkingStatus
 		} else if count := s.runningBackgroundTaskCountLocked(); count > 0 {
 			s.status = fmt.Sprintf("Claude Code has %s running", formatBackgroundTaskCount(count))
@@ -2782,6 +2898,13 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 		)
 		entries = append(entries, lineEntries...)
 		parsedState.turnObservation.AsyncEvents = claudeartifact.ParseAsyncTaskEvents([]byte(line))
+		for _, event := range parsedState.turnObservation.AsyncEvents {
+			// A later disk launch may belong to a resumed agent in an external
+			// process. Only stale launch evidence loses to our terminal receipt.
+			if completedAt, ok := s.finishedTaskIDs[event.TaskID]; ok && event.Kind == claudeartifact.AsyncTaskLaunched && event.At.After(completedAt) {
+				delete(s.finishedTaskIDs, event.TaskID)
+			}
+		}
 		turnTracker.Observe(parsedState.turnObservation)
 		applyClaudeBackgroundTaskEvents(backgroundTasks, &backgroundTaskOrder, toolCalls, line, stat.ModTime())
 		if entryType != "" {
@@ -2811,8 +2934,14 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	}
 
 	s.entries = entries
-	s.backgroundTasks = backgroundTasks
-	s.backgroundTaskOrder = backgroundTaskOrder
+	if !s.managedStream || s.cmd == nil {
+		for taskID := range s.finishedTaskIDs {
+			delete(backgroundTasks, taskID)
+			backgroundTaskOrder = removeClaudeBackgroundTaskID(backgroundTaskOrder, taskID)
+		}
+		s.backgroundTasks = backgroundTasks
+		s.backgroundTaskOrder = backgroundTaskOrder
+	}
 	if latestReasoningEffort != "" {
 		s.reasoningEffort = latestReasoningEffort
 	}
@@ -2953,17 +3082,20 @@ func claudePIDSessionTurnStartedAt(session claudeActivePIDSession) time.Time {
 	return time.Time{}
 }
 
-func startClaudeTurnWithMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, mcp claudeMCPOptions, safetySettings string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+func startClaudeTurnWithMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, mcp claudeMCPOptions, safetySettings string, managedStream bool) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
 	if strings.TrimSpace(safetySettings) == "" {
 		return nil, nil, nil, nil, fmt.Errorf("Claude Code safety-hook settings are required")
 	}
 	args := claudeTurnArgsWithMCP(resumeID, model, reasoning, permissionMode, mcp, safetySettings)
+	if managedStream {
+		args = append(args, "--replay-user-messages")
+	}
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectPath
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderClaudeCode, policy)
-	applyEmbeddedClaudeProcessEnvironment(cmd)
+	applyEmbeddedClaudeProcessEnvironment(cmd, managedStream)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -2997,7 +3129,7 @@ func startClaudeTurnWithMCP(ctx context.Context, projectPath, resumeID, model, r
 	return cmd, stdin, stdout, stderr, nil
 }
 
-func applyEmbeddedClaudeProcessEnvironment(cmd *exec.Cmd) {
+func applyEmbeddedClaudeProcessEnvironment(cmd *exec.Cmd, managedStream bool) {
 	if cmd == nil {
 		return
 	}
@@ -3005,7 +3137,13 @@ func applyEmbeddedClaudeProcessEnvironment(cmd *exec.Cmd) {
 	if base == nil {
 		base = os.Environ()
 	}
-	cmd.Env = withEnvOverride(base, claudeDisableBackgroundTasksEnv, "1")
+	if managedStream {
+		base = withEnvOverride(base, claudeDisableBackgroundTasksEnv, "0")
+		base = withEnvOverride(base, "CLAUDE_CODE_FORK_SUBAGENT", "1")
+		cmd.Env = withEnvOverride(base, "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "1")
+	} else {
+		cmd.Env = withEnvOverride(base, claudeDisableBackgroundTasksEnv, "1")
+	}
 }
 
 func claudeTurnArgs(resumeID, model, reasoning, permissionMode string) []string {
@@ -3029,6 +3167,10 @@ func claudeTurnArgs(resumeID, model, reasoning, permissionMode string) []string 
 }
 
 func buildClaudeStreamInput(input Submission) (string, error) {
+	return buildClaudeStreamInputWithID(input, "")
+}
+
+func buildClaudeStreamInputWithID(input Submission, messageID string) (string, error) {
 	input = normalizeSubmission(input)
 	content := make([]map[string]any, 0, 1+len(input.Attachments))
 	if input.Text != "" {
@@ -3070,6 +3212,9 @@ func buildClaudeStreamInput(input Submission) (string, error) {
 			"role":    "user",
 			"content": content,
 		},
+	}
+	if messageID != "" {
+		payload["uuid"] = messageID
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

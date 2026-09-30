@@ -151,6 +151,9 @@ func BuildRecordedEngineerSession(evidence model.SessionEvidence, classification
 }
 
 func BuildLiveEngineerSessionDetail(snapshot codexapp.Snapshot, now time.Time) EngineerSessionDetailSurface {
+	if now.IsZero() {
+		now = time.Now()
+	}
 	item := BuildLiveEngineerSession(snapshot, now)
 	entries, truncated := liveEngineerTranscriptEntries(snapshot.Entries)
 	instruments := []DetailFieldValue{
@@ -175,6 +178,20 @@ func BuildLiveEngineerSessionDetail(snapshot codexapp.Snapshot, now time.Time) E
 	}
 	if snapshot.Goal != nil && strings.TrimSpace(snapshot.Goal.Objective) != "" {
 		instruments = append(instruments, FieldValue("Goal", clipSessionText(snapshot.Goal.Objective, 320), ToneInfo))
+	}
+	if parent, quiet := snapshot.ParentActivitySummary(now); parent != "" {
+		tone := ToneValue
+		if quiet {
+			tone = ToneWarning
+		}
+		instruments = append(instruments, FieldValue("Parent", parent, tone))
+	}
+	if summary, warning := snapshot.MessageDeliverySummary(now); summary != "" {
+		tone := ToneValue
+		if warning {
+			tone = ToneWarning
+		}
+		instruments = append(instruments, FieldValue("Message delivery", summary, tone))
 	}
 
 	emptyMessage := ""
@@ -303,6 +320,12 @@ func recordedEngineerSessionSummary(evidence model.SessionEvidence) string {
 }
 
 func liveEngineerSessionSummary(snapshot codexapp.Snapshot, now time.Time) string {
+	if delivery, delayed := snapshot.MessageDeliverySummary(now); delayed {
+		return delivery
+	}
+	if parent, quiet := snapshot.ParentActivitySummary(now); quiet {
+		return parent
+	}
 	if failure := codexapp.StoppedSessionError(snapshot); failure != "" {
 		return failure
 	}

@@ -42,7 +42,7 @@ type claudeCLIModel struct {
 var newClaudeModelCatalogCommand = func(ctx context.Context) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "claude", "-p", "--verbose", "--input-format=stream-json", "--output-format=stream-json")
 	configureAppServerCommand(cmd)
-	applyEmbeddedClaudeProcessEnvironment(cmd)
+	applyEmbeddedClaudeProcessEnvironment(cmd, false)
 	cmd.Cancel = func() error { return terminateAppServerCommand(cmd) }
 	cmd.WaitDelay = 2 * time.Second
 	return cmd

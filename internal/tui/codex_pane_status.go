@@ -74,7 +74,7 @@ func codexSnapshotCanSubmitBusyInput(snapshot codexapp.Snapshot) bool {
 	if !snapshot.Busy {
 		return true
 	}
-	if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode && len(snapshot.BackgroundTasks) > 0 {
+	if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode && len(snapshot.BackgroundTasks) > 0 && !snapshot.BackgroundInputSupported {
 		return false
 	}
 	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
@@ -88,6 +88,9 @@ func codexSnapshotBrowserWaitingForUser(snapshot codexapp.Snapshot) bool {
 }
 
 func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
+	if delivery, delayed := snapshot.MessageDeliverySummary(now); delayed {
+		return delivery
+	}
 	switch {
 	case snapshot.PendingApproval != nil:
 		return "Waiting for approval"

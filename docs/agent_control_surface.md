@@ -196,8 +196,12 @@ thread id and the run ids belonging to that thread.
 
 After confirmation, the host writes the message to SQLite before attempting a
 provider call. It resumes an exact idle target and starts a turn. An eligible
-active Codex turn can be steered; active OpenCode, Claude Code, and LCAgent
-targets remain queued until idle. If the inspected target has been replaced or
+active Codex turn can be steered. A supported LCR-owned Claude Code stream can
+receive a follow-up while background workers run; the delivery receipt means
+submitted to its input stream, and per-message processing/completion appears
+in the session. Other busy Claude Code, OpenCode, and LCAgent targets remain
+queued until idle. Task-review messages still require an idle recipient.
+If the inspected target has been replaced or
 can no longer be resumed, LCR fails the message instead of delivering it to the
 replacement. The originating control operation remains `running` while a
 message is queued and becomes terminal only after delivery or terminal failure.

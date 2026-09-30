@@ -26,3 +26,12 @@ func TestMobileStreamUpdatesWhenOnlyChildActivityChanges(t *testing.T) {
 		t.Fatal("child completion did not stream")
 	}
 }
+
+func TestMobileStreamUpdatesWhenMessageIsAccepted(t *testing.T) {
+	s := codexapp.Snapshot{MessageDeliveries: []codexapp.MessageDeliverySnapshot{{ID: "message", State: "queued", SubmittedAt: time.Now()}}}
+	before := buildMobileLiveStreamRevision(s, true)
+	s.MessageDeliveries[0].State = "started"
+	if before == buildMobileLiveStreamRevision(s, true) {
+		t.Fatal("delivery acknowledgment did not reach mobile")
+	}
+}
