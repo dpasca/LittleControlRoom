@@ -80,3 +80,52 @@ func TestRenderProjectListKeepsCellsOnOneLine(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderProjectListKeepsAgentWorkflowStatusOnOneLine(t *testing.T) {
+	for _, phase := range []string{"completed", "awaiting_review", "changes_requested", "unclassified"} {
+		t.Run(phase, func(t *testing.T) {
+			task := model.AgentTask{
+				ID:            "completed-startup-task",
+				Title:         "Prepare signal-only automatic startup",
+				WorkspacePath: "/tmp/startup-agent-task",
+				Status:        model.AgentTaskStatusCompleted,
+				Summary:       "Addressed review revision 1 P1: both install preflights now run in isolated service-identity child processes. Root snapshot stays 0700/0600.",
+				Workflow:      model.AgentTaskWorkflow{Enabled: true, Phase: phase},
+			}
+			project, err := projectSummaryForAgentTask(task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := Model{
+				projects: []model.ProjectSummary{
+					project,
+					{Name: "next-project", Path: "/tmp/next-project", Status: model.StatusIdle, PresentOnDisk: true},
+				},
+				projectRows: []projectListRow{
+					{Kind: projectListRowAgentTask, Indent: 1},
+					{Kind: projectListRowStandalone},
+				},
+				openAgentTasks: []model.AgentTask{task},
+				sortMode:       sortByAttention,
+				visibility:     visibilityAIFolders,
+			}
+			for _, width := range []int{80, 145, 190} {
+				for selected := 0; selected < 2; selected++ {
+					m.selected = selected
+					for offset := 0; offset < 100; offset++ {
+						m.marqueeOffset = offset
+						rendered := ansi.Strip(m.renderProjectList(width, 6))
+						lines := strings.Split(rendered, "\n")
+						if len(lines) != 4 {
+							t.Fatalf("width=%d selected=%d offset=%d: got %d lines, want tabs + header + 2 rows: %q", width, selected, offset, len(lines), rendered)
+						}
+						statusPrefix := ansi.Truncate(strings.Split(strings.ReplaceAll(phase, "_", " "), " ")[0], 8, "")
+						if !strings.Contains(lines[2], statusPrefix) {
+							t.Fatalf("workflow status missing from task row: %q", lines[2])
+						}
+					}
+				}
+			}
+		})
+	}
+}
