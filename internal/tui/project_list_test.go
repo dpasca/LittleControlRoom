@@ -735,8 +735,8 @@ func TestAssessmentStatusLabelUsesInProgressName(t *testing.T) {
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: model.SessionCategoryInProgress,
 	}
-	if got, _, ok := assessmentStatusLabel(project, true); !ok || got != "working" {
-		t.Fatalf("assessmentStatusLabel(compact) = (%q, %v), want (%q, true)", got, ok, "working")
+	if got, _, ok := assessmentStatusLabel(project, true); !ok || got != "open" {
+		t.Fatalf("assessmentStatusLabel(compact) = (%q, %v), want (%q, true)", got, ok, "open")
 	}
 }
 

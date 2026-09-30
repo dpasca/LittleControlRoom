@@ -61,6 +61,24 @@ func TestClaudeSubagentViewerRefreshesAndRemainsReadOnly(t *testing.T) {
 	if err := session.Submit("continue"); err == nil || !strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("subagent input must fail closed: %v", err)
 	}
+	// An interrupted child may never write a terminal record. Age the event
+	// evidence without changing the file (whose mtime is still recent).
+	session.refreshSubagentActivityLocked(start.Add(claudeSubagentActivityWindow + time.Minute))
+	session.updateStatusLocked()
+	snapshot = session.Snapshot()
+	if snapshot.Busy || !snapshot.BusyExternal || snapshot.Phase != SessionPhaseStalled || !snapshot.BusySince.IsZero() {
+		t.Fatalf("silent child must stop claiming active work: %#v", snapshot)
+	}
+	if snapshot.LatestTurnCompleted || !snapshot.LatestTurnStateKnown || !strings.Contains(snapshot.Status, "no recent activity") {
+		t.Fatalf("silence must not manufacture completion: %#v", snapshot)
+	}
+	// Fresh structured progress can restore the inference; ownership stays
+	// read-only throughout, including when activity has expired.
+	session.latestTurnStateAt = start.Add(claudeSubagentActivityWindow + time.Minute)
+	session.refreshSubagentActivityLocked(session.latestTurnStateAt)
+	if snapshot = session.Snapshot(); !snapshot.Busy || !snapshot.BusyExternal {
+		t.Fatalf("new child activity should restore busy: %#v", snapshot)
+	}
 	// Same-length rewrites must refresh too (both stop reasons are eight bytes).
 	write("end_turn")
 	if err := os.Chtimes(path, start.Add(2*time.Second), start.Add(2*time.Second)); err != nil {

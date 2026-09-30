@@ -4115,3 +4115,76 @@ func TestWorktreeActionMsgMergeSucceededCleanupFailed(t *testing.T) {
 		t.Fatalf("error log = %#v", got.errorLogEntries)
 	}
 }
+
+func TestWorktreeActivityCountsRequireEngineerActivity(t *testing.T) {
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name             string
+		status           model.ProjectStatus
+		known, completed bool
+		eventAt          time.Time
+		snapshot         *codexapp.Snapshot
+		want             int
+	}{
+		{name: "stuck", status: model.StatusPossiblyStuck},
+		{name: "recent completed turn", status: model.StatusActive, known: true, completed: true, eventAt: now},
+		{name: "stale unfinished turn", status: model.StatusActive, known: true, eventAt: now.Add(-24 * time.Hour)},
+		{name: "recent unfinished turn", status: model.StatusActive, known: true, eventAt: now, want: 1},
+		{name: "idle viewer overrides recency", status: model.StatusActive, snapshot: &codexapp.Snapshot{Started: true}},
+		{name: "completed read-only viewer", status: model.StatusActive, snapshot: &codexapp.Snapshot{Started: true, BusyExternal: true, LatestTurnStateKnown: true, LatestTurnCompleted: true}},
+		{name: "stalled read-only viewer", status: model.StatusActive, snapshot: &codexapp.Snapshot{Started: true, BusyExternal: true, Phase: codexapp.SessionPhaseStalled}},
+		{name: "busy engineer overrides idle assessment", status: model.StatusIdle, snapshot: &codexapp.Snapshot{Started: true, Busy: true}, want: 1},
+		{name: "runtime alone", status: model.StatusIdle},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := model.ProjectSummary{Path: "/tmp/child", Status: tc.status, RepoDirty: true, LatestTurnStateKnown: tc.known, LatestTurnCompleted: tc.completed, LatestSessionLastEventAt: tc.eventAt}
+			m := Model{
+				nowFn:                        func() time.Time { return now },
+				renderCachedSessionStateOnly: true,
+				codexSnapshots:               map[string]codexapp.Snapshot{},
+				runtimeSnapshots:             map[string]projectrun.Snapshot{project.Path: {Running: true}},
+			}
+			if tc.snapshot != nil {
+				m.codexSnapshots[project.Path] = *tc.snapshot
+			}
+			active, dirty := m.worktreeActivityCounts([]model.ProjectSummary{project})
+			if active != tc.want || dirty != 1 {
+				t.Fatalf("counts = (%d, %d), want (%d, 1)", active, dirty, tc.want)
+			}
+		})
+	}
+}
+
+func TestStaleClaudeSubagentRowDoesNotShowWorkingTimer(t *testing.T) {
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	root := model.ProjectSummary{Name: "repo", Path: "/tmp/repo", PresentOnDisk: true, Status: model.StatusIdle, WorktreeKind: model.WorktreeKindMain, WorktreeRootPath: "/tmp/repo"}
+	child := model.ProjectSummary{
+		Name: "child", Path: "/tmp/child", PresentOnDisk: true, Status: model.StatusPossiblyStuck,
+		WorktreeKind: model.WorktreeKindLinked, WorktreeRootPath: root.Path,
+		LatestSessionFormat: "claude_code", LatestTurnStateKnown: true,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryInProgress,
+		LatestSessionLastEventAt:        now.Add(-12 * time.Hour), LatestTurnStartedAt: now.Add(-13 * time.Hour),
+	}
+	m := Model{
+		nowFn: func() time.Time { return now }, allProjects: []model.ProjectSummary{root, child},
+		visibility: visibilityAllFolders, renderCachedSessionStateOnly: true,
+		codexSnapshots: map[string]codexapp.Snapshot{child.Path: {
+			Provider: codexapp.ProviderClaudeCode, ThreadID: "parent/agent-child", Started: true,
+			BusyExternal: true, Phase: codexapp.SessionPhaseStalled, LatestTurnStateKnown: true,
+			LatestTurnStartedAt: child.LatestTurnStartedAt,
+			ActivityPreview:     []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: "Old progress message"}},
+		}},
+		runtimeSnapshots: map[string]projectrun.Snapshot{child.Path: {Running: true, Command: "vite"}},
+	}
+	m.rebuildProjectList(root.Path)
+	rendered := ansi.Strip(m.renderProjectList(180, 8))
+	for _, unwanted := range []string{"working", "1 active", "Old progress message", "13:00:00"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("stale child displays %q: %s", unwanted, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "stalled") || !strings.Contains(rendered, "blocked") || !strings.Contains(rendered, "vite") {
+		t.Fatalf("missing stale state or independent runtime: %s", rendered)
+	}
+}

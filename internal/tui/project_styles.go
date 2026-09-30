@@ -295,7 +295,7 @@ func sessionCategoryLabel(category model.SessionCategory) string {
 	case model.SessionCategoryNeedsFollowUp:
 		return "followup"
 	case model.SessionCategoryInProgress:
-		return "working"
+		return "open"
 	case model.SessionCategoryUnknown:
 		return "unknown"
 	default:

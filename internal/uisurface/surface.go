@@ -853,7 +853,7 @@ func assessmentCategoryLabel(category model.SessionCategory) string {
 	case model.SessionCategoryNeedsFollowUp:
 		return "Follow up"
 	case model.SessionCategoryInProgress:
-		return "Working"
+		return "Unfinished"
 	default:
 		return "Not assessed"
 	}
@@ -870,7 +870,7 @@ func assessmentCategoryDescription(category model.SessionCategory) string {
 	case model.SessionCategoryNeedsFollowUp:
 		return "Follow-up is recommended"
 	case model.SessionCategoryInProgress:
-		return "Engineer work is in progress"
+		return "Engineer work remains unfinished"
 	default:
 		return "Not assessed yet"
 	}
@@ -913,7 +913,7 @@ func AssessmentCompactLabel(category model.SessionCategory) (string, bool) {
 	case model.SessionCategoryNeedsFollowUp:
 		return "followup", true
 	case model.SessionCategoryInProgress:
-		return "working", true
+		return "open", true
 	default:
 		return "", false
 	}
