@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/gitlock"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
+	"lcroom/internal/store"
 	"lcroom/internal/worktreeprep"
 )
 
@@ -138,6 +139,16 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if req.Progress != nil {
 		req.Progress(CreateTodoWorktreeProgress{RootProjectPath: worktreeRootPath})
 	}
+	plan, planErr := s.store.TodoWorktreePlan(ctx, req.TodoID)
+	if planErr == nil {
+		if !samePath(plan.RootPath, worktreeRootPath) {
+			return CreateTodoWorktreeResult{}, fmt.Errorf("saved worktree root changed; inspect TODO #%d before retrying", req.TodoID)
+		}
+		return s.finishTodoWorktreePlan(ctx, req, plan, sourceCategoryID, sourceCategoryKnown, sourceRunCommand)
+	}
+	if !errors.Is(planErr, sql.ErrNoRows) {
+		return CreateTodoWorktreeResult{}, planErr
+	}
 	if err := s.ensureRootCanCreateTodoWorktree(ctx, worktreeRootPath); err != nil {
 		return CreateTodoWorktreeResult{}, err
 	}
@@ -188,22 +199,62 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if err := s.EnsureRepositoryRootExpectedBranch(ctx, worktreeRootPath, expectedRootBranch, expectedRootBranchSource); err != nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("record expected root branch for %s: %w", worktreeRootPath, err)
 	}
-	worktreePath, worktreeSuffix, branchName, err := uniqueWorktreeNames(worktreeRootPath, projectPath, worktreeSuffix, branchName)
+	worktreePath, _, branchName, err := uniqueWorktreeNames(worktreeRootPath, projectPath, worktreeSuffix, branchName)
 	if err != nil {
 		return CreateTodoWorktreeResult{}, err
 	}
-	result := CreateTodoWorktreeResult{
-		RootProjectPath: worktreeRootPath,
-		WorktreePath:    worktreePath,
-		ParentBranch:    parentBranch,
-		BranchName:      branchName,
-		WorktreeSuffix:  worktreeSuffix,
+	plan = store.TodoWorktreePlan{TodoID: req.TodoID, RootPath: worktreeRootPath, WorktreePath: worktreePath, Branch: branchName, ParentBranch: parentBranch}
+	if err := s.store.SaveTodoWorktreePlan(ctx, plan); err != nil {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("save worktree destination before creation: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
-		return CreateTodoWorktreeResult{}, fmt.Errorf("create worktree parent directory: %w", err)
-	}
-	if err := gitWorktreeAdd(ctx, worktreeRootPath, worktreePath, branchName); err != nil {
-		return CreateTodoWorktreeResult{}, err
+	return s.finishTodoWorktreePlan(ctx, req, plan, sourceCategoryID, sourceCategoryKnown, sourceRunCommand)
+}
+
+func (s *Service) finishTodoWorktreePlan(ctx context.Context, req CreateTodoWorktreeRequest, plan store.TodoWorktreePlan, sourceCategoryID string, sourceCategoryKnown bool, sourceRunCommand string) (result CreateTodoWorktreeResult, retErr error) {
+	worktreeRootPath, worktreePath, branchName, parentBranch := plan.RootPath, plan.WorktreePath, plan.Branch, plan.ParentBranch
+	result = CreateTodoWorktreeResult{RootProjectPath: worktreeRootPath, WorktreePath: worktreePath, BranchName: branchName, ParentBranch: parentBranch, WorktreeSuffix: strings.TrimPrefix(filepath.Base(worktreePath), filepath.Base(worktreeRootPath)+"--")}
+	defer func() {
+		if retErr != nil {
+			retErr = fmt.Errorf("TODO #%d launch paused at %s; engineer not started. Destination saved; use Retry launch on the TODO to finish preparation: %w", req.TodoID, worktreePath, retErr)
+		}
+	}()
+	if pathInfo, err := os.Lstat(worktreePath); errors.Is(err, os.ErrNotExist) {
+		if plan.Ready {
+			return result, fmt.Errorf("prepared worktree is now missing; restore it or remove its saved launch before retrying")
+		}
+		rootStatus, err := scanner.ReadGitRepoStatus(ctx, worktreeRootPath)
+		if err != nil {
+			return result, err
+		}
+		if rootStatus.Branch != parentBranch {
+			return result, fmt.Errorf("root branch changed since this destination was saved; restore %s before retrying", parentBranch)
+		}
+		if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+			return result, err
+		}
+		if err := gitWorktreeAdd(ctx, worktreeRootPath, worktreePath, branchName); err != nil {
+			return result, err
+		}
+	} else if err != nil {
+		return result, err
+	} else {
+		if !pathInfo.IsDir() || pathInfo.Mode()&os.ModeSymlink != 0 {
+			return result, fmt.Errorf("saved destination is no longer a directory")
+		}
+		info, err := scanner.ReadGitWorktreeInfo(ctx, worktreePath)
+		if err != nil {
+			return result, err
+		}
+		status, err := scanner.ReadGitRepoStatus(ctx, worktreePath)
+		if err != nil {
+			return result, err
+		}
+		if !samePath(info.TopLevelPath, worktreePath) || !samePath(info.RootPath, worktreeRootPath) || info.Kind != scanner.GitWorktreeKindLinked || status.Branch != branchName {
+			return result, fmt.Errorf("saved destination no longer matches its repository and branch; refusing to reuse it")
+		}
+		if plan.Ready {
+			return result, nil
+		}
 	}
 	prepResult, err := worktreeprep.Prepare(ctx, worktreeRootPath, worktreePath, req.PrepProfile)
 	if err != nil {
@@ -229,6 +280,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return result, fmt.Errorf("refresh tracked worktree %s after recording its metadata: %w", worktreePath, err)
 	}
 
+	if err := s.store.MarkTodoWorktreeReady(ctx, req.TodoID); err != nil {
+		return result, err
+	}
 	now := time.Now()
 	if s.bus != nil {
 		s.bus.Publish(events.Event{

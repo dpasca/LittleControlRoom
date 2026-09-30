@@ -224,6 +224,9 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 	if _, err := s.store.ClearTodoWorkForProjectPath(ctx, path); err != nil {
 		return err
 	}
+	if err := s.store.DeleteTodoWorktreePlanForPath(ctx, path); err != nil {
+		return fmt.Errorf("directory deleted; cannot clear saved launch destination: %w", err)
+	}
 	s.forgetProjectState(path)
 	now := time.Now()
 	if s.bus != nil {

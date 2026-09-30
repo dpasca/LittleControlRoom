@@ -693,6 +693,10 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
 		RunMode:     todoCopyModeNewWorktree,
 		Provider:    provider,
 	}
+	if todo.LaunchRequestID != "" && todo.WorkSessionID == "" {
+		m.status = "Engineer not started. Retry launch reuses the saved TODO, worktree, provider, model and prompt."
+		return nil
+	}
 	m.status = "Start TODO"
 	return m.ensureTodoWorktreeSuggestionCmd(m.todoDialog.ProjectPath, todo.ID)
 }
@@ -924,9 +928,23 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if copyDialog.Submitting {
+		if item, ok := m.selectedTodoItem(); ok && item.LaunchRequestID != "" && copyDialog.LaunchID == 0 {
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc", "ctrl+c":
 			return m, m.cancelTodoPendingLaunch("Canceling TODO start...")
+		}
+		return m, nil
+	}
+	if item, ok := m.selectedTodoItem(); ok && item.LaunchRequestID != "" && item.WorkSessionID == "" {
+		switch msg.String() {
+		case "esc", "ctrl+c":
+			return m, m.closeTodoCopyDialog("Retry launch canceled")
+		case "enter":
+			copyDialog.Submitting = true
+			m.status = "Retrying saved launch..."
+			return m, m.retrySavedTodoLaunchCmd(item)
 		}
 		return m, nil
 	}
@@ -945,6 +963,7 @@ func (m Model) updateTodoCopyDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		return m, m.closeTodoCopyDialog("TODO start canceled")
@@ -2507,6 +2526,31 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	copyDialog := m.todoCopyDialog
 	if copyDialog == nil {
 		return body
+	}
+	if item, ok := m.selectedTodoItem(); ok && item.LaunchRequestID != "" && item.WorkSessionID == "" {
+		state := "Launch incomplete; engineer not started."
+		if item.LaunchWorktreeReady {
+			state = "Worktree ready, engineer not started."
+		}
+		if item.LaunchEngineerClaimed {
+			state = "A previous engineer launch has an unconfirmed outcome. Inspect the worktree session before retrying."
+		}
+		panelW := min(bodyW, 86)
+		panelInnerW := max(24, panelW-4)
+		action := renderDialogAction("Enter", "Retry launch", commitActionKeyStyle, commitActionTextStyle)
+		cancelAction := renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle)
+		if copyDialog.Submitting {
+			action = renderDialogAction("Enter", "Retrying launch...", disabledActionKeyStyle, disabledActionTextStyle)
+			cancelAction = ""
+		}
+		panel := renderDialogPanel(panelW, panelInnerW, strings.Join([]string{
+			renderDialogHeader("Retry launch", copyDialog.ProjectName, "", panelInnerW),
+			truncateText(copyDialog.TodoText, panelInnerW),
+			state, item.LaunchWorktreePath,
+			"Reuses the saved TODO, destination, provider, model and prompt.",
+			action, cancelAction,
+		}, "\n"))
+		return overlayBlock(body, panel, bodyW, bodyH, max(0, (bodyW-lipgloss.Width(panel))/2), max(0, (bodyH-lipgloss.Height(panel))/3))
 	}
 	panelW := min(bodyW, min(max(84, bodyW-6), 116))
 	panelInnerW := max(24, panelW-4)

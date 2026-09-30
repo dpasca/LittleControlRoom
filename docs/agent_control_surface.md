@@ -149,6 +149,39 @@ For a request such as creating a project, the embedded agent:
 The generated `runtime` skill teaches this sequence. It contains the workflow,
 not the capability schemas; the registry remains the schema source of truth.
 
+## Recovering a tracked launch
+
+`todo.create_worktree_and_start_engineer` journals the request and TODO in one
+transaction, then saves the exact branch and worktree destination before Git
+creates it. Preparation or tracking failures retain that destination with an
+explicit paused receipt. Open the TODO and choose **Retry launch** to resume
+with the saved provider, model and prompt; it reuses the TODO and checkout.
+A ready checkout displays **Worktree ready, engineer not started**. Repeating a
+failed, journaled control proposal with the same caller request ID returns the same
+operation to confirmation; completed and running operations remain idempotent.
+
+The provider launch is claimed durably before execution. If a crash or a failed
+session receipt makes the outcome uncertain, LCR refuses a duplicate launch and
+asks the owner to inspect the existing session. A confirmed provider startup
+failure releases the claim for retry. Opening a linked worktree with no session
+shows **Engineer not started** and offers **Start engineer**, instead of opening
+an empty default-provider conversation. Older orphans without a launch journal
+can use their existing TODO's launcher and select the existing worktree. An
+operation without a saved TODO journal keeps its terminal failure on replay,
+rather than guessing whether an older attempt created resources. If TODO
+creation failed before any resources existed, submit a new request ID.
+
+SQLite uses WAL, a four-connection reader pool, a five-second busy timeout on
+every connection, and IMMEDIATE write transactions. Reserving the writer before
+reading prevents WAL snapshot-upgrade failures. Ordinary BUSY failures receive
+three retries with 25/50/100 ms backoff (about twenty seconds including SQLite
+waits), bounded by caller cancellation. Stale snapshots and same-connection
+LOCKED errors are not blindly retried. Scanners and control operations share this
+policy; no Git or provider work runs inside a database transaction.
+
+Rebuild and restart LCR after upgrading; the running process keeps its old
+connection setup and launch behavior until it is restarted.
+
 ## Linked worktree removal
 
 Agents can remove a tracked linked worktree with `worktree.remove` through the

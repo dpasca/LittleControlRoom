@@ -57,6 +57,12 @@ func TestDispatchedTodoEngineerReportsCompletedTurnToLaunchingSession(t *testing
 			Provider: codexapp.ProviderCodex, ProjectPath: workerPath, ThreadID: "worker-thread", Started: true, LastActivityAt: time.Now(),
 		}}
 	}
+	if err := st.SaveTodoWorktreePlan(ctx, store.TodoWorktreePlan{TodoID: todo.ID, RootPath: projectPath, WorktreePath: workerPath, Branch: "todo-fly-1", ParentBranch: "master"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkTodoWorktreeReady(ctx, todo.ID); err != nil {
+		t.Fatal(err)
+	}
 	input := control.TodoCreateWorktreeAndStartEngineerInput{RequestID: op.ID, ProjectPath: projectPath, ProjectName: "Game", TodoText: todo.Text, WorktreePath: workerPath}
 	opened, ok := m.trackBossTodoWorktreeEngineerLaunchCmd(input, codexapp.ProviderCodex, todo, "", launch)().(codexSessionOpenedMsg)
 	if !ok || !strings.Contains(opened.status, "Its completed turn will be reported back to the requesting session.") {

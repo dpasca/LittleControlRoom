@@ -593,22 +593,26 @@ func (p ProjectSummary) HasRecordedSession() bool {
 }
 
 type TodoItem struct {
-	ID                 int64
-	ProjectPath        string
-	Text               string
-	Attachments        []TodoAttachment
-	Done               bool
-	Position           int
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	CompletedAt        time.Time
-	WorkProvider       SessionSource
-	WorkProjectPath    string
-	WorkSessionID      string
-	WorkClaimedAt      time.Time
-	WorkState          TodoWorkState
-	WorkStateAt        time.Time
-	WorktreeSuggestion *TodoWorktreeSuggestion
+	LaunchRequestID       string
+	LaunchWorktreePath    string
+	LaunchWorktreeReady   bool
+	LaunchEngineerClaimed bool
+	ID                    int64
+	ProjectPath           string
+	Text                  string
+	Attachments           []TodoAttachment
+	Done                  bool
+	Position              int
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	CompletedAt           time.Time
+	WorkProvider          SessionSource
+	WorkProjectPath       string
+	WorkSessionID         string
+	WorkClaimedAt         time.Time
+	WorkState             TodoWorkState
+	WorkStateAt           time.Time
+	WorktreeSuggestion    *TodoWorktreeSuggestion
 }
 
 type TodoAttachmentKind string
