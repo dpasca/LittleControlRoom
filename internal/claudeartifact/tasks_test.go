@@ -5,6 +5,35 @@ import (
 	"time"
 )
 
+func TestStreamTaskLifecycle(t *testing.T) {
+	for _, tt := range []struct {
+		line           string
+		count          int
+		kind           AsyncTaskEventKind
+		status, source string
+	}{
+		{`{"type":"system","subtype":"task_started","task_id":"agent","task_type":"local_agent","is_backgrounded":false}`, 1, AsyncTaskLaunched, "running", AsyncTaskSourceAgent},
+		{`{"type":"system","subtype":"task_progress","task_id":"agent","summary":"Testing"}`, 1, AsyncTaskUpdated, "running", ""},
+		{`{"type":"system","subtype":"task_updated","task_id":"agent","patch":{"status":"killed"}}`, 1, AsyncTaskUpdated, "killed", ""},
+		{`{"type":"system","subtype":"task_notification","task_id":"agent","status":"completed"}`, 1, AsyncTaskUpdated, "completed", ""},
+		{`{"type":"system","subtype":"task_started","task_id":"housekeeping","ambient":true}`, 0, "", "", ""},
+		{`{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"shell","task_type":"local_bash"},{"task_id":"housekeeping","ambient":true}]}`, 1, AsyncTaskLaunched, "running", AsyncTaskSourceBackgroundShell},
+		{`{"type":"system","subtype":"task_updated","task_id":"agent","patch":{"description":"new title"}}`, 0, "", "", ""},
+		{`{"type":"assistant","subtype":"task_started","task_id":"not-a-system-event"}`, 0, "", "", ""},
+	} {
+		events := ParseAsyncTaskEvents([]byte(tt.line))
+		if len(events) != tt.count {
+			t.Fatalf("%s: %#v", tt.line, events)
+		}
+		if tt.count > 0 && (events[0].Kind != tt.kind || events[0].Status != tt.status || events[0].Source != tt.source) {
+			t.Fatalf("%s: %#v", tt.line, events)
+		}
+	}
+	if !IsTerminalTaskStatus("killed") {
+		t.Fatal("native killed status must release ownership")
+	}
+}
+
 func TestParseAsyncTaskEventsReadsBackgroundShellLaunch(t *testing.T) {
 	line := []byte(`{"type":"user","timestamp":"2026-07-29T00:40:21.697Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ignored display text"}]},"toolUseResult":{"backgroundTaskId":"task-123"}}`)
 

@@ -1737,6 +1737,7 @@ func TestStartClaudeTurnFailsClosedWithoutSafetySettings(t *testing.T) {
 		browserctl.Policy{},
 		claudeMCPOptions{},
 		"",
+		false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "safety-hook settings are required") {
 		t.Fatalf("startClaudeTurnWithMCP() error = %v, want missing safety-hook rejection", err)
@@ -1752,7 +1753,7 @@ func TestApplyEmbeddedClaudeProcessEnvironmentDisablesNativeBackgroundTasks(t *t
 		},
 	}
 
-	applyEmbeddedClaudeProcessEnvironment(cmd)
+	applyEmbeddedClaudeProcessEnvironment(cmd, false)
 
 	var backgroundSettings []string
 	for _, entry := range cmd.Env {

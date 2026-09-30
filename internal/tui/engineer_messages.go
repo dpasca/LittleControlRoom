@@ -241,7 +241,11 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 		}
 	}
 	if embeddedSessionBlocksProviderSwitch(snapshot) {
-		if message.AgentTaskRevision == 0 && message.Model == "" && provider == codexapp.ProviderCodex && controlPromptCanSteerActiveEmbeddedSession(snapshot) {
+		canAccept := controlPromptCanSteerActiveEmbeddedSession(snapshot)
+		if provider == codexapp.ProviderClaudeCode && snapshot.BackgroundInputSupported {
+			canAccept = codexapp.DescribeSessionInput(snapshot).Available
+		}
+		if message.AgentTaskRevision == 0 && message.Model == "" && canAccept {
 			return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 		}
 		return engineerMessageDisposition{project: project, wait: true, bindSessionID: targetSessionID}
@@ -396,6 +400,9 @@ func (m Model) engineerMessageDeliveryCmd(message control.EngineerMessage, cmd t
 		state := control.EngineerMessageDelivered
 		stateErr := opened.err
 		status := "Message delivered to the " + message.Provider.Label() + " engineer."
+		if message.Provider == control.ProviderClaudeCode {
+			status = "Message submitted to Claude Code. Processing and completion are shown in the session's delivery status."
+		}
 		targetSessionID := strings.TrimSpace(message.TargetSessionID)
 		if targetSessionID == "" {
 			targetSessionID = strings.TrimSpace(opened.snapshot.ThreadID)

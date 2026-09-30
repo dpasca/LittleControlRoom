@@ -9,9 +9,9 @@ import (
 
 // Claude Code has no CLI flag for output styles and no mid-turn control for
 // them, so LCR carries the selection in the per-turn `--settings` payload.
-// Because LCR spawns a fresh `claude --resume` process per turn, a staged
-// style takes effect on the next prompt, the same way a staged model or
-// reasoning effort does.
+// A managed stream can own background workers across several parent turns.
+// Staged styles, models and effort apply when that work settles and the next
+// prompt starts a fresh process.
 
 // ListOutputStyles returns the styles discovered for this session, refreshing
 // from disk so a style file added while the session is open becomes
@@ -41,7 +41,7 @@ func (s *claudeCodeSession) StageOutputStyle(name string) error {
 
 	if claudestyle.IsDefault(name) {
 		s.pendingOutputStyle = claudestyle.DefaultName
-		s.lastSystemNotice = "Claude Code will use its default output style on the next prompt."
+		s.lastSystemNotice = "Claude Code will use its default output style " + s.claudeStagedChangeTimingLocked() + "."
 		s.updateStatusLocked()
 		s.notifyAsync()
 		return nil
@@ -56,11 +56,11 @@ func (s *claudeCodeSession) StageOutputStyle(name string) error {
 	}
 
 	s.pendingOutputStyle = option.Name
-	s.lastSystemNotice = "Claude Code will use the " + option.Name + " output style on the next prompt."
+	s.lastSystemNotice = "Claude Code will use the " + option.Name + " output style " + s.claudeStagedChangeTimingLocked() + "."
 	if option.Name != name {
 		// Say which style was actually selected so a loose spelling never
 		// leaves the user guessing what is now in effect.
-		s.lastSystemNotice = "Claude Code will use the " + option.Name + " output style on the next prompt (matched from \"" + name + "\")."
+		s.lastSystemNotice = "Claude Code will use the " + option.Name + " output style " + s.claudeStagedChangeTimingLocked() + " (matched from \"" + name + "\")."
 	}
 	s.updateStatusLocked()
 	s.notifyAsync()

@@ -57,6 +57,10 @@ func DescribeSessionInput(snapshot Snapshot) SessionInputAvailability {
 	}
 
 	switch provider {
+	case ProviderClaudeCode:
+		if snapshot.BackgroundInputSupported {
+			return SessionInputAvailability{Available: true, Mode: SessionInputQueue}
+		}
 	case ProviderCodex:
 		if strings.TrimSpace(snapshot.ActiveTurnID) != "" && (snapshot.Phase == "" || snapshot.Phase == SessionPhaseRunning) {
 			return SessionInputAvailability{Available: true, Mode: SessionInputSteer}
