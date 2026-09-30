@@ -1550,6 +1550,7 @@ func aggregateWorktreeRootRow(root model.ProjectSummary, family []model.ProjectS
 func (m Model) worktreeActivityCounts(projects []model.ProjectSummary) (int, int) {
 	active := 0
 	dirty := 0
+	now := m.currentTime()
 	for _, project := range projects {
 		if _, ok := m.pendingGitOperation(project.Path); ok {
 			active++
@@ -1558,11 +1559,23 @@ func (m Model) worktreeActivityCounts(projects []model.ProjectSummary) (int, int
 		if project.RepoDirty {
 			dirty++
 		}
-		liveEngineerActive := false
-		if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
-			liveEngineerActive = embeddedSessionBlocksProviderSwitch(snapshot)
+		if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok && resolver.active() {
+			active++
+			continue
 		}
-		if project.Status != model.StatusIdle || liveEngineerActive || m.projectRuntimeSnapshot(project.Path).Running {
+		// A live snapshot overrides persisted recency. Open/read-only sessions,
+		// stalled turns, and dev servers are not evidence of an active engineer.
+		if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+			if _, running := embeddedSnapshotActiveStartedAt(snapshot, project); running && snapshot.Phase != codexapp.SessionPhaseStalled {
+				active++
+			}
+			continue
+		}
+		if project.LatestTurnStateKnown {
+			if m.projectUnfinishedTurnLooksLive(project, now) {
+				active++
+			}
+		} else if project.Status == model.StatusActive {
 			active++
 		}
 	}

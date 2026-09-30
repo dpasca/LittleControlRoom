@@ -308,6 +308,12 @@ badge, activity timer, and ordinary session assessments. Dashboard changes arriv
 on scans; opening the child uses the existing background transcript refresh.
 This is recorded activity, not a guarantee that an external process is alive.
 The parent's PID or busy status does not prove an individual child is running.
+The read-only viewer infers activity only while an unfinished child's latest
+structured turn event is at most 20 minutes old. After that, or if its event
+timestamp is missing, it reports stalled/unfinished with no running timer.
+This is a freshness limit on inferred activity, not evidence of completion,
+interruption, or a resumable pause. Fresh turn events restore inferred activity;
+file modification time alone does not. The viewer stays read-only throughout.
 
 Enter opens a read-only child transcript with its parent and agent identifiers,
 model, tool activity, and available usage. The composite identity is never

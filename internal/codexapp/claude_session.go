@@ -545,6 +545,8 @@ func (s *claudeCodeSession) phaseLocked() SessionPhase {
 	switch {
 	case s.closed:
 		phase = SessionPhaseClosed
+	case s.readOnlySubagent && s.latestTurnStateKnown && !s.latestTurnCompleted && !s.externalTurnActive:
+		phase = SessionPhaseStalled
 	case s.externalTurnActive:
 		phase = SessionPhaseExternal
 	case s.compacting:
@@ -2632,6 +2634,8 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		s.status = "Claude Code subagent · turn state unknown · read-only"
 	case s.readOnlySubagent && s.latestTurnCompleted:
 		s.status = "Claude Code subagent · completed · read-only"
+	case s.readOnlySubagent && s.latestTurnStateKnown && !s.externalTurnActive:
+		s.status = "Claude Code subagent · unfinished, no recent activity · read-only"
 	case s.readOnlySubagent:
 		s.status = "Claude Code subagent · unfinished · read-only"
 	case s.externalTurnActive:
@@ -2857,7 +2861,7 @@ func (s *claudeCodeSession) canUseStreamedTranscriptLocked(err error) bool {
 
 func (s *claudeCodeSession) refreshActiveLocked() {
 	if s.readOnlySubagent {
-		s.refreshSubagentActivityLocked()
+		s.refreshSubagentActivityLocked(time.Now())
 		return
 	}
 	if strings.TrimSpace(s.sessionID) == "" {

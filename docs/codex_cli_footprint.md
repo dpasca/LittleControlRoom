@@ -111,7 +111,9 @@ missing artifact references before queueing an assessment:
   Worktree subagents can instead live under the parent's project directory at
   `<parent-session-id>/subagents/agent-<agent-id>.jsonl`. LCR maps their structured
   `cwd` independently, uses a parent/agent composite identity, and opens them
-  read-only. See [Claude Code footprint](claude_code_footprint.md) for activity
+  read-only. An unfinished child log does not prove ongoing execution: the
+  viewer expires inferred activity after 20 minutes without a structured turn
+  event, preserving the unfinished state. See [Claude Code footprint](claude_code_footprint.md) for activity
   and resume limitations.
   Discovery excludes startup/settings-only files without conversational user,
   assistant, or compact-summary records, so authentication and local commands

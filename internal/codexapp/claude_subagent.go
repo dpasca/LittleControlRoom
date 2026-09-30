@@ -9,6 +9,11 @@ import (
 
 const claudeSubagentReadOnly = "Claude Code subagents are read-only in LCR; manage this agent from its parent conversation"
 
+// A child transcript has no independent process-liveness signal. Recent turn
+// events support an activity inference, but an unfinished log cannot keep it
+// busy forever after interruption or loss of its parent.
+const claudeSubagentActivityWindow = 20 * time.Minute
+
 func (s Snapshot) IsClaudeSubagent() bool {
 	_, _, ok := claudeartifact.ParseSubagentSessionID(s.ThreadID)
 	return s.Provider == ProviderClaudeCode && ok
@@ -42,11 +47,12 @@ func newClaudeSubagentSession(req LaunchRequest, claudeHome string, notify func(
 	return s, nil
 }
 
-func (s *claudeCodeSession) refreshSubagentActivityLocked() {
+func (s *claudeCodeSession) refreshSubagentActivityLocked(now time.Time) {
 	// A parent's live PID/status cannot establish which child is still working.
 	// Keep ownership read-only and derive this child's turn only from its log.
 	s.busyExternal = true
-	s.externalTurnActive = s.latestTurnStateKnown && !s.latestTurnCompleted
+	s.externalTurnActive = s.latestTurnStateKnown && !s.latestTurnCompleted &&
+		!s.latestTurnStateAt.IsZero() && now.Sub(s.latestTurnStateAt) <= claudeSubagentActivityWindow
 	s.busySince = time.Time{}
 	if s.externalTurnActive {
 		s.busySince = s.latestTurnStartedAt
