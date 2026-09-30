@@ -329,6 +329,28 @@ func TestHelpChatLCAgentPreflightSkipsLegacyRouter(t *testing.T) {
 	}
 }
 
+func TestHelpChatPromptSteersMentionSearchToCrossProjectCtx(t *testing.T) {
+	prompt := helpChatAgentSystemPrompt(AssistantRequest{HelpChat: true})
+	for _, want := range []string{"ctx search engineer", "no --project", "project.search do not read transcripts"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("system prompt lost %q", want)
+		}
+	}
+	tools, err := (&Assistant{}).helpChatAgentTools(AssistantRequest{HelpChat: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools {
+		if tool.Definition.Function.Name == "inspect_linked_context" {
+			if !strings.Contains(tool.Definition.Function.Description, "across all projects") {
+				t.Fatalf("description = %q", tool.Definition.Function.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("inspect_linked_context tool missing")
+}
+
 func TestHelpChatResolvesCompletedTaskBeforeContinuingWithoutSelection(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "chat.sqlite"))
 	if err != nil {
