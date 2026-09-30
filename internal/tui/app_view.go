@@ -1179,7 +1179,8 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 		}
 		cellStyle := func(style lipgloss.Style) lipgloss.Style {
-			style = projectListCellStyle(style, selectedRow)
+			// Width wraps overflowing text; cap height so metadata cannot add a row.
+			style = projectListCellStyle(style, selectedRow).MaxHeight(1)
 			if selectionFlashRow {
 				style = projectListSelectionFlashStyle(style)
 			} else if approvalPulseRow {
