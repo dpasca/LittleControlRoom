@@ -61,6 +61,9 @@ func (s *Store) CreateControlOperation(ctx context.Context, operation control.Op
 			if !sameControlOperationRequest(existing, operation) {
 				return control.Operation{}, errors.New("client request id is already bound to a different control operation")
 			}
+			if existing.Status == control.OperationFailed && existing.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+				return s.RetryFailedTodoLaunchOperation(ctx, existing.ID, false)
+			}
 			return existing, nil
 		}
 	}
@@ -86,6 +89,9 @@ func (s *Store) CreateControlOperation(ctx context.Context, operation control.Op
 			if lookupErr == nil && found {
 				if !sameControlOperationRequest(existing, operation) {
 					return control.Operation{}, errors.New("client request id is already bound to a different control operation")
+				}
+				if existing.Status == control.OperationFailed && existing.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+					return s.RetryFailedTodoLaunchOperation(ctx, existing.ID, false)
 				}
 				return existing, nil
 			}

@@ -26,16 +26,17 @@ const (
 )
 
 type attentionDialogState struct {
-	Title           string
-	ProjectName     string
-	ProjectPath     string
-	Message         string
-	Hint            string
-	PrimaryLabel    string
-	PrimaryProvider codexapp.Provider
-	DismissLabel    string
-	Severity        attentionDialogSeverity
-	Selected        attentionDialogFocus
+	StartTodoProject *model.ProjectSummary
+	Title            string
+	ProjectName      string
+	ProjectPath      string
+	Message          string
+	Hint             string
+	PrimaryLabel     string
+	PrimaryProvider  codexapp.Provider
+	DismissLabel     string
+	Severity         attentionDialogSeverity
+	Selected         attentionDialogFocus
 }
 
 func (m *Model) showAttentionDialog(dialog attentionDialogState) {
@@ -103,6 +104,11 @@ func (m Model) updateAttentionDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if dialog.Selected == attentionDialogFocusPrimary && dialog.PrimaryLabel != "" && dialog.PrimaryProvider != "" {
 			provider := dialog.PrimaryProvider
+			if dialog.StartTodoProject != nil {
+				project := *dialog.StartTodoProject
+				m.dismissAttentionDialog()
+				return m, m.openTodoDialog(m.repositoryTodoProject(project))
+			}
 			m.dismissAttentionDialog()
 			return m.launchEmbeddedForSelection(provider, false, "")
 		}

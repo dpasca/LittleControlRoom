@@ -1179,6 +1179,11 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		})
 		return m, nil
 	}
+	if !options.forceNew && strings.TrimSpace(options.prompt) == "" && options.resumeID == "" && p.WorktreeKind == model.WorktreeKindLinked {
+		if snapshot, ok := m.liveCodexSnapshot(p.Path); ok && snapshot.CanReplaceEmptyConversation() && (p.LatestSessionID == "" || p.ExternalLatestSessionID() == snapshot.ThreadID) {
+			return m.showWorktreeWithoutEngineer(p, provider)
+		}
+	}
 	replaceEmptySessionID := ""
 	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		recoverEmpty := false
@@ -1203,6 +1208,10 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 			}
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
 		}
+	}
+
+	if !options.forceNew && strings.TrimSpace(options.prompt) == "" && options.resumeID == "" && p.WorktreeKind == model.WorktreeKindLinked && p.LatestSessionID == "" {
+		return m.showWorktreeWithoutEngineer(p, provider)
 	}
 
 	req := m.embeddedLaunchRequest(p, provider, options)
@@ -1981,4 +1990,14 @@ func (m Model) currentEmbeddedLaunchLabel() string {
 		return m.preferredEmbeddedProviderForProject(project).Label()
 	}
 	return codexapp.ProviderCodex.Label()
+}
+
+func (m Model) showWorktreeWithoutEngineer(p model.ProjectSummary, provider codexapp.Provider) (tea.Model, tea.Cmd) {
+	m.showAttentionDialog(attentionDialogState{
+		Title: "Engineer not started", ProjectPath: p.Path, ProjectName: p.Name,
+		Message:      "This worktree has no engineer session with work. No task has been started here.",
+		Hint:         "Choose the TODO to retry its launch, or select this existing worktree in the TODO launcher.",
+		PrimaryLabel: "Start engineer", PrimaryProvider: provider, StartTodoProject: &p, DismissLabel: "Close",
+	})
+	return m, nil
 }

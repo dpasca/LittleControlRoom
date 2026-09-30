@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +23,7 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", sqliteDSN(path))
+	db, err := sql.Open("lcroom-sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -50,7 +49,7 @@ func sqliteDSN(path string) string {
 	}
 
 	return fmt.Sprintf(
-		"%s%s_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)",
+		"%s%s_txlock=immediate&_pragma=foreign_keys(ON)&_pragma=busy_timeout(%d)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)",
 		path,
 		sep,
 		sqliteBusyTimeout/time.Millisecond,

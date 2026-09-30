@@ -260,6 +260,10 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 }
 
 func (s *Store) AddTodoWithAttachments(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment) (model.TodoItem, error) {
+	return s.addTodoWithLaunchRequest(ctx, projectPath, text, attachments, "", "")
+}
+
+func (s *Store) addTodoWithLaunchRequest(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment, requestID, inputJSON string) (model.TodoItem, error) {
 	if projectPath == "" {
 		return model.TodoItem{}, fmt.Errorf("project path is required")
 	}
@@ -273,6 +277,23 @@ func (s *Store) AddTodoWithAttachments(ctx context.Context, projectPath, text st
 		return model.TodoItem{}, err
 	}
 	defer tx.Rollback()
+	if requestID != "" {
+		var id int64
+		var saved string
+		err := tx.QueryRowContext(ctx, `SELECT todo_id, input_json FROM todo_launch_requests WHERE request_id = ?`, requestID).Scan(&id, &saved)
+		if err == nil {
+			if saved != inputJSON {
+				return model.TodoItem{}, fmt.Errorf("launch request id is already bound to a different task")
+			}
+			if err := tx.Rollback(); err != nil {
+				return model.TodoItem{}, err
+			}
+			return s.GetTodo(ctx, id)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return model.TodoItem{}, err
+		}
+	}
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE project_todos
@@ -298,6 +319,11 @@ func (s *Store) AddTodoWithAttachments(ctx context.Context, projectPath, text st
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath); err != nil {
 		return model.TodoItem{}, err
+	}
+	if requestID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO todo_launch_requests(request_id, todo_id, input_json) VALUES (?, ?, ?)`, requestID, id, inputJSON); err != nil {
+			return model.TodoItem{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return model.TodoItem{}, err
@@ -680,6 +706,9 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 		return model.TodoItem{}, err
 	}
 	item.Attachments = attachments
+	if err := s.loadTodoLaunchState(ctx, &item); err != nil {
+		return model.TodoItem{}, err
+	}
 	return item, nil
 }
 

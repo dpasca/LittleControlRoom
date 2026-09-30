@@ -2119,18 +2119,32 @@ func (m Model) createBossTodoWorktreeTodoCmd(inv control.Invocation, input contr
 		if svc == nil {
 			return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, err: errors.New("service unavailable")}
 		}
-		item, err := svc.AddTodo(ctx, project.Path, input.TodoText)
+		item, err := svc.AddTodoForLaunch(ctx, input)
 		return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, todo: item, err: err}
 	}
 }
 
 func (m Model) applyBossTodoWorktreeTodoCreated(msg bossTodoWorktreeTodoCreatedMsg) (tea.Model, tea.Cmd) {
+	if m.todoCopyDialog != nil && m.todoCopyDialog.Submitting && m.todoCopyDialog.TodoID == msg.todo.ID && (msg.err != nil || msg.todo.Done || msg.todo.LaunchEngineerClaimed || msg.todo.WorkSessionID != "") {
+		m.closeTodoWorkLaunchDialogs()
+	}
 	if msg.err != nil {
 		status := fmt.Sprintf("Could not create the tracked TODO for %s, so no worktree or engineer was started: %v", bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
 		if msg.projectSetupAction != "" {
 			status = fmt.Sprintf("%s, but could not create its tracked TODO. No worktree or engineer was started: %v", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.err)
 		}
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	if msg.todo.Done {
+		return m, bossControlResultCmd(msg.inv, fmt.Sprintf("TODO #%d is complete; no engineer was restarted.", msg.todo.ID), nil)
+	}
+	if msg.todo.LaunchEngineerClaimed && msg.todo.WorkSessionID == "" {
+		status := fmt.Sprintf("TODO #%d has a previous engineer launch whose outcome is not recorded. Inspect its worktree/session before retrying; no duplicate engineer was started.", msg.todo.ID)
+		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	if msg.todo.WorkSessionID != "" {
+		status := fmt.Sprintf("TODO #%d already has engineer session %s in %s; no duplicate launch was started.", msg.todo.ID, msg.todo.WorkSessionID, msg.todo.WorkProjectPath)
+		return m, bossControlResultCmd(msg.inv, status, nil)
 	}
 	msg.input.TodoID = msg.todo.ID
 	msg.input.TodoLabel = todoDisplayLabelFromItem(msg.todo)
@@ -2162,10 +2176,13 @@ func (m Model) createBossTodoWorktreeCmd(inv control.Invocation, input control.T
 }
 
 func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (tea.Model, tea.Cmd) {
+	if m.todoCopyDialog != nil && m.todoCopyDialog.Submitting && m.todoCopyDialog.TodoID == msg.todo.ID {
+		m.closeTodoWorkLaunchDialogs()
+	}
 	if msg.err != nil {
-		status := fmt.Sprintf("Added TODO #%d to %s, but could not prepare its dedicated worktree. No engineer was launched: %v", msg.todo.ID, bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
+		status := fmt.Sprintf("Added TODO #%d to %s, launch is paused. No engineer was launched. Retry launch on this TODO resumes preparation: %v", msg.todo.ID, bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
 		if msg.projectSetupAction != "" {
-			status = fmt.Sprintf("%s and added TODO #%d, but could not prepare its dedicated worktree. No engineer was launched: %v", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.todo.ID, msg.err)
+			status = fmt.Sprintf("%s and added TODO #%d, launch is paused. No engineer was launched. Retry launch on this TODO resumes preparation: %v", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.todo.ID, msg.err)
 		}
 		m.status = status
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
@@ -2199,9 +2216,9 @@ func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (t
 		if cause == "" {
 			cause = "engineer session launch did not start"
 		}
-		status := fmt.Sprintf("Added TODO #%d and prepared worktree %s, but no engineer was launched: %s", msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
+		status := fmt.Sprintf("Added TODO #%d and prepared worktree %s, worktree ready, engineer not started. Use Retry launch on the TODO: %s", msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
 		if msg.projectSetupAction != "" {
-			status = fmt.Sprintf("%s, added TODO #%d, and prepared worktree %s, but no engineer was launched: %s", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
+			status = fmt.Sprintf("%s, added TODO #%d, and prepared worktree %s, worktree ready, engineer not started. Use Retry launch on the TODO: %s", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
 		}
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
 	}
@@ -2216,6 +2233,17 @@ func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWo
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	launchCmd := cmd
+	claimed := false
+	cmd = func() tea.Msg {
+		if svc != nil {
+			if err := svc.Store().ClaimTodoEngineerLaunch(ctx, todo.ID); err != nil {
+				return codexSessionOpenedMsg{projectPath: input.WorktreePath, err: err, status: "Engineer not started: " + err.Error()}
+			}
+		}
+		claimed = true
+		return launchCmd()
+	}
 	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok {
@@ -2229,9 +2257,21 @@ func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWo
 		}
 		target = strings.TrimSpace(target)
 		if opened.err != nil {
-			opened.status = fmt.Sprintf("Added TODO #%d and prepared worktree %s, but no engineer was launched: %v", todo.ID, worktreeLabel, opened.err)
+			if svc != nil && claimed && opened.snapshot.ThreadID == "" {
+				releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 25*time.Second)
+				releaseErr := svc.Store().ReleaseTodoEngineerLaunch(releaseCtx, todo.ID)
+				cancel()
+				if releaseErr != nil {
+					opened.err = fmt.Errorf("%w; could not release launch claim: %v", opened.err, releaseErr)
+				}
+			}
+
+			opened.status = fmt.Sprintf("Added TODO #%d and prepared worktree %s, worktree ready, engineer not started. Use Retry launch on the TODO: %v", todo.ID, worktreeLabel, opened.err)
 			if projectSetupAction != "" {
-				opened.status = fmt.Sprintf("%s, added TODO #%d, and prepared worktree %s, but no engineer was launched: %v", projectSetupReceipt(projectSetupAction, input.ProjectPath), todo.ID, worktreeLabel, opened.err)
+				opened.status = fmt.Sprintf("%s, added TODO #%d, and prepared worktree %s, worktree ready, engineer not started. Use Retry launch on the TODO: %v", projectSetupReceipt(projectSetupAction, input.ProjectPath), todo.ID, worktreeLabel, opened.err)
+			}
+			if !claimed || opened.snapshot.ThreadID != "" {
+				opened.status = fmt.Sprintf("TODO #%d worktree %s retained. Engineer launch outcome needs inspection; no duplicate launch was started: %v", todo.ID, worktreeLabel, opened.err)
 			}
 			return opened
 		}

@@ -85,6 +85,20 @@ func (s *Store) initSchema(ctx context.Context) error {
 			work_state_at INTEGER,
 			FOREIGN KEY(project_path) REFERENCES projects(path) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS todo_launch_requests (
+            request_id TEXT PRIMARY KEY,
+            todo_id INTEGER NOT NULL UNIQUE REFERENCES project_todos(id) ON DELETE CASCADE,
+            input_json TEXT NOT NULL
+        );`,
+		`CREATE TABLE IF NOT EXISTS todo_worktree_plans (
+            todo_id INTEGER PRIMARY KEY REFERENCES project_todos(id) ON DELETE CASCADE,
+            root_path TEXT NOT NULL,
+            worktree_path TEXT NOT NULL UNIQUE,
+            branch TEXT NOT NULL,
+            parent_branch TEXT NOT NULL,
+            ready INTEGER NOT NULL DEFAULT 0,
+            engineer_claimed INTEGER NOT NULL DEFAULT 0
+        );`,
 		`CREATE INDEX IF NOT EXISTS idx_project_todos_project_path_position ON project_todos(project_path, done, position, id);`,
 		`CREATE TABLE IF NOT EXISTS todo_attachments (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

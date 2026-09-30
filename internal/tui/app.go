@@ -2683,6 +2683,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.refreshRunCommandAutocomplete()
 	case todoActionMsg:
+		if m.todoCopyDialog != nil && m.todoCopyDialog.ProjectPath == msg.projectPath && msg.err != nil {
+			m.todoCopyDialog.Submitting = false
+		}
 		if msg.err != nil {
 			m.reportError("TODO action failed", msg.err, msg.projectPath)
 			if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {

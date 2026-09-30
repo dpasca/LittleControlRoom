@@ -883,9 +883,12 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 			pt.id, pt.project_path, pt.text, pt.done, pt.position, pt.created_at, pt.updated_at, pt.completed_at,
 			pt.work_provider, pt.work_project_path, pt.work_session_id, pt.work_claimed_at, pt.work_state, pt.work_state_at,
 			tws.todo_id, tws.status, tws.todo_text_hash, tws.branch_name, tws.worktree_suffix, tws.kind,
-			tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
+			tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at,
+            COALESCE(tlr.request_id, ''), COALESCE(twp.worktree_path, ''), COALESCE(twp.ready, 0), COALESCE(twp.engineer_claimed, 0)
 		FROM project_todos pt
 		LEFT JOIN todo_worktree_suggestions tws ON tws.todo_id = pt.id
+        LEFT JOIN todo_launch_requests tlr ON tlr.todo_id = pt.id
+        LEFT JOIN todo_worktree_plans twp ON twp.todo_id = pt.id
 		WHERE project_path = ?
 		ORDER BY done ASC, position ASC, id ASC
 	`, path)
@@ -924,6 +927,7 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 			&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt,
 			&workProvider, &workProject, &workSession, &workClaimed, &workState, &workStateAt,
 			&suggestion, &status, &textHash, &branchName, &suffix, &kind, &reason, &confidence, &modelName, &lastError, &suggestedAt,
+			&item.LaunchRequestID, &item.LaunchWorktreePath, &item.LaunchWorktreeReady, &item.LaunchEngineerClaimed,
 		); err != nil {
 			return nil, err
 		}
