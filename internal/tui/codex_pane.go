@@ -580,6 +580,8 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 	cached.PendingToolInput = state.PendingToolInput
 	cached.PendingElicitation = state.PendingElicitation
 	cached.BackgroundTasks = cloneClaudeBackgroundTasks(state.BackgroundTasks)
+	cached.Subagents = append([]claudeartifact.SubagentProgress(nil), state.Subagents...)
+	cached.SubagentProgressError = state.SubagentProgressError
 	cached.ActivityPreview = cloneCodexActivityPreview(state.ActivityPreview)
 	cached.BrowserActivity = state.BrowserActivity
 	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL

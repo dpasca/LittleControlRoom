@@ -104,7 +104,7 @@ func BuildLiveEngineerSession(snapshot codexapp.Snapshot, now time.Time) Enginee
 	}
 
 	status := liveEngineerSessionStatus(snapshot)
-	summary := liveEngineerSessionSummary(snapshot)
+	summary := liveEngineerSessionSummary(snapshot, now)
 	if summary == "" {
 		summary = status.Label
 	}
@@ -302,9 +302,21 @@ func recordedEngineerSessionSummary(evidence model.SessionEvidence) string {
 	return "Recorded engineer session."
 }
 
-func liveEngineerSessionSummary(snapshot codexapp.Snapshot) string {
+func liveEngineerSessionSummary(snapshot codexapp.Snapshot, now time.Time) string {
 	if failure := codexapp.StoppedSessionError(snapshot); failure != "" {
 		return failure
+	}
+	if snapshot.Busy {
+		if progress := snapshot.SubagentActivitySummary(now); progress != "" {
+			if len(snapshot.Subagents) > 0 {
+				child := snapshot.Subagents[0]
+				progress += " · " + child.Description
+				if child.LatestAction != "" {
+					progress += " — " + child.LatestAction
+				}
+			}
+			return progress
+		}
 	}
 	for i := len(snapshot.Entries) - 1; i >= 0; i-- {
 		entry := snapshot.Entries[i]

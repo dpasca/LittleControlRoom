@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudeartifact"
 	"lcroom/internal/claudecli"
 	"lcroom/internal/claudestyle"
 	"lcroom/internal/codexcli"
@@ -645,8 +646,10 @@ type Snapshot struct {
 	PendingApproval           *ApprovalRequest
 	PendingToolInput          *ToolInputRequest
 	PendingElicitation        *ElicitationRequest
-	BackgroundTasks           []BackgroundTaskSnapshot // Provider-declared background work still awaiting a terminal notification.
-	ActivityPreview           []TranscriptEntry        // Bounded text-only tail for lightweight state snapshots.
+	BackgroundTasks           []BackgroundTaskSnapshot          // Provider-declared background work still awaiting a terminal notification.
+	Subagents                 []claudeartifact.SubagentProgress // Cached child activity; does not establish turn ownership.
+	SubagentProgressError     string
+	ActivityPreview           []TranscriptEntry // Bounded text-only tail for lightweight state snapshots.
 	Entries                   []TranscriptEntry
 	Transcript                string
 	Status                    string

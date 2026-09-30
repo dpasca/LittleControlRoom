@@ -209,7 +209,7 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			"",
 		}
 	default:
-		lines := []string{}
+		lines := m.renderCodexSubagentProgress(snapshot, width)
 		if snapshot.BusyExternal {
 			lines = append(lines, m.renderCodexBusyElsewhereNotice(snapshot, width))
 		}

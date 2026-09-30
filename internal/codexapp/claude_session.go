@@ -167,6 +167,13 @@ type claudeCodeSession struct {
 	backgroundTaskOrder []string
 	transcriptRevision  uint64
 	transcriptCache     transcriptExportCache
+
+	subagentProgress           []claudeartifact.SubagentProgress
+	subagentProgressError      string
+	subagentProgressReader     claudeSubagentProgressReader
+	subagentProgressRefreshAt  time.Time
+	subagentProgressSince      time.Time
+	subagentProgressRefreshing bool
 }
 
 type claudePendingInteraction struct {
@@ -484,6 +491,7 @@ func (s *claudeCodeSession) TryStateSnapshot() (Snapshot, bool) {
 }
 
 func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
+	s.scheduleSubagentProgressRefreshLocked(time.Now())
 	permissionLevel := string(s.effectivePermissionModeLocked())
 	if s.readOnlySubagent {
 		permissionLevel = ""
@@ -529,6 +537,8 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		TokenUsage:               cloneTokenUsageSnapshot(s.tokenUsage),
 		UsageWindows:             cloneUsageWindowSnapshots(s.usageWindows),
 		BackgroundTasks:          s.backgroundTaskSnapshotsLocked(),
+		Subagents:                append([]claudeartifact.SubagentProgress(nil), s.subagentProgress...),
+		SubagentProgressError:    s.subagentProgressError,
 	}
 }
 

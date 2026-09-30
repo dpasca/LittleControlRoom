@@ -115,6 +115,10 @@ missing artifact references before queueing an assessment:
   viewer expires inferred activity after 20 minutes without a structured turn
   event, preserving the unfinished state. See [Claude Code footprint](claude_code_footprint.md) for activity
   and resume limitations.
+  The live parent pane also reads bounded child progress independently of its own
+  transcript, including foreground workers identified by sibling `.meta.json`
+  descriptions. Cached summaries expose task names, latest tools and event ages
+  without using child activity to change parent turn ownership or completion.
   Discovery excludes startup/settings-only files without conversational user,
   assistant, or compact-summary records, so authentication and local commands
   cannot displace a populated session from another provider. Detection uses
