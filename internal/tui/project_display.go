@@ -695,14 +695,15 @@ func truncateText(text string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(text)
-	if len(runes) <= width {
-		return text
-	}
 	if width <= 3 {
-		return string(runes[:width])
+		return ansi.Truncate(text, width, "")
 	}
-	return string(runes[:width-3]) + "..."
+	return ansi.Truncate(text, width, "...")
+}
+
+// projectListCellText flattens external text before sizing single-line cells.
+func projectListCellText(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // projectListNameCellText keeps hierarchy markers fixed while the selected
@@ -711,6 +712,7 @@ func projectListNameCellText(prefix, label string, width int, selected bool, off
 	if width <= 0 {
 		return ""
 	}
+	label = projectListCellText(label)
 	prefixWidth := ansi.StringWidth(prefix)
 	if prefixWidth >= width {
 		return truncateText(prefix, width)
@@ -723,16 +725,16 @@ func projectListNameCellText(prefix, label string, width int, selected bool, off
 }
 
 // marqueeScrollText returns a width-wide window into text that scrolls
-// right-to-left, wrapping around.  When text fits in width it is returned
-// as-is.  The caller passes an ever-increasing offset; the helper normalises
+// right-to-left in terminal columns, wrapping around. Text that fits is padded.
+// The caller passes an ever-increasing offset; the helper normalises
 // it so the animation loops smoothly.  The text repeats with 4 spaces
 // between copies so the area is always filled.
 func marqueeScrollText(text string, width int, offset int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(text)
-	n := len(runes)
+	text = projectListCellText(text)
+	n := ansi.StringWidth(text)
 	if n <= width {
 		if n < width {
 			return text + strings.Repeat(" ", width-n)
@@ -741,18 +743,12 @@ func marqueeScrollText(text string, width int, offset int) string {
 	}
 	// Build a repeating ribbon: text + 4 spaces, repeated.
 	const spacer = "    "
-	cycle := n + len([]rune(spacer))
-	// Enough repeats to cover any width-wide window at any position.
-	needed := width + cycle
-	repeatCount := (needed / cycle) + 1
-	ribbon := make([]rune, 0, repeatCount*cycle)
-	spaceRunes := []rune(spacer)
-	for i := 0; i < repeatCount; i++ {
-		ribbon = append(ribbon, runes...)
-		ribbon = append(ribbon, spaceRunes...)
-	}
+	cycle := n + len(spacer)
+	// Since width < n, two copies cover every possible window.
+	ribbon := text + spacer + text
 	pos := ((offset % cycle) + cycle) % cycle // always non-negative
-	return string(ribbon[pos : pos+width])
+	// Cut preserves grapheme clusters; pad when a wide glyph straddles an edge.
+	return fitStyledWidth(ansi.Cut(ribbon, pos, pos+width), width)
 }
 
 func singleLineStatusText(text string) string {

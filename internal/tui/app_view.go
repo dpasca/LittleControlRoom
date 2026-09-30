@@ -9,6 +9,7 @@ import (
 	"lcroom/internal/model"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func (m *Model) syncDetailViewport(reset bool) {
@@ -1289,7 +1290,6 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 		}
 		nameRender := projectListNameCellText(namePrefix, nameLabel, projectW, selectedRow, m.marqueeOffset)
-		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
 		agentStyle := sourceStyleForTag(agentTag, agentLive)
@@ -1363,13 +1363,15 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 			runState = projectRunError
 		}
-		assessment = truncateText(assessmentText, assessmentW)
+		assessmentText = projectListCellText(assessmentText)
+		runLabel = projectListCellText(runLabel)
+		assessment := truncateText(assessmentText, assessmentW)
 		runRender := truncateText(runLabel, projectListRunWidth)
-		if selectedRow && len([]rune(runLabel)) > projectListRunWidth {
+		if selectedRow && ansi.StringWidth(runLabel) > projectListRunWidth {
 			runRender = marqueeScrollText(runLabel, projectListRunWidth, m.marqueeOffset)
 		}
 		assessmentRender := assessment
-		if selectedRow && len([]rune(assessmentText)) > assessmentW {
+		if selectedRow && ansi.StringWidth(assessmentText) > assessmentW {
 			assessmentRender = marqueeScrollText(assessmentText, assessmentW, m.marqueeOffset)
 		}
 		selectionMarker := " "
