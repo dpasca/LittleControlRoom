@@ -223,7 +223,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		return CommitPreview{}, fmt.Errorf("project not found on disk: %s", projectPath)
 	}
 
-	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	repoStatus, err := s.readRepoStatusRepairingSubmodules(ctx, projectPath)
 	if err != nil {
 		return CommitPreview{}, err
 	}
@@ -467,7 +467,7 @@ func (s *Service) CommitPreviewStateHash(ctx context.Context, projectPath string
 		return "", fmt.Errorf("project not found on disk: %s", projectPath)
 	}
 
-	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	repoStatus, err := s.readRepoStatusRepairingSubmodules(ctx, projectPath)
 	if err != nil {
 		return "", err
 	}
@@ -495,7 +495,7 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 	} else if err := gitops.StagePaths(ctx, preview.ProjectPath, commitFileStagePaths(preview.SelectedUntracked)); err != nil {
 		return CommitResult{}, err
 	}
-	repoStatus, err := s.gitRepoStatusReader(ctx, preview.ProjectPath)
+	repoStatus, err := s.readRepoStatusRepairingSubmodules(ctx, preview.ProjectPath)
 	if err != nil {
 		return CommitResult{}, err
 	}
@@ -627,7 +627,7 @@ func (s *Service) PushProject(ctx context.Context, projectPath string) (PushResu
 		return PushResult{}, fmt.Errorf("project not found on disk: %s", projectPath)
 	}
 
-	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	repoStatus, err := s.readRepoStatusRepairingSubmodules(ctx, projectPath)
 	if err != nil {
 		return PushResult{}, err
 	}
@@ -671,7 +671,7 @@ func (s *Service) PullProject(ctx context.Context, projectPath string) (PullResu
 		return PullResult{}, fmt.Errorf("project not found on disk: %s", projectPath)
 	}
 
-	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	repoStatus, err := s.readRepoStatusRepairingSubmodules(ctx, projectPath)
 	if err != nil {
 		return PullResult{}, err
 	}

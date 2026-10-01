@@ -34,6 +34,50 @@ func TestRootMetadataRepairPreservesIndexLockRecoveryType(t *testing.T) {
 	}
 }
 
+func TestReadRepoStatusRepairingSubmodulesRestoresStaleCoreWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	rootSubmodulePath := initGitRepoWithSubmodule(t, projectPath, filepath.Join(root, "asset-origin"), "Assets")
+	submoduleGitDir := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "--absolute-git-dir"))
+	staleCoreWorktree, err := filepath.Rel(submoduleGitDir, filepath.Join(root, "repo--removed-worktree", "Assets"))
+	if err != nil {
+		t.Fatalf("resolve stale core.worktree: %v", err)
+	}
+	runGit(t, rootSubmodulePath, "git", "config", "--local", "core.worktree", staleCoreWorktree)
+	statusErr := func() error {
+		_, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+		return err
+	}()
+	if !isStaleSubmoduleWorktreeError(statusErr) {
+		t.Fatalf("root git status error = %v, want stale submodule worktree error", statusErr)
+	}
+
+	svc := &Service{gitRepoStatusReader: scanner.ReadGitRepoStatus}
+	if _, err := svc.readRepoStatusRepairingSubmodules(ctx, projectPath); err != nil {
+		t.Fatalf("readRepoStatusRepairingSubmodules() error = %v", err)
+	}
+	if _, err := scanner.ReadGitRepoStatus(ctx, projectPath); err != nil {
+		t.Fatalf("root git status after repair: %v", err)
+	}
+}
+
+func TestReadRepoStatusRepairingSubmodulesIgnoresUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	statusErr := errors.New("read git repo status: exit status 128")
+	calls := 0
+	svc := &Service{gitRepoStatusReader: func(context.Context, string) (scanner.GitRepoStatus, error) {
+		calls++
+		return scanner.GitRepoStatus{}, statusErr
+	}}
+	if _, err := svc.readRepoStatusRepairingSubmodules(context.Background(), t.TempDir()); !errors.Is(err, statusErr) || calls != 1 {
+		t.Fatalf("err = %v after %d reads, want original error after one read", err, calls)
+	}
+}
+
 func TestMergeBackScopesSubmoduleLocksToParticipatingCheckouts(t *testing.T) {
 	t.Parallel()
 	for _, sourceLocked := range []bool{false, true} {

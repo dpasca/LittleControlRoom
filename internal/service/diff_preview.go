@@ -96,7 +96,7 @@ func (s *Service) PrepareDiff(ctx context.Context, projectPath string) (DiffPrev
 		}
 	}
 
-	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	repoStatus, err := s.readRepoStatusRepairingSubmodules(ctx, projectPath)
 	if err != nil {
 		return DiffPreview{}, err
 	}

@@ -915,6 +915,32 @@ func (s *Service) readRootRepoStatusWithSubmoduleRepair(ctx context.Context, roo
 	if statusErr == nil {
 		return status, nil
 	}
+	return s.repairSubmodulesAndRereadStatus(ctx, rootPath, rootPath, statusErr)
+}
+
+// readRepoStatusRepairingSubmodules reads statusPath and, when the read fails
+// because a shared submodule core.worktree points at a missing checkout, takes
+// the root repository's Git write lock, repairs that metadata, and retries once.
+// Callers must not already hold the root's Git write lock; use
+// readRootRepoStatusWithSubmoduleRepair from locked paths instead.
+func (s *Service) readRepoStatusRepairingSubmodules(ctx context.Context, statusPath string) (scanner.GitRepoStatus, error) {
+	status, statusErr := s.gitRepoStatusReader(ctx, statusPath)
+	if statusErr == nil || !isStaleSubmoduleWorktreeError(statusErr) {
+		return status, statusErr
+	}
+	info, err := scanner.ReadGitWorktreeInfo(ctx, statusPath)
+	if err != nil || strings.TrimSpace(info.RootPath) == "" {
+		return scanner.GitRepoStatus{}, statusErr
+	}
+	unlockGitWrite, err := s.lockGitWrite(ctx, info.RootPath)
+	if err != nil {
+		return scanner.GitRepoStatus{}, fmt.Errorf("%w (submodule metadata repair blocked: %w)", statusErr, err)
+	}
+	defer unlockGitWrite()
+	return s.repairSubmodulesAndRereadStatus(ctx, info.RootPath, statusPath, statusErr)
+}
+
+func (s *Service) repairSubmodulesAndRereadStatus(ctx context.Context, rootPath, statusPath string, statusErr error) (scanner.GitRepoStatus, error) {
 	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
 		return scanner.GitRepoStatus{}, fmt.Errorf("%w (submodule metadata repair blocked: %w)", statusErr, err)
 	}
@@ -925,11 +951,21 @@ func (s *Service) readRootRepoStatusWithSubmoduleRepair(ctx context.Context, roo
 	if len(repaired) == 0 {
 		return scanner.GitRepoStatus{}, statusErr
 	}
-	status, retryErr := s.gitRepoStatusReader(ctx, rootPath)
+	status, retryErr := s.gitRepoStatusReader(ctx, statusPath)
 	if retryErr != nil {
 		return scanner.GitRepoStatus{}, fmt.Errorf("%w (git status still failed after repairing submodule metadata for %s: %v)", statusErr, strings.Join(repaired, ", "), retryErr)
 	}
 	return status, nil
+}
+
+// isStaleSubmoduleWorktreeError matches the Git failure produced when a
+// submodule's core.worktree points at a checkout that no longer exists.
+func isStaleSubmoduleWorktreeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "cannot chdir to") && strings.Contains(msg, "in submodule")
 }
 
 // FinalizeMergedWorktree applies the selected post-merge actions. Confirmed
