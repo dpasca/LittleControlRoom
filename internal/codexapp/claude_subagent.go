@@ -3,6 +3,7 @@ package codexapp
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"lcroom/internal/claudeartifact"
@@ -15,25 +16,35 @@ const claudeSubagentReadOnly = "Claude Code subagents are read-only in LCR; mana
 // busy forever after interruption or loss of its parent.
 const claudeSubagentActivityWindow = claudeartifact.SubagentActivityWindow
 
+// A quiet parent emits no events while its children work, so unfinished
+// children re-arm their own refresh instead of waiting for a snapshot request.
+const claudeSubagentProgressPollInterval = 5 * time.Second
+
 type claudeSubagentProgressReader interface {
 	Read(parentFile, parentID string, since time.Time) ([]claudeartifact.SubagentProgress, error)
+}
+
+// SubagentCounts splits children into recently active, completed, and
+// silent ones. Silent children have no recent turn events or unreadable logs.
+func (s Snapshot) SubagentCounts(now time.Time) (active, completed, quiet int) {
+	for _, child := range s.Subagents {
+		switch child.State(now) {
+		case "active":
+			active++
+		case "completed":
+			completed++
+		default:
+			quiet++
+		}
+	}
+	return active, completed, quiet
 }
 
 func (s Snapshot) SubagentActivitySummary(now time.Time) string {
 	if len(s.Subagents) == 0 {
 		return s.SubagentProgressError
 	}
-	active, complete, quiet := 0, 0, 0
-	for _, child := range s.Subagents {
-		switch child.State(now) {
-		case "active":
-			active++
-		case "completed":
-			complete++
-		default:
-			quiet++
-		}
-	}
+	active, complete, quiet := s.SubagentCounts(now)
 	text := fmt.Sprintf("Subagents: %d active", active)
 	if complete > 0 {
 		text += fmt.Sprintf(" · %d completed", complete)
@@ -42,6 +53,25 @@ func (s Snapshot) SubagentActivitySummary(now time.Time) string {
 		text += fmt.Sprintf(" · %d without recent activity", quiet)
 	}
 	return text
+}
+
+// RunningSubagentSummary is the compact label for dashboards and footers. It
+// stays empty once every child has completed so finished work does not read
+// as ongoing activity.
+func (s Snapshot) RunningSubagentSummary(now time.Time) string {
+	active, _, quiet := s.SubagentCounts(now)
+	parts := []string{}
+	if active > 0 {
+		noun := "subagents"
+		if active == 1 {
+			noun = "subagent"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s active", active, noun))
+	}
+	if quiet > 0 {
+		parts = append(parts, fmt.Sprintf("%d quiet", quiet))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // Snapshots only queue a coalesced refresh. File reads and parsing run outside
@@ -65,7 +95,11 @@ func (s *claudeCodeSession) scheduleSubagentProgressRefreshLocked(now time.Time)
 		s.subagentProgressSince = since
 		s.subagentProgressRefreshAt = time.Time{}
 	}
-	if s.subagentProgressRefreshing || now.Sub(s.subagentProgressRefreshAt) < 5*time.Second {
+	interval := s.subagentProgressPollInterval
+	if interval <= 0 {
+		interval = claudeSubagentProgressPollInterval
+	}
+	if s.subagentProgressRefreshing || now.Sub(s.subagentProgressRefreshAt) < interval {
 		return
 	}
 	s.subagentProgressRefreshing = true
@@ -87,12 +121,28 @@ func (s *claudeCodeSession) scheduleSubagentProgressRefreshLocked(now time.Time)
 			changed = !reflect.DeepEqual(s.subagentProgress, progress) || s.subagentProgressError != errorText
 			s.subagentProgress = progress
 			s.subagentProgressError = errorText
+			if subagentProgressUnfinished(progress) {
+				time.AfterFunc(interval, func() {
+					s.mu.Lock()
+					defer s.mu.Unlock()
+					s.scheduleSubagentProgressRefreshLocked(time.Now())
+				})
+			}
 		}
 		s.mu.Unlock()
 		if changed {
 			s.notifyAsync()
 		}
 	}()
+}
+
+func subagentProgressUnfinished(progress []claudeartifact.SubagentProgress) bool {
+	for _, child := range progress {
+		if !child.Completed {
+			return true
+		}
+	}
+	return false
 }
 
 func (s Snapshot) IsClaudeSubagent() bool {

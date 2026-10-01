@@ -32,6 +32,11 @@ func TestClaudeSubagentProgressRefreshDoesNotBlockSnapshotsOrChangeTurnOwnership
 			return []claudeartifact.SubagentProgress{{ID: "worker", Description: "Phone profiling", UpdatedAt: now, LatestAction: "Bash: Measure phone"}}, nil
 		}),
 	}
+	t.Cleanup(func() { // Stops the re-armed poll for the unfinished worker.
+		session.mu.Lock()
+		session.closed = true
+		session.mu.Unlock()
+	})
 	session.StateSnapshot()
 	select {
 	case <-started:
@@ -69,6 +74,41 @@ func TestClaudeSubagentProgressRefreshDoesNotBlockSnapshotsOrChangeTurnOwnership
 	session.mu.Unlock()
 	if len(session.StateSnapshot().Subagents) != 1 || calls.Load() != 1 {
 		t.Fatal("queued follow-up discarded the current worker")
+	}
+}
+
+func TestClaudeSubagentProgressPollsUnfinishedChildrenWithoutSnapshots(t *testing.T) {
+	now := time.Now()
+	var calls atomic.Int32
+	notified := make(chan struct{}, 8)
+	session := &claudeCodeSession{
+		sessionFile: "/unused/parent.jsonl", sessionID: "parent", busy: true,
+		latestTurnStartedAt: now.Add(-time.Hour), busySince: now.Add(-time.Hour),
+		subagentProgressPollInterval: 10 * time.Millisecond,
+		notify:                       func() { notified <- struct{}{} },
+		subagentProgressReader: testSubagentProgressReader(func(string, string, time.Time) ([]claudeartifact.SubagentProgress, error) {
+			// The quiet parent never asks for another snapshot; only the
+			// unfinished child can bring this second read.
+			return []claudeartifact.SubagentProgress{{ID: "worker", UpdatedAt: now, Completed: calls.Add(1) > 1}}, nil
+		}),
+	}
+	session.StateSnapshot()
+	for range 2 {
+		select {
+		case <-notified:
+		case <-time.After(time.Second):
+			t.Fatalf("child progress was not re-polled; reads=%d", calls.Load())
+		}
+	}
+	session.mu.Lock()
+	completed := len(session.subagentProgress) == 1 && session.subagentProgress[0].Completed
+	session.mu.Unlock()
+	if !completed {
+		t.Fatal("completion from the child log was not published")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if calls.Load() != 2 {
+		t.Fatalf("completed children kept polling: %d reads", calls.Load())
 	}
 }
 

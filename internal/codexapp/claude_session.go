@@ -175,12 +175,13 @@ type claudeCodeSession struct {
 	transcriptRevision  uint64
 	transcriptCache     transcriptExportCache
 
-	subagentProgress           []claudeartifact.SubagentProgress
-	subagentProgressError      string
-	subagentProgressReader     claudeSubagentProgressReader
-	subagentProgressRefreshAt  time.Time
-	subagentProgressSince      time.Time
-	subagentProgressRefreshing bool
+	subagentProgress             []claudeartifact.SubagentProgress
+	subagentProgressError        string
+	subagentProgressReader       claudeSubagentProgressReader
+	subagentProgressRefreshAt    time.Time
+	subagentProgressSince        time.Time
+	subagentProgressRefreshing   bool
+	subagentProgressPollInterval time.Duration // Zero uses claudeSubagentProgressPollInterval.
 }
 
 type claudePendingInteraction struct {

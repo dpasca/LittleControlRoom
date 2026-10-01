@@ -330,13 +330,19 @@ func liveEngineerSessionSummary(snapshot codexapp.Snapshot, now time.Time) strin
 		return failure
 	}
 	if snapshot.Busy {
-		if progress := snapshot.SubagentActivitySummary(now); progress != "" {
-			if len(snapshot.Subagents) > 0 {
-				child := snapshot.Subagents[0]
-				progress += " · " + child.Description
-				if child.LatestAction != "" {
-					progress += " — " + child.LatestAction
-				}
+		if len(snapshot.Subagents) == 0 && snapshot.SubagentProgressError != "" {
+			return snapshot.SubagentProgressError
+		}
+		// Completed children are receipts; only unfinished ones replace the
+		// parent's own latest message.
+		for _, child := range snapshot.Subagents {
+			state := child.State(now)
+			if state == "completed" {
+				continue
+			}
+			progress := snapshot.SubagentActivitySummary(now) + " · " + child.Description
+			if state == "active" && child.LatestAction != "" {
+				progress += " — " + child.LatestAction
 			}
 			return progress
 		}

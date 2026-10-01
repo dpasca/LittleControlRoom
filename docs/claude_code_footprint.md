@@ -333,14 +333,16 @@ Recommended filesystem-first approach:
 ### Foreground child progress in the parent pane (verified 2026-09-30)
 
 Claude Code 2.1.284 writes a sibling `agent-<id>.meta.json` with `description`,
-`toolUseId`, and `requestShape` for a child. With LCR's background-task mode
+`agentType`, `toolUseId`, and `requestShape` for a child. With LCR's background-task mode
 disabled, an `Agent` invocation requesting background execution can still have
 `requestShape: "foreground"`. Its tools keep updating the child JSONL while the
 parent is waiting; absence of an async launch result does not mean no child exists.
 
-The parent pane and live mobile session summary expose this activity separately
-from provider-owned background tasks. Snapshot reads queue a coalesced five-second
-refresh outside the session lock. The reader examines at most 16 recent children,
+The parent pane, dashboard row and detail pane, and live mobile session summary
+expose this activity separately from provider-owned background tasks. Snapshot
+reads queue a coalesced five-second refresh outside the session lock; while any
+child is unfinished, each completed refresh re-arms the next one so a quiet
+parent (including a hidden session) does not freeze child progress. The reader examines at most 16 recent children,
 caches unchanged logs, reads at most the final 1 MiB of each changed log and 64 KiB
 of its metadata, and ignores partial records. It validates `isSidechain`, `agentId`,
 and `sessionId`; only structured lifecycle timestamps within the current parent
@@ -348,8 +350,10 @@ turn contribute. Descriptions and latest tool actions come from explicit fields,
 not from interpreting prompts or command text. Oversized records outside the
 bounded tail may make recent activity unavailable until another complete event.
 
-The compact parent panel shows up to three child task names, completion state,
-last action and event age even without the sidebar. After 20 minutes without a
+The compact parent panel lists up to four unfinished children with agent type,
+last action and event age even without the sidebar, and collapses completed
+children into one line; once every child has completed, the panel is that single
+line and the footer keeps the parent's working timer. After 20 minutes without a
 child event it says "no recent activity"; queue writes, attachments and filesystem
 mtime do not renew that activity. A terminal record means the child completed,
 not that the parent reviewed or delivered its report. Child snapshots never

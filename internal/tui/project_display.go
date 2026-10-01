@@ -371,7 +371,15 @@ func (m Model) projectLiveEngineerAssessmentSummary(project model.ProjectSummary
 		if !active {
 			return "", false
 		}
-		return formatLiveEngineerSummary(liveEngineerActiveSummaryDetail(snapshot, project), startedAt, now), true
+		detail := liveEngineerActiveSummaryDetail(snapshot, project)
+		// Lead with running children so the dashboard row shows delegated
+		// work; pending user decisions keep their wording first.
+		if snapshot.PendingApproval == nil && snapshot.PendingToolInput == nil && snapshot.PendingElicitation == nil {
+			if subagents := snapshot.RunningSubagentSummary(now); subagents != "" {
+				detail = subagents + " · " + detail
+			}
+		}
+		return formatLiveEngineerSummary(detail, startedAt, now), true
 	}
 
 	provider := providerForSessionFormat(project.LatestSessionFormat)

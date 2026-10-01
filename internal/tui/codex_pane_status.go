@@ -137,13 +137,14 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 		return "Waiting for browser input"
 	}
 	if snapshot.Busy {
-		if progress := snapshot.SubagentActivitySummary(now); progress != "" {
-			return progress
-		}
+		status := "Working"
 		if !snapshot.BusySince.IsZero() {
-			return "Working " + formatRunningDuration(now.Sub(snapshot.BusySince))
+			status += " " + formatRunningDuration(now.Sub(snapshot.BusySince))
 		}
-		return "Working"
+		if subagents := snapshot.RunningSubagentSummary(now); subagents != "" {
+			status += " · " + subagents
+		}
+		return status
 	}
 	return normalizedCodexStatus(snapshot.Status)
 }

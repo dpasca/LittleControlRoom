@@ -23,6 +23,7 @@ const subagentProgressLimit = 16
 type SubagentProgress struct {
 	ID           string
 	Description  string
+	AgentType    string
 	ToolUseID    string
 	LatestAction string
 	UpdatedAt    time.Time
@@ -137,10 +138,12 @@ func readSubagentProgressMetadata(path string, progress *SubagentProgress) {
 	defer file.Close()
 	var meta struct {
 		Description string `json:"description"`
+		AgentType   string `json:"agentType"`
 		ToolUseID   string `json:"toolUseId"`
 	}
 	if json.NewDecoder(io.LimitReader(file, 64*1024)).Decode(&meta) == nil {
 		progress.Description = subagentProgressText(meta.Description)
+		progress.AgentType = subagentProgressText(meta.AgentType)
 		progress.ToolUseID = meta.ToolUseID
 	}
 }

@@ -109,6 +109,9 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 	if resolver, ok := m.mergeConflictResolverForProject(p.Path); ok {
 		surface.WrappedField("Resolver", resolver.detailText(m.currentTime()), mergeConflictResolverDetailTone(resolver))
 	}
+	if snapshot, ok := m.liveCodexSnapshot(p.Path); ok {
+		addProjectSubagentDetail(&surface, snapshot, now)
+	}
 
 	surface.RenderedField("Last activity", m.projectDetailLastActivityText(p), projectDetailLastActivityTone(p), m.projectDetailLastActivityRenderedText(p))
 	if p.MovedFromPath != "" && moveStatusActive(p.MovedAt, p.Path, p.LatestSessionDetectedProjectPath) {
