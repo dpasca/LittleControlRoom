@@ -62,7 +62,7 @@ type TurnState struct {
 // turn only while no provider-declared async task remains pending.
 type TurnTracker struct {
 	state                 TurnState
-	pendingAsync          map[string]struct{}
+	pendingAsync          map[string]string // task id -> source
 	pendingAsyncStartedAt time.Time
 }
 
@@ -79,13 +79,13 @@ func (t *TurnTracker) Observe(observation TurnObservation) {
 		switch event.Kind {
 		case AsyncTaskLaunched:
 			if t.pendingAsync == nil {
-				t.pendingAsync = make(map[string]struct{})
+				t.pendingAsync = make(map[string]string)
 			}
 			if len(t.pendingAsync) == 0 && !eventAt.IsZero() {
 				t.pendingAsyncStartedAt = eventAt
 			}
 			if taskID := strings.TrimSpace(event.TaskID); taskID != "" {
-				t.pendingAsync[taskID] = struct{}{}
+				t.pendingAsync[taskID] = firstNonEmpty(event.Source, t.pendingAsync[taskID])
 			}
 			if observation.Type == "user" {
 				asyncUserEvent = true
@@ -98,10 +98,20 @@ func (t *TurnTracker) Observe(observation TurnObservation) {
 			}
 			if IsTerminalTaskStatus(event.Status) {
 				delete(t.pendingAsync, strings.TrimSpace(event.TaskID))
-				if len(t.pendingAsync) == 0 {
-					t.pendingAsyncStartedAt = time.Time{}
+			}
+		case AsyncTasksOrphaned:
+			if observation.Type == "user" {
+				asyncUserEvent = true
+				t.set(eventAt, false, true)
+			}
+			for taskID, source := range t.pendingAsync {
+				if event.FinishesOrphan(taskID, source) {
+					delete(t.pendingAsync, taskID)
 				}
 			}
+		}
+		if len(t.pendingAsync) == 0 {
+			t.pendingAsyncStartedAt = time.Time{}
 		}
 	}
 
@@ -196,4 +206,13 @@ func (t *ConversationTracker) Observe(entry TranscriptEntry) bool {
 	t.previousUUID = uuid
 	t.previousGeneratedUser = generated && uuid != ""
 	return conversational
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }

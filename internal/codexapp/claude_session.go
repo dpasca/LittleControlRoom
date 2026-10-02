@@ -2593,7 +2593,7 @@ func (s *claudeCodeSession) observeClaudeBackgroundTaskEventsLocked(line string,
 	if s.backgroundTasks == nil {
 		s.backgroundTasks = make(map[string]BackgroundTaskSnapshot)
 	}
-	events := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+	events := expandClaudeOrphanedTaskEvents(s.backgroundTasks, s.backgroundTaskOrder, claudeartifact.ParseAsyncTaskEvents([]byte(line)))
 	if s.finishedTaskIDs == nil {
 		s.finishedTaskIDs = make(map[string]time.Time)
 	}
@@ -2623,8 +2623,34 @@ func applyClaudeBackgroundTaskEvents(
 	line string,
 	fallback time.Time,
 ) bool {
-	events := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+	events := expandClaudeOrphanedTaskEvents(tasks, *order, claudeartifact.ParseAsyncTaskEvents([]byte(line)))
 	return applyClaudeTaskEvents(tasks, order, toolCalls, events, fallback)
+}
+
+// expandClaudeOrphanedTaskEvents replaces an orphan summary with a terminal
+// update for each known task it covers, so per-task bookkeeping applies.
+func expandClaudeOrphanedTaskEvents(tasks map[string]BackgroundTaskSnapshot, order []string, events []claudeartifact.AsyncTaskEvent) []claudeartifact.AsyncTaskEvent {
+	expanded := make([]claudeartifact.AsyncTaskEvent, 0, len(events))
+	for _, event := range events {
+		if event.Kind != claudeartifact.AsyncTasksOrphaned {
+			expanded = append(expanded, event)
+			continue
+		}
+		for _, taskID := range order {
+			task, ok := tasks[taskID]
+			if !ok || !event.FinishesOrphan(taskID, task.Source) {
+				continue
+			}
+			expanded = append(expanded, claudeartifact.AsyncTaskEvent{
+				Kind:    claudeartifact.AsyncTaskUpdated,
+				TaskID:  taskID,
+				Status:  event.Status,
+				Summary: event.Summary,
+				At:      event.At,
+			})
+		}
+	}
+	return expanded
 }
 
 func applyClaudeTaskEvents(tasks map[string]BackgroundTaskSnapshot, order *[]string, toolCalls map[string]claudeToolCall, events []claudeartifact.AsyncTaskEvent, fallback time.Time) bool {
