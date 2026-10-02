@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"lcroom/internal/agentcontrol"
@@ -203,6 +204,25 @@ func (s *Server) Run(ctx context.Context) error {
 
 	decoder := json.NewDecoder(s.input)
 	encoder := json.NewEncoder(s.output)
+	var writeMu sync.Mutex
+	write := func(response rpcResponse) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return encoder.Encode(response)
+	}
+
+	// Claude permission callbacks wait for a human and may outlive Claude's MCP
+	// tool timeout. They run off the read loop so the client's cancellation (or
+	// exit) reaches them and drops the abandoned prompt from LCR.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	var inflight sync.WaitGroup
+	var cancelMu sync.Mutex
+	cancels := make(map[string]context.CancelFunc)
+	defer func() {
+		cancelRun()
+		inflight.Wait()
+	}()
+
 	for {
 		var req rpcRequest
 		if err := decoder.Decode(&req); err != nil {
@@ -211,14 +231,66 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 			return err
 		}
-		response, ok := s.handle(ctx, req)
+		if strings.TrimSpace(req.Method) == "notifications/cancelled" {
+			key := cancelledRequestKey(req.Params)
+			cancelMu.Lock()
+			if cancel := cancels[key]; cancel != nil {
+				cancel()
+			}
+			cancelMu.Unlock()
+			continue
+		}
+		if isClaudePermissionCall(req) {
+			key := strings.TrimSpace(string(req.ID))
+			callCtx, cancel := context.WithCancel(runCtx)
+			cancelMu.Lock()
+			cancels[key] = cancel
+			cancelMu.Unlock()
+			inflight.Add(1)
+			go func() {
+				defer inflight.Done()
+				defer func() {
+					cancelMu.Lock()
+					delete(cancels, key)
+					cancelMu.Unlock()
+					cancel()
+				}()
+				response, ok := s.handle(callCtx, req)
+				if ok && callCtx.Err() == nil {
+					_ = write(response)
+				}
+			}()
+			continue
+		}
+		response, ok := s.handle(runCtx, req)
 		if !ok {
 			continue
 		}
-		if err := encoder.Encode(response); err != nil {
+		if err := write(response); err != nil {
 			return err
 		}
 	}
+}
+
+func isClaudePermissionCall(req rpcRequest) bool {
+	if !req.hasID() || strings.TrimSpace(req.Method) != "tools/call" {
+		return false
+	}
+	var params toolCallParams
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return false
+	}
+	return strings.TrimSpace(params.Name) == claudeapproval.PermissionToolName
+}
+
+func cancelledRequestKey(raw json.RawMessage) string {
+	var params struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(params.RequestID))
 }
 
 func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool) {

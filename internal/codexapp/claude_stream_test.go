@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lcroom/internal/claudeapproval"
 )
 
 func TestClaudeManagedStreamProcess(t *testing.T) {
@@ -345,5 +347,92 @@ func TestParentSilenceIsSeparateFromWorkerAndTransportActivity(t *testing.T) {
 	s.ParentStatus = "Parent available · background work running"
 	if _, quiet := s.ParentActivitySummary(now); quiet {
 		t.Fatal("available parent should not be warned for awaiting background work")
+	}
+}
+
+func TestClaudeManagedStreamIdleWithdrawsAbandonedQuestion(t *testing.T) {
+	server, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	s, stdin := managedClaudeTestSession()
+	s.approvalServer = server
+	go s.consumeClaudeApprovalRequests()
+
+	// Claude's MCP tool timeout elapsed without cancelling the permission call,
+	// so the bridge requester is still connected when the parent goes idle.
+	responseCh := make(chan claudeapproval.Response, 1)
+	go func() {
+		response, _ := claudeapproval.RequestApproval(t.Context(), server.SocketPath(), claudeapproval.Request{
+			ID:        "toolu-question",
+			ToolName:  "AskUserQuestion",
+			Input:     json.RawMessage(`{"questions":[{"question":"Which?","header":"Pick","options":[{"label":"A","description":"a"},{"label":"B","description":"b"}],"multiSelect":false}]}`),
+			ToolUseID: "toolu-question",
+		})
+		responseCh <- response
+	}()
+	waitForClaudeInteractiveRequest(t, s)
+
+	for _, line := range []string{
+		`{"type":"assistant","message":{"id":"reply","content":[{"type":"text","text":"Took the default"}],"stop_reason":"end_turn"}}`,
+		`{"type":"result","subtype":"success","user_message_uuid":"first"}`,
+		`{"type":"command_lifecycle","command_uuid":"first","state":"completed"}`,
+		`{"type":"system","subtype":"session_state_changed","state":"idle"}`,
+	} {
+		s.handleClaudeStdoutLine(line)
+	}
+	if !stdin.closed {
+		t.Fatal("stale question kept the finished stream open")
+	}
+	snapshot := s.Snapshot()
+	if snapshot.PendingToolInput != nil || s.pendingClaudeInput != nil {
+		t.Fatalf("stale question still pending: %#v", snapshot.PendingToolInput)
+	}
+	if snapshot.LastSystemNotice != claudeRequestWithdrawnNotice {
+		t.Fatalf("notice = %q, want withdrawal notice", snapshot.LastSystemNotice)
+	}
+	select {
+	case response := <-responseCh:
+		if response.Behavior != "deny" {
+			t.Fatalf("stale request response = %#v, want deny", response)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stale bridge request was never answered")
+	}
+}
+
+func TestClaudeApprovalWithdrawnByRequesterClearsQuestion(t *testing.T) {
+	server, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+	s, _ := managedClaudeTestSession()
+	s.approvalServer = server
+	go s.consumeClaudeApprovalRequests()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		_, _ = claudeapproval.RequestApproval(ctx, server.SocketPath(), claudeapproval.Request{
+			ID:        "toolu-bash",
+			ToolName:  "Bash",
+			Input:     json.RawMessage(`{"command":"make test"}`),
+			ToolUseID: "toolu-bash",
+		})
+	}()
+	waitForClaudeInteractiveRequest(t, s)
+	cancel()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for s.Snapshot().PendingApproval != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("abandoned approval stayed pending")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if notice := s.Snapshot().LastSystemNotice; notice != claudeRequestWithdrawnNotice {
+		t.Fatalf("notice = %q, want withdrawal notice", notice)
 	}
 }

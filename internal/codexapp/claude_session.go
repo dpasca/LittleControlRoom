@@ -36,6 +36,7 @@ const (
 	claudeInterruptNotice                 = "Interrupted embedded Claude Code turn at your request; canceled tool calls were not individually denied."
 	claudeInterruptedCommandResult        = "[interrupted by the explicit Little Control Room stop; this command was not individually denied]"
 	claudeCompactingStatus                = "Claude Code is compacting conversation history..."
+	claudeRequestWithdrawnNotice          = "Claude Code stopped waiting for its pending question or approval (it timed out or its helper exited), so Little Control Room withdrew it."
 	claudeElicitationUnsupported          = "Embedded Claude Code elicitation responses are not supported yet"
 	claudeAutoModeNotice                  = "Embedded Claude Code is using Auto mode: Claude's classifier reviews risky actions in the background, while explicit permission prompts route to Little Control Room."
 	claudeAutoApprovalUnavailableNotice   = "Embedded Claude Code is using Auto mode, but Little Control Room approval routing is unavailable; classifier-denied and explicitly gated actions cannot be approved interactively."
@@ -1265,6 +1266,8 @@ func (s *claudeCodeSession) consumeClaudeApprovalRequests() {
 		select {
 		case request := <-server.Requests():
 			s.handleClaudeApprovalRequest(request)
+		case id := <-server.Withdrawn():
+			s.handleClaudeApprovalWithdrawn(id)
 		case <-server.Done():
 			return
 		}
@@ -1311,6 +1314,34 @@ func (s *claudeCodeSession) handleClaudeApprovalRequest(request claudeapproval.R
 	} else {
 		s.setClaudePendingInteractionLocked(interaction)
 	}
+	s.touchLocked()
+	s.updateStatusLocked()
+	s.mu.Unlock()
+	s.notifyAsync()
+}
+
+func (s *claudeCodeSession) handleClaudeApprovalWithdrawn(id string) {
+	id = strings.TrimSpace(id)
+	s.mu.Lock()
+	withdrawn := false
+	if s.pendingClaudeInput != nil && strings.TrimSpace(s.pendingClaudeInput.ID) == id {
+		s.clearClaudePendingRequestLocked(id)
+		s.advanceClaudePendingInteractionLocked()
+		withdrawn = true
+	} else {
+		for i, interaction := range s.pendingClaudeQueue {
+			if strings.TrimSpace(interaction.request.ID) == id {
+				s.pendingClaudeQueue = append(s.pendingClaudeQueue[:i], s.pendingClaudeQueue[i+1:]...)
+				withdrawn = true
+				break
+			}
+		}
+	}
+	if !withdrawn {
+		s.mu.Unlock()
+		return
+	}
+	s.appendSystemNoticeLocked(claudeRequestWithdrawnNotice)
 	s.touchLocked()
 	s.updateStatusLocked()
 	s.mu.Unlock()

@@ -961,3 +961,66 @@ type testRPCResponse struct {
 	Result  json.RawMessage `json:"result"`
 	Error   json.RawMessage `json:"error"`
 }
+
+func TestRuntimeMCPCancelledPermissionCallWithdrawsBridgeRequest(t *testing.T) {
+	bridge, err := claudeapproval.NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = bridge.Close() })
+	manager := projectrun.NewManager()
+	t.Cleanup(func() { _ = manager.CloseAll() })
+	inputReader, inputWriter := io.Pipe()
+	outputReader, outputWriter := io.Pipe()
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- Run(t.Context(), Options{
+			ProjectPath:          t.TempDir(),
+			ClaudeApprovalSocket: bridge.SocketPath(),
+			Manager:              manager,
+			Input:                inputReader,
+			Output:               outputWriter,
+		})
+		_ = outputWriter.Close()
+	}()
+	send := func(line string) {
+		t.Helper()
+		if _, err := io.WriteString(inputWriter, line+"\n"); err != nil {
+			t.Fatalf("write request: %v", err)
+		}
+	}
+	responses := json.NewDecoder(outputReader)
+
+	send(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"request_tool_approval","arguments":{"tool_name":"AskUserQuestion","input":{},"tool_use_id":"toolu-timeout"}}}`)
+	request := <-bridge.Requests()
+	if request.ID != "toolu-timeout" {
+		t.Fatalf("bridge request = %#v", request)
+	}
+
+	// A waiting human prompt must not block other calls on the same server.
+	send(`{"jsonrpc":"2.0","id":8,"method":"ping"}`)
+	var pong struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if err := responses.Decode(&pong); err != nil || string(pong.ID) != "8" {
+		t.Fatalf("ping response = %s, %v; want id 8", pong.ID, err)
+	}
+
+	send(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7,"reason":"timeout"}}`)
+	select {
+	case id := <-bridge.Withdrawn():
+		if id != "toolu-timeout" {
+			t.Fatalf("withdrawn id = %q", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled permission call was not withdrawn from the bridge")
+	}
+
+	_ = inputWriter.Close()
+	if err := <-runErr; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if err := responses.Decode(&pong); err != io.EOF {
+		t.Fatalf("cancelled call produced a response: %s, %v", pong.ID, err)
+	}
+}

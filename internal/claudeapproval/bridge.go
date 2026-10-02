@@ -48,6 +48,7 @@ type Server struct {
 	tempDir    string
 	socketPath string
 	requests   chan Request
+	withdrawn  chan string
 	done       chan struct{}
 	closeOnce  sync.Once
 
@@ -72,6 +73,7 @@ func NewServer() (*Server, error) {
 		tempDir:    tempDir,
 		socketPath: socketPath,
 		requests:   make(chan Request, 8),
+		withdrawn:  make(chan string, 8),
 		done:       make(chan struct{}),
 		pending:    make(map[string]chan Response),
 	}
@@ -91,6 +93,16 @@ func (s *Server) Requests() <-chan Request {
 		return nil
 	}
 	return s.requests
+}
+
+// Withdrawn reports IDs of delivered requests whose requester disconnected
+// before LCR answered, for example because Claude timed out the permission
+// tool call or its MCP helper exited. They can no longer be answered.
+func (s *Server) Withdrawn() <-chan string {
+	if s == nil {
+		return nil
+	}
+	return s.withdrawn
 }
 
 func (s *Server) Done() <-chan struct{} {
@@ -200,8 +212,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.mu.Unlock()
 	}()
 
+	// The requester writes nothing after its request, so any read result means
+	// it disconnected and the request can no longer be answered.
+	abandoned := make(chan struct{})
+	go func() {
+		_, _ = conn.Read(make([]byte, 1))
+		close(abandoned)
+	}()
+
 	select {
 	case s.requests <- cloneRequest(request):
+	case <-abandoned:
+		return
 	case <-s.done:
 		return
 	}
@@ -209,6 +231,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 	var response Response
 	select {
 	case response = <-responseCh:
+	case <-abandoned:
+		s.mu.Lock()
+		_, stillPending := s.pending[request.ID]
+		delete(s.pending, request.ID)
+		s.mu.Unlock()
+		if stillPending {
+			select {
+			case s.withdrawn <- request.ID:
+			case <-s.done:
+			}
+		}
+		return
 	case <-s.done:
 		response = Deny("Little Control Room closed the approval bridge", true)
 	}

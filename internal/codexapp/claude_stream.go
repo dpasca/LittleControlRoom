@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"lcroom/internal/claudeapproval"
 )
 
 const claudeStreamInitializeID = "lcr-stream-initialize"
@@ -150,8 +152,20 @@ func (s *claudeCodeSession) handleClaudeSessionStateLocked(state string, at time
 	default:
 		return nil
 	}
-	if s.pendingSubmissions > 0 || s.runningBackgroundTaskCountLocked() > 0 || s.pendingClaudeInput != nil {
+	if s.pendingSubmissions > 0 || s.runningBackgroundTaskCountLocked() > 0 {
 		return nil
+	}
+	if s.pendingClaudeInput != nil {
+		// With no queued prompt or running worker, an idle parent cannot still be
+		// waiting on a permission callback. Claude abandoned the request (e.g. its
+		// MCP tool timeout elapsed while nobody answered), so keeping it would hold
+		// stdin open and leave the session finishing forever.
+		for _, stale := range s.takeClaudePendingRequestsLocked() {
+			if s.approvalServer != nil {
+				_ = s.approvalServer.Respond(stale.ID, claudeapproval.Deny("Claude Code finished its turn before this request was answered", false))
+			}
+		}
+		s.appendSystemNoticeLocked(claudeRequestWithdrawnNotice)
 	}
 	if s.browserHandoffPending {
 		s.busy = false

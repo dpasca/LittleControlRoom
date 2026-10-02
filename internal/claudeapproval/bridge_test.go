@@ -122,3 +122,39 @@ func TestBridgeRejectsRequestDecodedAfterClose(t *testing.T) {
 	default:
 	}
 }
+
+func TestBridgeWithdrawsRequestWhenRequesterDisconnects(t *testing.T) {
+	server, err := NewServer()
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		_, requestErr := RequestApproval(ctx, server.SocketPath(), Request{
+			ID:        "toolu-abandoned",
+			ToolName:  "AskUserQuestion",
+			ToolUseID: "toolu-abandoned",
+		})
+		errCh <- requestErr
+	}()
+
+	request := <-server.Requests()
+	cancel()
+	if err := <-errCh; !errors.Is(err, context.Canceled) {
+		t.Fatalf("RequestApproval() error = %v, want context.Canceled", err)
+	}
+	select {
+	case id := <-server.Withdrawn():
+		if id != request.ID {
+			t.Fatalf("withdrawn id = %q, want %q", id, request.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("abandoned request was not withdrawn")
+	}
+	if err := server.Respond(request.ID, Allow(nil)); err == nil {
+		t.Fatal("Respond() to a withdrawn request succeeded")
+	}
+}
