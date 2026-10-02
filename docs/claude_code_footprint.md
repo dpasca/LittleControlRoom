@@ -147,6 +147,16 @@ Observed completion statuses worth treating as terminal:
 the previous process left no completion record. It is terminal for turn
 detection, but it is not evidence that the command succeeded.
 
+A resumed process reports all such orphans in one notification with repeated
+`<task-id>` tags. It lists at most 20 real ids, then adds a
+`__orphan_summary__:<kind>` marker (`shell`, `agent`, or `workflow`) that
+covers every earlier task of that kind, and `__orphan_summary_live__:<id>`
+markers for tasks that must stay running. Claude Code's own resume scan applies
+the summary marker that way, so LCR finishes every listed id and every earlier
+pending task of the summarized kind except the live ids. Reading only the first
+id leaves the rest pending and pins the turn start to the oldest orphaned
+launch. Verified on 2026-10-02 with Claude Code 2.1.284.
+
 `Monitor` tasks have no complete transcript lifecycle. The launch result has
 `toolUseResult.taskId`, `timeoutMs`, and `persistent`; each event is a
 `<task-notification>` with an `<event>` and no `<status>`. A monitor whose

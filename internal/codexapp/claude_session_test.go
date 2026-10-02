@@ -2593,6 +2593,32 @@ func TestClaudeRefreshMarksUnownedBackgroundTaskUnresolved(t *testing.T) {
 	}
 }
 
+func TestClaudeOrphanSummaryFinishesUnlistedBackgroundTasks(t *testing.T) {
+	session := &claudeCodeSession{
+		backgroundTasks: map[string]BackgroundTaskSnapshot{
+			"task-listed":   {ID: "task-listed", Source: claudeartifact.AsyncTaskSourceBackgroundShell, Status: "running"},
+			"task-unlisted": {ID: "task-unlisted", Source: claudeartifact.AsyncTaskSourceBackgroundShell, Status: "running"},
+			"task-live":     {ID: "task-live", Source: claudeartifact.AsyncTaskSourceBackgroundShell, Status: "running"},
+			"agent-1":       {ID: "agent-1", Source: claudeartifact.AsyncTaskSourceAgent, Status: "running"},
+		},
+		backgroundTaskOrder: []string{"task-listed", "task-unlisted", "task-live", "agent-1"},
+		toolCalls:           make(map[string]claudeToolCall),
+	}
+	line := `{"type":"user","origin":{"kind":"task-notification"},"timestamp":"2026-10-02T06:51:08Z","message":{"content":"<task-notification>\n<task-id>task-listed</task-id>\n<task-id>__orphan_summary__:shell</task-id>\n<task-id>__orphan_summary_live__:task-live</task-id>\n<status>stopped</status>\n<summary>3 background shell command tasks didn't finish before the previous session ended. First 1 task ids: task-listed.</summary>\n</task-notification>"}}`
+
+	if !session.observeClaudeBackgroundTaskEventsLocked(line, time.Now()) {
+		t.Fatal("orphan summary should change background task state")
+	}
+	if got := strings.Join(session.backgroundTaskOrder, ","); got != "task-live,agent-1" {
+		t.Fatalf("remaining tasks = %q, want live shell and other-kind agent", got)
+	}
+	for _, taskID := range []string{"task-listed", "task-unlisted"} {
+		if _, finished := session.finishedTaskIDs[taskID]; !finished {
+			t.Fatalf("finishedTaskIDs missing %q: %#v", taskID, session.finishedTaskIDs)
+		}
+	}
+}
+
 func TestClaudeRefreshActiveSetsBusySinceFromPIDSession(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, ".claude")

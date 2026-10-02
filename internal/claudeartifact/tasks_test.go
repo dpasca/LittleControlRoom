@@ -1,6 +1,7 @@
 package claudeartifact
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,6 +80,63 @@ func TestParseAsyncTaskEventsReadsTaskNotification(t *testing.T) {
 	}
 	if !IsTerminalTaskStatus(event.Status) {
 		t.Fatalf("completed task should be terminal")
+	}
+}
+
+func TestOrphanNotificationStopsListedAndSummarizedTasks(t *testing.T) {
+	launch := func(id, ts string) []byte {
+		return []byte(`{"type":"user","timestamp":"` + ts + `","toolUseResult":{"backgroundTaskId":"` + id + `"}}`)
+	}
+	// Claude Code 2.1.284 reports the previous process's unfinished shells in
+	// one notification: at most 20 task ids, a per-kind summary marker for the
+	// whole set, and live markers for tasks that must stay running.
+	orphans := []byte(`{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-02T06:39:57Z","content":"<task-notification>\n<task-id>task-a</task-id>\n<task-id>task-b</task-id>\n<task-id>__orphan_summary__:shell</task-id>\n<task-id>__orphan_summary_live__:task-live</task-id>\n<status>stopped</status>\n<summary>3 background shell command tasks didn't finish before the previous session ended. First 2 task ids: task-a, task-b.</summary>\n</task-notification>"}`)
+
+	events := ParseAsyncTaskEvents(orphans)
+	var ids []string
+	var orphaned *AsyncTaskEvent
+	for i, event := range events {
+		switch event.Kind {
+		case AsyncTaskUpdated:
+			ids = append(ids, event.TaskID)
+		case AsyncTasksOrphaned:
+			orphaned = &events[i]
+		default:
+			t.Fatalf("event = %#v, want stopped updates and one orphan summary", event)
+		}
+		if event.Status != "stopped" {
+			t.Fatalf("event = %#v, want stopped status", event)
+		}
+	}
+	if strings.Join(ids, ",") != "task-a,task-b" {
+		t.Fatalf("task ids = %v, want every listed task and no scan markers", ids)
+	}
+	if orphaned == nil || orphaned.Source != AsyncTaskSourceBackgroundShell {
+		t.Fatalf("orphan summary = %#v, want background shell summary", orphaned)
+	}
+	if !orphaned.FinishesOrphan("task-unlisted", AsyncTaskSourceBackgroundShell) ||
+		orphaned.FinishesOrphan("task-live", AsyncTaskSourceBackgroundShell) ||
+		orphaned.FinishesOrphan("agent-1", AsyncTaskSourceAgent) {
+		t.Fatalf("orphan summary should cover unlisted shells only, excluding live tasks and other kinds")
+	}
+
+	var tracker TurnTracker
+	for _, line := range [][]byte{
+		launch("task-a", "2026-10-01T18:05:21Z"),
+		launch("task-b", "2026-10-01T19:00:00Z"),
+		launch("task-unlisted", "2026-10-01T20:00:00Z"),
+	} {
+		tracker.Observe(TurnObservation{Type: "user", AsyncEvents: ParseAsyncTaskEvents(line)})
+	}
+	tracker.Observe(TurnObservation{Type: "queue-operation", AsyncEvents: events})
+	tracker.Observe(TurnObservation{Type: "assistant", At: time.Date(2026, 10, 2, 6, 40, 0, 0, time.UTC), AssistantStopReason: "end_turn"})
+	if state := tracker.State(); !state.Completed {
+		t.Fatalf("state = %#v, want completed once every orphan is stopped", state)
+	}
+	promptAt := time.Date(2026, 10, 2, 7, 27, 0, 0, time.UTC)
+	tracker.Observe(TurnObservation{Type: "user", At: promptAt, ConversationalUser: true})
+	if state := tracker.State(); !state.StartedAt.Equal(promptAt) {
+		t.Fatalf("turn started = %s, want latest prompt %s rather than an orphaned launch", state.StartedAt, promptAt)
 	}
 }
 

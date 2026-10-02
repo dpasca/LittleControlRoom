@@ -11,11 +11,23 @@ type AsyncTaskEventKind string
 const (
 	AsyncTaskLaunched AsyncTaskEventKind = "launched"
 	AsyncTaskUpdated  AsyncTaskEventKind = "updated"
+	// AsyncTasksOrphaned reports that a resumed Claude Code process finished
+	// every earlier task of Source that the previous process left without a
+	// completion record, except LiveTaskIDs. TaskID is empty.
+	AsyncTasksOrphaned AsyncTaskEventKind = "orphaned"
 )
 
 const (
 	AsyncTaskSourceBackgroundShell = "background_shell"
 	AsyncTaskSourceAgent           = "agent"
+	AsyncTaskSourceWorkflow        = "local_workflow"
+)
+
+// Claude Code's orphan summary task ids are scan markers, not tasks.
+const (
+	orphanSummaryPrefix     = "__orphan_summary"
+	orphanSummaryKindPrefix = "__orphan_summary__:"
+	orphanSummaryLivePrefix = "__orphan_summary_live__:"
 )
 
 type AsyncTaskEvent struct {
@@ -28,6 +40,22 @@ type AsyncTaskEvent struct {
 	OutputPath string
 	Summary    string
 	At         time.Time
+	// LiveTaskIDs are excluded from an AsyncTasksOrphaned event.
+	LiveTaskIDs []string
+}
+
+// FinishesOrphan reports whether e is a terminal orphan summary covering the
+// task with taskID and source.
+func (e AsyncTaskEvent) FinishesOrphan(taskID, source string) bool {
+	if e.Kind != AsyncTasksOrphaned || !IsTerminalTaskStatus(e.Status) || e.Source != source {
+		return false
+	}
+	for _, live := range e.LiveTaskIDs {
+		if live == taskID {
+			return false
+		}
+	}
+	return true
 }
 
 type asyncTaskToolUseResult struct {
@@ -156,20 +184,61 @@ func ParseAsyncTaskEvents(line []byte) []AsyncTaskEvent {
 	if notification == "" {
 		return events
 	}
-	taskID := taggedValue(notification, "task-id")
+	// A resumed process reports the tasks the previous process left without a
+	// completion record in one notification: repeated task-id tags capped at
+	// 20 ids, plus a per-kind summary marker that covers the uncapped set.
+	taskIDs := taggedValues(notification, "task-id")
 	status := strings.ToLower(strings.TrimSpace(taggedValue(notification, "status")))
-	if taskID == "" || status == "" {
+	if len(taskIDs) == 0 || status == "" {
 		return events
 	}
-	events = append(events, AsyncTaskEvent{
-		Kind:       AsyncTaskUpdated,
-		TaskID:     taskID,
-		Status:     status,
-		OutputPath: taggedValue(notification, "output-file"),
-		Summary:    taggedValue(notification, "summary"),
-		At:         at,
-	})
+	outputPath := taggedValue(notification, "output-file")
+	summary := taggedValue(notification, "summary")
+	var orphanSources, liveTaskIDs []string
+	for _, taskID := range taskIDs {
+		switch {
+		case strings.HasPrefix(taskID, orphanSummaryLivePrefix):
+			liveTaskIDs = append(liveTaskIDs, strings.TrimPrefix(taskID, orphanSummaryLivePrefix))
+		case strings.HasPrefix(taskID, orphanSummaryKindPrefix):
+			if source := orphanSummarySource(strings.TrimPrefix(taskID, orphanSummaryKindPrefix)); source != "" {
+				orphanSources = append(orphanSources, source)
+			}
+		case strings.HasPrefix(taskID, orphanSummaryPrefix):
+		default:
+			events = append(events, AsyncTaskEvent{
+				Kind:       AsyncTaskUpdated,
+				TaskID:     taskID,
+				Status:     status,
+				OutputPath: outputPath,
+				Summary:    summary,
+				At:         at,
+			})
+		}
+	}
+	for _, source := range orphanSources {
+		events = append(events, AsyncTaskEvent{
+			Kind:        AsyncTasksOrphaned,
+			Source:      source,
+			Status:      status,
+			Summary:     summary,
+			At:          at,
+			LiveTaskIDs: liveTaskIDs,
+		})
+	}
 	return events
+}
+
+func orphanSummarySource(kind string) string {
+	switch kind {
+	case "shell":
+		return AsyncTaskSourceBackgroundShell
+	case "agent":
+		return AsyncTaskSourceAgent
+	case "workflow":
+		return AsyncTaskSourceWorkflow
+	default:
+		return ""
+	}
 }
 
 func IsTerminalTaskStatus(status string) bool {
@@ -271,4 +340,29 @@ func taggedValue(raw, tag string) string {
 		return ""
 	}
 	return strings.TrimSpace(raw[start : start+end])
+}
+
+func taggedValues(raw, tag string) []string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	open := "<" + tag + ">"
+	close := "</" + tag + ">"
+	var values []string
+	for {
+		start := strings.Index(raw, open)
+		if start < 0 {
+			return values
+		}
+		raw = raw[start+len(open):]
+		end := strings.Index(raw, close)
+		if end < 0 {
+			return values
+		}
+		if value := strings.TrimSpace(raw[:end]); value != "" {
+			values = append(values, value)
+		}
+		raw = raw[end+len(close):]
+	}
 }
