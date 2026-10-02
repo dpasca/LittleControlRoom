@@ -258,6 +258,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			raw := m.resolvedCodexSlashInput()
 			inv, err := codexslash.Parse(raw)
+			if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode {
+				inv, err = codexslash.ParseClaude(raw)
+			}
 			if err != nil {
 				if hostInv, ok := codexHostSlashCommand(raw); ok {
 					m.clearCodexDraft(m.codexVisibleProject)
@@ -383,6 +386,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "Adding LCAgent review TODO..."
 				return m, m.addDevLCAgentReviewTodoCmd(snapshot)
 			case codexslash.KindPermissions:
+				if embeddedProvider(snapshot) == codexapp.ProviderClaudeCode {
+					return m.runClaudePermissions(inv)
+				}
 				if strings.TrimSpace(inv.PermissionLevel) == "" {
 					m.status = "Reading embedded " + label + " permissions..."
 					return m, m.showVisibleCodexPermissionsCmd()

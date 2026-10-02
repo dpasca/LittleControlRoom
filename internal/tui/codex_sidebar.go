@@ -1155,7 +1155,7 @@ func embeddedSidebarModelCommands(snapshot codexapp.Snapshot) string {
 	}
 	switch snapshot.Provider {
 	case codexapp.ProviderClaudeCode:
-		return "/model /style"
+		return "/model /style /permissions"
 	case codexapp.ProviderLCAgent, codexapp.ProviderCodex, codexapp.ProviderOpenCode:
 		return "/model"
 	default:

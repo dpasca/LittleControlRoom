@@ -58,6 +58,9 @@ type Invocation struct {
 	Prompt              string
 	SessionID           string
 	PermissionLevel     string
+	PermissionAction    string
+	PermissionRule      string
+	PermissionRemove    bool
 	GoalAction          GoalAction
 	GoalObjective       string
 	GoalTokenBudget     *int64

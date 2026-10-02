@@ -39,6 +39,7 @@ type Model struct {
 	unsub func()
 
 	codexFastModeBusy     bool
+	claudePermissionsBusy bool
 	claudeOutputStyleBusy bool
 
 	allProjects               []model.ProjectSummary
@@ -3243,6 +3244,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return msg.Result }
 		}
 		return m, nil
+	case claudePermissionsResultMsg:
+		m.claudePermissionsBusy = false
+		return m.applyCodexActionMsg(msg.codexActionMsg)
 	case codexActionMsg:
 		return m.applyCodexActionMsg(msg)
 	case codexModelListMsg:

@@ -26,7 +26,11 @@ func (m Model) codexSlashInput() string {
 }
 
 func (m Model) codexSlashSuggestions() []codexslash.Suggestion {
-	return codexSlashSuggestionsForInputWithStyles(m.codexSlashInput(), m.visibleClaudeOutputStyleNames())
+	suggestions := codexSlashSuggestionsForInputWithStyles(m.codexSlashInput(), m.visibleClaudeOutputStyleNames())
+	if snapshot, ok := m.currentCachedCodexSnapshot(); ok && snapshot.Provider == codexapp.ProviderClaudeCode {
+		return codexslash.ClaudePermissionSuggestions(m.codexSlashInput(), suggestions)
+	}
+	return suggestions
 }
 
 // visibleClaudeOutputStyleNames reads the style names off the current session
@@ -259,7 +263,7 @@ func (m Model) resolvedCodexSlashInput() string {
 		return raw
 	}
 
-	if _, err := codexslash.Parse(raw); err == nil {
+	if _, err := m.parseCodexSlash(raw); err == nil {
 		return raw
 	}
 	if _, ok := codexHostSlashCommand(raw); ok {
@@ -268,7 +272,7 @@ func (m Model) resolvedCodexSlashInput() string {
 
 	suggestion, ok := m.selectedCodexSlashSuggestion()
 	return slashcmd.ResolveInput(raw, suggestion, ok, func(input string) bool {
-		if _, err := codexslash.Parse(input); err == nil {
+		if _, err := m.parseCodexSlash(input); err == nil {
 			return true
 		}
 		_, ok := codexHostSlashCommand(input)
@@ -347,4 +351,11 @@ func (m Model) renderCodexSlashSuggestionRow(s codexslash.Suggestion, selected b
 
 func codexSlashSuggestionIndex(suggestions []codexslash.Suggestion, raw string) int {
 	return slashcmd.SuggestionIndex(suggestions, raw)
+}
+
+func (m Model) parseCodexSlash(input string) (codexslash.Invocation, error) {
+	if snapshot, ok := m.currentCachedCodexSnapshot(); ok && snapshot.Provider == codexapp.ProviderClaudeCode {
+		return codexslash.ParseClaude(input)
+	}
+	return codexslash.Parse(input)
 }

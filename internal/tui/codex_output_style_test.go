@@ -135,8 +135,8 @@ func TestSidebarCommandsHintIncludesStyleOnlyForClaude(t *testing.T) {
 		Provider: codexapp.ProviderClaudeCode,
 		Model:    "claude-opus-5",
 	})
-	if claude != "/model /style" {
-		t.Fatalf("Claude commands hint = %q, want %q", claude, "/model /style")
+	if claude != "/model /style /permissions" {
+		t.Fatalf("Claude commands hint = %q, want %q", claude, "/model /style /permissions")
 	}
 	codex := embeddedSidebarModelCommands(codexapp.Snapshot{
 		Provider: codexapp.ProviderCodex,
