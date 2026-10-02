@@ -147,6 +147,17 @@ Observed completion statuses worth treating as terminal:
 the previous process left no completion record. It is terminal for turn
 detection, but it is not evidence that the command succeeded.
 
+`Monitor` tasks have no complete transcript lifecycle. The launch result has
+`toolUseResult.taskId`, `timeoutMs`, and `persistent`; each event is a
+`<task-notification>` with an `<event>` and no `<status>`. A monitor whose
+source exits reports `completed`, but one that expires is killed with only an
+`<event>` notice. Transcript turn detection therefore ignores Monitor
+launches, and a reload can read the parent turn as completed while monitors
+run. For an LCR-owned stream, the stream's task events remain authoritative:
+live views count its running tasks, or a parent turn the stream reports as
+running, as active work despite that completed transcript state. Verified on
+2026-10-01 with Claude Code 2.1.284.
+
 ## 5. Important detector implication
 
 The parent Claude session JSONL may look done enough to misclassify a session even when work is still running elsewhere.

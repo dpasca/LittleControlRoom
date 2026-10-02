@@ -616,6 +616,119 @@ func TestIdleExternalOwnershipSuppressesLiveTimer(t *testing.T) {
 	}
 }
 
+func TestOwnedStreamWorkOutlastsCompletedTurnState(t *testing.T) {
+	busySince := time.Date(2026, 10, 1, 15, 24, 0, 0, time.UTC)
+	monitor := codexapp.BackgroundTaskSnapshot{ID: "b2pvrvk23", Tool: "Monitor", Status: "running"}
+	for _, tc := range []struct {
+		name   string
+		update func(*codexapp.Snapshot)
+		active bool
+	}{
+		{name: "background task", update: func(s *codexapp.Snapshot) {
+			s.BackgroundTasks = []codexapp.BackgroundTaskSnapshot{monitor}
+		}, active: true},
+		{name: "parent turn", update: func(s *codexapp.Snapshot) {
+			s.ParentTurnActive = true
+		}, active: true},
+		{name: "lost task", update: func(s *codexapp.Snapshot) {
+			lost := monitor
+			lost.Status = "unresolved"
+			s.Busy = false
+			s.Phase = codexapp.SessionPhaseIdle
+			s.BackgroundTasks = []codexapp.BackgroundTaskSnapshot{lost}
+		}},
+		{name: "no owned work", update: func(*codexapp.Snapshot) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := codexapp.Snapshot{
+				Provider:             codexapp.ProviderClaudeCode,
+				Started:              true,
+				Busy:                 true,
+				BusySince:            busySince,
+				Phase:                codexapp.SessionPhaseRunning,
+				LatestTurnStateKnown: true,
+				LatestTurnCompleted:  true,
+			}
+			tc.update(&snapshot)
+			gotStartedAt, active := embeddedSnapshotActiveStartedAt(snapshot, model.ProjectSummary{})
+			if active != tc.active {
+				t.Fatalf("active = %t, want %t", active, tc.active)
+			}
+			if tc.active && !gotStartedAt.Equal(busySince) {
+				t.Fatalf("started = %v, want busy start %v", gotStartedAt, busySince)
+			}
+		})
+	}
+}
+
+func TestRenderProjectListShowsWorkingWhileClaudeBackgroundWorkRuns(t *testing.T) {
+	now := time.Date(2026, 10, 1, 16, 32, 5, 0, time.UTC)
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:  codexapp.ProviderClaudeCode,
+			Started:   true,
+			Busy:      true,
+			BusySince: now.Add(-(time.Hour + 8*time.Minute + 5*time.Second)),
+			Phase:     codexapp.SessionPhaseRunning,
+			ThreadID:  "claude-live",
+			// A transcript reload sees the parent's end_turn but not the
+			// Monitor tasks the stream still owns.
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+			ParentStatus:         "Parent available · background work running",
+			BackgroundTasks: []codexapp.BackgroundTaskSnapshot{
+				{ID: "becgu3aoh", Tool: "Monitor", Status: "running"},
+				{ID: "b2pvrvk23", Tool: "Monitor", Status: "running"},
+			},
+			ActivityPreview: []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Three placeholders remain. Waiting on the parity captures.",
+			}},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderClaudeCode,
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Name:                            "demo",
+		Path:                            "/tmp/demo",
+		Status:                          model.StatusIdle,
+		PresentOnDisk:                   true,
+		LatestSessionFormat:             "claude_code",
+		LatestTurnStateKnown:            true,
+		LatestTurnCompleted:             true,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryBlocked,
+		LatestSessionSummary:            "Placeholders remain; halted pending parity captures.",
+	}
+	m := Model{
+		projects:     []model.ProjectSummary{project},
+		codexManager: manager,
+		nowFn:        func() time.Time { return now },
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(160, 4))
+	for _, want := range []string{"working", "CC 1:08:05", "Waiting on the parity captures."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderProjectList() missing %q for owned background work: %q", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"blocked", "halted pending parity captures"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("renderProjectList() showed completed-turn assessment %q while the stream owns work: %q", unwanted, rendered)
+		}
+	}
+}
+
 func TestProjectAgentDisplayUsesConflictResolverTimer(t *testing.T) {
 	projectPath := "/tmp/demo"
 	startedAt := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)

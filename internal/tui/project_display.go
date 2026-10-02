@@ -517,7 +517,9 @@ func liveEngineerGenericStatus(status string) bool {
 }
 
 func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.ProjectSummary) (time.Time, bool) {
-	if snapshot.LatestTurnStateKnown && snapshot.LatestTurnCompleted {
+	// Durable completion outranks stale transport state, but not work the
+	// stream still owns; the pane shows that work as running.
+	if snapshot.LatestTurnStateKnown && snapshot.LatestTurnCompleted && !snapshot.OwnsRunningWork() {
 		return time.Time{}, false
 	}
 	active := snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != ""

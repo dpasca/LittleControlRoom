@@ -2,6 +2,7 @@ package codexapp
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,27 @@ func (s Snapshot) ParentActivitySummary(now time.Time) (string, bool) {
 		return "No parent activity for " + age.Round(time.Second).String() + " · check the active tool or worker", true
 	}
 	return s.ParentStatus + " · last parent activity " + age.Round(time.Second).String() + " ago", false
+}
+
+// OwnsRunningWork reports work the live provider stream still runs after its
+// transcript may read as a completed turn: a parent turn the stream reports
+// as running, or background tasks awaiting their terminal notification.
+// Claude's transcript has no complete lifecycle for some tasks, such as
+// Monitor, and a parent turn woken by a task notification keeps the last
+// reloaded state.
+func (s Snapshot) OwnsRunningWork() bool {
+	if !s.Busy {
+		return false
+	}
+	if s.ParentTurnActive {
+		return true
+	}
+	for _, task := range s.BackgroundTasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "unresolved") {
+			return true
+		}
+	}
+	return false
 }
 
 // MessageDeliverySnapshot is a transport receipt, not a claim that the model
