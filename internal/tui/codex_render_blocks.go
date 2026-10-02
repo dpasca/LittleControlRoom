@@ -1125,6 +1125,12 @@ func codexRelativeLocalLinkPath(path string) bool {
 	if strings.Contains(slashPath, "/") && firstSegment != "." && firstSegment != ".." && strings.Contains(firstSegment, ".") {
 		return false
 	}
+	// A trailing slash marks an explicit directory reference such as
+	// "build/review/". Directories rarely carry an extension, so accept the
+	// shape when the final component names something concrete.
+	if dir := strings.TrimRight(slashPath, "/"); dir != slashPath {
+		return codexLocalPathTerminalComponentHasWord(dir)
+	}
 	base := slashPath
 	if idx := strings.LastIndexByte(slashPath, '/'); idx >= 0 {
 		base = slashPath[idx+1:]

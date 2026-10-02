@@ -144,3 +144,29 @@ func TestCodexArtifactScanRetriesMissingPathsOnTranscriptRevision(t *testing.T) 
 		t.Fatalf("new file was not confirmed on the next revision: %#v", targets)
 	}
 }
+
+func TestCodexArtifactPickerListsTrailingSlashProjectDirectories(t *testing.T) {
+	projectPath := t.TempDir()
+	dirPath := filepath.Join(projectPath, "build", "terrain-review", "before-after")
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Look at: `build/terrain-review/before-after/`, with the original on the left. " +
+				"Not `build/missing-review/`.",
+		}},
+	}
+	m := Model{codexVisibleProject: projectPath}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	updated, cmd := m.openCodexArtifactPicker(snapshot)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("picker = %#v, want only the existing directory", got.codexArtifactPicker)
+	}
+	if target := got.codexArtifactPicker.Targets[0]; target.Path != dirPath {
+		t.Fatalf("target = %#v, want %q", target, dirPath)
+	}
+}
