@@ -131,6 +131,14 @@ Observed machine-readable signals for unfinished delegated work:
 - Task completion notifications:
   - `user` entries with `origin.kind == "task-notification"`
   - `queue-operation` entries carrying `<task-notification>...</task-notification>` content
+- Task stop receipts (`TaskStop` tool results):
+  - `toolUseResult.task_id` with `toolUseResult.task_type` (stream JSON: `tool_use_result`)
+
+A task ended with `TaskStop` gets stream `task_updated` (`patch.status ==
+"killed"`) and `task_notification` (`status == "stopped"`) frames, but the
+session JSONL records neither; the receipt is its only transcript evidence and
+counts as `stopped`. Subagent transcripts omit `toolUseResult` for both the
+launch and the stop. Verified on 2026-10-02 with Claude Code 2.1.284.
 
 Observed completion statuses worth treating as terminal:
 
@@ -322,7 +330,7 @@ Recommended filesystem-first approach:
 
 1. Parse `~/.claude/projects/<encoded-project>/*.jsonl` for `sessionId`, `cwd`, and start time.
 2. Track latest-turn state from structured entry types instead of natural-language transcript text.
-3. Treat pending `backgroundTaskId` and async `agentId` launches as in-progress until a terminal task notification is observed.
+3. Treat pending `backgroundTaskId` and async `agentId` launches as in-progress until a terminal task notification or `TaskStop` receipt is observed.
 4. Fold auxiliary activity into `LastEventAt` using:
    - `~/.claude/projects/<encoded-project>/<session-id>/subagents/*.jsonl`
    - temp `claude-*` task outputs under `/tmp`, `/private/tmp`, and `os.TempDir()`

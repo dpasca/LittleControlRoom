@@ -887,6 +887,53 @@ func TestDetectCompletedBackgroundTaskRestoresCompletedTurnState(t *testing.T) {
 	}
 }
 
+func TestDetectTaskStopReceiptCompletesBackgroundTurn(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", root)
+
+	projectPath := filepath.Join(root, "stopped-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claudeHome := filepath.Join(root, ".claude")
+	sessionID := "background-session-003"
+	sessionFile, _ := createClaudeProjectDirs(t, claudeHome, projectPath, sessionID)
+	ts := time.Date(2026, 10, 1, 9, 21, 27, 0, time.UTC)
+	taskID := "b99c39tzm"
+	entry := func(entryType, uuid string, at time.Time, content any) map[string]any {
+		return map[string]any{"type": entryType, "sessionId": sessionID, "cwd": projectPath, "uuid": uuid,
+			"timestamp": at.Format(time.RFC3339Nano), "message": map[string]any{"role": entryType, "content": content}}
+	}
+	launch := entry("user", "u1", ts, []map[string]any{{"type": "tool_result", "tool_use_id": "toolu_wait", "content": "moved to the background"}})
+	launch["toolUseResult"] = map[string]any{"backgroundTaskId": taskID}
+	stop := entry("user", "u2", ts.Add(5*time.Hour), []map[string]any{{"type": "tool_result", "tool_use_id": "toolu_stop", "content": "stopped"}})
+	stop["toolUseResult"] = map[string]any{"message": "Successfully stopped task: " + taskID, "task_id": taskID, "task_type": "local_bash", "command": "sleep 300"}
+	final := entry("assistant", "a2", ts.Add(5*time.Hour+time.Minute), []map[string]any{{"type": "text", "text": "Voice fixes committed."}})
+	final["message"].(map[string]any)["stop_reason"] = "end_turn"
+
+	writeJSONLines(t, sessionFile, []map[string]any{
+		entry("assistant", "a1", ts.Add(-10*time.Minute), []map[string]any{{"type": "tool_use", "id": "toolu_wait", "name": "Bash", "input": map[string]any{"command": "sleep 300"}}}),
+		launch,
+		entry("assistant", "a-stop", ts.Add(5*time.Hour-time.Second), []map[string]any{{"type": "tool_use", "id": "toolu_stop", "name": "TaskStop", "input": map[string]any{"task_id": taskID}}}),
+		stop,
+		final,
+	})
+	setModTime(t, sessionFile, ts.Add(5*time.Hour+time.Minute))
+
+	results, err := New(claudeHome).Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	project := results[projectPath]
+	if project == nil || len(project.Sessions) != 1 {
+		t.Fatalf("results = %#v, want one session for %s", results, projectPath)
+	}
+	if sess := project.Sessions[0]; !sess.LatestTurnStateKnown || !sess.LatestTurnCompleted {
+		t.Fatalf("turn known=%t completed=%t, want completed after TaskStop released the task", sess.LatestTurnStateKnown, sess.LatestTurnCompleted)
+	}
+}
+
 func TestDetectUsesSubagentActivityForIncompleteParentTurn(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("TMPDIR", root)

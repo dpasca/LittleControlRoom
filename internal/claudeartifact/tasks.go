@@ -35,6 +35,8 @@ type asyncTaskToolUseResult struct {
 	IsAsync          bool   `json:"isAsync"`
 	Status           string `json:"status"`
 	AgentID          string `json:"agentId"`
+	StoppedTaskID    string `json:"task_id"`
+	StoppedTaskType  string `json:"task_type"`
 }
 
 // ParseAsyncTaskEvents reads Claude Code's structured background-shell and
@@ -145,6 +147,17 @@ func ParseAsyncTaskEvents(line []byte) []AsyncTaskEvent {
 			})
 		}
 	}
+	// A TaskStop result is the only persisted record of a stop: Claude streams
+	// task_updated and task_notification frames for it but writes neither.
+	if taskID := strings.TrimSpace(result.StoppedTaskID); taskID != "" && strings.TrimSpace(result.StoppedTaskType) != "" {
+		events = append(events, AsyncTaskEvent{
+			Kind:   AsyncTaskUpdated,
+			TaskID: taskID,
+			Source: streamTaskSource(result.StoppedTaskType),
+			Status: "stopped",
+			At:     at,
+		})
+	}
 
 	notification := ""
 	switch {
@@ -204,6 +217,10 @@ func mergeAsyncTaskToolUseResult(primary, fallback asyncTaskToolUseResult) async
 	}
 	if strings.TrimSpace(primary.AgentID) == "" {
 		primary.AgentID = fallback.AgentID
+	}
+	if strings.TrimSpace(primary.StoppedTaskID) == "" {
+		primary.StoppedTaskID = fallback.StoppedTaskID
+		primary.StoppedTaskType = fallback.StoppedTaskType
 	}
 	return primary
 }

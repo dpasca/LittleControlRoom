@@ -2593,6 +2593,40 @@ func TestClaudeRefreshMarksUnownedBackgroundTaskUnresolved(t *testing.T) {
 	}
 }
 
+func TestClaudeRefreshReleasesTaskStoppedByTaskStop(t *testing.T) {
+	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
+	lines := []string{
+		`{"type":"assistant","timestamp":"2026-10-01T09:11:27Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_wait","name":"Bash","input":{"command":"until grep -q real smoke.txt; do sleep 10; done"}}],"stop_reason":"tool_use"}}`,
+		`{"type":"user","timestamp":"2026-10-01T09:21:27Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_wait","content":"Command was moved to the background."}]},"toolUseResult":{"backgroundTaskId":"b99c39tzm"}}`,
+		`{"type":"assistant","timestamp":"2026-10-01T14:37:51Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_stop","name":"TaskStop","input":{"task_id":"b99c39tzm"}}],"stop_reason":"tool_use"}}`,
+		`{"type":"user","timestamp":"2026-10-01T14:37:51.1Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_stop","content":"stopped"}]},"toolUseResult":{"message":"Successfully stopped task: b99c39tzm","task_id":"b99c39tzm","task_type":"local_bash","command":"until grep -q real smoke.txt; do sleep 10; done"}}`,
+		`{"type":"assistant","timestamp":"2026-10-01T14:40:00Z","message":{"role":"assistant","content":[{"type":"text","text":"Voice fixes committed."}],"stop_reason":"end_turn"}}`,
+	}
+	if err := os.WriteFile(sessionFile, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	session := &claudeCodeSession{
+		claudeHome:      t.TempDir(),
+		sessionFile:     sessionFile,
+		started:         true,
+		assistantBlocks: make(map[string]map[string]struct{}),
+		toolCalls:       make(map[string]claudeToolCall),
+		toolResults:     make(map[string]struct{}),
+	}
+
+	if err := session.RefreshBusyElsewhere(); err != nil {
+		t.Fatalf("RefreshBusyElsewhere() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if len(snapshot.BackgroundTasks) != 0 {
+		t.Fatalf("BackgroundTasks = %#v, want the stopped task released", snapshot.BackgroundTasks)
+	}
+	if snapshot.Status == claudeBackgroundTaskUnresolved {
+		t.Fatalf("Status = %q, want no lost background work", snapshot.Status)
+	}
+}
+
 func TestClaudeRefreshActiveSetsBusySinceFromPIDSession(t *testing.T) {
 	root := t.TempDir()
 	claudeHome := filepath.Join(root, ".claude")

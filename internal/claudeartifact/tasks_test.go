@@ -82,6 +82,31 @@ func TestParseAsyncTaskEventsReadsTaskNotification(t *testing.T) {
 	}
 }
 
+func TestParseAsyncTaskEventsReadsTaskStopReceipt(t *testing.T) {
+	receipt := `{"message":"Successfully stopped task: b99c39tzm (sleep 300)","task_id":"b99c39tzm","task_type":"local_bash","command":"sleep 300"}`
+	for _, field := range []string{"toolUseResult", "tool_use_result"} {
+		line := []byte(`{"type":"user","timestamp":"2026-10-01T14:37:51.112Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_stop","content":"stopped"}]},"` + field + `":` + receipt + `}`)
+		events := ParseAsyncTaskEvents(line)
+		if len(events) != 1 {
+			t.Fatalf("%s: events = %#v, want one stop", field, events)
+		}
+		event := events[0]
+		if event.Kind != AsyncTaskUpdated || event.TaskID != "b99c39tzm" || event.Source != AsyncTaskSourceBackgroundShell || !IsTerminalTaskStatus(event.Status) {
+			t.Fatalf("%s: event = %#v, want terminal background-shell update", field, event)
+		}
+		if want := time.Date(2026, 10, 1, 14, 37, 51, 112000000, time.UTC); !event.At.Equal(want) {
+			t.Fatalf("%s: event.At = %v, want %v", field, event.At, want)
+		}
+	}
+
+	// TaskOutput nests the task it reports on; only TaskStop's top-level
+	// receipt ends a task.
+	output := []byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_out"}]},"toolUseResult":{"retrieval_status":"not_ready","task":{"task_id":"b99c39tzm","task_type":"local_bash","status":"running"}}}`)
+	if events := ParseAsyncTaskEvents(output); len(events) != 0 {
+		t.Fatalf("task output events = %#v, want none", events)
+	}
+}
+
 func TestStoppedTaskStatusIsTerminal(t *testing.T) {
 	line := []byte(`{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>task-stopped</task-id>\n<status>stopped</status>\n<summary>No completion record was found.</summary>\n</task-notification>"}`)
 	events := ParseAsyncTaskEvents(line)
