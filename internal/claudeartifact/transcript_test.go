@@ -35,8 +35,8 @@ func TestTurnTrackerUsesStructuredTerminalStateAndPendingTasks(t *testing.T) {
 	if !state.Known || state.Completed || !state.Verified {
 		t.Fatalf("state with pending task = %#v, want known incomplete", state)
 	}
-	if !state.StartedAt.Equal(startedAt.Add(30 * time.Second)) {
-		t.Fatalf("pending task start = %v, want %v", state.StartedAt, startedAt.Add(30*time.Second))
+	if !state.StartedAt.Equal(startedAt) {
+		t.Fatalf("pending task start = %v, want busy span start %v", state.StartedAt, startedAt)
 	}
 
 	tracker.Observe(TurnObservation{
@@ -209,5 +209,50 @@ func TestConversationTrackerRejectsCompactSummary(t *testing.T) {
 		OriginKind:   "human",
 	}) {
 		t.Fatal("human prompt after compact summary should be conversational")
+	}
+}
+
+func TestTurnTrackerKeepsBusySpanAcrossTaskNotificationTurns(t *testing.T) {
+	promptAt := time.Date(2026, 10, 3, 20, 29, 0, 0, time.UTC)
+	var tracker TurnTracker
+	launch := func(id string, at time.Time) {
+		tracker.Observe(TurnObservation{
+			Type:                "assistant",
+			At:                  at,
+			AssistantStopReason: "tool_use",
+			AsyncEvents:         []AsyncTaskEvent{{Kind: AsyncTaskLaunched, TaskID: id, At: at}},
+		})
+		tracker.Observe(TurnObservation{Type: "assistant", At: at.Add(time.Second), AssistantStopReason: "end_turn"})
+	}
+	notify := func(id string, at time.Time) {
+		tracker.Observe(TurnObservation{
+			Type:        "user",
+			At:          at,
+			AsyncEvents: []AsyncTaskEvent{{Kind: AsyncTaskUpdated, TaskID: id, Status: "completed", At: at}},
+		})
+	}
+
+	tracker.Observe(TurnObservation{Type: "user", At: promptAt, ConversationalUser: true})
+	launch("build", promptAt.Add(3*time.Minute))
+	notify("build", promptAt.Add(4*time.Minute))
+	launch("windows", promptAt.Add(21*time.Minute))
+	notify("other", promptAt.Add(42*time.Minute))
+	launch("smoke", promptAt.Add(43*time.Minute))
+
+	if state := tracker.State(); state.Completed || !state.StartedAt.Equal(promptAt) {
+		t.Fatalf("state = %#v, want open busy span from the prompt %v", state, promptAt)
+	}
+
+	notify("windows", promptAt.Add(58*time.Minute))
+	notify("smoke", promptAt.Add(59*time.Minute))
+	tracker.Observe(TurnObservation{Type: "assistant", At: promptAt.Add(60 * time.Minute), AssistantStopReason: "end_turn"})
+	if state := tracker.State(); !state.Completed || !state.StartedAt.IsZero() {
+		t.Fatalf("settled state = %#v, want completed without a start", state)
+	}
+
+	nextAt := promptAt.Add(2 * time.Hour)
+	tracker.Observe(TurnObservation{Type: "user", At: nextAt, ConversationalUser: true})
+	if state := tracker.State(); !state.StartedAt.Equal(nextAt) {
+		t.Fatalf("next span start = %v, want %v", state.StartedAt, nextAt)
 	}
 }

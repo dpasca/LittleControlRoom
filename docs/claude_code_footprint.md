@@ -176,6 +176,18 @@ live views count its running tasks, or a parent turn the stream reports as
 running, as active work despite that completed transcript state. Verified on
 2026-10-01 with Claude Code 2.1.284.
 
+Every surface times that work as one busy span. It opens with the prompt (or the
+first async launch after idle) and stays open across the short parent turns
+that task notifications wake, closing only when no turn is open and no async
+task is pending. Transcript-derived `LatestTurnStartedAt` reports the span
+start, and live views use the earlier of that and the stream's busy start, so
+the pane footer and dashboard row show the same running time. When an
+LCR-owned parent has finished every submitted turn and only background tasks
+remain (`session_state_changed` `idle` for managed streams), views say
+"Waiting on background command/agent/task" with the launching tool call's
+`description` instead of "Working". Verified on 2026-10-03 with Claude Code
+2.1.284.
+
 ## 5. Important detector implication
 
 The parent Claude session JSONL may look done enough to misclassify a session even when work is still running elsewhere.

@@ -436,3 +436,36 @@ func TestClaudeApprovalWithdrawnByRequesterClearsQuestion(t *testing.T) {
 		t.Fatalf("notice = %q, want withdrawal notice", notice)
 	}
 }
+
+func TestClaudeManagedStreamReportsIdleParentWaitingOnBackgroundCommand(t *testing.T) {
+	s, _ := managedClaudeTestSession()
+	for _, line := range []string{
+		`{"type":"assistant","message":{"id":"watch","content":[{"type":"tool_use","id":"watch-call","name":"Bash","input":{"command":"while true; do poll; sleep 60; done","description":"Watch Windows PackageChecks","run_in_background":true}}],"stop_reason":"tool_use"}}`,
+		`{"type":"system","subtype":"task_started","task_id":"b52b7wkjl","tool_use_id":"watch-call","task_type":"local_bash","is_backgrounded":true}`,
+	} {
+		s.handleClaudeStdoutLine(line)
+	}
+	if snapshot := s.stateSnapshotLocked(); snapshot.ParentAwaitingBackgroundTasks {
+		t.Fatal("reported a background wait while the parent turn still runs")
+	}
+	for _, line := range []string{
+		`{"type":"assistant","message":{"id":"reply","content":[{"type":"text","text":"Watching the Windows job."}],"stop_reason":"end_turn"}}`,
+		`{"type":"result","subtype":"success","user_message_uuid":"first"}`,
+		`{"type":"command_lifecycle","command_uuid":"first","state":"completed"}`,
+		`{"type":"system","subtype":"session_state_changed","state":"idle"}`,
+	} {
+		s.handleClaudeStdoutLine(line)
+	}
+	snapshot := s.stateSnapshotLocked()
+	if !snapshot.Busy || !snapshot.ParentAwaitingBackgroundTasks {
+		t.Fatalf("snapshot busy=%v awaiting=%v, want an idle parent owning background work", snapshot.Busy, snapshot.ParentAwaitingBackgroundTasks)
+	}
+	if got, want := snapshot.BackgroundWaitSummary(), "Waiting on background command: Watch Windows PackageChecks"; got != want {
+		t.Fatalf("BackgroundWaitSummary() = %q, want %q", got, want)
+	}
+
+	s.handleClaudeStdoutLine(`{"type":"system","subtype":"session_state_changed","state":"running"}`)
+	if s.stateSnapshotLocked().ParentAwaitingBackgroundTasks {
+		t.Fatal("kept the background wait after the parent resumed work")
+	}
+}

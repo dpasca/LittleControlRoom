@@ -927,10 +927,7 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 	if projectPath == "" || sessionID == "" || lastActivity.IsZero() {
 		return service.EmbeddedSessionActivity{}, false
 	}
-	latestTurnStartedAt := snapshot.LatestTurnStartedAt
-	if latestTurnStartedAt.IsZero() {
-		latestTurnStartedAt = snapshot.BusySince
-	}
+	latestTurnStartedAt := snapshot.ActiveSince()
 	if snapshot.EmptyConversation && !embeddedSessionBlocksProviderSwitch(snapshot) {
 		// Preserve the control binding, but opening a startup-only artifact is
 		// not new work. A zero timestamp tells the service to record identity only.

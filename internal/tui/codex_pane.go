@@ -585,6 +585,7 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 	cached.BackgroundInputSupported = state.BackgroundInputSupported
 	cached.ParentStatus = state.ParentStatus
 	cached.ParentTurnActive = state.ParentTurnActive
+	cached.ParentAwaitingBackgroundTasks = state.ParentAwaitingBackgroundTasks
 	cached.ParentActivityAt = state.ParentActivityAt
 	cached.MessageDeliveries = append([]codexapp.MessageDeliverySnapshot(nil), state.MessageDeliveries...)
 	cached.ActivityPreview = cloneCodexActivityPreview(state.ActivityPreview)

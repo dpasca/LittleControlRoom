@@ -611,6 +611,9 @@ type BackgroundTaskSnapshot struct {
 	Summary    string
 	StartedAt  time.Time
 	UpdatedAt  time.Time
+
+	// Description is the launching tool call's own short label, when present.
+	Description string
 }
 
 type Snapshot struct {
@@ -705,6 +708,10 @@ type Snapshot struct {
 	TokenUsage                  *TokenUsageSnapshot
 	UsageWindows                []UsageWindowSnapshot
 	Goal                        *ThreadGoal
+
+	// ParentAwaitingBackgroundTasks marks a busy span whose parent turn has
+	// ended and is only waiting for background tasks to report completion.
+	ParentAwaitingBackgroundTasks bool
 }
 
 type CompactionResult struct {

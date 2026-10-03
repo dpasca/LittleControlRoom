@@ -401,7 +401,7 @@ func bossEngineerActivityKey(activity bossui.ViewEngineerActivity) string {
 }
 
 func bossEngineerActivityStartedAt(snapshot codexapp.Snapshot) time.Time {
-	startedAt := snapshot.BusySince
+	startedAt := snapshot.ActiveSince()
 	if startedAt.IsZero() {
 		startedAt = snapshot.LastBusyActivityAt
 	}

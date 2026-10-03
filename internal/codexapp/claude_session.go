@@ -196,6 +196,8 @@ type claudeToolCall struct {
 	Summary string
 	Command string
 	Input   json.RawMessage
+
+	Description string
 }
 
 type claudeSubmissionMode int
@@ -559,6 +561,8 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		ParentTurnActive:         s.cmd != nil && s.managedStream && s.streamState == "running",
 		ParentActivityAt:         s.lastParentActivityAt,
 		MessageDeliveries:        append([]MessageDeliverySnapshot(nil), s.messageDeliveries...),
+
+		ParentAwaitingBackgroundTasks: s.parentAwaitingBackgroundTasksLocked(),
 	}
 }
 
@@ -2199,6 +2203,8 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, env
 					Summary: summary,
 					Command: command,
 					Input:   append(json.RawMessage(nil), block.Input...),
+
+					Description: claudeToolDescription(block.Input),
 				}
 			}
 		}
@@ -2714,6 +2720,7 @@ func applyClaudeTaskEvents(tasks map[string]BackgroundTaskSnapshot, order *[]str
 			if call, ok := toolCalls[task.ToolUseID]; ok {
 				task.Tool = firstNonEmptyTrimmed(call.Name, task.Tool)
 				task.Command = firstNonEmptyTrimmed(call.Command, call.Summary, task.Command)
+				task.Description = firstNonEmptyTrimmed(call.Description, task.Description)
 			}
 			tasks[taskID] = task
 			changed = true
@@ -2799,6 +2806,16 @@ func (s *claudeCodeSession) backgroundTaskSnapshotsLocked() []BackgroundTaskSnap
 		}
 	}
 	return tasks
+}
+
+// parentAwaitingBackgroundTasksLocked reports a busy span in which Claude has
+// finished every submitted turn and only background tasks remain running.
+func (s *claudeCodeSession) parentAwaitingBackgroundTasksLocked() bool {
+	return s.busy && !s.compacting && !s.externalTurnActive &&
+		s.pendingSubmissions == 0 &&
+		s.pendingApproval == nil && s.pendingToolInput == nil &&
+		(!s.managedStream || s.streamState == "idle") &&
+		s.runningBackgroundTaskCountLocked() > 0
 }
 
 func formatBackgroundTaskCount(count int) string {
@@ -3363,6 +3380,16 @@ func summarizeClaudeToolUse(name string, input json.RawMessage) (summary string,
 	}
 }
 
+// claudeToolDescription reads the short label Claude writes for Bash, Agent,
+// and similar tools; it names background work better than its raw command.
+func claudeToolDescription(input json.RawMessage) string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(input, &fields); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(ccExtractString(fields, "description"))
+}
+
 func claudeFileToolPath(name string, input json.RawMessage) string {
 	pathKey := ""
 	switch strings.ToLower(strings.TrimSpace(name)) {
@@ -3655,6 +3682,8 @@ func extractCCAssistantEntries(content json.RawMessage, itemID string, toolCalls
 					Name:    b.Name,
 					Summary: summary,
 					Command: command,
+
+					Description: claudeToolDescription(b.Input),
 				}
 			}
 		}

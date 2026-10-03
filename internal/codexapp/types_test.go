@@ -1475,3 +1475,43 @@ func TestApprovalRequestAllowsDecision(t *testing.T) {
 		t.Fatalf("one-shot file summary = %q, want %q", got, want)
 	}
 }
+
+func TestSnapshotActiveSinceUsesEarliestBusySpanStart(t *testing.T) {
+	busySince := time.Date(2026, 10, 3, 20, 29, 0, 0, time.UTC)
+	turnStart := busySince.Add(21 * time.Minute)
+	for name, tc := range map[string]struct {
+		snapshot Snapshot
+		want     time.Time
+	}{
+		"busy span covers later turn":       {Snapshot{BusySince: busySince, LatestTurnStartedAt: turnStart}, busySince},
+		"reopened session predates busy":    {Snapshot{BusySince: turnStart, LatestTurnStartedAt: busySince}, busySince},
+		"artifact turn only":                {Snapshot{LatestTurnStartedAt: turnStart}, turnStart},
+		"live busy only":                    {Snapshot{BusySince: busySince}, busySince},
+		"no running work has no start time": {Snapshot{}, time.Time{}},
+	} {
+		if got := tc.snapshot.ActiveSince(); !got.Equal(tc.want) {
+			t.Errorf("%s: ActiveSince() = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestSnapshotBackgroundWaitSummary(t *testing.T) {
+	shell := BackgroundTaskSnapshot{ID: "a", Source: "background_shell", Status: "running", Command: "until [ -f done ]; do sleep 20; done"}
+	agent := BackgroundTaskSnapshot{ID: "b", Tool: "Agent", Status: "running", Description: "Review the diff"}
+	unresolved := BackgroundTaskSnapshot{ID: "c", Source: "background_shell", Status: "unresolved"}
+	for name, tc := range map[string]struct {
+		snapshot Snapshot
+		want     string
+	}{
+		"parent running":    {Snapshot{BackgroundTasks: []BackgroundTaskSnapshot{shell}}, ""},
+		"single command":    {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, unresolved}}, "Waiting on background command: until [ -f done ]; do sleep 20; done"},
+		"single agent":      {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{agent}}, "Waiting on background agent: Review the diff"},
+		"same kind counted": {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, {ID: "d", Tool: "Bash", Status: "running"}}}, "Waiting on 2 background commands"},
+		"mixed kinds":       {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, agent}}, "Waiting on 2 background tasks"},
+		"only unresolved":   {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{unresolved}}, ""},
+	} {
+		if got := tc.snapshot.BackgroundWaitSummary(); got != tc.want {
+			t.Errorf("%s: BackgroundWaitSummary() = %q, want %q", name, got, tc.want)
+		}
+	}
+}

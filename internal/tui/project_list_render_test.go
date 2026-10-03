@@ -2615,3 +2615,54 @@ func TestAssessmentRefreshFlashesOnlyChangedDisplay(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveClaudeBackgroundWaitSharesOneTimerAcrossListAndFooter(t *testing.T) {
+	now := time.Date(2026, 10, 3, 21, 26, 0, 0, time.UTC)
+	snapshot := codexapp.Snapshot{
+		Provider:  codexapp.ProviderClaudeCode,
+		Started:   true,
+		Busy:      true,
+		BusySince: now.Add(-57 * time.Minute),
+		// The transcript's newest turn started when a later task notification
+		// woke the parent; the busy span began with the user's prompt.
+		LatestTurnStartedAt:           now.Add(-36 * time.Minute),
+		LatestTurnStateKnown:          true,
+		Phase:                         codexapp.SessionPhaseRunning,
+		ThreadID:                      "claude-live",
+		ParentAwaitingBackgroundTasks: true,
+		BackgroundTasks: []codexapp.BackgroundTaskSnapshot{{
+			ID: "b52b7wkjl", Source: "background_shell", Tool: "Bash", Status: "running",
+			Description: "Watch Windows PackageChecks",
+		}},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{projectPath: "/tmp/demo", snapshot: snapshot}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderClaudeCode,
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:                "demo",
+			Path:                "/tmp/demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "claude_code",
+		}},
+		codexManager: manager,
+		nowFn:        func() time.Time { return now },
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(160, 4))
+	for _, want := range []string{"CC 57:00", "Waiting on background command: Watch Windows PackageChecks (57:00)"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderProjectList() missing %q: %q", want, rendered)
+		}
+	}
+	if got, want := codexFooterStatus(snapshot, now), "Waiting on background command 57:00 · Watch Windows PackageChecks"; got != want {
+		t.Fatalf("codexFooterStatus() = %q, want %q", got, want)
+	}
+}

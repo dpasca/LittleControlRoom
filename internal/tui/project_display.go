@@ -437,6 +437,9 @@ func liveEngineerSnapshotDetail(snapshot codexapp.Snapshot) string {
 	if snapshot.PendingElicitation != nil {
 		return liveEngineerCleanSummary("Waiting for input: " + snapshot.PendingElicitation.Summary())
 	}
+	if wait := snapshot.BackgroundWaitSummary(); wait != "" {
+		return liveEngineerCleanSummary(wait)
+	}
 	if snapshot.Goal != nil && snapshot.Goal.Status == codexapp.ThreadGoalStatusActive {
 		if objective := liveEngineerCleanSummary(snapshot.Goal.Objective); objective != "" {
 			return objective
@@ -530,10 +533,7 @@ func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.P
 	if !active {
 		return time.Time{}, false
 	}
-	startedAt := snapshot.LatestTurnStartedAt
-	if startedAt.IsZero() {
-		startedAt = snapshot.BusySince
-	}
+	startedAt := snapshot.ActiveSince()
 	if startedAt.IsZero() {
 		startedAt = project.LatestTurnStartedAt
 	}

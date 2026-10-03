@@ -114,8 +114,8 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseReconciling:
 		if codexSnapshotIsCompacting(snapshot) {
-			if !snapshot.BusySince.IsZero() {
-				return "Compacting conversation " + formatRunningDuration(now.Sub(snapshot.BusySince))
+			if since := snapshot.ActiveSince(); !since.IsZero() {
+				return "Compacting conversation " + formatRunningDuration(now.Sub(since))
 			}
 			return "Compacting conversation"
 		}
@@ -123,13 +123,13 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	case codexapp.SessionPhaseStalled:
 		return "Stalled; use /reconnect"
 	case codexapp.SessionPhaseFinishing:
-		if !snapshot.BusySince.IsZero() {
-			return "Finishing " + formatRunningDuration(now.Sub(snapshot.BusySince))
+		if since := snapshot.ActiveSince(); !since.IsZero() {
+			return "Finishing " + formatRunningDuration(now.Sub(since))
 		}
 		return "Finishing"
 	case codexapp.SessionPhaseExternal:
-		if !snapshot.BusySince.IsZero() {
-			return "Working elsewhere " + formatRunningDuration(now.Sub(snapshot.BusySince))
+		if since := snapshot.ActiveSince(); !since.IsZero() {
+			return "Working elsewhere " + formatRunningDuration(now.Sub(since))
 		}
 		return "Working elsewhere"
 	}
@@ -138,8 +138,15 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	}
 	if snapshot.Busy {
 		status := "Working"
-		if !snapshot.BusySince.IsZero() {
-			status += " " + formatRunningDuration(now.Sub(snapshot.BusySince))
+		waitDetail := ""
+		if label, detail, ok := snapshot.BackgroundWait(); ok {
+			status, waitDetail = label, detail
+		}
+		if since := snapshot.ActiveSince(); !since.IsZero() {
+			status += " " + formatRunningDuration(now.Sub(since))
+		}
+		if waitDetail != "" {
+			status += " · " + waitDetail
 		}
 		if subagents := snapshot.RunningSubagentSummary(now); subagents != "" {
 			status += " · " + subagents

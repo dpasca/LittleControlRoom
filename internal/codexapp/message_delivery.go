@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"lcroom/internal/claudeartifact"
 )
 
 const MessageQueueWarningAfter = 2 * time.Minute
@@ -43,6 +45,85 @@ func (s Snapshot) OwnsRunningWork() bool {
 		}
 	}
 	return false
+}
+
+// ActiveSince is the single running-time origin shared by every surface: the
+// earliest known start of the current busy span. BusySince covers queued
+// follow-ups and parent turns woken by background tasks; an artifact-derived
+// turn start can predate it after LCR reopens an already-running session.
+func (s Snapshot) ActiveSince() time.Time {
+	switch {
+	case s.BusySince.IsZero():
+		return s.LatestTurnStartedAt
+	case s.LatestTurnStartedAt.IsZero() || s.BusySince.Before(s.LatestTurnStartedAt):
+		return s.BusySince
+	default:
+		return s.LatestTurnStartedAt
+	}
+}
+
+// BackgroundWait names the background work an idle parent is waiting on, so a
+// long busy span is not mistaken for active model work. The label counts the
+// work; detail describes it when there is exactly one task. ok is false while
+// the parent itself is running.
+func (s Snapshot) BackgroundWait() (label, detail string, ok bool) {
+	if !s.ParentAwaitingBackgroundTasks {
+		return "", "", false
+	}
+	running := make([]BackgroundTaskSnapshot, 0, len(s.BackgroundTasks))
+	for _, task := range s.BackgroundTasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "unresolved") {
+			running = append(running, task)
+		}
+	}
+	if len(running) == 0 {
+		return "", "", false
+	}
+	noun := backgroundTaskNoun(running[0])
+	for _, task := range running[1:] {
+		if backgroundTaskNoun(task) != noun {
+			noun = "task"
+			break
+		}
+	}
+	if len(running) > 1 {
+		return fmt.Sprintf("Waiting on %d background %ss", len(running), noun), "", true
+	}
+	return "Waiting on background " + noun, backgroundTaskLabel(running[0]), true
+}
+
+func (s Snapshot) BackgroundWaitSummary() string {
+	label, detail, ok := s.BackgroundWait()
+	if !ok || detail == "" {
+		return label
+	}
+	return label + ": " + detail
+}
+
+func backgroundTaskNoun(task BackgroundTaskSnapshot) string {
+	switch strings.TrimSpace(task.Source) {
+	case claudeartifact.AsyncTaskSourceBackgroundShell:
+		return "command"
+	case claudeartifact.AsyncTaskSourceAgent:
+		return "agent"
+	case claudeartifact.AsyncTaskSourceWorkflow:
+		return "workflow"
+	}
+	switch strings.TrimSpace(task.Tool) {
+	case "Bash":
+		return "command"
+	case "Agent", "Task":
+		return "agent"
+	}
+	return "task"
+}
+
+func backgroundTaskLabel(task BackgroundTaskSnapshot) string {
+	label := strings.Join(strings.Fields(firstNonEmptyTrimmed(task.Description, task.Summary, task.Command)), " ")
+	if runes := []rune(label); len(runes) > 60 {
+		label = string(runes[:57]) + "..."
+	}
+	return label
 }
 
 // MessageDeliverySnapshot is a transport receipt, not a claim that the model

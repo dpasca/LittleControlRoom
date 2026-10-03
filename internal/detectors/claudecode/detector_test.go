@@ -757,8 +757,8 @@ func TestDetectPendingBackgroundTaskKeepsClaudeSessionInProgress(t *testing.T) {
 	if sess.LatestTurnCompleted {
 		t.Fatalf("expected LatestTurnCompleted = false while background task is pending")
 	}
-	if want := ts.Add(4 * time.Second); !sess.LatestTurnStartedAt.Equal(want) {
-		t.Fatalf("LatestTurnStartedAt = %s, want %s from the start of the pending background task", sess.LatestTurnStartedAt, want)
+	if want := ts; !sess.LatestTurnStartedAt.Equal(want) {
+		t.Fatalf("LatestTurnStartedAt = %s, want %s from the start of the busy span that launched the task", sess.LatestTurnStartedAt, want)
 	}
 	if !sess.LastEventAt.Equal(taskMTime) {
 		t.Fatalf("LastEventAt = %s, want %s from task output mtime", sess.LastEventAt, taskMTime)

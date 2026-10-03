@@ -46,9 +46,12 @@ type TurnObservation struct {
 }
 
 // TurnState describes the latest top-level Claude Code turn observed in a
-// transcript. UpdatedAt is retained even when a completed turn clears its
-// start time, allowing restart recovery to compare the terminal record with
-// the turn that was active when LCR shut down.
+// transcript. While work remains open, StartedAt is the start of the whole
+// busy span: background tasks keep it open across the short parent turns their
+// notifications wake, so every surface reports one consistent running time.
+// UpdatedAt is retained even when a completed turn clears its start time,
+// allowing restart recovery to compare the terminal record with the turn that
+// was active when LCR shut down.
 type TurnState struct {
 	StartedAt time.Time
 	UpdatedAt time.Time
@@ -64,6 +67,9 @@ type TurnTracker struct {
 	state                 TurnState
 	pendingAsync          map[string]string // task id -> source
 	pendingAsyncStartedAt time.Time
+	// activeSince starts when an open turn or pending async task follows idle
+	// and clears only once both have settled.
+	activeSince time.Time
 }
 
 func (t *TurnTracker) Observe(observation TurnObservation) {
@@ -130,6 +136,26 @@ func (t *TurnTracker) Observe(observation TurnObservation) {
 			t.set(observation.At, false, true)
 		}
 	}
+	t.updateActiveSince()
+}
+
+func (t *TurnTracker) updateActiveSince() {
+	turnOpen := t.state.Known && !t.state.Completed
+	asyncPending := len(t.pendingAsync) > 0
+	if !turnOpen && !asyncPending {
+		t.activeSince = time.Time{}
+		return
+	}
+	if !t.activeSince.IsZero() {
+		return
+	}
+	if turnOpen {
+		t.activeSince = t.state.StartedAt
+	}
+	if asyncPending && !t.pendingAsyncStartedAt.IsZero() &&
+		(t.activeSince.IsZero() || t.pendingAsyncStartedAt.Before(t.activeSince)) {
+		t.activeSince = t.pendingAsyncStartedAt
+	}
 }
 
 func (t *TurnTracker) State() TurnState {
@@ -141,10 +167,9 @@ func (t *TurnTracker) State() TurnState {
 		state.Known = true
 		state.Completed = false
 		state.Verified = true
-		state.StartedAt = t.pendingAsyncStartedAt
-		if state.StartedAt.IsZero() {
-			state.StartedAt = t.state.StartedAt
-		}
+	}
+	if !state.Completed && !t.activeSince.IsZero() {
+		state.StartedAt = t.activeSince
 	}
 	return state
 }

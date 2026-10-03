@@ -274,6 +274,8 @@ func liveEngineerSessionStatus(snapshot codexapp.Snapshot) Status {
 		return Status{Label: "External work", Tone: ToneInfo}
 	case snapshot.BusyExternal:
 		return Status{Label: "Open externally", Tone: ToneInfo}
+	case snapshot.Busy && snapshot.BackgroundWaitSummary() != "":
+		return Status{Label: "Waiting", Tone: ToneInfo}
 	case snapshot.Busy:
 		return Status{Label: "Working", Tone: TonePositive}
 	case snapshot.Started:
@@ -345,6 +347,9 @@ func liveEngineerSessionSummary(snapshot codexapp.Snapshot, now time.Time) strin
 				progress += " — " + child.LatestAction
 			}
 			return progress
+		}
+		if wait := snapshot.BackgroundWaitSummary(); wait != "" {
+			return wait
 		}
 	}
 	for i := len(snapshot.Entries) - 1; i >= 0; i-- {
