@@ -374,7 +374,12 @@ the number retained.
 
 ## 10. Deleted-worktree session cleanup
 
-LCR's `/codex-gc` workflow audits global Codex storage without using a missing
+LCR's `/session-gc` dialog selects Codex or Claude Code with a Provider dropdown.
+`/codex-gc` and `/claude-gc` open the same dialog with that provider selected;
+all three commands reopen an existing cleanup job without replacing it.
+Changing providers clears selection and runs a fresh audit.
+
+The Codex workflow audits global Codex storage without using a missing
 directory alone as deletion authority. A read-only audit runs when the TUI or
 server starts and then once per day; it only refreshes an in-memory report and
 never deletes a thread. Opening `/codex-gc` runs another fresh audit unless it
@@ -500,6 +505,47 @@ separate bounded post-cancel verification pass and reports only bytes it can
 still prove were reclaimed. Each destructive group also shares the repository
 family's worktree-operation lock, preventing an in-process create or restore
 from changing the missing-path evidence between the repeat audit and deletion.
+
+### Claude Code session cleanup
+
+Claude cleanup is an explicit, on-demand audit of the configured
+`--claude-code-home` (normally `~/.claude`). It uses the shared orphaned/stale
+policies, project-group selection, permanent-deletion review, background job,
+cancellation, privacy filtering, and verified-byte report. It does not change
+Claude's own retention settings or add automatic deletion.
+
+Root identity comes from structured `sessionId` and absolute `cwd` fields in
+`projects/<sanitized-cwd>/<session-id>.jsonl`; the folder encoding must agree.
+Children must have matching parent `sessionId`, `agentId`, and `isSidechain`
+evidence in `<session-id>/subagents/agent-<agent-id>.jsonl`. Associated
+`agent-<agent-id>.meta.json` files and regular files directly under
+`<session-id>/tool-results/` are included. Unrecognized associated files,
+malformed transcripts, ambiguous identities, symlinks, filesystem crossings,
+and children whose recorded folder differs from their parent's protect the tree.
+
+Activity uses the newest structured transcript timestamp or owned-file mtime.
+Stale cleanup always preserves the newest root tree per existing folder and
+supports 7/14/30/90-day thresholds. Orphaned cleanup requires an exact retained
+LCR deletion record and seven days of both absence and inactivity; archived
+records, open TODOs, and uncertain repository roots are excluded. LCR project
+pins, transcript pin markers, LCR-loaded roots or children, and live Claude CLI
+markers under `sessions/` protect sessions. Unreadable or malformed live markers
+fail the audit explicitly rather than assuming the process is idle.
+
+The preview binds the provider and storage-root identity, root and descendant
+IDs, total session count, policy, paths, file identities, sizes, mtimes and content
+hashes. Deletion repeats the audit under the repository-operation lock and
+rejects a changed preview. It rechecks live ownership and complete selected
+trees before removing files through directory-bound `os.Root` handles. It never
+recursively removes a directory. Associated files are removed before the parent
+transcript; empty directories are retained. Completed removals are verified even
+when cancellation or a later failure stops the group.
+
+Global history, session indexes, settings, plans, file-history backups, and
+other caches remain outside deletion scope. Storage breakdown accounts for
+these retained files; unknown ownership uses a generic label. Displayed bytes
+are logical sizes, not a claim about physical blocks reclaimed.
+
 
 ## Embedded fast-mode policy
 

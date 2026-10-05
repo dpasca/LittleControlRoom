@@ -17,7 +17,7 @@ func buildCodexCleanupStorage(d *codexCleanupDialogState, width, bodyH int) code
 		retained += g.Bytes
 	}
 	v.add(commandPaletteTitleStyle.Render("Storage breakdown"), "",
-		cleanupStrong(formatCodexCleanupBytes(storage.TotalBytes)+" used in Codex storage"),
+		cleanupStrong(formatCodexCleanupBytes(storage.TotalBytes)+" used in "+d.Provider.Label()+" storage"),
 		detailMutedStyle.Render(fmt.Sprintf("%s sessions · %s other files · logical sizes", formatCodexCleanupBytes(storage.SessionBytes), formatCodexCleanupBytes(storage.TotalBytes-storage.SessionBytes))), "")
 	v.add(cleanupStrong(fmt.Sprintf("%s eligible for this cleanup · %s outside it", formatCodexCleanupBytes(d.Audit.RecoverableBytes), formatCodexCleanupBytes(retained))))
 	policy := d.Category.Label()

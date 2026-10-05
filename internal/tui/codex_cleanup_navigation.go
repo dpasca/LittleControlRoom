@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +22,7 @@ const (
 	cleanupFocusCancel
 	cleanupFocusRefresh
 	cleanupFocusReview
+	cleanupFocusProvider
 )
 
 var codexCleanupDays = []int{7, 14, 30, 90}
@@ -56,9 +58,9 @@ func (d *codexCleanupDialogState) focusOrder() []codexCleanupFocus {
 		return []codexCleanupFocus{cleanupFocusTable, cleanupFocusCancel}
 	}
 	if d.ErrorMessage != "" {
-		return []codexCleanupFocus{cleanupFocusRefresh, cleanupFocusCancel}
+		return []codexCleanupFocus{cleanupFocusProvider, cleanupFocusRefresh, cleanupFocusCancel}
 	}
-	order := []codexCleanupFocus{cleanupFocusStorage, cleanupFocusCategory}
+	order := []codexCleanupFocus{cleanupFocusStorage, cleanupFocusProvider, cleanupFocusCategory}
 	if d.Category == service.CodexCleanupStale {
 		order = append(order, cleanupFocusAge)
 	}
@@ -94,6 +96,8 @@ func (d *codexCleanupDialogState) moveFocus(back bool) {
 
 func (d *codexCleanupDialogState) options() []string {
 	switch d.Focus {
+	case cleanupFocusProvider:
+		return []string{"Codex", "Claude Code"}
 	case cleanupFocusCategory:
 		return []string{"Orphaned worktrees", "Stale sessions"}
 	case cleanupFocusAge:
@@ -108,6 +112,10 @@ func (d *codexCleanupDialogState) openDropdown() {
 	d.Dropdown = true
 	d.OptionIndex = 0
 	switch d.Focus {
+	case cleanupFocusProvider:
+		if d.Provider.Normalized() == codexapp.ProviderClaudeCode {
+			d.OptionIndex = 1
+		}
 	case cleanupFocusCategory:
 		if d.Category == service.CodexCleanupStale {
 			d.OptionIndex = 1
@@ -149,6 +157,15 @@ func (m Model) updateCodexCleanupForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			d.Dropdown = false
 			switch d.Focus {
+			case cleanupFocusProvider:
+				provider := codexapp.ProviderCodex
+				if d.OptionIndex == 1 {
+					provider = codexapp.ProviderClaudeCode
+				}
+				if provider != d.Provider.Normalized() {
+					d.Provider = provider
+					return m.refreshCodexCleanup()
+				}
 			case cleanupFocusCategory:
 				category := service.CodexCleanupOrphaned
 				if d.OptionIndex == 1 {
@@ -181,7 +198,7 @@ func (m Model) updateCodexCleanupForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			d.Focus = cleanupFocusStorage
 		} else {
 			m.codexCleanup = nil
-			m.status = "Codex cleanup closed; no sessions were deleted"
+			m.status = d.Provider.Label() + " cleanup closed; no sessions were deleted"
 		}
 		return m, nil
 	}
@@ -194,14 +211,14 @@ func (m Model) updateCodexCleanupForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch d.Focus {
-		case cleanupFocusCategory, cleanupFocusAge, cleanupFocusSort:
+		case cleanupFocusProvider, cleanupFocusCategory, cleanupFocusAge, cleanupFocusSort:
 			d.openDropdown()
 		case cleanupFocusStorage:
 			d.ShowRetained = true
 			d.Focus = cleanupFocusTable
 		case cleanupFocusCancel:
 			m.codexCleanup = nil
-			m.status = "Codex cleanup closed; no sessions were deleted"
+			m.status = d.Provider.Label() + " cleanup closed; no sessions were deleted"
 		case cleanupFocusRefresh:
 			return m.refreshCodexCleanup()
 		case cleanupFocusAll:
@@ -253,7 +270,7 @@ func (m *Model) toggleCodexCleanupAll() {
 	d := m.codexCleanup
 	if allCodexCleanupGroupsSelected(d) {
 		d.Chosen = make(map[string]bool)
-		m.status = "Cleared all Codex cleanup selections"
+		m.status = "Cleared all " + d.Provider.Label() + " cleanup selections"
 		return
 	}
 	d.Chosen = make(map[string]bool, len(d.Audit.Groups))

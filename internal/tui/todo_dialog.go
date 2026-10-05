@@ -2012,7 +2012,7 @@ func (m Model) todoPendingLaunchWaitReason(pending todoPendingLaunchState) strin
 		cleanup.QueueIndex >= 0 && cleanup.QueueIndex < len(cleanup.Queue) &&
 		cleanup.progressSnapshot().HoldsRepositoryLock &&
 		normalizeProjectPath(cleanup.Queue[cleanup.QueueIndex].RootProjectPath) == normalizeProjectPath(progress.RootProjectPath) {
-		return "waiting for Codex cleanup"
+		return "waiting for " + cleanup.Provider.Label() + " cleanup"
 	}
 	return "waiting for repository operations"
 }
@@ -2036,8 +2036,8 @@ func (m Model) todoPendingLaunchListSummary(pending todoPendingLaunchState, now 
 func (m Model) todoPendingLaunchDetailSummary(pending todoPendingLaunchState, now time.Time) string {
 	summary := "Creating the dedicated worktree and preparing submodules if this repo needs them."
 	switch m.todoPendingLaunchWaitReason(pending) {
-	case "waiting for Codex cleanup":
-		summary = "Waiting for Codex cleanup to release this repository. Open /codex-gc to view progress or abort the remaining cleanup. Worktree creation will continue automatically afterward."
+	case "waiting for Codex cleanup", "waiting for Claude Code cleanup":
+		summary = "Waiting for " + m.codexCleanup.Provider.Label() + " cleanup to release this repository. Open " + m.codexCleanup.command() + " to view progress or abort the remaining cleanup. Worktree creation will continue automatically afterward."
 	case "waiting for repository operations":
 		summary = "Waiting for another repository operation to finish before creating the worktree. Creation will continue automatically afterward."
 	}

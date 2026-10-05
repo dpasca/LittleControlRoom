@@ -242,17 +242,17 @@ func (m Model) renderFooter(width int) string {
 	if m.codexCleanupVisible() {
 		switch {
 		case m.codexCleanup.Loading:
-			return m.renderModalFooter(width, "Codex cleanup: auditing only, Esc close", supplementSegments...)
+			return m.renderModalFooter(width, m.codexCleanup.Provider.Label()+" cleanup: auditing only, Esc close", supplementSegments...)
 		case m.codexCleanup.Deleting && m.codexCleanup.CancelRequested:
-			return m.renderModalFooter(width, "Codex cleanup: aborting active request; B background", supplementSegments...)
+			return m.renderModalFooter(width, m.codexCleanup.Provider.Label()+" cleanup: aborting active request; b background", supplementSegments...)
 		case m.codexCleanup.Deleting:
-			return m.renderModalFooter(width, "Codex cleanup: deleting in background, B hide, Esc abort", supplementSegments...)
+			return m.renderModalFooter(width, m.codexCleanup.Provider.Label()+" cleanup: deleting in background, b hide, Esc abort", supplementSegments...)
 		case m.codexCleanup.Finished:
-			return m.renderModalFooter(width, "Codex cleanup report: Enter/Esc close", supplementSegments...)
+			return m.renderModalFooter(width, m.codexCleanup.Provider.Label()+" cleanup report: Enter/Esc close", supplementSegments...)
 		case m.codexCleanup.Confirming:
 			return m.renderModalFooter(width, "Review cleanup: Tab choose button, Enter activate, Esc back", supplementSegments...)
 		default:
-			return m.renderModalFooter(width, "Codex cleanup: Tab focus, arrows navigate, Space select, Enter activate, Esc back", supplementSegments...)
+			return m.renderModalFooter(width, m.codexCleanup.Provider.Label()+" cleanup: Tab focus, arrows navigate, Space select, Enter activate, Esc back", supplementSegments...)
 		}
 	}
 	if m.worktreeMergeRecoveryDialog != nil {

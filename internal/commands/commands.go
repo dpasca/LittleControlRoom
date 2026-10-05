@@ -21,6 +21,8 @@ const (
 	KindRefresh         Kind = "refresh"
 	KindClean           Kind = "clean"
 	KindCodexGC         Kind = "codex-gc"
+	KindSessionGC       Kind = "session-gc"
+	KindClaudeGC        Kind = "claude-gc"
 	KindRepairTerminal  Kind = "repair-terminal"
 	KindUpdate          Kind = "update"
 	KindSort            Kind = "sort"
@@ -204,9 +206,11 @@ var specs = []Spec{
 	{Name: "resolve", Usage: "/resolve", Summary: "Resolve merge conflicts in the background with project-row progress"},
 	{Name: "integrity", Usage: "/integrity", Summary: "Review a primary checkout that differs from its saved home branch"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
+	{Name: "session-gc", Usage: "/session-gc", Summary: "Review Codex or Claude Code session storage before permanent deletion"},
 	{Name: "codex-gc", Usage: "/codex-gc", Summary: "Review safely eligible Codex session storage before permanent deletion"},
 	{Name: "new-codex", Usage: "/new-codex [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "claude", Usage: "/claude [prompt]", Summary: "Resume the selected project's latest Claude Code session, or start a new one"},
+	{Name: "claude-gc", Usage: "/claude-gc", Summary: "Review Claude Code session storage before permanent deletion"},
 	{Name: "new-claude", Usage: "/new-claude [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "new-opencode", Usage: "/new-opencode [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
@@ -478,6 +482,15 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /clean")
 		}
 		return Invocation{Kind: KindClean, Canonical: "/clean"}, nil
+	case "session-gc", "claude-gc":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /%s", name)
+		}
+		kind := KindSessionGC
+		if name == "claude-gc" {
+			kind = KindClaudeGC
+		}
+		return Invocation{Kind: kind, Canonical: "/" + name}, nil
 	case "codex-gc":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /codex-gc")

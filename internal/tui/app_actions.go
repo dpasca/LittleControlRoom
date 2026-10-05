@@ -500,6 +500,10 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		)
 	case commands.KindClean:
 		return m.openStaleWorktreeCleanup()
+	case commands.KindSessionGC:
+		return m.openSessionCleanup(codexapp.ProviderCodex)
+	case commands.KindClaudeGC:
+		return m.openSessionCleanup(codexapp.ProviderClaudeCode)
 	case commands.KindCodexGC:
 		return m.openCodexCleanup()
 	case commands.KindRepairTerminal:

@@ -31,6 +31,7 @@ func formatCodexCleanupBytes(size int64) string {
 }
 
 type codexCleanupDialogState struct {
+	Provider        codexapp.Provider
 	Category        service.CodexCleanupCategory
 	InactiveDays    int
 	Focus           codexCleanupFocus
@@ -96,28 +97,33 @@ type codexCleanupDeleteMsg struct {
 }
 
 func (m Model) openCodexCleanup() (tea.Model, tea.Cmd) {
+	return m.openSessionCleanup(codexapp.ProviderCodex)
+}
+
+func (m Model) openSessionCleanup(provider codexapp.Provider) (tea.Model, tea.Cmd) {
 	if dialog := m.codexCleanup; dialog != nil {
 		m.filterCodexCleanupForPrivacy()
 		dialog.Backgrounded = false
 		switch {
 		case dialog.Deleting && dialog.CancelRequested:
-			m.status = "Codex cleanup is stopping; waiting for post-delete verification"
+			m.status = dialog.Provider.Label() + " cleanup is stopping; waiting for post-delete verification"
 		case dialog.Deleting:
-			m.status = fmt.Sprintf("Codex cleanup %d/%d in progress; b hides it, Esc aborts", dialog.QueueIndex+1, len(dialog.Queue))
+			m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup %d/%d in progress; b hides it, Esc aborts", dialog.QueueIndex+1, len(dialog.Queue))
 		case dialog.Finished && dialog.Aborted:
-			m.status = "Codex cleanup aborted; report open"
+			m.status = dialog.Provider.Label() + " cleanup aborted; report open"
 		case dialog.Finished:
-			m.status = "Codex cleanup report open"
+			m.status = dialog.Provider.Label() + " cleanup report open"
 		}
 		return m, nil
 	}
 	m.codexCleanup = &codexCleanupDialogState{
+		Provider:     provider,
 		InactiveDays: 7,
 		Focus:        cleanupFocusCategory,
 		Chosen:       make(map[string]bool),
 		Loading:      true,
 	}
-	m.status = "Auditing Codex session storage..."
+	m.status = "Auditing " + provider.Label() + " session storage..."
 	return m, m.loadCodexCleanupAuditCmd()
 }
 
@@ -132,15 +138,15 @@ func (m Model) renderFooterCodexCleanupSegment() string {
 	}
 	switch {
 	case dialog.Deleting && dialog.CancelRequested:
-		return renderFooterAlert("Codex GC stopping · /codex-gc")
+		return renderFooterAlert(dialog.Provider.Label() + " GC stopping · " + dialog.command())
 	case dialog.Deleting:
 		p := dialog.progressSnapshot()
 		reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
-		return renderFooterStatus(fmt.Sprintf("Codex GC %d/%d · %d/%d roots · %s · /codex-gc", dialog.QueueIndex+1, len(dialog.Queue), p.CompletedRoots, p.TotalRoots, formatCodexCleanupBytes(reclaimed+p.VerifiedReclaimedBytes)))
+		return renderFooterStatus(fmt.Sprintf(dialog.Provider.Label()+" GC %d/%d · %d/%d roots · %s · "+dialog.command(), dialog.QueueIndex+1, len(dialog.Queue), p.CompletedRoots, p.TotalRoots, formatCodexCleanupBytes(reclaimed+p.VerifiedReclaimedBytes)))
 	case dialog.Finished && dialog.Aborted:
-		return renderFooterAlert("Codex GC stopped · /codex-gc report")
+		return renderFooterAlert(dialog.Provider.Label() + " GC stopped · " + dialog.command() + " report")
 	case dialog.Finished:
-		return renderFooterStatus("Codex GC report · /codex-gc")
+		return renderFooterStatus(dialog.Provider.Label() + " GC report · " + dialog.command())
 	default:
 		return ""
 	}
@@ -166,19 +172,23 @@ func (m Model) loadCodexCleanupAuditCmd() tea.Cmd {
 		generation = dialog.AuditGeneration
 	}
 	manager := m.codexManager
-	cachedLoadedThreadIDs := m.cachedLoadedCodexThreadIDs()
+	provider := codexapp.ProviderCodex
+	if dialog != nil {
+		provider = dialog.Provider.Normalized()
+	}
+	cachedLoadedThreadIDs := m.cachedLoadedSessionIDs(provider)
 	return func() tea.Msg {
 		defer cancel()
 		if svc == nil {
 			return codexCleanupAuditMsg{owner: dialog, generation: generation, err: fmt.Errorf("service unavailable")}
 		}
-		loadedThreadIDs := append(cachedLoadedThreadIDs, codexapp.LoadedThreadIDs(manager)...)
-		audit, err := svc.AuditCodexSessionStorage(ctx, service.CodexCleanupAuditOptions{
+		loadedThreadIDs := append(cachedLoadedThreadIDs, codexapp.LoadedSessionIDs(manager, provider)...)
+		audit, err := svc.AuditSessionStorage(ctx, provider, service.CodexCleanupAuditOptions{
 			Category:        category,
 			InactiveDays:    days,
 			LoadedThreadIDs: loadedThreadIDs,
 		})
-		err = timeoutActionError(err, codexCleanupAuditTimeout, "auditing Codex session storage")
+		err = timeoutActionError(err, codexCleanupAuditTimeout, "auditing "+provider.Label()+" session storage")
 		return codexCleanupAuditMsg{owner: dialog, generation: generation, audit: audit, err: err}
 	}
 }
@@ -186,7 +196,8 @@ func (m Model) loadCodexCleanupAuditCmd() tea.Cmd {
 func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeGroup) tea.Cmd {
 	svc := m.svc
 	manager := m.codexManager
-	cachedLoadedThreadIDs := m.cachedLoadedCodexThreadIDs()
+	provider := group.Provider.Normalized()
+	cachedLoadedThreadIDs := m.cachedLoadedSessionIDs(provider)
 	rootThreadIDs := make([]string, 0, len(group.Threads))
 	for _, thread := range group.Threads {
 		rootThreadIDs = append(rootThreadIDs, thread.ID)
@@ -204,12 +215,12 @@ func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeG
 		if svc == nil {
 			return codexCleanupDeleteMsg{group: group, err: fmt.Errorf("service unavailable")}
 		}
-		loadedThreadIDs := append(append([]string(nil), cachedLoadedThreadIDs...), codexapp.LoadedThreadIDs(manager)...)
-		result, err := svc.DeleteCodexCleanupWorktree(ctx, service.DeleteCodexCleanupWorktreeRequest{
+		loadedThreadIDs := append(append([]string(nil), cachedLoadedThreadIDs...), codexapp.LoadedSessionIDs(manager, provider)...)
+		result, err := svc.DeleteSessionCleanupWorktree(ctx, provider, service.DeleteCodexCleanupWorktreeRequest{
 			Progress: func(p service.CodexCleanupProgress) {
 				progress.Store(&codexCleanupProgressSnapshot{CodexCleanupProgress: p, UpdatedAt: time.Now()})
 			},
-			CurrentLoadedThreadIDs: func() []string { return codexapp.LoadedThreadIDs(manager) },
+			CurrentLoadedThreadIDs: func() []string { return codexapp.LoadedSessionIDs(manager, provider) },
 			Category:               group.Category,
 			InactiveDays:           group.InactiveDays,
 			WorktreePath:           group.WorktreePath,
@@ -218,15 +229,19 @@ func (m *Model) startCodexCleanupGroupDelete(group service.CodexCleanupWorktreeG
 			Revision:               group.Revision,
 			LoadedThreadIDs:        loadedThreadIDs,
 		})
-		err = timeoutActionError(err, codexCleanupDeleteTimeout, "permanently deleting Codex sessions")
+		err = timeoutActionError(err, codexCleanupDeleteTimeout, "permanently deleting "+provider.Label()+" sessions")
 		return codexCleanupDeleteMsg{group: group, result: result, err: err}
 	}
 }
 
 func (m Model) cachedLoadedCodexThreadIDs() []string {
+	return m.cachedLoadedSessionIDs(codexapp.ProviderCodex)
+}
+
+func (m Model) cachedLoadedSessionIDs(provider codexapp.Provider) []string {
 	set := make(map[string]struct{})
 	for _, snapshot := range m.codexSnapshots {
-		if snapshot.Provider.Normalized() != codexapp.ProviderCodex || snapshot.Closed {
+		if snapshot.Provider.Normalized() != provider.Normalized() || snapshot.Closed {
 			continue
 		}
 		if threadID := strings.TrimSpace(snapshot.ThreadID); threadID != "" {
@@ -234,7 +249,7 @@ func (m Model) cachedLoadedCodexThreadIDs() []string {
 		}
 	}
 	for _, state := range m.mergeConflictResolvers {
-		if state.Provider.Normalized() != codexapp.ProviderCodex || !state.active() {
+		if state.Provider.Normalized() != provider.Normalized() || !state.active() {
 			continue
 		}
 		if threadID := strings.TrimSpace(state.SessionID); threadID != "" {
@@ -262,7 +277,7 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 	if msg.err != nil {
 		dialog.ErrorMessage = msg.err.Error()
 		dialog.Focus = cleanupFocusRefresh
-		m.reportError("Codex cleanup audit failed", msg.err, "")
+		m.reportError(dialog.Provider.Label()+" cleanup audit failed", msg.err, "")
 		return m, nil
 	}
 	dialog.Audit = msg.audit
@@ -275,11 +290,11 @@ func (m Model) applyCodexCleanupAudit(msg codexCleanupAuditMsg) (tea.Model, tea.
 	dialog.ErrorMessage = ""
 	m.err = nil
 	if len(dialog.Audit.Groups) == 0 {
-		m.status = fmt.Sprintf("Codex cleanup audit complete: no eligible sessions (%d excluded by safeguards)", msg.audit.Excluded.Total())
+		m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup audit complete: no eligible sessions (%d excluded by safeguards)", msg.audit.Excluded.Total())
 		return m, nil
 	}
 	m.status = fmt.Sprintf(
-		"Codex cleanup audit: %d project group%s, %d root thread%s, %s recoverable",
+		dialog.Provider.Label()+" cleanup audit: %d project group%s, %d root thread%s, %s recoverable",
 		len(dialog.Audit.Groups), pluralSuffix(len(dialog.Audit.Groups)),
 		dialog.Audit.EligibleRootThreads, pluralSuffix(dialog.Audit.EligibleRootThreads),
 		formatCodexCleanupBytes(dialog.Audit.RecoverableBytes),
@@ -318,9 +333,9 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 		reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
 		verified := codexCleanupVerifiedGroupCount(dialog.Results)
 		remaining := max(0, len(dialog.Queue)-dialog.QueueIndex)
-		m.status = fmt.Sprintf("Codex cleanup aborted: %d group%s fully verified, %d not started, %s reclaimed", verified, pluralSuffix(verified), remaining, formatCodexCleanupBytes(reclaimed))
+		m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup aborted: %d group%s fully verified, %d not started, %s reclaimed", verified, pluralSuffix(verified), remaining, formatCodexCleanupBytes(reclaimed))
 		if dialog.Backgrounded {
-			m.status += "; /codex-gc opens the report"
+			m.status += "; " + dialog.command() + " opens the report"
 		}
 		return m, nil
 	}
@@ -329,17 +344,17 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 		dialog.Finished = true
 		dialog.ErrorMessage = msg.err.Error()
 		if m.codexCleanupGroupPrivate(msg.group) {
-			m.status = "Codex cleanup stopped for a private project"
+			m.status = dialog.Provider.Label() + " cleanup stopped for a private project"
 		} else {
-			m.reportError("Codex cleanup stopped", msg.err, msg.group.WorktreePath)
+			m.reportError(dialog.Provider.Label()+" cleanup stopped", msg.err, msg.group.WorktreePath)
 		}
 		return m, nil
 	}
 	if dialog.QueueIndex < len(dialog.Queue) {
 		next := dialog.Queue[dialog.QueueIndex]
-		m.status = fmt.Sprintf("Codex cleanup %d/%d verified; deleting %s...", dialog.QueueIndex, len(dialog.Queue), m.codexCleanupGroupLabel(next))
+		m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup %d/%d verified; deleting %s...", dialog.QueueIndex, len(dialog.Queue), m.codexCleanupGroupLabel(next))
 		if dialog.Backgrounded {
-			m.status += " (background; /codex-gc to view or abort)"
+			m.status += " (background; " + dialog.command() + " to view or abort)"
 		}
 		return m, m.startCodexCleanupGroupDelete(next)
 	}
@@ -348,12 +363,12 @@ func (m Model) applyCodexCleanupDelete(msg codexCleanupDeleteMsg) (tea.Model, te
 	dialog.Finished = true
 	reclaimed, allVerified := codexCleanupVerifiedTotal(dialog.Results)
 	if allVerified {
-		m.status = fmt.Sprintf("Codex cleanup complete: %d project group%s, %s reclaimed and verified", len(dialog.Results), pluralSuffix(len(dialog.Results)), formatCodexCleanupBytes(reclaimed))
+		m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup complete: %d project group%s, %s reclaimed and verified", len(dialog.Results), pluralSuffix(len(dialog.Results)), formatCodexCleanupBytes(reclaimed))
 	} else {
-		m.status = fmt.Sprintf("Codex cleanup finished: %s verified reclaimed; review verification details", formatCodexCleanupBytes(reclaimed))
+		m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup finished: %s verified reclaimed; review verification details", formatCodexCleanupBytes(reclaimed))
 	}
 	if dialog.Backgrounded {
-		m.status += "; /codex-gc opens the report"
+		m.status += "; " + dialog.command() + " opens the report"
 	}
 	return m, nil
 }
@@ -367,14 +382,14 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "b", "B":
 			dialog.Backgrounded = true
-			m.status = fmt.Sprintf("Codex cleanup continues in background (%d/%d); /codex-gc reopens progress or abort controls", dialog.QueueIndex+1, len(dialog.Queue))
+			m.status = fmt.Sprintf(dialog.Provider.Label()+" cleanup continues in background (%d/%d); "+dialog.command()+" reopens progress or abort controls", dialog.QueueIndex+1, len(dialog.Queue))
 		case "esc":
 			if !dialog.CancelRequested {
 				dialog.CancelRequested = true
 				if dialog.Cancel != nil {
 					dialog.Cancel()
 				}
-				m.status = "Aborting Codex cleanup; waiting for the active request to stop and verification to finish"
+				m.status = "Aborting " + dialog.Provider.Label() + " cleanup; waiting for the active request to stop and verification to finish"
 			}
 		}
 		return m, nil
@@ -385,14 +400,14 @@ func (m Model) updateCodexCleanupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				dialog.AuditCancel()
 			}
 			m.codexCleanup = nil
-			m.status = "Codex cleanup audit closed; no sessions were deleted"
+			m.status = dialog.Provider.Label() + " cleanup audit closed; no sessions were deleted"
 		}
 		return m, nil
 	}
 	if dialog.Finished {
 		if msg.String() == "esc" || msg.String() == "enter" {
 			m.codexCleanup = nil
-			m.status = "Codex cleanup report closed"
+			m.status = dialog.Provider.Label() + " cleanup report closed"
 		}
 		return m, nil
 	}
@@ -538,11 +553,11 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 	reclaimed, _ := codexCleanupVerifiedTotal(dialog.Results)
 	p := dialog.progressSnapshot()
 	reclaimed += p.VerifiedReclaimedBytes
-	title := "Deleting Codex session storage"
+	title := "Deleting " + dialog.Provider.Label() + " session storage"
 	progress := spinnerFrames[spinnerFrame%len(spinnerFrames)] + fmt.Sprintf(" Project group %d of %d", dialog.QueueIndex+1, len(dialog.Queue))
 	if dialog.CancelRequested {
-		title = "Aborting Codex session cleanup"
-		progress = spinnerFrames[spinnerFrame%len(spinnerFrames)] + " Stopping the active app-server request"
+		title = "Aborting " + dialog.Provider.Label() + " session cleanup"
+		progress = spinnerFrames[spinnerFrame%len(spinnerFrames)] + " Stopping the active delete request"
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
@@ -557,7 +572,7 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 		waiting := time.Duration(max(0, int(now.Sub(p.UpdatedAt)/time.Second))) * time.Second
 		lines = append(lines, detailField("Time", cleanupJobTiming(now, dialog.GroupStartedAt, p.UpdatedAt)))
 		if waiting >= 15*time.Second {
-			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Still waiting for Codex or storage verification; Esc stops remaining work.")...)
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, "Still waiting for deletion or storage verification; Esc stops remaining work.")...)
 		}
 	}
 	lines = append(lines, "")
@@ -566,7 +581,7 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 		lines = append(lines, "", cleanupJobControls(true))
 		return strings.Join(lines, "\n")
 	}
-	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "Deletion is permanent. It is running off the UI path while LCR waits for app-server and verifies that thread rows and rollout files are gone.")...)
+	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, "Deletion is permanent. It runs in the background; LCR verifies removed session files before reporting reclaimed space.")...)
 	lines = append(lines,
 		"",
 		cleanupJobControls(false),
@@ -576,12 +591,12 @@ func renderCodexCleanupProgress(dialog *codexCleanupDialogState, width, spinnerF
 
 func renderCodexCleanupResults(dialog *codexCleanupDialogState, width, bodyH int) string {
 	reclaimed, allVerified := codexCleanupVerifiedTotal(dialog.Results)
-	title := "Codex cleanup report"
+	title := dialog.Provider.Label() + " cleanup report"
 	lines := []string{commandPaletteTitleStyle.Render(title), ""}
 	if dialog.Aborted {
 		lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("Cleanup aborted. Verified reclaimed before stop: %s", formatCodexCleanupBytes(reclaimed))))
 		remaining := max(0, len(dialog.Queue)-dialog.QueueIndex)
-		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("%d queued project group%s did not start. Run /codex-gc again to audit anything that remains.", remaining, pluralSuffix(remaining))))
+		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("%d queued project group%s did not start. Run "+dialog.command()+" again to audit anything that remains.", remaining, pluralSuffix(remaining))))
 	} else if len(dialog.Results) == 0 {
 		lines = append(lines, detailWarningStyle.Render("No sessions were deleted."))
 	} else if allVerified && dialog.ErrorMessage == "" {
@@ -679,7 +694,7 @@ func cleanupExclusionSummary(excluded service.CodexCleanupExclusions) string {
 		}
 	}
 	if len(parts) == 0 {
-		return detailMutedStyle.Render("No missing-working-directory Codex roots were found.")
+		return detailMutedStyle.Render("No eligible session roots were found.")
 	}
 	return detailMutedStyle.Render("Excluded: " + strings.Join(parts, " · "))
 }
@@ -728,4 +743,11 @@ func cleanupChildLabel(count int) string {
 		return "child"
 	}
 	return "children"
+}
+
+func (d *codexCleanupDialogState) command() string {
+	if d.Provider.Normalized() == codexapp.ProviderCodex {
+		return "/codex-gc"
+	}
+	return "/session-gc"
 }

@@ -9,12 +9,17 @@ import (
 // session. Callers should use it from background work because taking a complete
 // manager snapshot may wait for a session lock.
 func LoadedThreadIDs(manager *Manager) []string {
+	return LoadedSessionIDs(manager, ProviderCodex)
+}
+
+// LoadedSessionIDs includes foreground and parallel sessions; call off the UI path.
+func LoadedSessionIDs(manager *Manager, provider Provider) []string {
 	if manager == nil {
 		return nil
 	}
 	set := make(map[string]struct{})
 	for _, snapshot := range append(manager.Snapshots(), manager.ParallelSnapshots()...) {
-		if snapshot.Provider.Normalized() != ProviderCodex || snapshot.Closed {
+		if snapshot.Provider.Normalized() != provider.Normalized() || snapshot.Closed {
 			continue
 		}
 		if threadID := strings.TrimSpace(snapshot.ThreadID); threadID != "" {

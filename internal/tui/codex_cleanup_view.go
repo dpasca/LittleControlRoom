@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/service"
 
 	"github.com/charmbracelet/lipgloss"
@@ -70,7 +71,7 @@ func buildCodexCleanupView(d *codexCleanupDialogState, width, bodyH, spinnerFram
 			v.add("")
 		}
 	}
-	v.add(commandPaletteTitleStyle.Render("Clean up Codex storage"))
+	v.add(commandPaletteTitleStyle.Render("Clean up " + d.Provider.Label() + " storage"))
 	gap()
 	used := formatCodexCleanupBytes(d.Audit.Storage.TotalBytes) + " used"
 	if d.Audit.Storage.Partial {
@@ -85,6 +86,11 @@ func buildCodexCleanupView(d *codexCleanupDialogState, width, bodyH, spinnerFram
 	v.appendText(strings.Repeat(" ", space))
 	v.control(storageLabel, cleanupFocusStorage, d, d.ErrorMessage == "")
 	gap()
+	v.add("Provider: ")
+	v.control(d.Provider.Label()+" ▾", cleanupFocusProvider, d, true)
+	if d.Dropdown && d.Focus == cleanupFocusProvider {
+		v.menu(d, width)
+	}
 	v.add("Clean up: ")
 	v.control(d.Category.Label()+" ▾", cleanupFocusCategory, d, d.ErrorMessage == "")
 	if d.Category == service.CodexCleanupStale {
@@ -96,7 +102,7 @@ func buildCodexCleanupView(d *codexCleanupDialogState, width, bodyH, spinnerFram
 		}
 		v.control(ageText, cleanupFocusAge, d, d.ErrorMessage == "")
 	}
-	if d.Dropdown && d.Focus != cleanupFocusSort {
+	if d.Dropdown && d.Focus != cleanupFocusSort && d.Focus != cleanupFocusProvider {
 		v.menu(d, width)
 	}
 	gap()
@@ -107,7 +113,7 @@ func buildCodexCleanupView(d *codexCleanupDialogState, width, bodyH, spinnerFram
 		return v
 	}
 	if d.ErrorMessage != "" {
-		v.add(detailDangerStyle.Render("Could not audit Codex storage"))
+		v.add(detailDangerStyle.Render("Could not audit " + d.Provider.Label() + " storage"))
 		v.add(renderWrappedDialogTextLines(detailMutedStyle, width, d.ErrorMessage)...)
 		v.add("")
 		v.control("Retry audit", cleanupFocusRefresh, d, true)
@@ -239,7 +245,7 @@ func buildCodexCleanupReview(d *codexCleanupDialogState, width, bodyH int) codex
 	}
 	v := codexCleanupView{}
 	v.add(commandPaletteTitleStyle.Render("Review cleanup"), "", detailDangerStyle.Render("Permanent deletion · this cannot be undone"), "")
-	policy := d.Category.Label()
+	policy := d.Provider.Label() + " · " + d.Category.Label()
 	if d.Category == service.CodexCleanupStale {
 		policy += fmt.Sprintf(" · inactive for %d+ days", d.days())
 	}
@@ -256,7 +262,11 @@ func buildCodexCleanupReview(d *codexCleanupDialogState, width, bodyH int) codex
 	}
 	v.add("")
 	v.add(renderWrappedDialogTextLines(detailMutedStyle, width, "Only conversation history is deleted, including spawned sessions. Project files are untouched.")...)
-	v.add(renderWrappedDialogTextLines(detailMutedStyle, width, "Codex app-server performs deletion after a fresh safety audit; changed previews are rejected.")...)
+	deletion := "Codex app-server performs deletion after a fresh safety audit; changed previews are rejected."
+	if d.Provider.Normalized() == codexapp.ProviderClaudeCode {
+		deletion = "LCR removes audited transcripts and associated subagent and tool-result files after a fresh safety audit; changed previews are rejected."
+	}
+	v.add(renderWrappedDialogTextLines(detailMutedStyle, width, deletion)...)
 	v.add("")
 	back := codexCleanupControl("Back", !d.ReviewDelete, true, false)
 	deleteButton := codexCleanupControl(fmt.Sprintf("Delete %d sessions permanently", roots+children), d.ReviewDelete, true, true)

@@ -136,6 +136,8 @@ type CodexCleanupAuditSnapshot struct {
 }
 
 type CodexCleanupWorktreeGroup struct {
+	StorageIdentity  string // Provider storage root identity, when deletion is file-based.
+	Provider         codexapp.Provider
 	Category         CodexCleanupCategory
 	InactiveDays     int
 	TotalThreadCount int
@@ -170,6 +172,8 @@ type CodexCleanupThread struct {
 }
 
 type CodexCleanupRolloutFile struct {
+	Identity string // Device/inode identity for file-based cleanup.
+	Digest   string // Claude content fingerprint; empty for Codex app-server artifacts.
 	ThreadID string
 	Path     string
 	Size     int64
@@ -930,6 +934,12 @@ func cleanupGroupRevision(group CodexCleanupWorktreeGroup) string {
 		_, _ = hash.Write([]byte(value))
 		_, _ = hash.Write([]byte{0})
 	}
+	if group.Provider.Normalized() != codexapp.ProviderCodex {
+		writeRevisionPart(string(group.Provider.Normalized()))
+	}
+	if group.StorageIdentity != "" {
+		writeRevisionPart(group.StorageIdentity)
+	}
 	writeRevisionPart(group.WorktreePath)
 	writeRevisionPart(string(group.Category))
 	// Both cleanup views show REMOVE / KEEP counts in the final review.
@@ -943,6 +953,12 @@ func cleanupGroupRevision(group CodexCleanupWorktreeGroup) string {
 		writeRevisionPart(thread.ID)
 		writeRevisionPart(thread.LastActivity.UTC().Format(time.RFC3339Nano))
 		for _, file := range thread.RolloutFiles {
+			if file.Identity != "" {
+				writeRevisionPart(file.Identity)
+			}
+			if file.Digest != "" {
+				writeRevisionPart(file.Digest)
+			}
 			writeRevisionPart(file.ThreadID)
 			writeRevisionPart(file.Path)
 			writeRevisionPart(fmt.Sprintf("%d", file.Size))

@@ -71,7 +71,7 @@ func (m Model) codexCleanupPrivacyView() *codexCleanupDialogState {
 		}
 	}
 	if view.ErrorMessage != "" {
-		view.ErrorMessage = "Codex cleanup encountered an error"
+		view.ErrorMessage = d.Provider.Label() + " cleanup encountered an error"
 	}
 	return &view
 }
