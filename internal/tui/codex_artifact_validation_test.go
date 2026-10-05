@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"lcroom/internal/codexapp"
 )
@@ -168,5 +169,187 @@ func TestCodexArtifactPickerListsTrailingSlashProjectDirectories(t *testing.T) {
 	}
 	if target := got.codexArtifactPicker.Targets[0]; target.Path != dirPath {
 		t.Fatalf("target = %#v, want %q", target, dirPath)
+	}
+}
+
+func scanCodexArtifactTargetsForTest(t *testing.T, projectPath string, entries []codexapp.TranscriptEntry) []codexArtifactOpenTarget {
+	t.Helper()
+	snapshot := codexapp.Snapshot{ProjectPath: projectPath, Entries: entries}
+	m := Model{codexVisibleProject: projectPath}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	got := drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, snapshot))
+	return got.cachedProgressiveCodexOpenTargets(snapshot)
+}
+
+func writeCodexArtifactTestFiles(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCodexArtifactScanResolvesBareNamesInTheFolderTheMessageNames(t *testing.T) {
+	projectPath := t.TempDir()
+	clipDir := filepath.Join(projectPath, "build", "review-clips", "fe-1b")
+	clip := filepath.Join(clipDir, "title-backdrop.mp4")
+	nearReadme := filepath.Join(clipDir, "README.md")
+	rootReadme := filepath.Join(projectPath, "README.md")
+	writeCodexArtifactTestFiles(t, clip, nearReadme, rootReadme)
+
+	targets := scanCodexArtifactTargetsForTest(t, projectPath, []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "Clips are in build/review-clips/fe-1b/\n\n| title-backdrop.mp4 │ the new backdrop |\n\nREADME.md there lists what to check. Node.js and e.g. v1.2 are not files.",
+	}})
+	got := make(map[string]bool)
+	for _, target := range targets {
+		got[target.Path] = true
+	}
+	want := map[string]bool{clipDir: true, clip: true, nearReadme: true}
+	if len(got) != len(want) {
+		t.Fatalf("targets = %#v, want %v", targets, want)
+	}
+	for path := range want {
+		if !got[path] {
+			t.Fatalf("missing %s in %#v", path, targets)
+		}
+	}
+	if got[rootReadme] {
+		t.Fatalf("bare README.md resolved to the project root instead of the named folder: %#v", targets)
+	}
+}
+
+func TestCodexArtifactScanFallsBackToTheProjectRootForBareNames(t *testing.T) {
+	projectPath := t.TempDir()
+	rootNotes := filepath.Join(projectPath, "NOTES.md")
+	writeCodexArtifactTestFiles(t, rootNotes)
+
+	targets := scanCodexArtifactTargetsForTest(t, projectPath, []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "See `NOTES.md` and also NOTES.md again; `missing.md` does not exist.",
+	}})
+	if len(targets) == 0 {
+		t.Fatal("bare root file was not found")
+	}
+	for _, target := range targets {
+		if target.Path != rootNotes {
+			t.Fatalf("unexpected target %#v", target)
+		}
+	}
+}
+
+func TestCodexArtifactScanDropsAmbiguousBareNames(t *testing.T) {
+	projectPath := t.TempDir()
+	first := filepath.Join(projectPath, "a", "notes.md")
+	second := filepath.Join(projectPath, "b", "notes.md")
+	writeCodexArtifactTestFiles(t, first, second)
+
+	targets := scanCodexArtifactTargetsForTest(t, projectPath, []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "Compare a/ and b/ — notes.md differs.",
+	}})
+	for _, target := range targets {
+		if filepath.Base(target.Path) == "notes.md" {
+			t.Fatalf("ambiguous bare name resolved: %#v", target)
+		}
+	}
+	if len(targets) != 2 {
+		t.Fatalf("both folders should still be listed: %#v", targets)
+	}
+}
+
+func TestCodexArtifactScanResolvesBareNamesFromRecentlyEditedFolders(t *testing.T) {
+	projectPath := t.TempDir()
+	source := filepath.Join(projectPath, "src", "app", "launch.cpp")
+	other := filepath.Join(projectPath, "docs", "launch.cpp.md")
+	writeCodexArtifactTestFiles(t, source, other)
+
+	targets := scanCodexArtifactTargetsForTest(t, projectPath, []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptTool, ToolName: "Edit", ToolPath: source},
+		{Kind: codexapp.TranscriptAgent, Text: "Updated `launch.cpp` to center the camera."},
+	})
+	found := false
+	for _, target := range targets {
+		if target.Path == source && target.Label == "launch.cpp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("launch.cpp should resolve to the edited folder: %#v", targets)
+	}
+}
+
+func TestCodexArtifactScanLeavesCommandOutputAloneForBareNames(t *testing.T) {
+	projectPath := t.TempDir()
+	writeCodexArtifactTestFiles(t, filepath.Join(projectPath, "main.go"))
+
+	targets := scanCodexArtifactTargetsForTest(t, projectPath, []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptCommand, CommandText: "ls", Text: "$ ls\nmain.go\n",
+	}})
+	if len(targets) != 0 {
+		t.Fatalf("shell listings must not flood the picker: %#v", targets)
+	}
+}
+
+func TestCodexArtifactMentionShapes(t *testing.T) {
+	for _, accepted := range []string{"README.md", "a/b/clip.mp4", "build/out/", "résumé.pdf", ".github/ci.yml", "main.go."} {
+		if _, ok := codexNormalizeMention(accepted); !ok {
+			t.Errorf("%q should be a candidate", accepted)
+		}
+	}
+	for _, rejected := range []string{"v1.2", "1.5.3", "e.g", "and/or", "/etc/hosts", "../up.txt", "~/x.txt", "foo", "a//b.txt", ".go", "a b.txt"} {
+		if mention, ok := codexNormalizeMention(rejected); ok {
+			t.Errorf("%q should not be a candidate, got %q", rejected, mention)
+		}
+	}
+	if _, ok := codexCodeSpanMention("go test ./..."); ok {
+		t.Error("commands are not file mentions")
+	}
+}
+
+func TestCodexArtifactTargetFolderIsRelativeToTheProject(t *testing.T) {
+	project := "/Users/me/dev/repos/App--feature-worktree"
+	tests := []struct {
+		path, want string
+	}{
+		{project + "/build/review-clips/fe-1b/clip.mp4", "build/review-clips/fe-1b/"},
+		{project + "/README.md", "./"},
+		{project + "/build/review-clips", "build/"},
+		{"/Users/me/dev/repos/App/src/main.go", "~/dev/repos/App/src/"},
+		{"/tmp/out.png", "/tmp/"},
+	}
+	for _, tt := range tests {
+		got := codexArtifactTargetFolder(codexArtifactOpenTarget{Path: tt.path}, project, "/Users/me")
+		if got != tt.want {
+			t.Errorf("folder(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+	if got := shortenPathLeft("build/review-clips/fe-1b/", 12); got != "…lips/fe-1b/" {
+		t.Errorf("shortenPathLeft kept the wrong end: %q", got)
+	}
+}
+
+func TestCodexArtifactPickerFiltersByFolderAndShowsRelativeFolders(t *testing.T) {
+	project := "/Users/me/dev/repos/App--feature-worktree-with-a-very-long-name"
+	picker := &codexArtifactPickerState{
+		ProjectPath: project,
+		Targets: []codexArtifactOpenTarget{
+			{Kind: "video", Path: project + "/build/review-clips/fe-1b/title-backdrop.mp4"},
+			{Kind: "doc", Path: project + "/docs/README.md"},
+		},
+	}
+	picker.Filter = "fe1b"
+	if got := codexArtifactPickerFilteredIndexes(picker); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("folder filter = %v, want only the clip", got)
+	}
+	layout := newCodexArtifactPickerRowLayout(100)
+	layout.ProjectPath = project
+	row := ansi.Strip(renderCodexArtifactPickerRow(picker.Targets[0], false, 100, layout))
+	if !strings.Contains(row, "build/review-clips/fe-1b/") || strings.Contains(row, "worktree") {
+		t.Fatalf("row should show the project-relative folder: %q", row)
 	}
 }
