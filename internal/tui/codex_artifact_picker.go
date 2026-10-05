@@ -73,7 +73,7 @@ func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, t
 	m.codexArtifactPicker = &codexArtifactPickerState{
 		ProjectPath:     projectPath,
 		Title:           "Open Links",
-		Hint:            "Links found in this embedded transcript. Type to filter by name.",
+		Hint:            "Links found in this embedded transcript. Type to filter by name or folder.",
 		Targets:         targets,
 		Selected:        len(targets) - 1,
 		PreviewRequests: make(map[string]int64),
@@ -404,7 +404,7 @@ func codexArtifactLinkScanCmd(
 		targets, pathEvidence, nextEntry, nextTextOffset, complete := scanCodexArtifactLinksChunk(projectPath, entries, startEntry, startTextOffset)
 		pathEvidence = normalizeCodexArtifactOpenTargets(append(basePathEvidence, pathEvidence...))
 		targets = normalizeCodexArtifactOpenTargetsForProjectWithPathEvidence(append(baseTargets, targets...), pathEvidence, projectPath)
-		targets = verifyCodexInferredArtifactPaths(targets)
+		targets = verifyCodexInferredArtifactPaths(projectPath, targets)
 		return codexArtifactLinkScanMsg{
 			projectPath:    projectPath,
 			scanSeq:        scanSeq,
@@ -417,29 +417,6 @@ func codexArtifactLinkScanCmd(
 			sourceEntries:  entries,
 		}
 	}
-}
-
-// Only call from a background command. Keep unconfirmed candidates in the scan
-// state so later command output can resolve a project-relative path correctly.
-func verifyCodexInferredArtifactPaths(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
-	out := append([]codexArtifactOpenTarget(nil), targets...)
-	checked := make(map[string]bool)
-	for i := range out {
-		target := &out[i]
-		if !target.inferredLocalPath || target.verifiedPath == target.Path {
-			continue
-		}
-		valid, ok := checked[target.Path]
-		if !ok {
-			info, err := os.Stat(target.Path)
-			valid = err == nil && (info.Mode().IsRegular() || info.IsDir())
-			checked[target.Path] = valid
-		}
-		if valid {
-			target.verifiedPath = target.Path
-		}
-	}
-	return out
 }
 
 func confirmedCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
@@ -528,12 +505,13 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 		scanLen := min(len(text)-textOffset, remainingBudget)
 		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+max(codexMarkdownLinkTargetScanLimit, codexInlineCodePathScanLimit)+4)
 		includeStandalonePaths := entry.Kind != codexapp.TranscriptCommand
-		chunkTargets := codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithPolicy(
+		chunkTargets := codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithMentions(
 			text[textOffset:parseEnd],
 			scanLen,
 			projectPath,
 			includeStandalonePaths,
 			entry.Kind != codexapp.TranscriptCommand,
+			codexEntryMentionsRelativeFiles(entry.Kind),
 		)
 		targets = append(targets, locateCodexArtifactOpenTargets(chunkTargets, entryIndex)...)
 		if !includeStandalonePaths {
@@ -607,7 +585,7 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 			m.normalizeCodexArtifactPickerSelection()
 		}
 		if previousCount == 0 && len(picker.Targets) > 0 {
-			picker.Hint = "Links found in this embedded transcript. Type to filter by name."
+			picker.Hint = "Links found in this embedded transcript. Type to filter by name or folder."
 			m.status = "Link picker open"
 			previewCmd = m.codexArtifactPickerPreviewCmd()
 		} else if filteredCount != previousFilteredCount || len(msg.targets) > 0 {
@@ -859,14 +837,14 @@ func codexArtifactPickerFilteredIndexes(picker *codexArtifactPickerState) []int 
 	filter := strings.TrimSpace(picker.Filter)
 	indexes := make([]int, 0, len(picker.Targets))
 	for i, target := range picker.Targets {
-		if codexArtifactTargetMatchesFilter(target, filter) {
+		if codexArtifactTargetMatchesFilter(target, filter, picker.ProjectPath) {
 			indexes = append(indexes, i)
 		}
 	}
 	return indexes
 }
 
-func codexArtifactTargetMatchesFilter(target codexArtifactOpenTarget, filter string) bool {
+func codexArtifactTargetMatchesFilter(target codexArtifactOpenTarget, filter, projectPath string) bool {
 	filter = strings.TrimSpace(filter)
 	if filter == "" {
 		return true
@@ -874,7 +852,11 @@ func codexArtifactTargetMatchesFilter(target codexArtifactOpenTarget, filter str
 	if strings.TrimSpace(target.Kind) == "url" {
 		return fuzzyfilter.Match(filter, codexArtifactTargetName(target), strings.TrimSpace(target.Label), codexArtifactTargetRight(target))
 	}
-	return fuzzyfilter.Match(filter, codexArtifactTargetName(target), strings.TrimSpace(target.Label))
+	return fuzzyfilter.MatchWithFragments(
+		filter,
+		[]string{codexArtifactTargetName(target), strings.TrimSpace(target.Label)},
+		[]string{codexArtifactTargetFolder(target, projectPath, "")},
+	)
 }
 
 func (m Model) currentCodexArtifactTarget() (codexArtifactOpenTarget, bool) {
@@ -946,7 +928,7 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	}
 	indexes := codexArtifactPickerFilteredIndexes(picker)
 	if len(indexes) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No names match the current filter."))
+		lines = append(lines, commandPaletteHintStyle.Render("No names or folders match the current filter."))
 		return strings.Join(lines, "\n")
 	}
 	selected := picker.Selected
@@ -963,6 +945,8 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	}
 	start, end := codexArtifactPickerWindow(selected, len(indexes), bodyH, previewRows)
 	layout := newCodexArtifactPickerRowLayout(width)
+	layout.ProjectPath = picker.ProjectPath
+	layout.HomeDir = m.homeDir
 	lines = append(lines, renderCodexArtifactPickerHeader(layout, width))
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
@@ -1044,6 +1028,9 @@ type codexArtifactPickerRowLayout struct {
 	NameWidth int
 	TypeWidth int
 	PathWidth int
+	// ProjectPath and HomeDir shorten the folder column; both may be empty.
+	ProjectPath string
+	HomeDir     string
 }
 
 func newCodexArtifactPickerRowLayout(width int) codexArtifactPickerRowLayout {
@@ -1062,7 +1049,7 @@ func newCodexArtifactPickerRowLayout(width int) codexArtifactPickerRowLayout {
 
 func renderCodexArtifactPickerFilterLine(picker *codexArtifactPickerState, width int) string {
 	filter := strings.TrimSpace(picker.Filter)
-	value := detailMutedStyle.Render("type to filter by name")
+	value := detailMutedStyle.Render("type to filter by name or folder")
 	if filter != "" {
 		value = detailValueStyle.Render(fitFooterWidth(filter, max(8, width-10)))
 	}
@@ -1091,7 +1078,7 @@ func renderCodexArtifactPickerHeader(layout codexArtifactPickerRowLayout, width 
 	row := fmt.Sprintf("  %s  %s  %s",
 		renderCodexArtifactCell("Name", layout.NameWidth, codexArtifactHeaderStyle()),
 		renderCodexArtifactCell("Type", layout.TypeWidth, codexArtifactHeaderStyle()),
-		renderCodexArtifactCell("Path", layout.PathWidth, codexArtifactHeaderStyle()),
+		renderCodexArtifactCell("Folder", layout.PathWidth, codexArtifactHeaderStyle()),
 	)
 	return fitStyledWidth(row, width)
 }
@@ -1099,14 +1086,20 @@ func renderCodexArtifactPickerHeader(layout codexArtifactPickerRowLayout, width 
 func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool, width int, layout codexArtifactPickerRowLayout) string {
 	kind := codexArtifactTargetTypeLabel(target)
 	name := codexArtifactTargetName(target)
-	path := strings.TrimSpace(target.Path)
-	if path == "" {
-		path = codexArtifactTargetRight(target)
+	var location string
+	if strings.TrimSpace(target.Kind) == "url" {
+		location = shortenHeadTail(strings.TrimSpace(target.Path), layout.PathWidth)
+		if location == "" {
+			location = codexArtifactTargetRight(target)
+		}
+	} else {
+		// The tail of a path names the folder; the head is mostly disk prefix.
+		location = shortenPathLeft(codexArtifactTargetFolder(target, layout.ProjectPath, layout.HomeDir), layout.PathWidth)
 	}
 	row := fmt.Sprintf("  %s  %s  %s",
 		renderCodexArtifactCell(name, layout.NameWidth, codexArtifactNameStyle(selected)),
 		renderCodexArtifactCell(kind, layout.TypeWidth, codexArtifactTypeStyle(kind, selected)),
-		renderCodexArtifactCell(shortenHeadTail(path, layout.PathWidth), layout.PathWidth, codexArtifactPathStyle(selected)),
+		renderCodexArtifactCell(location, layout.PathWidth, codexArtifactPathStyle(selected)),
 	)
 	if selected {
 		row = "> " + strings.TrimPrefix(row, "  ")
@@ -1228,6 +1221,50 @@ func shortenHeadTail(text string, width int) string {
 		return truncateText(text, width)
 	}
 	return string(runes[:headWidth]) + ".." + string(runes[len(runes)-tailWidth:])
+}
+
+// shortenPathLeft keeps the end of a path and elides the start.
+func shortenPathLeft(text string, width int) string {
+	text = strings.TrimSpace(text)
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(text) <= width {
+		return text
+	}
+	runes := []rune(text)
+	for start := 1; start < len(runes); start++ {
+		candidate := "…" + string(runes[start:])
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+	}
+	return "…"
+}
+
+// codexArtifactTargetFolder names the directory holding a local target. Paths
+// inside the project are relative to it ("./" is the project root itself), so
+// long worktree prefixes never crowd out the part that tells folders apart.
+func codexArtifactTargetFolder(target codexArtifactOpenTarget, projectPath, homeDir string) string {
+	path := strings.TrimSpace(target.Path)
+	if path == "" {
+		return ""
+	}
+	dir := filepath.Dir(filepath.Clean(path))
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath != "" {
+		if filepath.Clean(dir) == filepath.Clean(projectPath) {
+			return "./"
+		}
+		if rel, ok := codexProjectRelativeTargetSuffix(dir, projectPath); ok {
+			return rel + "/"
+		}
+	}
+	display := displayPathWithHomeTilde(dir, homeDir)
+	if strings.HasSuffix(display, "/") {
+		return display
+	}
+	return display + "/"
 }
 
 func codexArtifactOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
@@ -1469,6 +1506,20 @@ func codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithPolicy(
 	includeStandalonePaths bool,
 	includeInlineCodePaths bool,
 ) []codexArtifactOpenTarget {
+	return codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithMentions(text, scanLimit, projectPath, includeStandalonePaths, includeInlineCodePaths, false)
+}
+
+// includeRelativeMentions also collects bare names and partial paths from
+// prose. They stay inferred, so only the background scan's filesystem check
+// can turn them into picker targets.
+func codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithMentions(
+	text string,
+	scanLimit int,
+	projectPath string,
+	includeStandalonePaths bool,
+	includeInlineCodePaths bool,
+	includeRelativeMentions bool,
+) []codexArtifactOpenTarget {
 	if scanLimit <= 0 || strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -1481,11 +1532,19 @@ func codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithPolicy(
 	}
 	remaining := text
 	remainingScanLimit := scanLimit
+	seenMentions := make(map[string]struct{})
 	for len(remaining) > 0 && remainingScanLimit > 0 {
 		scanWindow := remaining[:min(len(remaining), remainingScanLimit)]
 		linkIdx := strings.IndexByte(scanWindow, '[')
 		codeIdx := strings.IndexByte(scanWindow, '`')
 		idx := earliestNonNegativeIndex(linkIdx, codeIdx)
+		if includeRelativeMentions {
+			prose := scanWindow
+			if idx >= 0 {
+				prose = scanWindow[:idx]
+			}
+			targets = codexMentionTargets(targets, prose, projectPath, seenMentions)
+		}
 		if idx < 0 {
 			return normalizeCodexArtifactOpenTargetsForProject(targets, projectPath)
 		}
@@ -1501,6 +1560,10 @@ func codexArtifactOpenTargetsFromMarkdownPrefixInProjectWithPolicy(
 			if includeInlineCodePaths {
 				if target, ok := codexArtifactOpenTargetFromInlineCodePath(code, projectPath); ok {
 					targets = append(targets, target)
+				} else if includeRelativeMentions {
+					if mention, ok := codexCodeSpanMention(code); ok {
+						targets = appendCodexMentionTarget(targets, mention, projectPath, seenMentions)
+					}
 				}
 			}
 			advance := idx + max(1, consumed)
@@ -1817,6 +1880,11 @@ func preferCodexAbsoluteTargetsForImplicitProjectRelatives(targets []codexArtifa
 		}
 		rel, ok := codexProjectRelativeTargetSuffix(out[i].Path, projectPath)
 		if !ok {
+			continue
+		}
+		if out[i].inferredLocalPath && !strings.Contains(rel, "/") {
+			// A bare name resolves by nearby folders, not by any absolute path that
+			// happens to end with it.
 			continue
 		}
 		match, ok := uniqueCodexAbsoluteTargetWithSuffix(out, i, rel)

@@ -55,3 +55,19 @@ func TestMatchAcceptsFragmentsAndFuzzyInitials(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchWithFragmentsKeepsFuzzyOffLongText(t *testing.T) {
+	folder := "build/review-clips/fe-1b/"
+	if !MatchWithFragments("clips", []string{"title.mp4"}, []string{folder}) {
+		t.Fatal("folder fragment should match")
+	}
+	if !MatchWithFragments("fe1b title", []string{"title.mp4"}, []string{folder}) {
+		t.Fatal("tokens may match the name and the folder")
+	}
+	if MatchWithFragments("zzz", []string{"title.mp4"}, nil) {
+		t.Fatal("unmatched tokens must fail")
+	}
+	if MatchWithFragments("acx", []string{"beta_notes.md"}, []string{"/var/folders/fy/9y_kz/T/TestA/001/"}) {
+		t.Fatal("ordered characters must not match across a long folder path")
+	}
+}

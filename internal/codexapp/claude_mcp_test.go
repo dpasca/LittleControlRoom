@@ -132,8 +132,8 @@ func TestClaudeRuntimeMCPConfigKeepsProcessToolsWhenTODOCaptureIsOff(t *testing.
 	if options.Config == "" {
 		t.Fatal("buildClaudeMCPOptions() config is empty; process tools should remain available")
 	}
-	if options.Prompt != agentquery.KnowledgeInstructions+"\n\n"+claudeRuntimeProcessInstructions {
-		t.Fatalf("buildClaudeMCPOptions() prompt = %q, want knowledge and process guidance without TODO or browser instructions", options.Prompt)
+	if options.Prompt != agentquery.KnowledgeInstructions+"\n\n"+claudeRuntimeProcessInstructions+"\n\n"+claudePathMentionInstructions {
+		t.Fatalf("buildClaudeMCPOptions() prompt = %q, want knowledge, process, and path guidance without TODO or browser instructions", options.Prompt)
 	}
 	if slices.Contains(options.AllowedTools, claudePlaywrightMCPAllowedTools) {
 		t.Fatalf("classic browser allowed tools = %#v, want no Playwright wildcard", options.AllowedTools)

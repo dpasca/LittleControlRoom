@@ -13,15 +13,7 @@ func Match(query string, candidates ...string) bool {
 	if len(tokens) == 0 {
 		return true
 	}
-	prepared := make([]preparedCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		folded := strings.ToLower(strings.TrimSpace(candidate))
-		normalized := normalize(candidate)
-		if folded == "" && normalized == "" {
-			continue
-		}
-		prepared = append(prepared, preparedCandidate{folded: folded, normalized: normalized})
-	}
+	prepared := prepareCandidates(candidates)
 	if len(prepared) == 0 {
 		return false
 	}
@@ -31,6 +23,49 @@ func Match(query string, candidates ...string) bool {
 		}
 	}
 	return true
+}
+
+// MatchWithFragments is Match with a second, stricter candidate group. Tokens
+// may fuzzy-match candidates, but fragmentOnly candidates (long text such as a
+// folder path, where ordered-character matches are nearly always accidental)
+// only match when they contain the token as an exact or normalized fragment.
+func MatchWithFragments(query string, candidates, fragmentOnly []string) bool {
+	tokens := queryTokens(query)
+	if len(tokens) == 0 {
+		return true
+	}
+	fuzzy := prepareCandidates(candidates)
+	strict := prepareCandidates(fragmentOnly)
+	for _, token := range tokens {
+		if tokenMatchesAny(token, fuzzy) {
+			continue
+		}
+		matched := false
+		for _, candidate := range strict {
+			if (token.folded != "" && strings.Contains(candidate.folded, token.folded)) ||
+				(token.normalized != "" && strings.Contains(candidate.normalized, token.normalized)) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+func prepareCandidates(candidates []string) []preparedCandidate {
+	prepared := make([]preparedCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		folded := strings.ToLower(strings.TrimSpace(candidate))
+		normalized := normalize(candidate)
+		if folded == "" && normalized == "" {
+			continue
+		}
+		prepared = append(prepared, preparedCandidate{folded: folded, normalized: normalized})
+	}
+	return prepared
 }
 
 type queryToken struct {

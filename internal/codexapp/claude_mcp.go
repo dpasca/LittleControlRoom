@@ -17,6 +17,11 @@ const claudeRuntimeProcessInstructions = `Little Control Room tracks this projec
 - Call lcr_runtime/read_process_output to check the tail output or exit state of a managed process.
 - Call lcr_runtime/stop_process only when the user asks or to clean up a temporary process you started.`
 
+// claudePathMentionInstructions keeps file mentions openable from the
+// transcript: the link picker confirms project-relative paths against the disk
+// and cannot guess which folder a bare file name belongs to.
+const claudePathMentionInstructions = `When you mention a file or folder the user may want to open, write it in backticks as a path relative to the project root, for example ` + "`build/review-clips/fe-1b/title-backdrop.mp4`" + `, rather than a bare file name. Name the folder once and the files inside it by full relative path.`
+
 type claudeMCPConfig struct {
 	Servers map[string]claudeMCPServer `json:"mcpServers"`
 }
@@ -88,6 +93,7 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 	if len(servers) == 0 {
 		return claudeMCPOptions{}, nil
 	}
+	promptParts = append(promptParts, claudePathMentionInstructions)
 	encoded, err := json.Marshal(claudeMCPConfig{Servers: servers})
 	if err != nil {
 		return claudeMCPOptions{}, err
