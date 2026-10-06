@@ -130,7 +130,7 @@ func (m Model) renderProjectCollaborations(body string, width, height int) strin
 	} else if d.errorText != "" {
 		lines = append(lines, d.errorText)
 	} else if len(d.pairs) == 0 {
-		lines = append(lines, "No trusted pairs. Choose A at the next engineer handoff.")
+		lines = append(lines, "No trusted pairs. Choose a at the next engineer handoff.")
 	}
 	// Window the list so selection remains visible on short terminals.
 	visible := max(1, height-15)

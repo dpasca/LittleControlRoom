@@ -452,3 +452,62 @@ func TestProjectCollaborationApprovalFailureKeepsReviewUsable(t *testing.T) {
 		t.Fatal("approval failure was hidden")
 	}
 }
+
+func TestProjectCollaborationReviewKeys(t *testing.T) {
+	args, err := json.Marshal(control.EngineerSendPromptInput{
+		ProjectPath:     "/projects/target",
+		Provider:        control.ProviderCodex,
+		SessionMode:     control.SessionModeResumeOrNew,
+		TargetSessionID: "target-session",
+		Prompt:          "Continue the authorized work.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyEnter},
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyRunes, Runes: []rune{'A'}},
+	} {
+		t.Run(key.String(), func(t *testing.T) {
+			m := Model{externalControlConfirmation: &externalControlConfirmationState{
+				reviewing: true,
+				operation: control.Operation{
+					ID:          "collaboration-review",
+					ProjectPath: "/projects/origin",
+					Capability:  control.CapabilityEngineerSendPrompt,
+					Provider:    "codex",
+					SessionKey:  "sender-session",
+					Invocation: control.Invocation{
+						RequestID:  "collaboration-review",
+						Capability: control.CapabilityEngineerSendPrompt,
+						Args:       args,
+					},
+				},
+			}}
+			updated, cmd := m.Update(key)
+			m = normalizeUpdateModel(updated)
+			if key.String() == "A" {
+				if cmd != nil || !m.externalControlReviewActive() || m.externalControlConfirmation.submitting {
+					t.Fatal("uppercase A activated the lowercase a binding")
+				}
+				return
+			}
+			if cmd == nil || m.externalControlConfirmation != nil {
+				t.Fatal("Enter/Esc did not resolve the review")
+			}
+			switch msg := cmd().(type) {
+			case bossui.ControlInvocationConfirmedMsg:
+				if key.Type != tea.KeyEnter || msg.OperationRecorded || msg.Invocation.RequestID != "collaboration-review" {
+					t.Fatalf("Enter must confirm only the current invocation: %#v", msg)
+				}
+			case bossui.ControlInvocationCanceledMsg:
+				if key.Type != tea.KeyEsc {
+					t.Fatal("unexpected cancellation")
+				}
+			default:
+				t.Fatalf("unexpected approval command result: %T", msg)
+			}
+		})
+	}
+}

@@ -29,8 +29,8 @@ func RenderControlConfirmationDialog(inv control.Invocation, preview string, bod
 	return m.renderControlConfirmationDialog(bodyW, bodyH), nil
 }
 
-// RenderCollaborationConfirmationDialog keeps the persistent choice visible
-// above the prompt, including when the prompt must be clipped on short screens.
+// RenderCollaborationConfirmationDialog reserves space for the action legend,
+// including when the prompt must be clipped on short screens.
 func RenderCollaborationConfirmationDialog(inv control.Invocation, origin string, busy bool, errorText string, bodyW, bodyH int) (string, error) {
 	normalized, err := control.ValidateInvocation(inv)
 	if err != nil {
@@ -41,27 +41,68 @@ func RenderCollaborationConfirmationDialog(inv control.Invocation, origin string
 		return "", err
 	}
 	panelW := minInt(bodyW-4, 88)
-	width := maxInt(28, panelW-4)
-	actions := "Enter: send once   A: always allow this pair   Esc: cancel"
-	if busy {
-		actions = "Saving collaboration approval..."
-	}
+	width := bossPanelInnerWidth(panelW)
 	lines := []string{
 		renderBossControlDetail("From", filepath.Base(origin)+" ("+origin+")", width),
 		renderBossControlDetail("To", filepath.Base(input.ProjectPath)+" ("+input.ProjectPath+")", width),
-		fitLine("Always allow: messages in both directions, including future sessions.", width),
-		fitLine("Agents may continue authorized work. Other approvals still apply.", width),
-		fitLine("Manage or revoke with /collab in either project.", width),
-		"", fitLine(actions, width),
+		"",
 	}
-	if errorText != "" {
-		lines = append(lines, fitLine(errorText, width))
+	for _, explanation := range []string{
+		"Enter sends only this message.",
+		"a also allows future messages in both directions, including future sessions.",
+		"Manage or revoke with /collab in either project.",
+		"Other approvals and task scope still apply.",
+	} {
+		lines = append(lines, wrappedBlockLines(explanation, width)...)
 	}
 	lines = append(lines, "", renderBossControlDetail("Session", input.Provider.Label()+" / "+input.TargetSessionID, width),
 		bossControlSectionStyle.Render("Prompt"), renderBossControlPromptBox(input.Prompt, width))
 	content := strings.Join(lines, "\n")
-	panelH := minInt(countBlockLines(content)+4, maxInt(8, bodyH-2))
+	footer := renderCollaborationActions(width, busy)
+	if busy {
+		footer = fitLine("Saving collaboration approval...", width) + "\n" + footer
+	} else if errorText != "" {
+		footer = fitLine(errorText, width) + "\n" + footer
+	}
+	footer = bossControlSectionStyle.Render(strings.Repeat("─", width)) + "\n" + footer
+	footerH := countBlockLines(footer)
+	panelH := minInt(countBlockLines(content)+footerH+4, maxInt(8, bodyH-2))
+	contentH := maxInt(0, panelH-4-footerH)
+	content = fitRenderedBlock(content, width, contentH)
+	if contentH > 0 {
+		content += "\n"
+	}
+	content += footer
 	return renderBossControlPanel("Project Collaboration", content, panelW, panelH), nil
+}
+
+func renderCollaborationActions(width int, busy bool) string {
+	actions := []struct {
+		key, label string
+		tone       uistyle.DialogActionTone
+	}{
+		{"Enter", "send once", uistyle.DialogActionPrimary},
+		{"a", "always allow this pair", uistyle.DialogActionSecondary},
+		{"Esc", "cancel", uistyle.DialogActionCancel},
+	}
+	var rows []string
+	row := ""
+	for _, action := range actions {
+		if busy {
+			action.tone = uistyle.DialogActionDisabled
+		}
+		chip := renderBossControlAction(action.key, action.label, action.tone)
+		if row != "" && lipgloss.Width(row)+3+lipgloss.Width(chip) > width {
+			rows = append(rows, row)
+			row = ""
+		}
+		if row != "" {
+			row += "   "
+		}
+		row += chip
+	}
+	rows = append(rows, row)
+	return strings.Join(rows, "\n")
 }
 
 func (m Model) renderControlConfirmationOverlay(body string, bodyW, bodyH int) string {

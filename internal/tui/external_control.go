@@ -153,7 +153,7 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 	}
 	invocation := m.externalControlConfirmation.operation.Invocation
 	switch msg.String() {
-	case "a", "A":
+	case "a":
 		if _, ok := control.CollaborationForOperation(m.externalControlConfirmation.operation); !ok {
 			return m, nil
 		}

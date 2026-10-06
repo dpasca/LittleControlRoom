@@ -2,10 +2,13 @@ package boss
 
 import (
 	"encoding/json"
-	"lcroom/internal/control"
+	"fmt"
 	"strings"
 	"testing"
 
+	"lcroom/internal/control"
+
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -15,9 +18,56 @@ func TestCollaborationConfirmationShowsPromptOnStandardTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"always allow this pair", "Fix the build incompatibility.", "crypto_desk", "/collab"} {
+	for _, want := range []string{"always allow this pair", "Fix the build incompatibility.", "crypto_desk", "/collab", "Enter sends only this message.", "a also allows future messages"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
+		}
+	}
+}
+
+func TestCollaborationConfirmationKeepsActionsVisible(t *testing.T) {
+	inv := validatedControlInvocationForTest(t, control.CapabilityEngineerSendPrompt, control.EngineerSendPromptInput{
+		ProjectPath:     "/projects/crypto",
+		Provider:        control.ProviderCodex,
+		SessionMode:     control.SessionModeResumeOrNew,
+		TargetSessionID: "session",
+		Prompt:          strings.Repeat("Review the build and continue the authorized work.\n", 30),
+	})
+	for _, size := range [][2]int{{110, 40}, {80, 24}, {60, 18}, {40, 14}} {
+		for _, state := range []struct {
+			name, errorText string
+			busy            bool
+		}{
+			{name: "ready"},
+			{name: "saving", busy: true},
+			{name: "error", errorText: "Approval failed: disk failure"},
+		} {
+			t.Run(fmt.Sprintf("%dx%d/%s", size[0], size[1], state.name), func(t *testing.T) {
+				view, err := RenderCollaborationConfirmationDialog(inv, "/projects/crypto_desk", state.busy, state.errorText, size[0], size[1])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
+					t.Fatalf("dialog exceeds terminal bounds: %s", view)
+				}
+				plain := ansi.Strip(view)
+				separator := strings.Index(plain, "│ ────")
+				if separator < 0 {
+					t.Fatalf("missing action bar separator: %s", plain)
+				}
+				footer := strings.Join(strings.Fields(plain[separator:]), " ")
+				for _, want := range []string{"Enter send once", "a always allow this pair", "Esc cancel"} {
+					if !strings.Contains(footer, want) {
+						t.Fatalf("action bar missing %q: %s", want, plain)
+					}
+				}
+				if state.busy && !strings.Contains(footer, "Saving collaboration approval...") {
+					t.Fatalf("missing saving status: %s", plain)
+				}
+				if state.errorText != "" && !strings.Contains(footer, state.errorText) {
+					t.Fatalf("missing failure status: %s", plain)
+				}
+			})
 		}
 	}
 }
