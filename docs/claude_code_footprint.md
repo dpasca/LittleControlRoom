@@ -184,9 +184,22 @@ start, and live views use the earlier of that and the stream's busy start, so
 the pane footer and dashboard row show the same running time. When an
 LCR-owned parent has finished every submitted turn and only background tasks
 remain (`session_state_changed` `idle` for managed streams), views say
-"Waiting on background command/agent/task" with the launching tool call's
-`description` instead of "Working". Verified on 2026-10-03 with Claude Code
-2.1.284.
+"Parent idle" with the outstanding background command/agent/task count. The
+dashboard uses `bg tasks` and `CC bg`, and elapsed time is labeled `open`.
+The launching tool call's `description` is a launch label, not evidence that
+the described wait remains necessary. Task details expose the last provider
+update, including unknown timestamps, without equating recency with progress.
+Ownership, follow-up input, and process-release rules are unchanged.
+
+Observed on 2026-10-06 with Claude Code 2.1.284: idle parents retained a preview
+server and shell polling loops for hours after their remote jobs had finished.
+One poller watched for a marker absent from a log that already contained a
+structured `state: complete` result; another missed `BATCH1 DONE`. A live
+process, a pending task receipt, and a launch description do not establish
+useful work, a remote queue position, or a dependency on that task. LCR makes
+that uncertainty explicit; it does not infer completion from command/log
+keywords, automatically terminate quiet tasks, or claim remote queue state
+without structured job evidence.
 
 ## 5. Important detector implication
 

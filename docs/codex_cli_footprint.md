@@ -115,7 +115,9 @@ missing artifact references before queueing an assessment:
   viewer expires inferred activity after 20 minutes without a structured turn
   event, preserving the unfinished state. Managed Claude streams also track
   explicit message receipts and task/session lifecycle events; child traffic
-  does not establish parent responsiveness. See [Claude Code footprint](claude_code_footprint.md) for activity
+  does not establish parent responsiveness. An idle Claude parent with outstanding
+  tasks is displayed as `Parent idle` / `bg tasks`; task ownership is not evidence
+  of progress or a real remote queue wait. See [Claude Code footprint](claude_code_footprint.md) for activity
   and resume limitations.
   The live parent pane also reads bounded child progress independently of its own
   transcript, including foreground workers identified by sibling `.meta.json`

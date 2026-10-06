@@ -162,7 +162,11 @@ func BuildLiveEngineerSessionDetail(snapshot codexapp.Snapshot, now time.Time) E
 		FieldValue("Status", item.Status.Label, item.Status.Tone),
 	}
 	if phase := sessionPhaseLabel(snapshot.Phase); phase != "" {
-		instruments = append(instruments, FieldValue("Phase", phase, sessionPhaseTone(snapshot.Phase)))
+		tone := sessionPhaseTone(snapshot.Phase)
+		if _, _, backgroundOnly := snapshot.BackgroundWait(); backgroundOnly && snapshot.Phase == codexapp.SessionPhaseRunning {
+			phase, tone = "Background tasks", ToneInfo
+		}
+		instruments = append(instruments, FieldValue("Phase", phase, tone))
 	}
 	if item.Model != "" {
 		instruments = append(instruments, FieldValue("Model", item.Model, ToneValue))
@@ -192,6 +196,20 @@ func BuildLiveEngineerSessionDetail(snapshot codexapp.Snapshot, now time.Time) E
 			tone = ToneWarning
 		}
 		instruments = append(instruments, FieldValue("Message delivery", summary, tone))
+	}
+	for _, task := range snapshot.BackgroundTasks {
+		status := strings.TrimSpace(task.Status)
+		if status == "" {
+			status = "unknown"
+		}
+		text := fmt.Sprintf("%s · reported %s · last update %s", task.ID, status, task.ReportedUpdateAge(now))
+		if task.Description != "" {
+			text += " · launch label: " + task.Description
+		}
+		instruments = append(instruments, FieldValue("Background task", clipSessionText(text, 640), ToneMuted))
+	}
+	if len(snapshot.BackgroundTasks) > 0 {
+		instruments = append(instruments, FieldValue("Task evidence", "Progress and remote queue state unverified.", ToneMuted))
 	}
 
 	emptyMessage := ""
@@ -275,7 +293,7 @@ func liveEngineerSessionStatus(snapshot codexapp.Snapshot) Status {
 	case snapshot.BusyExternal:
 		return Status{Label: "Open externally", Tone: ToneInfo}
 	case snapshot.Busy && snapshot.BackgroundWaitSummary() != "":
-		return Status{Label: "Waiting", Tone: ToneInfo}
+		return Status{Label: "Parent idle", Tone: ToneInfo}
 	case snapshot.Busy:
 		return Status{Label: "Working", Tone: TonePositive}
 	case snapshot.Started:

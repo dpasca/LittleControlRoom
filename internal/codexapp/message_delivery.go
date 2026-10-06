@@ -62,12 +62,12 @@ func (s Snapshot) ActiveSince() time.Time {
 	}
 }
 
-// BackgroundWait names the background work an idle parent is waiting on, so a
-// long busy span is not mistaken for active model work. The label counts the
-// work; detail describes it when there is exactly one task. ok is false while
-// the parent itself is running.
+// BackgroundWait describes outstanding provider tasks with an idle parent.
+// Ownership does not establish useful progress, a remote queue position, or
+// whether the parent needs the task's result (a preview server can stay open).
+// detail is the launch label, not a verified account of current activity.
 func (s Snapshot) BackgroundWait() (label, detail string, ok bool) {
-	if !s.ParentAwaitingBackgroundTasks {
+	if !s.ParentAwaitingBackgroundTasks || s.ParentTurnActive {
 		return "", "", false
 	}
 	running := make([]BackgroundTaskSnapshot, 0, len(s.BackgroundTasks))
@@ -87,9 +87,18 @@ func (s Snapshot) BackgroundWait() (label, detail string, ok bool) {
 		}
 	}
 	if len(running) > 1 {
-		return fmt.Sprintf("Waiting on %d background %ss", len(running), noun), "", true
+		return fmt.Sprintf("Parent idle · %d background %ss", len(running), noun), "", true
 	}
-	return "Waiting on background " + noun, backgroundTaskLabel(running[0]), true
+	return "Parent idle · 1 background " + noun, backgroundTaskLabel(running[0]), true
+}
+
+// ReportedUpdateAge describes provider evidence, not task output or progress.
+// Even a recent task update can be a repeated status report from a quiet job.
+func (t BackgroundTaskSnapshot) ReportedUpdateAge(now time.Time) string {
+	if t.UpdatedAt.IsZero() || now.IsZero() {
+		return "unknown"
+	}
+	return max(time.Duration(0), now.Sub(t.UpdatedAt)).Round(time.Second).String() + " ago"
 }
 
 func (s Snapshot) BackgroundWaitSummary() string {

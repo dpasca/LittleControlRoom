@@ -13,13 +13,13 @@ func TestClaudeMessageDeliveryRemainsVisibleWithActiveWorker(t *testing.T) {
 	now := time.Now()
 	s := codexapp.Snapshot{Provider: codexapp.ProviderClaudeCode, Busy: true, Started: true,
 		Phase: codexapp.SessionPhaseRunning, BackgroundInputSupported: true,
-		ParentStatus: "Parent available · background work running", ParentActivityAt: now.Add(-time.Minute),
+		ParentStatus: "Parent idle · background tasks still reported", ParentActivityAt: now.Add(-time.Minute),
 		BackgroundTasks:   []codexapp.BackgroundTaskSnapshot{{ID: "worker"}},
 		MessageDeliveries: []codexapp.MessageDeliverySnapshot{{ID: "message", Preview: "Steer the phone test", State: "queued", SubmittedAt: now.Add(-3 * time.Minute)}},
 	}
 	m := Model{codexInput: newCodexTextarea()}
 	text := ansi.Strip(strings.Join(m.codexLowerBlocks(s, 120), "\n"))
-	for _, want := range []string{"Parent available", "last parent activity", "message waiting", "parent has not started", "Steer the phone test"} {
+	for _, want := range []string{"Parent idle", "last parent activity", "message waiting", "parent has not started", "Steer the phone test"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q:\n%s", want, text)
 		}

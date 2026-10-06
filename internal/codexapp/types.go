@@ -633,7 +633,7 @@ type Snapshot struct {
 	EmptyConversation         bool // Provider-verified emptiness, also present in state-only snapshots.
 	Phase                     SessionPhase
 	Started                   bool
-	Busy                      bool // A turn is currently active, whether local or external.
+	Busy                      bool // A turn or provider-owned background task remains open, whether local or external; not proof of progress.
 	BusyExternal              bool // Another process owns the session; controls must remain read-only even when Busy is false.
 	Compacting                bool // Distinguishes known conversation compaction from generic reconciling state.
 	BusySince                 time.Time
@@ -710,7 +710,8 @@ type Snapshot struct {
 	Goal                        *ThreadGoal
 
 	// ParentAwaitingBackgroundTasks marks a busy span whose parent turn has
-	// ended and is only waiting for background tasks to report completion.
+	// ended while background tasks lack terminal receipts. It does not prove
+	// the parent needs their results or that those tasks are making progress.
 	ParentAwaitingBackgroundTasks bool
 }
 

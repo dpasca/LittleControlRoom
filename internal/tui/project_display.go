@@ -334,6 +334,8 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 		label := tag
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
 			label += " stalled"
+		} else if _, _, backgroundOnly := snapshot.BackgroundWait(); backgroundOnly {
+			label += " bg"
 		} else if startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project); active {
 			if !startedAt.IsZero() && !now.IsZero() {
 				label += " " + formatRunningDuration(now.Sub(startedAt))
@@ -379,7 +381,7 @@ func (m Model) projectLiveEngineerAssessmentSummary(project model.ProjectSummary
 				detail = subagents + " · " + detail
 			}
 		}
-		return formatLiveEngineerSummary(detail, startedAt, now), true
+		return formatLiveEngineerSnapshotSummary(detail, snapshot, startedAt, now), true
 	}
 
 	provider := providerForSessionFormat(project.LatestSessionFormat)
@@ -396,6 +398,13 @@ func (m Model) projectLiveEngineerAssessmentSummary(project model.ProjectSummary
 		return formatLiveEngineerSummary(detail, project.LatestTurnStartedAt, now), true
 	}
 	return formatLiveEngineerSummary("Work in progress", project.LatestTurnStartedAt, now), true
+}
+
+func formatLiveEngineerSnapshotSummary(detail string, snapshot codexapp.Snapshot, startedAt, now time.Time) string {
+	if _, _, backgroundOnly := snapshot.BackgroundWait(); backgroundOnly && !startedAt.IsZero() && !now.IsZero() {
+		return detail + " (open " + formatRunningDuration(now.Sub(startedAt)) + ")"
+	}
+	return formatLiveEngineerSummary(detail, startedAt, now)
 }
 
 func formatLiveEngineerSummary(detail string, startedAt, now time.Time) string {

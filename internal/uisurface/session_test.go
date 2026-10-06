@@ -70,6 +70,41 @@ func TestBuildLiveEngineerSessionShowsIdleExternalOwnershipWithoutWork(t *testin
 	}
 }
 
+func TestLiveClaudeIdleParentDoesNotClaimRemoteProgress(t *testing.T) {
+	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode,
+		Started:  true, Busy: true, BackgroundInputSupported: true,
+		Phase:                         codexapp.SessionPhaseRunning,
+		ParentAwaitingBackgroundTasks: true,
+		BackgroundTasks: []codexapp.BackgroundTaskSnapshot{
+			{ID: "poller", Status: "running", Source: "background_shell", Description: "Wait for NucBox", UpdatedAt: now.Add(-4 * time.Hour)},
+			{ID: "server", Status: "running", Source: "background_shell", Description: "Preview server"},
+		},
+		Entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: "Waiting for the remote build."}},
+	}
+	surface := BuildLiveEngineerSessionDetail(snapshot, now)
+	if surface.Session.Status.Label != "Parent idle" || surface.Session.Summary != "Parent idle · 2 background commands" {
+		t.Fatalf("background tasks mistaken for useful work: %+v", surface.Session)
+	}
+	var evidence []string
+	for _, item := range surface.Instruments {
+		evidence = append(evidence, item.Label+": "+item.Text)
+	}
+	for _, want := range []string{"poller · reported running · last update 4h0m0s ago", "server · reported running · last update unknown", "Progress and remote queue state unverified."} {
+		if !strings.Contains(strings.Join(evidence, "\n"), want) {
+			t.Fatalf("missing %q from task evidence: %v", want, evidence)
+		}
+	}
+	if !snapshot.OwnsRunningWork() || !BuildEngineerSessionInput(snapshot, true).Available {
+		t.Fatal("idle presentation must retain task ownership and accept follow-ups")
+	}
+	snapshot.ParentTurnActive = true
+	if got := BuildLiveEngineerSession(snapshot, now).Status.Label; got != "Working" {
+		t.Fatalf("resumed parent status = %q", got)
+	}
+}
+
 func TestBuildLiveEngineerSessionDetailKeepsConversationWhenActivityIsDense(t *testing.T) {
 	t.Parallel()
 	entries := []codexapp.TranscriptEntry{

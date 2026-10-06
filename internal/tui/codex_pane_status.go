@@ -143,7 +143,11 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 			status, waitDetail = label, detail
 		}
 		if since := snapshot.ActiveSince(); !since.IsZero() {
-			status += " " + formatRunningDuration(now.Sub(since))
+			if snapshot.ParentAwaitingBackgroundTasks && !snapshot.ParentTurnActive {
+				status += " · open " + formatRunningDuration(now.Sub(since))
+			} else {
+				status += " " + formatRunningDuration(now.Sub(since))
+			}
 		}
 		if waitDetail != "" {
 			status += " · " + waitDetail

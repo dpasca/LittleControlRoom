@@ -55,7 +55,7 @@ func TestClaudeManagedStreamProcess(t *testing.T) {
 		return Snapshot{}
 	}
 	wait(func(snapshot Snapshot) bool {
-		return snapshot.ParentStatus == "Parent available · background work running"
+		return snapshot.ParentStatus == "Parent idle · background tasks still reported"
 	})
 	if err := s.Submit("Steer worker"); err != nil {
 		t.Fatal(err)
@@ -344,7 +344,7 @@ func TestParentSilenceIsSeparateFromWorkerAndTransportActivity(t *testing.T) {
 		t.Fatalf("hidden parent silence: %q %v", summary, quiet)
 	}
 	s.ParentTurnActive = false
-	s.ParentStatus = "Parent available · background work running"
+	s.ParentStatus = "Parent idle · background tasks still reported"
 	if _, quiet := s.ParentActivitySummary(now); quiet {
 		t.Fatal("available parent should not be warned for awaiting background work")
 	}
@@ -460,7 +460,7 @@ func TestClaudeManagedStreamReportsIdleParentWaitingOnBackgroundCommand(t *testi
 	if !snapshot.Busy || !snapshot.ParentAwaitingBackgroundTasks {
 		t.Fatalf("snapshot busy=%v awaiting=%v, want an idle parent owning background work", snapshot.Busy, snapshot.ParentAwaitingBackgroundTasks)
 	}
-	if got, want := snapshot.BackgroundWaitSummary(), "Waiting on background command: Watch Windows PackageChecks"; got != want {
+	if got, want := snapshot.BackgroundWaitSummary(), "Parent idle · 1 background command: Watch Windows PackageChecks"; got != want {
 		t.Fatalf("BackgroundWaitSummary() = %q, want %q", got, want)
 	}
 

@@ -111,7 +111,7 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderCodexView())
 	for _, want := range []string{
-		"Active Processes",
+		"Processes & Tasks",
 		"Diff Summary",
 		"npm run dev",
 		"vite pid 2468",
@@ -128,31 +128,40 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSidebarShowsClaudeBackgroundTasksAsActiveProcesses(t *testing.T) {
+func TestEmbeddedSidebarShowsClaudeTaskEvidenceWithoutClaimingProgress(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
+	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return now }
 	snapshot := testEmbeddedSidebarSnapshot(projectPath)
 	snapshot.Provider = codexapp.ProviderClaudeCode
 	snapshot.BackgroundTasks = []codexapp.BackgroundTaskSnapshot{{
-		ID:        "task-bg-1",
-		ToolUseID: "toolu_bg",
-		Source:    "background_shell",
-		Tool:      "Bash",
-		Command:   "./telemetry --frames 2900",
-		Status:    "running",
+		ID:          "task-bg-1",
+		ToolUseID:   "toolu_bg",
+		Source:      "background_shell",
+		Tool:        "Bash",
+		Command:     "./telemetry --frames 2900",
+		Status:      "running",
+		Description: "Wait for the remote build",
+		UpdatedAt:   now.Add(-4 * time.Hour),
 	}}
 
 	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarProcessSection(snapshot, projectPath, 46), "\n"))
-	for _, want := range []string{"Active Processes", "bg", "./telemetry --frames 2900", "task-bg-1"} {
+	for _, want := range []string{"Processes & Tasks", "bg", "./telemetry --frames 2900", "task-bg-1"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("background-task process section missing %q:\n%s", want, rendered)
 		}
 	}
 
 	detail := ansi.Strip(strings.Join(m.embeddedSidebarProcessDetailRows(snapshot, projectPath, 46, 0), "\n"))
-	for _, want := range []string{"Status", "running", "Task", "task-bg-1", "Tool", "Bash", "Command", "./telemetry --frames 2900"} {
+	for _, want := range []string{"Reported", "running", "Last update", "4h0m0s ago", "Progress and remote queue state unverified.", "Task", "task-bg-1", "Tool", "Bash", "Command", "./telemetry --frames 2900", "Launch label", "Wait for the remote build"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("background-task process detail missing %q:\n%s", want, detail)
+		}
+	}
+	for _, row := range m.embeddedSidebarProcessDetailRows(snapshot, projectPath, 32, 0) {
+		if ansi.StringWidth(row) > 32 {
+			t.Fatalf("task detail overflows narrow sidebar: %q", row)
 		}
 	}
 }
@@ -272,7 +281,7 @@ func TestEmbeddedSidebarSelectionSkipsHiddenBrowserSection(t *testing.T) {
 	updated, _ := m.updateCodexSidebarMode(snapshot, tea.KeyMsg{Type: tea.KeyDown})
 	got := normalizeUpdateModel(updated)
 	if got.codexSidebarSelected != embeddedCodexSidebarDiff {
-		t.Fatalf("down from Active Processes selected %s, want Diff Summary", embeddedSidebarSectionTitle(got.codexSidebarSelected))
+		t.Fatalf("down from Processes & Tasks selected %s, want Diff Summary", embeddedSidebarSectionTitle(got.codexSidebarSelected))
 	}
 }
 

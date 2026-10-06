@@ -1309,6 +1309,12 @@ func (m Model) renderProjectList(width, height int) string {
 			assessmentText = liveSummary
 			statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
 			summaryStyle = detailValueStyle
+			if snapshot, ok := m.liveCodexSnapshot(p.Path); ok {
+				if _, _, backgroundOnly := snapshot.BackgroundWait(); backgroundOnly {
+					statusText = "bg tasks"
+					statusStyle = detailMutedStyle
+				}
+			}
 		}
 		if failure := m.projectStoppedSessionError(p); failure != "" && !agentTaskRow && !browserAttentionRow && !pendingLaunchRow {
 			statusText = "blocked"

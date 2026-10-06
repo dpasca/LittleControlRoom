@@ -192,7 +192,7 @@ func (s *claudeCodeSession) claudeParentStatusLocked() string {
 	switch s.streamState {
 	case "idle":
 		if s.runningBackgroundTaskCountLocked() > 0 {
-			return "Parent available · background work running"
+			return "Parent idle · background tasks still reported"
 		}
 		return "Parent idle"
 	case "requires_action":

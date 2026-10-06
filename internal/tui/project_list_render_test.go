@@ -661,7 +661,7 @@ func TestOwnedStreamWorkOutlastsCompletedTurnState(t *testing.T) {
 	}
 }
 
-func TestRenderProjectListShowsWorkingWhileClaudeBackgroundWorkRuns(t *testing.T) {
+func TestRenderProjectListSeparatesIdleParentFromOutstandingClaudeTasks(t *testing.T) {
 	now := time.Date(2026, 10, 1, 16, 32, 5, 0, time.UTC)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -674,9 +674,10 @@ func TestRenderProjectListShowsWorkingWhileClaudeBackgroundWorkRuns(t *testing.T
 			ThreadID:  "claude-live",
 			// A transcript reload sees the parent's end_turn but not the
 			// Monitor tasks the stream still owns.
-			LatestTurnStateKnown: true,
-			LatestTurnCompleted:  true,
-			ParentStatus:         "Parent available · background work running",
+			LatestTurnStateKnown:          true,
+			LatestTurnCompleted:           true,
+			ParentStatus:                  "Parent idle · background tasks still reported",
+			ParentAwaitingBackgroundTasks: true,
 			BackgroundTasks: []codexapp.BackgroundTaskSnapshot{
 				{ID: "becgu3aoh", Tool: "Monitor", Status: "running"},
 				{ID: "b2pvrvk23", Tool: "Monitor", Status: "running"},
@@ -717,12 +718,12 @@ func TestRenderProjectListShowsWorkingWhileClaudeBackgroundWorkRuns(t *testing.T
 	}
 
 	rendered := ansi.Strip(m.renderProjectList(160, 4))
-	for _, want := range []string{"working", "CC 1:08:05", "Waiting on the parity captures."} {
+	for _, want := range []string{"bg tasks", "CC bg", "Parent idle · 2 background tasks", "open 1:08:05"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderProjectList() missing %q for owned background work: %q", want, rendered)
 		}
 	}
-	for _, unwanted := range []string{"blocked", "halted pending parity captures"} {
+	for _, unwanted := range []string{"working", "blocked", "halted pending parity captures", "Waiting on the parity captures."} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("renderProjectList() showed completed-turn assessment %q while the stream owns work: %q", unwanted, rendered)
 		}
@@ -2657,12 +2658,15 @@ func TestLiveClaudeBackgroundWaitSharesOneTimerAcrossListAndFooter(t *testing.T)
 	}
 
 	rendered := ansi.Strip(m.renderProjectList(160, 4))
-	for _, want := range []string{"CC 57:00", "Waiting on background command: Watch Windows PackageChecks (57:00)"} {
+	for _, want := range []string{"bg tasks", "CC bg", "Parent idle · 1 background command: Watch Windows PackageChecks"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderProjectList() missing %q: %q", want, rendered)
 		}
 	}
-	if got, want := codexFooterStatus(snapshot, now), "Waiting on background command 57:00 · Watch Windows PackageChecks"; got != want {
+	if summary, ok := m.projectLiveEngineerAssessmentSummary(m.projects[0], now); !ok || !strings.HasSuffix(summary, "(open 57:00)") {
+		t.Fatalf("background ownership duration missing: %q", summary)
+	}
+	if got, want := codexFooterStatus(snapshot, now), "Parent idle · 1 background command · open 57:00 · Watch Windows PackageChecks"; got != want {
 		t.Fatalf("codexFooterStatus() = %q, want %q", got, want)
 	}
 }

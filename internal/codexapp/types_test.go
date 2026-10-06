@@ -1503,11 +1503,12 @@ func TestSnapshotBackgroundWaitSummary(t *testing.T) {
 		snapshot Snapshot
 		want     string
 	}{
-		"parent running":    {Snapshot{BackgroundTasks: []BackgroundTaskSnapshot{shell}}, ""},
-		"single command":    {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, unresolved}}, "Waiting on background command: until [ -f done ]; do sleep 20; done"},
-		"single agent":      {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{agent}}, "Waiting on background agent: Review the diff"},
-		"same kind counted": {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, {ID: "d", Tool: "Bash", Status: "running"}}}, "Waiting on 2 background commands"},
-		"mixed kinds":       {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, agent}}, "Waiting on 2 background tasks"},
+		"parent running": {Snapshot{BackgroundTasks: []BackgroundTaskSnapshot{shell}}, ""},
+		"parent resumed before stale wait flag cleared": {Snapshot{ParentTurnActive: true, ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell}}, ""},
+		"single command":    {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, unresolved}}, "Parent idle · 1 background command: until [ -f done ]; do sleep 20; done"},
+		"single agent":      {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{agent}}, "Parent idle · 1 background agent: Review the diff"},
+		"same kind counted": {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, {ID: "d", Tool: "Bash", Status: "running"}}}, "Parent idle · 2 background commands"},
+		"mixed kinds":       {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{shell, agent}}, "Parent idle · 2 background tasks"},
 		"only unresolved":   {Snapshot{ParentAwaitingBackgroundTasks: true, BackgroundTasks: []BackgroundTaskSnapshot{unresolved}}, ""},
 	} {
 		if got := tc.snapshot.BackgroundWaitSummary(); got != tc.want {

@@ -12,6 +12,9 @@ func (m Model) renderCodexMessageDelivery(snapshot codexapp.Snapshot, width int)
 		}
 		rows = append(rows, style.Render(fitLine(status, width)))
 	}
+	if _, _, backgroundOnly := snapshot.BackgroundWait(); backgroundOnly {
+		rows = append(rows, embeddedSidebarWrappedRows("Background tasks remain open; progress unverified.", embeddedSidebarMutedStyle, width)...)
+	}
 	if summary, warning := snapshot.MessageDeliverySummary(now); summary != "" {
 		style := detailValueStyle
 		if warning {

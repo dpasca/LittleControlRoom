@@ -2851,7 +2851,7 @@ func (s *claudeCodeSession) updateStatusLocked() {
 		s.status = "Browser needs attention"
 	case s.busy:
 		if s.managedStream && s.streamState == "idle" && s.runningBackgroundTaskCountLocked() > 0 {
-			s.status = "Claude Code parent available · " + formatBackgroundTaskCount(s.runningBackgroundTaskCountLocked()) + " running"
+			s.status = "Claude Code parent idle · " + formatBackgroundTaskCount(s.runningBackgroundTaskCountLocked()) + " outstanding"
 		} else if s.pendingSubmissions > 0 || (s.managedStream && s.streamState == "running") {
 			s.status = claudeThinkingStatus
 		} else if count := s.runningBackgroundTaskCountLocked(); count > 0 {

@@ -321,7 +321,7 @@ func embeddedSidebarSectionTitle(section embeddedCodexSidebarSection) string {
 	case embeddedCodexSidebarDiff:
 		return "Diff Summary"
 	case embeddedCodexSidebarProcesses:
-		return "Active Processes"
+		return "Processes & Tasks"
 	case embeddedCodexSidebarSummary:
 		return "Summary"
 	default:
@@ -1745,7 +1745,7 @@ func (m Model) renderEmbeddedSidebarSummarySection(snapshot codexapp.Snapshot, w
 }
 
 func (m Model) renderEmbeddedSidebarProcessSection(snapshot codexapp.Snapshot, projectPath string, width int) []string {
-	lines := []string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarProcesses, "Active Processes", width)}
+	lines := []string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarProcesses, "Processes & Tasks", width)}
 	rows := m.embeddedSidebarProcessRows(snapshot, projectPath, width, 5)
 	if len(rows) == 0 {
 		lines = append(lines, embeddedSidebarMutedStyle.Render(fitLine("No active project processes", width)))
@@ -1806,7 +1806,7 @@ func (m Model) embeddedSidebarProcessDetailRows(snapshot codexapp.Snapshot, proj
 		if limit > 0 && len(rows) >= limit {
 			break
 		}
-		rows = append(rows, embeddedSidebarBackgroundTaskDetailRows(task, width)...)
+		rows = append(rows, embeddedSidebarBackgroundTaskDetailRows(task, width, m.currentTime())...)
 	}
 	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
 		if limit > 0 && len(rows) >= limit {
@@ -1851,20 +1851,27 @@ func embeddedSidebarBackgroundTaskRow(task codexapp.BackgroundTaskSnapshot, widt
 	return fitStyledWidth(style.Render(status)+" "+embeddedSidebarMutedStyle.Render(truncateText(label, max(1, width-len(status)-1))), width)
 }
 
-func embeddedSidebarBackgroundTaskDetailRows(task codexapp.BackgroundTaskSnapshot, width int) []string {
-	status := firstNonEmptyTrimmed(task.Status, "running")
+func embeddedSidebarBackgroundTaskDetailRows(task codexapp.BackgroundTaskSnapshot, width int, now time.Time) []string {
+	status := firstNonEmptyTrimmed(task.Status, "unknown")
 	style := detailValueStyle
 	if strings.EqualFold(status, "unresolved") {
 		style = detailDangerStyle
 	}
 	rows := []string{
-		embeddedSidebarFieldRow("Status", status, style, width),
+		embeddedSidebarFieldRow("Reported", status, style, width),
+		embeddedSidebarFieldRow("Last update", task.ReportedUpdateAge(now), embeddedSidebarMutedStyle, width),
+	}
+	if !strings.EqualFold(status, "unresolved") {
+		rows = append(rows, embeddedSidebarWrappedRows("Progress and remote queue state unverified.", embeddedSidebarMutedStyle, width)...)
 	}
 	if task.ID != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Task", task.ID, embeddedSidebarMutedStyle, width))
 	}
 	if task.Tool != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Tool", task.Tool, embeddedSidebarMutedStyle, width))
+	}
+	if task.Description != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Launch label", task.Description, embeddedSidebarMutedStyle, width, 0)...)
 	}
 	if task.Command != "" {
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Command", task.Command, embeddedSidebarMutedStyle, width, 0)...)
@@ -2215,7 +2222,7 @@ func (m Model) embeddedSidebarSummary(snapshot codexapp.Snapshot) (string, lipgl
 		return failure, detailConflictStyle, true
 	}
 	if startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project); active {
-		return formatLiveEngineerSummary(liveEngineerActiveSummaryDetail(snapshot, project), startedAt, now), detailValueStyle, true
+		return formatLiveEngineerSnapshotSummary(liveEngineerActiveSummaryDetail(snapshot, project), snapshot, startedAt, now), detailValueStyle, true
 	}
 	if summary, ok := m.projectLiveEngineerAssessmentSummary(project, now); ok {
 		summary = strings.TrimSpace(summary)
