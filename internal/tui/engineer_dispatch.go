@@ -13,6 +13,33 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+const engineerDispatchReportCharLimit = 32000
+
+// Dispatch replies carry review evidence, not the short prose used in UI
+// notices. Preserve the original message, including tables and code fences.
+func latestEngineerDispatchOutput(snapshot codexapp.Snapshot) string {
+	for i := len(snapshot.Entries) - 1; i >= 0; i-- {
+		entry := snapshot.Entries[i]
+		if entry.Kind == codexapp.TranscriptUser {
+			break
+		}
+		if entry.Kind != codexapp.TranscriptAgent {
+			continue
+		}
+		text := firstNonEmptyTrimmed(entry.Text, entry.DisplayText)
+		if text == "" {
+			continue
+		}
+		runes := []rune(text)
+		if len(runes) > engineerDispatchReportCharLimit {
+			return string(runes[:engineerDispatchReportCharLimit]) +
+				"\n\n[LCR truncated this report at 32000 characters. Consult the worker's full transcript for the remainder.]"
+		}
+		return text
+	}
+	return ""
+}
+
 type engineerDispatchReplyRoutedMsg struct {
 	projectPath string
 	dispatch    model.EngineerDispatch
@@ -44,7 +71,7 @@ func (m Model) routeEngineerDispatchReplyCmd(projectPath string, snapshot codexa
 			ProjectPath: projectPath,
 			Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
 			SessionID:   strings.TrimSpace(snapshot.ThreadID),
-			Summary:     latestEngineerTranscriptReviewOutput(snapshot),
+			Summary:     latestEngineerDispatchOutput(snapshot),
 			Problem:     strings.TrimSpace(snapshot.LastError),
 		}
 		dispatches, err := svc.RouteEngineerTurnCompletion(ctx, completion)

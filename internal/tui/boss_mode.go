@@ -560,8 +560,8 @@ func freshEngineerCompletionSnapshot(projectPath string, snapshot codexapp.Snaps
 	if fresh.TranscriptRevision > snapshot.TranscriptRevision || len(fresh.Entries) > len(snapshot.Entries) {
 		return fresh
 	}
-	snapshotOutput := latestEngineerTranscriptOutput(snapshot)
-	freshOutput := latestEngineerTranscriptOutput(fresh)
+	snapshotOutput := latestEngineerDispatchOutput(snapshot)
+	freshOutput := latestEngineerDispatchOutput(fresh)
 	if snapshotOutput == "" && freshOutput != "" {
 		return fresh
 	}

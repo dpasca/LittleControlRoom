@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/control"
@@ -139,6 +140,12 @@ func queuedDispatchMessage(t *testing.T, st *store.Store, callerKey, workerPath 
 }
 
 func TestEngineerDispatchReconcilesCompletionBeforeDeliveryReceipt(t *testing.T) {
+	const finalReport = "## HEAP-1 recovery report (self-contained; reviewer needs no checkout access).\n\n" +
+		"The waiter propagated the test failure. The original heap corruption remains unresolved.\n\n" +
+		"| Job | Result |\n| --- | --- |\n| asan-od | Startup abort |\n\n" +
+		"```text\nERROR: AddressSanitizer: stack-use-after-scope\n```\n\n" +
+		"```diff\n-Compiler artifact confirmed.\n+Optimization sensitivity observed; cause unproven.\n```\n\n" +
+		"No commits, merges, or pushes."
 	for _, provider := range []control.Provider{control.ProviderCodex, control.ProviderClaudeCode, control.ProviderOpenCode, control.ProviderLCAgent} {
 		t.Run(string(provider), func(t *testing.T) {
 			ctx := t.Context()
@@ -148,7 +155,7 @@ func TestEngineerDispatchReconcilesCompletionBeforeDeliveryReceipt(t *testing.T)
 			message := queuedDispatchMessage(t, st, "caller", workerPath, provider)
 			idle := codexapp.Snapshot{
 				Provider: codexProviderFromControlProvider(provider), ProjectPath: workerPath, ThreadID: "worker-thread", Started: true,
-				Entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: "The rehearsal is ready."}},
+				Entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: finalReport}},
 			}
 			live := &fakeCodexSession{projectPath: workerPath, snapshot: idle}
 			manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) { return live, nil })
@@ -176,7 +183,7 @@ func TestEngineerDispatchReconcilesCompletionBeforeDeliveryReceipt(t *testing.T)
 			m = updated.(Model)
 			collectCmdMsgs(cmd)
 			messages, err := st.ListQueuedEngineerMessages(ctx, 10)
-			if err != nil || len(messages) != 1 || messages[0].TargetSessionID != "caller-thread" || !strings.Contains(messages[0].Prompt, "The rehearsal is ready.") {
+			if err != nil || len(messages) != 1 || messages[0].TargetSessionID != "caller-thread" || !strings.Contains(messages[0].Prompt, finalReport) {
 				t.Fatalf("late receipt reports = %#v, %v", messages, err)
 			}
 			// A receipt retry and a duplicate completion must not queue duplicates.
@@ -187,6 +194,83 @@ func TestEngineerDispatchReconcilesCompletionBeforeDeliveryReceipt(t *testing.T)
 				t.Fatalf("repeated completion reports = %#v, %v", messages, err)
 			}
 		})
+	}
+}
+
+func TestEngineerDispatchOutputPreservesCurrentResponse(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		entries []codexapp.TranscriptEntry
+		want    string
+	}{
+		{
+			name: "original instead of display summary",
+			entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: "Report the evidence."},
+				{Kind: codexapp.TranscriptAgent, Text: "Report\n\nEvidence and limitations.", DisplayText: "Report"},
+				{Kind: codexapp.TranscriptStatus, Text: "LCAgent run complete"},
+			},
+			want: "Report\n\nEvidence and limitations.",
+		},
+		{
+			name:    "display fallback",
+			entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, DisplayText: "Report\n\nEvidence."}},
+			want:    "Report\n\nEvidence.",
+		},
+		{
+			name:    "short answer",
+			entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: "No."}},
+			want:    "No.",
+		},
+		{
+			name: "no stale answer or plan substituted",
+			entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptAgent, Text: "Old request completed."},
+				{Kind: codexapp.TranscriptUser, Text: "Investigate the next failure."},
+				{Kind: codexapp.TranscriptPlan, Text: "I will inspect the failure."},
+				{Kind: codexapp.TranscriptError, Text: "Provider unavailable."},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := latestEngineerDispatchOutput(codexapp.Snapshot{Entries: tc.entries}); got != tc.want {
+				t.Fatalf("dispatch output = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEngineerDispatchOutputMarksOversizedReports(t *testing.T) {
+	t.Parallel()
+
+	text := strings.Repeat("証", engineerDispatchReportCharLimit)
+	snapshot := codexapp.Snapshot{Entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: text}}}
+	if got := latestEngineerDispatchOutput(snapshot); got != text {
+		t.Fatal("report at the size limit was modified")
+	}
+	snapshot.Entries[0].Text += "extra evidence"
+	got := latestEngineerDispatchOutput(snapshot)
+	if !utf8.ValidString(got) || !strings.HasPrefix(got, text+"\n\n[LCR truncated this report") || strings.Contains(got, "extra evidence") {
+		t.Fatalf("oversized report was not bounded with a valid, explicit truncation notice (bytes=%d)", len(got))
+	}
+}
+
+func TestEngineerDispatchRefreshesBodyWithUnchangedHeading(t *testing.T) {
+	t.Parallel()
+
+	const heading = "## HEAP-1 recovery report (self-contained; reviewer needs no checkout access)."
+	stale := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent, ThreadID: "worker-thread", Started: true,
+		Entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: heading}},
+	}
+	fresh := stale
+	fresh.Entries = []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptAgent, Text: heading + "\n\nThe actual evidence."}}
+	live := &fakeCodexSession{projectPath: "/worker", snapshot: fresh}
+	got := freshEngineerCompletionSnapshot("/worker", stale, live)
+	if output := latestEngineerDispatchOutput(got); output != fresh.Entries[0].Text {
+		t.Fatalf("completion retained stale body: %q", output)
 	}
 }
 
