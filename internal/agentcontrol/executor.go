@@ -74,7 +74,7 @@ func (e *Executor) Describe(name string) (map[string]any, error) {
 	return control.DescribeReport(name, e.scope, "propose_control_operation")
 }
 
-func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments json.RawMessage, clientRequestID string) (map[string]any, error) {
+func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments json.RawMessage, clientRequestID string, resumeOnSuccess ...bool) (map[string]any, error) {
 	if e == nil || e.store == nil {
 		return nil, errors.New("LCR control proposals are unavailable")
 	}
@@ -94,6 +94,9 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 		return nil, err
 	}
 	if capability.Name == control.CapabilityAgentTaskSubmitResult || capability.Name == control.CapabilityAgentTaskReviewResult {
+		if len(resumeOnSuccess) > 0 && resumeOnSuccess[0] {
+			return nil, errors.New("immediate task metadata does not support resume_on_success")
+		}
 		actor := model.AgentTaskActor{ProjectPath: e.originProjectPath, Provider: model.NormalizeSessionSource(model.SessionSource(e.provider)), SessionKey: e.sessionKey}
 		var task model.AgentTask
 		if capability.Name == control.CapabilityAgentTaskSubmitResult {
@@ -110,7 +113,9 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 		}
 		return map[string]any{"success": true, "terminal": true, "operator_confirmation": false, "requires_new_user_turn": false, "task_id": task.ID, "workflow": task.Workflow, "message": "Task metadata recorded. End this turn after submitting a worker result; the host waits for the worker to stop before review. No corrective turn or repository action was started."}, nil
 	}
+	resume := len(resumeOnSuccess) > 0 && resumeOnSuccess[0]
 	created, err := e.store.CreateControlOperation(ctx, control.Operation{
+		ResumeOnSuccess: resume,
 		ID:              operationID,
 		ClientRequestID: strings.TrimSpace(clientRequestID),
 		Capability:      capability.Name,
@@ -149,11 +154,17 @@ func (e *Executor) operationReport(ctx context.Context, operation control.Operat
 		if err != nil {
 			return nil, err
 		}
+		if !allowed {
+			allowed, err = e.store.PermissionAllowsOperation(ctx, operation)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if allowed {
 			report["automatic_delivery"] = true
 			report["operator_confirmation"] = false
 			report["requires_new_user_turn"] = false
-			report["message"] = "Project collaboration is already approved. LCR will deliver this message automatically through its durable queue. Continue independent authorized work without asking for approval; check get_control_operation for delivery. Queued does not mean delivered. Do not create acknowledgment-only reply loops."
+			report["message"] = "A saved LCR permission covers this operation. LCR will execute it automatically through its durable queue. Continue independent authorized work without asking for approval; check get_control_operation for delivery. Queued does not mean delivered. Do not create acknowledgment-only reply loops."
 		}
 		if !allowed {
 			granted, err := e.store.SupervisionAllowsOperation(ctx, operation)
@@ -167,6 +178,14 @@ func (e *Executor) operationReport(ctx context.Context, operation control.Operat
 				report["message"] = "This task's correction grant covers this continuation, so LCR will reopen the same worker on the edits you reviewed without asking the operator again. One correction round is consumed. Check get_control_operation for delivery, then wait for the next result revision; do not resend or widen the request."
 			}
 		}
+	}
+	if operation.Status != control.OperationCanceled && operation.Status != control.OperationFailed && operation.ResumeOnSuccess && (operation.ContinuationState == "pending" || operation.ContinuationState == "armed" || operation.ContinuationState == "dispatching") {
+		report["end_turn"] = true
+		report["requires_new_user_turn"] = false
+		report["message"] = "End this turn now: you explicitly requested continuation after this operation succeeds. LCR will continue the exact waiting session with the result if it is still eligible. Do not poll or submit more work. Operator confirmation is still required unless automatic_delivery is true. A stop, later input, session replacement, failure, or host restart suppresses automatic continuation."
+	}
+	if operation.ContinuationState == "suppressed" {
+		report["message"] = report["message"].(string) + " Automatic continuation was suppressed: " + operation.ContinuationReason
 	}
 	return report, nil
 }

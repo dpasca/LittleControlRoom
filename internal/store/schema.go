@@ -15,6 +15,23 @@ import (
 
 func (s *Store) initSchema(ctx context.Context) error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS control_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin TEXT NOT NULL, provider TEXT NOT NULL, session_key TEXT NOT NULL DEFAULT '',
+            capability TEXT NOT NULL, target TEXT NOT NULL, constraints_json TEXT NOT NULL,
+            use_limit INTEGER NOT NULL DEFAULT 0, used INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(origin,provider,session_key,capability,target,constraints_json)
+        );`,
+		`CREATE TABLE IF NOT EXISTS control_continuations (
+            operation_id TEXT PRIMARY KEY,
+            requested_at INTEGER NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending',
+            host_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT NOT NULL DEFAULT '',
+            input_revision INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT ''
+        );`,
+		`CREATE INDEX IF NOT EXISTS idx_control_continuations_state ON control_continuations(state);`,
 		`CREATE TABLE IF NOT EXISTS engineer_session_bindings (
 			project_path TEXT NOT NULL,
 			provider TEXT NOT NULL,

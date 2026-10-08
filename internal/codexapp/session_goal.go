@@ -331,6 +331,7 @@ func (s *appServerSession) setThreadGoalReplacingStale(ctx context.Context, thre
 
 func (s *appServerSession) ClearGoal() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("codex session is closed")

@@ -72,8 +72,27 @@ func (s *Store) CreateControlOperation(ctx context.Context, operation control.Op
 		operation.CreatedAt = now
 	}
 	operation.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO control_operations(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Operation{}, err
+	}
+	defer tx.Rollback()
+	if operation.ResumeOnSuccess && operation.SessionKey != "" {
+		var waiting bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM control_continuations c JOIN control_operations o ON o.id=c.operation_id
+			WHERE o.source=? AND o.session_key=? AND c.state IN ('pending','armed','dispatching')
+			AND o.status NOT IN ('failed','canceled') AND (?='' OR o.client_request_id<>?))`,
+			operation.Source, operation.SessionKey, operation.ClientRequestID, operation.ClientRequestID).Scan(&waiting)
+		if err != nil {
+			return control.Operation{}, err
+		}
+		if waiting {
+			return control.Operation{}, errors.New("this calling session already has a pending continuation; end the turn and wait for its operation instead of queuing another")
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+        INSERT INTO control_operations(
 			id, client_request_id, source, provider, session_key, project_path,
 			capability, args_json, status, requested_by, confirmed, confirmation_by,
 			result_json, error, created_at, updated_at, started_at, completed_at
@@ -84,6 +103,7 @@ func (s *Store) CreateControlOperation(ctx context.Context, operation control.Op
 		operation.RequestedBy, boolToInt(operation.Confirmed), operation.ConfirmationBy, string(operation.Result),
 		operation.Error, operation.CreatedAt.Unix(), operation.UpdatedAt.Unix(),
 		nullableTimeUnixValue(operation.StartedAt), nullableTimeUnixValue(operation.CompletedAt)); err != nil {
+		_ = tx.Rollback()
 		if operation.ClientRequestID != "" {
 			existing, found, lookupErr := s.FindControlOperationByClientRequest(ctx, operation.Source, operation.SessionKey, operation.ClientRequestID)
 			if lookupErr == nil && found {
@@ -98,11 +118,19 @@ func (s *Store) CreateControlOperation(ctx context.Context, operation control.Op
 		}
 		return control.Operation{}, fmt.Errorf("create control operation: %w", err)
 	}
+	if operation.ResumeOnSuccess {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO control_continuations(operation_id,requested_at) VALUES(?,?)`, operation.ID, time.Now().UnixNano()); err != nil {
+			return control.Operation{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return control.Operation{}, err
+	}
 	return s.GetControlOperation(ctx, operation.ID)
 }
 
 func sameControlOperationRequest(existing, proposed control.Operation) bool {
-	if existing.Capability != proposed.Capability {
+	if existing.Capability != proposed.Capability || existing.ResumeOnSuccess != proposed.ResumeOnSuccess {
 		return false
 	}
 	return bytes.Equal(
@@ -214,6 +242,13 @@ func (s *Store) ClaimNextControlOperation(ctx context.Context) (control.Operatio
 		if checkErr != nil {
 			return control.Operation{}, false, checkErr
 		}
+		if !allowed {
+			permissionID, permissionErr := scopedPermissionID(ctx, tx, candidate)
+			if permissionErr != nil {
+				return control.Operation{}, false, permissionErr
+			}
+			allowed = permissionID != 0
+		}
 		if allowed || !waiting {
 			id = candidate.ID
 			break
@@ -321,8 +356,10 @@ func (s *Store) UpdateControlOperationStatus(ctx context.Context, id string, sta
 const controlOperationSelect = `
 	SELECT id, client_request_id, source, provider, session_key, project_path,
 		capability, args_json, status, requested_by, confirmed, confirmation_by,
-		result_json, error, created_at, updated_at, started_at, completed_at
-	FROM control_operations
+		result_json, error, created_at, updated_at, started_at, completed_at,
+        COALESCE((SELECT state FROM control_continuations WHERE operation_id=control_operations.id),''),
+        COALESCE((SELECT reason FROM control_continuations WHERE operation_id=control_operations.id),'')
+    FROM control_operations
 `
 
 type controlOperationScanner interface {
@@ -357,9 +394,12 @@ func scanControlOperation(scanner controlOperationScanner) (control.Operation, e
 		&updatedAt,
 		&startedAt,
 		&completedAt,
+		&operation.ContinuationState,
+		&operation.ContinuationReason,
 	); err != nil {
 		return control.Operation{}, err
 	}
+	operation.ResumeOnSuccess = operation.ContinuationState != ""
 	operation.Capability = control.CapabilityName(capability)
 	operation.Status = control.OperationStatus(status)
 	operation.Confirmed = confirmed != 0

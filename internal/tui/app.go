@@ -150,6 +150,7 @@ type Model struct {
 	helpChatModel                       bossui.Model
 	externalControlConfirmation         *externalControlConfirmationState
 	projectCollaborationDialog          *projectCollaborationDialog
+	controlContinuationsInFlight        bool
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
 	errorLogSelected                    int
@@ -1525,6 +1526,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(controlContinuationsProcessedMsg); ok {
+		m.controlContinuationsInFlight = false
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Control continuation failed", msg.err, "")
+		}
+		return m, nil
+	}
 	if msg, ok := msg.(projectCollaborationApprovedMsg); ok {
 		return m.applyProjectCollaborationApproved(msg)
 	}
@@ -1537,8 +1545,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				d.errorText = "Collaboration settings failed: " + msg.err.Error()
 			} else {
 				d.pairs = msg.pairs
+				d.permissions = msg.permissions
 			}
-			d.selected = min(d.selected, max(0, len(d.pairs)-1))
+			d.selected = min(d.selected, max(0, len(d.pairs)+len(d.permissions)-1))
 			m.projectCollaborationDialog = &d
 		}
 		return m, nil
@@ -3363,7 +3372,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		engineerMessagesCmd := tea.Cmd(nil)
 		if m.spinnerFrame%engineerMessagePollEveryTick == 0 {
-			engineerMessagesCmd = m.requestEngineerMessagesPollCmd()
+			engineerMessagesCmd = batchCmds(m.requestEngineerMessagesPollCmd(), m.requestControlContinuationsCmd())
 		}
 		sidebarDiffCmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd()
 		browserStateCmd := m.maybeRefreshVisibleManagedBrowserStateCmd()

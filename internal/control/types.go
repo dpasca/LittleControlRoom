@@ -433,25 +433,28 @@ func stringValues[T ~string](includeEmpty bool, values ...T) []string {
 }
 
 type Operation struct {
-	ID              string          `json:"id"`
-	ClientRequestID string          `json:"client_request_id,omitempty"`
-	Capability      CapabilityName  `json:"capability"`
-	Status          OperationStatus `json:"status"`
-	Invocation      Invocation      `json:"invocation"`
-	Resources       []ResourceRef   `json:"resources,omitempty"`
-	Source          string          `json:"source,omitempty"`
-	Provider        string          `json:"provider,omitempty"`
-	SessionKey      string          `json:"session_key,omitempty"`
-	ProjectPath     string          `json:"project_path,omitempty"`
-	RequestedBy     string          `json:"requested_by,omitempty"`
-	Confirmed       bool            `json:"confirmed"`
-	ConfirmationBy  string          `json:"confirmation_by,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	StartedAt       time.Time       `json:"started_at,omitempty"`
-	CompletedAt     time.Time       `json:"completed_at,omitempty"`
-	Result          json.RawMessage `json:"result,omitempty"`
-	Error           string          `json:"error,omitempty"`
+	ResumeOnSuccess    bool            `json:"resume_on_success,omitempty"`
+	ContinuationState  string          `json:"continuation_state,omitempty"`
+	ContinuationReason string          `json:"continuation_reason,omitempty"`
+	ID                 string          `json:"id"`
+	ClientRequestID    string          `json:"client_request_id,omitempty"`
+	Capability         CapabilityName  `json:"capability"`
+	Status             OperationStatus `json:"status"`
+	Invocation         Invocation      `json:"invocation"`
+	Resources          []ResourceRef   `json:"resources,omitempty"`
+	Source             string          `json:"source,omitempty"`
+	Provider           string          `json:"provider,omitempty"`
+	SessionKey         string          `json:"session_key,omitempty"`
+	ProjectPath        string          `json:"project_path,omitempty"`
+	RequestedBy        string          `json:"requested_by,omitempty"`
+	Confirmed          bool            `json:"confirmed"`
+	ConfirmationBy     string          `json:"confirmation_by,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+	StartedAt          time.Time       `json:"started_at,omitempty"`
+	CompletedAt        time.Time       `json:"completed_at,omitempty"`
+	Result             json.RawMessage `json:"result,omitempty"`
+	Error              string          `json:"error,omitempty"`
 }
 
 type EngineerMessageState string

@@ -674,14 +674,15 @@ func lcrControlToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "propose_control_operation",
-				Description: "Propose one described LCR capability. Approved project collaboration delivers exact-session engineer messages automatically. Follow automatic_delivery and requires_new_user_turn in the result: continue authorized work when automatic, otherwise stop for confirmation. Queued is not delivered.",
+				Description: "Propose one described LCR capability. Approved project collaboration delivers exact-session engineer messages automatically. Follow end_turn first: when true, end this turn immediately for the requested automatic continuation. Otherwise follow automatic_delivery and requires_new_user_turn in the result: continue authorized work when automatic, otherwise stop for confirmation. Queued is not delivered.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"capability": map[string]any{"type": "string", "minLength": 1, "description": "Exact described capability name."},
-						"arguments":  map[string]any{"type": "object", "description": "Arguments matching capability.input_schema."},
-						"request_id": map[string]any{"type": "string", "minLength": 1, "description": "Optional stable idempotency key for an exact retry."},
+						"resume_on_success": map[string]any{"type": "boolean", "description": "Set true only when unfinished work should resume after this operation succeeds AND you will end this turn immediately. Omit/false for a final handoff or notification. Follow end_turn before automatic_delivery; stops, later input and restarts suppress continuation."},
+						"capability":        map[string]any{"type": "string", "minLength": 1, "description": "Exact described capability name."},
+						"arguments":         map[string]any{"type": "object", "description": "Arguments matching capability.input_schema."},
+						"request_id":        map[string]any{"type": "string", "minLength": 1, "description": "Optional stable idempotency key for an exact retry."},
 					},
 					"required": []string{"capability", "arguments"},
 				},

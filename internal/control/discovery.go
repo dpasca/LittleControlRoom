@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const ConfirmationContract = "Every available control capability is proposed first. Execution requires operator confirmation unless an existing project-pair collaboration grant covers an exact-session engineer message. Exact-worker result submission and exact-caller review on an opted-in structured task record bounded metadata immediately; they never launch work or commit. Other capabilities require confirmation. Follow the proposal result: automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping."
+const ConfirmationContract = "Controls execute after operator confirmation or under an existing scoped permission, project collaboration grant, or task correction grant. Exact-worker result submission and exact-caller review record bounded metadata immediately. Set resume_on_success only for unfinished work when you will end this turn immediately. Follow end_turn first: end the turn without polling; the host may resume the exact waiting workflow after success. New input, stop, replacement, failure, or host restart suppresses continuation. Otherwise automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping. Saved permissions never expand task scope."
 
 // ListReport returns the transport-neutral progressive control catalog. MCP and
 // in-process agent hosts should expose this result rather than duplicating the
@@ -39,19 +39,25 @@ func DescribeReport(nameRaw string, authority AuthorityScope, proposalTool strin
 	if !AuthorityAllows(authority, capability.Scope) {
 		return nil, fmt.Errorf("control capability %q requires %s scope; this agent has %s scope", capability.Name, capability.Scope, NormalizeAuthorityScope(string(authority)))
 	}
-	return map[string]any{
+	report := map[string]any{
 		"success":               true,
 		"capability":            capability,
 		"confirmation_contract": ConfirmationContract,
 		"proposal": map[string]any{
 			"tool": strings.TrimSpace(proposalTool),
 			"arguments": map[string]any{
-				"capability": capability.Name,
-				"arguments":  "Use an object matching capability.input_schema.",
-				"request_id": "Optional stable idempotency key for an exact retry.",
+				"capability":        capability.Name,
+				"arguments":         "Use an object matching capability.input_schema.",
+				"request_id":        "Optional stable idempotency key for an exact retry.",
+				"resume_on_success": "Optional boolean: request continuation of unfinished work and end this turn immediately. Omit for a final handoff or notification.",
 			},
 		},
-	}, nil
+	}
+	if NormalizeAuthorityScope(string(authority)) == AuthorityScopeHost {
+		delete(report["proposal"].(map[string]any)["arguments"].(map[string]any), "resume_on_success")
+		report["confirmation_contract"] = "Help Chat proposals terminate its turn and use the host confirmation dialog; this adapter does not support automatic caller continuation."
+	}
+	return report, nil
 }
 
 // BuildProposedInvocation injects the host-owned request id and validates an

@@ -133,6 +133,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		ThreadID:                 s.threadID,
 		Preset:                   s.preset,
 		BrowserActivity:          s.browserActivity.Normalize(),
+		ControlInput:             s.controlInput,
 		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
@@ -459,6 +460,7 @@ func (s *appServerSession) markTurnStartedLocked(turnID string, startedAt time.T
 		return false
 	}
 	if turnID != "" && turnID != strings.TrimSpace(s.latestTurnID) {
+		s.controlInput.observeInput()
 		s.latestTurnID = turnID
 		s.latestTurnStartedAt = time.Time{}
 		if stateTurnID := strings.TrimSpace(s.rolloutResumeState.TurnID); stateTurnID != "" && stateTurnID != turnID {

@@ -24,6 +24,10 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	}
 	defer unlockAdmission()
 	s.mu.Lock()
+	if err := s.controlInput.accept(input); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
 		s.mu.Unlock()
 		return fmt.Errorf("caller is not idle; review delivery cannot steer it")

@@ -242,6 +242,7 @@ func stagedModelOverride(currentModel, currentReasoning, requestedModel, request
 
 func (s *appServerSession) Interrupt() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("codex session is closed")
@@ -406,6 +407,7 @@ func (s *appServerSession) RespondElicitation(decision ElicitationDecision, cont
 
 func (s *appServerSession) Close() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return nil

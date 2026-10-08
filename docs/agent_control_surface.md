@@ -290,13 +290,13 @@ merges, pushes, or worktree removal.
 ### Approve collaboration once per project pair
 
 At an eligible engineer handoff, open review with **Ctrl+G**. **Enter** sends
-only that message. **A** approves collaboration between the displayed projects
+only that message. **a** approves collaboration between the displayed projects
 and sends the message. This permission is bidirectional, persists in SQLite,
 and applies to future sessions in those two exact project paths. It does not
 implicitly include sibling worktrees, renamed folders, or other projects.
 
 Open **`/collab`** from the dashboard or either embedded project to see its
-trusted peers; select a peer and press **R** to revoke. Revocation affects
+trusted peers; select a peer and press **r** to revoke. Revocation affects
 unapproved/future messages, including requests claimed but not yet authorized;
 it does not cancel messages already authorized for delivery or stop running work.
 
@@ -320,6 +320,73 @@ scope or an override of explicit stops and other action approvals.
 
 Restart LCR on the updated build to use this policy; reconnect existing external
 provider sessions to refresh their MCP descriptions and generated runtime skill.
+
+## Scoped action permissions
+
+External embedded callers can choose **s** (allow for this calling session) or
+**p** (save permission for future sessions) in an eligible action's **Ctrl+G**
+review. **Enter** still approves only that action; **a** retains the existing
+bidirectional message-pair grant. No permission is created by merely proposing
+an action. Agents cannot create, edit, or revoke permissions through MCP.
+
+Permissions match the exact host-bound caller project/provider, capability,
+target and validated settings. Session permissions additionally match the
+host control key. They do not inherit to sibling worktrees or other providers.
+Only explicitly designated content fields (such as the prompt or TODO text)
+may vary. The dialog shows the scope and any use limit; arrows, Page Up/Down and
+Home/End scroll the details while approval choices stay visible. **/collab** lists both
+message pairs and action permissions, with lowercase **r** to revoke a selection.
+Revocation affects requests not yet authorized, including already-claimed ones.
+
+Eligible controls are exact-session `engineer.send_prompt` without model changes
+or TODO redirects, `todo.add`, `todo.complete`, `project.set_category`,
+`todo.create_worktree_and_start_engineer`, `agent_task.create`, and non-archival
+`agent_task.close` without closing the session. Launch permissions require an
+explicit provider and model and cover **three launches including the action
+being approved**. The limit persists across restart and must be renewed by the
+operator; retries do not consume extra uses. Repository ownership and other
+launch checks still apply. Corrections use the existing task-specific
+`max_corrections` grant and its explicit-stop/review checks. New repository
+creation, worktree deletion, Git actions, settings and integration changes are
+not covered. Saved permissions authorize the operation category and target;
+they never expand the user's task scope or override an explicit stop.
+
+Matching requests report `automatic_delivery: true`, pass unrelated waiting
+confirmations, and execute only after the host rechecks the current permission
+and atomically consumes any bounded use. The operation retains
+`confirmation_by: scoped_permission`. Codex/provider approval presets remain
+independent of these LCR permissions.
+
+## Intentional continuation after an action
+
+`propose_control_operation` accepts optional `resume_on_success: true` for
+embedded MCP and native LCAgent callers. Use it only when unfinished work should
+continue after the operation succeeds **and the caller will end this turn
+immediately**. Omit it for final handoffs, notifications, or work with no
+follow-on steps. Immediate result/review metadata calls do not accept it.
+Help Chat retains its own terminal-proposal flow and does not expose this option.
+
+An opted-in proposal returns `end_turn: true`; this takes precedence over
+`automatic_delivery`. The caller ends without polling or queuing more work.
+LCR binds the wait to the live caller's host channel, exact provider session and
+input revision. Only one outstanding continuation may belong to a control
+channel. Once execution succeeds and the originating turn becomes idle, LCR
+supplies the result in one guarded follow-up input. Engineer-message completion
+means delivery; the worker's completed-task report remains a separate event.
+
+New input (including a steer), explicit stop, closed/replaced sessions, operation
+failure/cancellation, or a host restart suppress the wakeup. A canceled wakeup
+does not cancel the operation itself: approving an old action can still execute
+it without reviving its old workflow. Provider input guards recheck the revision
+under the session lock, so a late callback cannot race past newer input.
+Unknown identity and ambiguous delivery fail closed. The host persists a
+single dispatch attempt before sending; after a crash it does not retry an
+uncertain callback. Results and `continuation_state` remain available through
+`get_control_operation`; manual continuation remains possible. These guards do
+not reinterpret idle sessions or assistant prose as requests to resume.
+
+Restart on the updated build and reconnect existing provider sessions to load
+the new tool schema, generated runtime skill and live input guards.
 
 ## Architecture
 

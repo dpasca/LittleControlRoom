@@ -183,11 +183,12 @@ func attachmentDisplayLabel(path string) string {
 }
 
 type Submission struct {
-	RequireIdle bool         `json:"-"`
-	BeforeStart func() error `json:"-"`
-	Text        string
-	DisplayText string // optional; if set, used for transcript display instead of Text
-	Attachments []Attachment
+	ExpectedControlInput *ControlInputState `json:"-"`
+	RequireIdle          bool               `json:"-"`
+	BeforeStart          func() error       `json:"-"`
+	Text                 string
+	DisplayText          string // optional; if set, used for transcript display instead of Text
+	Attachments          []Attachment
 }
 
 // TranscriptDisplayText returns the display-friendly transcript text, using
@@ -617,6 +618,7 @@ type BackgroundTaskSnapshot struct {
 }
 
 type Snapshot struct {
+	ControlInput ControlInputState
 	// ControlSessionKey identifies the host control channel, not a provider transcript.
 	ControlSessionKey         string
 	ImageReviewEnabled        bool

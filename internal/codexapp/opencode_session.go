@@ -35,6 +35,7 @@ const (
 )
 
 type openCodeSession struct {
+	controlInput             ControlInputState
 	turnAdmission            func() (func(), error)
 	projectPath              string
 	preset                   codexcli.Preset
@@ -370,6 +371,7 @@ func (s *openCodeSession) stateSnapshotLocked() Snapshot {
 		ThreadID:                 s.sessionID,
 		Preset:                   s.preset,
 		BrowserActivity:          s.browserActivity.Normalize(),
+		ControlInput:             s.controlInput,
 		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
@@ -479,6 +481,10 @@ func (s *openCodeSession) SubmitInput(input Submission) error {
 	defer unlockAdmission()
 
 	s.mu.Lock()
+	if err := s.controlInput.accept(input); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
 		s.mu.Unlock()
 		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
@@ -631,6 +637,7 @@ func (s *openCodeSession) StageModelOverride(model, reasoningEffort string) erro
 
 func (s *openCodeSession) Interrupt() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("opencode session is closed")
@@ -720,6 +727,7 @@ func (s *openCodeSession) RespondElicitation(decision ElicitationDecision, conte
 
 func (s *openCodeSession) Close() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return nil
@@ -1872,6 +1880,9 @@ func (s *openCodeSession) appendEntryLocked(itemID string, kind TranscriptKind, 
 		s.entryIndex[itemID] = len(s.entries)
 	}
 	s.invalidateTranscriptCacheLocked()
+	if kind == TranscriptUser {
+		s.controlInput.observeInput()
+	}
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -1891,6 +1902,9 @@ func (s *openCodeSession) upsertItemEntryLocked(itemID string, kind TranscriptKi
 	}
 	s.entryIndex[itemID] = len(s.entries)
 	s.invalidateTranscriptCacheLocked()
+	if kind == TranscriptUser {
+		s.controlInput.observeInput()
+	}
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -1912,6 +1926,9 @@ func (s *openCodeSession) appendDeltaToItemLocked(itemID string, kind Transcript
 	}
 	s.entryIndex[itemID] = len(s.entries)
 	s.invalidateTranscriptCacheLocked()
+	if kind == TranscriptUser {
+		s.controlInput.observeInput()
+	}
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
@@ -1947,6 +1964,9 @@ func (s *openCodeSession) mergeHistoryItemLocked(itemID string, kind TranscriptK
 	}
 	s.entryIndex[itemID] = len(s.entries)
 	s.invalidateTranscriptCacheLocked()
+	if kind == TranscriptUser {
+		s.controlInput.observeInput()
+	}
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 

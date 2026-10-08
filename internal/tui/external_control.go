@@ -37,11 +37,12 @@ type externalControlCancellationRecordedMsg struct {
 }
 
 type externalControlConfirmationState struct {
-	operation  control.Operation
-	preview    string
-	reviewing  bool
-	submitting bool
-	errorText  string
+	operation    control.Operation
+	preview      string
+	reviewing    bool
+	submitting   bool
+	errorText    string
+	scrollOffset int
 }
 
 const externalControlReviewKey = "ctrl+g"
@@ -58,6 +59,9 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 		}
 		operation, automatic, err := svc.Store().ConfirmProjectCollaboration(parent, operationID)
 		if err == nil && !automatic {
+			operation, automatic, err = svc.Store().ConfirmControlPermission(parent, operationID)
+		}
+		if err == nil && !automatic {
 			// A task's own correction grant is the other standing authorization.
 			// It consumes one round only when it actually authorizes this run.
 			operation, automatic, err = svc.Store().ConfirmDelegationSupervision(parent, operationID)
@@ -73,7 +77,7 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		return m, nil
 	}
 	if msg.automatic {
-		m.status = "Delivering approved project collaboration message"
+		m.status = "Executing an operation covered by an LCR permission"
 		if msg.operation.ConfirmationBy == control.ConfirmationDelegationSupervision {
 			m.status = "Running an authorized correction round for this delegated task"
 		}
@@ -153,6 +157,44 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 	}
 	invocation := m.externalControlConfirmation.operation.Invocation
 	switch msg.String() {
+	case "up", "down", "pgup", "pgdown", "home", "end":
+		layout := m.bodyLayout()
+		width, height := layout.width, layout.height
+		if m.codexVisible() && m.diffView == nil {
+			width, height = m.width, m.height
+		}
+		_, maxScroll, err := m.externalControlConfirmationPanel(width, height)
+		if err != nil {
+			return m, nil
+		}
+		state := *m.externalControlConfirmation
+		state.scrollOffset = min(state.scrollOffset, maxScroll)
+		switch msg.String() {
+		case "up":
+			state.scrollOffset--
+		case "down":
+			state.scrollOffset++
+		case "pgup":
+			state.scrollOffset -= max(1, height/2)
+		case "pgdown":
+			state.scrollOffset += max(1, height/2)
+		case "home":
+			state.scrollOffset = 0
+		case "end":
+			state.scrollOffset = maxScroll
+		}
+		state.scrollOffset = max(0, min(state.scrollOffset, maxScroll))
+		m.externalControlConfirmation = &state
+		return m, nil
+	case "s", "p":
+		if _, ok := control.PermissionForOperation(m.externalControlConfirmation.operation); !ok {
+			return m, nil
+		}
+		state := *m.externalControlConfirmation
+		state.submitting = true
+		state.errorText = ""
+		m.externalControlConfirmation = &state
+		return m, m.approveControlPermissionCmd(state.operation.ID, msg.String() == "s")
 	case "a":
 		if _, ok := control.CollaborationForOperation(m.externalControlConfirmation.operation); !ok {
 			return m, nil
@@ -182,20 +224,19 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 	return m, nil
 }
 
+func (m Model) externalControlConfirmationPanel(bodyW, bodyH int) (string, int, error) {
+	confirmation := m.externalControlConfirmation
+	return bossui.RenderPermissionConfirmationDialog(confirmation.operation, bossui.PermissionConfirmationOptions{
+		Preview: confirmation.preview, Busy: confirmation.submitting,
+		ErrorText: confirmation.errorText, ScrollOffset: confirmation.scrollOffset,
+	}, bodyW, bodyH)
+}
+
 func (m Model) renderExternalControlConfirmationOverlay(body string, bodyW, bodyH int) string {
 	if !m.externalControlReviewActive() {
 		return body
 	}
-	confirmation := m.externalControlConfirmation
-	panel, err := bossui.RenderControlConfirmationDialog(
-		confirmation.operation.Invocation,
-		confirmation.preview,
-		bodyW,
-		bodyH,
-	)
-	if _, ok := control.CollaborationForOperation(confirmation.operation); ok {
-		panel, err = bossui.RenderCollaborationConfirmationDialog(confirmation.operation.Invocation, confirmation.operation.ProjectPath, confirmation.submitting, confirmation.errorText, bodyW, bodyH)
-	}
+	panel, _, err := m.externalControlConfirmationPanel(bodyW, bodyH)
 	if err != nil {
 		return body
 	}

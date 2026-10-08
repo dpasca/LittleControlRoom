@@ -61,6 +61,7 @@ func (e *ForceNewSessionReusedError) Error() string {
 }
 
 type appServerSession struct {
+	controlInput              ControlInputState
 	turnAdmission             func() (func(), error)
 	projectPath               string
 	preset                    codexcli.Preset

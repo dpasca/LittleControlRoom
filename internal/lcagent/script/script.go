@@ -1070,9 +1070,10 @@ type describeControlCapabilityArgs struct {
 }
 
 type proposeControlOperationArgs struct {
-	Capability string          `json:"capability"`
-	Arguments  json.RawMessage `json:"arguments"`
-	RequestID  string          `json:"request_id"`
+	ResumeOnSuccess bool            `json:"resume_on_success"`
+	Capability      string          `json:"capability"`
+	Arguments       json.RawMessage `json:"arguments"`
+	RequestID       string          `json:"request_id"`
 }
 
 type getControlOperationArgs struct {
@@ -1348,7 +1349,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = tools.ToolResult{Success: false, Error: "LCR controls are not available for this LCAgent run"}
 			break
 		}
-		report, err := r.LCRControls.Propose(ctx, args.Capability, args.Arguments, args.RequestID)
+		report, err := r.LCRControls.Propose(ctx, args.Capability, args.Arguments, args.RequestID, args.ResumeOnSuccess)
 		result = lcrQueryToolResult(report, err)
 	case "get_control_operation":
 		var args getControlOperationArgs

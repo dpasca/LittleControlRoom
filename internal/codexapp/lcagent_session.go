@@ -47,6 +47,7 @@ type lcagentRunOptions struct {
 }
 
 type lcagentSession struct {
+	controlInput        ControlInputState
 	turnAdmission       func() (func(), error)
 	projectPath         string
 	dataDir             string
@@ -406,6 +407,10 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 	transcriptText := input.TranscriptText()
 	displayText := firstNonEmpty(input.TranscriptDisplayText(), transcriptText)
 	s.mu.Lock()
+	if err := s.controlInput.accept(input); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil) {
 		s.mu.Unlock()
 		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
@@ -1361,6 +1366,7 @@ func lcagentSameModelSelection(leftProvider, leftModel, leftReasoning, rightProv
 
 func (s *lcagentSession) Interrupt() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	cancel := s.cancel
 	cmd := s.cmd
 	runID := strings.TrimSpace(s.runID)
@@ -1562,6 +1568,7 @@ func (s *lcagentSession) RespondElicitation(ElicitationDecision, json.RawMessage
 
 func (s *lcagentSession) Close() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return nil
@@ -3835,6 +3842,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		ProjectPath:                 s.projectPath,
 		ThreadID:                    s.threadID,
 		BrowserActivity:             s.browserActivity.Normalize(),
+		ControlInput:                s.controlInput,
 		ControlSessionKey:           strings.TrimSpace(s.threadID), // Native controls use the stable thread, not the per-turn run ID.
 		ManagedBrowserSessionKey:    strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:       strings.TrimSpace(s.currentBrowserPageURL),

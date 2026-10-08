@@ -75,6 +75,7 @@ const (
 )
 
 type claudeCodeSession struct {
+	controlInput             ControlInputState
 	turnAdmission            func() (func(), error)
 	projectPath              string
 	preset                   codexcli.Preset
@@ -520,6 +521,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		Preset:                   s.preset,
 		PermissionLevel:          permissionLevel,
 		BrowserActivity:          s.browserActivity.Normalize(),
+		ControlInput:             s.controlInput,
 		ControlSessionKey:        strings.TrimSpace(s.controlSessionKey),
 		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
@@ -678,6 +680,10 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 
 	s.mu.Lock()
+	if err := s.controlInput.accept(input); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
 		s.mu.Unlock()
 		return fmt.Errorf("caller is not idle; review delivery cannot steer it")
@@ -1133,6 +1139,7 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 
 func (s *claudeCodeSession) Interrupt() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	cmd := s.cmd
 	approvalServer := s.approvalServer
 	if s.closed {
@@ -1624,6 +1631,7 @@ func (s *claudeCodeSession) RespondElicitation(_ ElicitationDecision, _ json.Raw
 
 func (s *claudeCodeSession) Close() error {
 	s.mu.Lock()
+	s.controlInput.stop()
 	if s.closed {
 		s.mu.Unlock()
 		return nil

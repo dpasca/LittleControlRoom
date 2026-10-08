@@ -177,7 +177,7 @@ var specs = []Spec{
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
 	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
-	{Name: "collab", Usage: "/collab", Summary: "View or revoke trusted project collaboration"},
+	{Name: "collab", Usage: "/collab", Summary: "View or revoke LCR permissions and message collaboration"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Manage agent skills, MCP connections, and plugins"},
 	{Name: "integrations", Usage: "/integrations", Summary: "Manage agent skills, MCP connections, and plugins"},

@@ -93,7 +93,7 @@ var specs = []Spec{
 	{Name: "skills", Usage: "/skills", Summary: "Manage agent skills, MCP connections, and native plugins"},
 	{Name: "integrations", Usage: "/integrations", Summary: "Manage agent skills, MCP connections, and native plugins"},
 	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
-	{Name: "collab", Usage: "/collab", Summary: "View or revoke trusted project collaboration"},
+	{Name: "collab", Usage: "/collab", Summary: "View or revoke LCR permissions and message collaboration"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
 	{Name: "image-review", Usage: "/image-review [on|off]", Summary: "Explicitly enable or disable external API image review for this Codex session only"},
