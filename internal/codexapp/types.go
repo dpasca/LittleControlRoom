@@ -980,6 +980,9 @@ func sessionStateSnapshot(session Session) Snapshot {
 	return session.Snapshot()
 }
 
+// Manager's mu protects the registry and notification bookkeeping only. Never
+// call provider session methods while holding it: providers can notify the
+// manager with their state lock held. Project lifecycle operations use opLocks.
 type Manager struct {
 	turnAdmission           TurnAdmission
 	mu                      sync.Mutex
@@ -1099,9 +1102,14 @@ func (m *Manager) Snapshots() []Snapshot {
 		return nil
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	snapshots := make([]Snapshot, 0, len(m.sessions))
+	sessions := make([]Session, 0, len(m.sessions))
 	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.mu.Unlock()
+
+	snapshots := make([]Snapshot, 0, len(sessions))
+	for _, session := range sessions {
 		snapshots = append(snapshots, session.Snapshot())
 	}
 	return snapshots
@@ -1129,9 +1137,14 @@ func (m *Manager) ParallelSnapshots() []Snapshot {
 		return nil
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	snapshots := make([]Snapshot, 0, len(m.parallelSessions))
+	sessions := make([]Session, 0, len(m.parallelSessions))
 	for _, session := range m.parallelSessions {
+		sessions = append(sessions, session)
+	}
+	m.mu.Unlock()
+
+	snapshots := make([]Snapshot, 0, len(sessions))
+	for _, session := range sessions {
 		snapshots = append(snapshots, sessionStateSnapshot(session))
 	}
 	return snapshots
@@ -1173,34 +1186,33 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 
 	m.mu.Lock()
 	existing, ok := m.sessions[projectPath]
+	m.mu.Unlock()
 	replaceExisting := false
 	existingState := Snapshot{}
 	if ok {
 		existingState = sessionStateSnapshot(existing)
 	}
 	if ok && existingState.Closed {
+		m.mu.Lock()
 		delete(m.sessions, projectPath)
 		delete(m.sessionProviders, projectPath)
+		m.mu.Unlock()
 		existing = nil
 		ok = false
 	}
 	if req.RequireLiveIdle && (!ok || existingState.ActiveTurnID != "" || existingState.Busy || existingState.BusyExternal || existingState.Closed || existingState.PendingApproval != nil || existingState.PendingToolInput != nil) {
-		m.mu.Unlock()
 		return nil, false, fmt.Errorf("review delivery requires the exact live idle caller; it will not reopen or steer a session")
 	}
 	if expected := strings.TrimSpace(req.ReplaceEmptySessionID); expected != "" &&
 		(!ok || existingState.ThreadID != expected || !existingState.CanReplaceEmptyConversation()) {
-		m.mu.Unlock()
 		return nil, false, fmt.Errorf("%w: the empty session changed before recovery; reopen the project to review its current conversation", ErrSessionChanged)
 	}
 	if req.ForceNew && ok {
 		confirmedID := strings.TrimSpace(req.ConfirmedReplacementSessionID)
 		if confirmedID != "" && confirmedID != strings.TrimSpace(existingState.ThreadID) {
-			m.mu.Unlock()
 			return nil, false, fmt.Errorf("%w: the session changed before replacement", ErrSessionChanged)
 		}
 		if existingState.Busy && !existingState.BusyExternal && confirmedID == "" {
-			m.mu.Unlock()
 			return nil, false, &BusySessionReplacementError{SessionID: existingState.ThreadID}
 		}
 	}
@@ -1216,7 +1228,6 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 			requestedProvider = ProviderCodex
 		}
 		if existingProvider != requestedProvider || !sessionMatchesResumeID(existing, existingState, expectedThreadID) {
-			m.mu.Unlock()
 			return nil, false, fmt.Errorf("%w: expected %s session %s, found %s session %s", ErrSessionChanged, requestedProvider.Label(), expectedThreadID, existingProvider.Label(), existingThreadID)
 		}
 	}
@@ -1244,7 +1255,6 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		}
 	}
 	if ok && !req.ForceNew {
-		m.mu.Unlock()
 		if updater, ok := existing.(workspaceContractUpdater); ok {
 			updater.SetWorkspaceContract(req.WorkspaceContract, req.WorkspaceExcursionHandler)
 		}
@@ -1280,7 +1290,6 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	if ok {
 		replaceExisting = true
 	}
-	m.mu.Unlock()
 
 	if replaceExisting {
 		_ = existing.Close()
@@ -1355,16 +1364,17 @@ func (m *Manager) OpenParallel(req LaunchRequest) (Session, bool, error) {
 
 	m.mu.Lock()
 	existing, ok := m.parallelSessions[projectPath]
+	m.mu.Unlock()
 	if ok {
 		state := sessionStateSnapshot(existing)
 		if parallelSessionActive(state) {
-			m.mu.Unlock()
 			m.notifyParallel(projectPath)
 			return existing, true, nil
 		}
+		m.mu.Lock()
 		delete(m.parallelSessions, projectPath)
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 
 	if ok {
 		_ = existing.Close()
