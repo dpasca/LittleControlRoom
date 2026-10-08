@@ -1975,6 +1975,11 @@ func dedupeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []codexAr
 	seen := make(map[string]int, len(targets))
 	for _, target := range targets {
 		key := strings.TrimSpace(target.Kind) + "\x00" + filepath.Clean(strings.TrimSpace(target.Path))
+		// Resolving an alias may collapse duplicates within one entry, but a
+		// later message must keep its own occurrence in transcript order.
+		if target.sourceLocated {
+			key += fmt.Sprintf("\x00%d", target.sourceEntry)
+		}
 		if existingIndex, ok := seen[key]; ok {
 			if out[existingIndex].resolvedProjectRelative || target.resolvedProjectRelative {
 				out[existingIndex] = mergeCodexArtifactOpenTarget(out[existingIndex], target)
