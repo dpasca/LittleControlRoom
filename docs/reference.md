@@ -492,7 +492,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider; fresh projects and scratch tasks default to Codex unless their create flow preselected another assistant
 - `Esc` hide the visible embedded session pane
-- `Alt+O` opens transcript links, inspected images, or generated artifacts when an embedded pane advertises available links; image rows include a large inline preview, streaming turns append newly discovered rows without resetting the current selection, and `Alt+F` reveals the selected file in its folder when supported, otherwise opens the containing folder
+- `alt+o` opens the file/link picker on the latest assistant reply, falling back to all transcript links when that reply has no openable files. `Tab` switches between **Latest reply** and **All transcript**; `←/→` filters **All / Images / Videos / Docs / Folders**. Type to search filenames, link labels, and folders; `ctrl+l` clears filters while keeping the selected file when possible. Counts grow while earlier messages scan in the background. Images have inline previews sized to the terminal; `Enter` opens the selected file in its associated application, and `alt+f` reveals it in its folder when supported, otherwise opens the containing folder.
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
 - `f` open the temporary project-name filter dialog

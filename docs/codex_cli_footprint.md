@@ -160,9 +160,12 @@ evidence and are excluded.
 
 Full-transcript discovery runs progressively outside the TUI render path. While
 that scan is incomplete, its occurrences are reconciled one-for-one with links
-already found in the visible viewport. This avoids showing the same transcript
+already found in the visible viewport or latest assistant reply. This avoids showing the same transcript
 occurrence twice without collapsing separate mentions that may carry different
-labels or chronology.
+labels or chronology. The latest reply is a separate in-memory picker scope, so
+its explicit links are available immediately regardless of scroll position; inferred
+paths still wait for background verification. Structured generated images suppress
+redundant plain-text mentions of their own path within the same entry.
 
 ### Format B: legacy JSONL
 
