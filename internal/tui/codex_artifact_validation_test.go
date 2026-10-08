@@ -6,11 +6,68 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
 	"lcroom/internal/codexapp"
 )
+
+func TestCodexArtifactPickerKeepsFinalVideosAfterEarlierRelativeLinks(t *testing.T) {
+	for _, mode := range []string{"same chunk", "later chunk", "streaming revision"} {
+		t.Run(mode, func(t *testing.T) {
+			projectPath := t.TempDir()
+			folder := filepath.Join(projectPath, "build", "review-pending", "camera")
+			names := []string{"debris-before.mp4", "debris-after.mp4", "missile-before.mp4", "missile-after.mp4"}
+			var relativeLinks, finalLinks []string
+			finalLinks = append(finalLinks, "[Complete handoff]("+filepath.Join(folder, "README.md")+")")
+			for _, name := range names {
+				relativeLinks = append(relativeLinks, "[old clip]("+name+")")
+				finalLinks = append(finalLinks, "[review clip]("+filepath.Join(folder, name)+")")
+			}
+			snapshot := codexapp.Snapshot{
+				ProjectPath: projectPath, TranscriptRevision: 1,
+				Entries: []codexapp.TranscriptEntry{{Kind: codexapp.TranscriptCommand, Text: strings.Join(relativeLinks, "\n")}},
+			}
+			if mode == "later chunk" {
+				for len(snapshot.Entries) < codexArtifactLinkScanEntryBudget {
+					snapshot.Entries = append(snapshot.Entries, codexapp.TranscriptEntry{Kind: codexapp.TranscriptAgent, Text: "Still working."})
+				}
+			}
+			m := Model{codexVisibleProject: projectPath, codexViewport: viewport.New(100, 30)}
+			if mode == "streaming revision" {
+				m.storeCodexSnapshot(projectPath, snapshot)
+				m = drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, snapshot))
+				snapshot.TranscriptRevision++
+			}
+			finalEntry := len(snapshot.Entries)
+			snapshot.Entries = append(snapshot.Entries, codexapp.TranscriptEntry{Kind: codexapp.TranscriptAgent, Text: strings.Join(finalLinks, "\n")})
+			m.storeCodexSnapshot(projectPath, snapshot)
+			m = drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, snapshot))
+			updated, cmd := m.openCodexArtifactPicker(snapshot)
+			m = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+			picker := m.codexArtifactPicker
+			if picker == nil || len(picker.Targets) != 9 {
+				t.Fatalf("picker = %#v, want four earlier clips followed by the handoff and four final clips", picker)
+			}
+			for i, name := range names {
+				target := picker.Targets[len(picker.Targets)-len(names)+i]
+				if target.Path != filepath.Join(folder, name) || target.Kind != "video" || target.Label != "review clip" || target.sourceEntry != finalEntry {
+					t.Fatalf("final video %d = %#v", i, target)
+				}
+			}
+			if picker.Selected != len(picker.Targets)-1 {
+				t.Fatalf("selection = %d, want the latest video", picker.Selected)
+			}
+			panel := ansi.Strip(m.renderCodexArtifactPickerContent(120, 50))
+			for _, name := range names {
+				if !strings.Contains(panel, name) {
+					t.Fatalf("final video %q missing from picker panel:\n%s", name, panel)
+				}
+			}
+		})
+	}
+}
 
 func TestCodexArtifactPickerRejectsSlashCommandMentions(t *testing.T) {
 	for _, provider := range []codexapp.Provider{codexapp.ProviderCodex, codexapp.ProviderClaudeCode, codexapp.ProviderOpenCode, codexapp.ProviderLCAgent} {
