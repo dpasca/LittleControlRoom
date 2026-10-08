@@ -51,7 +51,7 @@ func (c codexReplayToolCall) transcriptEntry(itemID, status string) TranscriptEn
 			if summary := renderCommandStatusLine(status, nil); summary != "" {
 				lines = append(lines, summary)
 			}
-			return TranscriptEntry{ItemID: itemID, Kind: TranscriptCommand, Text: strings.Join(lines, "\n")}
+			return TranscriptEntry{ItemID: itemID, Kind: TranscriptCommand, Text: strings.Join(lines, "\n"), CommandText: command}
 		}
 	}
 

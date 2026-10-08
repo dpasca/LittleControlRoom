@@ -1124,7 +1124,26 @@ func (s *appServerSession) mergeHistoryItemLocked(itemID string, kind Transcript
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
+// Keep the structured command alongside rendered text so consumers can exclude
+// the entire input, including multiline scripts, from command-result scans.
+func (s *appServerSession) setCommandTextLocked(itemID string, item map[string]json.RawMessage) {
+	command := commandTextFromItem(item)
+	if command == "" {
+		return
+	}
+	index, ok := s.entryIndex[itemID]
+	if itemID == "" && len(s.entries) > 0 {
+		index, ok = len(s.entries)-1, true
+	}
+	if !ok || s.entries[index].Kind != TranscriptCommand || s.entries[index].CommandText == command {
+		return
+	}
+	s.entries[index].CommandText = command
+	s.invalidateTranscriptCacheLocked()
+}
+
 func (s *appServerSession) finalizeCommandItemLocked(itemID string, item map[string]json.RawMessage) {
+	defer s.setCommandTextLocked(itemID, item)
 	text := strings.TrimSpace(renderResumedCommandExecution(item))
 	if itemID == "" {
 		if text != "" {

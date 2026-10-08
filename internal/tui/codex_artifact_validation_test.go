@@ -295,6 +295,59 @@ func TestCodexArtifactScanLeavesCommandOutputAloneForBareNames(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerExcludesLinksFromMultilineCommandInput(t *testing.T) {
+	projectPath := t.TempDir()
+	audioPath := filepath.Join(projectPath, "build", "review-pending", "menu-music", "military-r2", "loop.wav")
+	writeCodexArtifactTestFiles(t, audioPath, filepath.Join(projectPath, "preview.wav"))
+	command := "python3 - <<'PY'\ntext = '''[preview](preview.wav)\n[provenance](provenance.json)'''\nprint('Wrote README')\nPY"
+	snapshot := codexapp.Snapshot{ProjectPath: projectPath, Entries: []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptCommand, CommandText: command, Text: "$ " + command + "\nWrote README\n[command completed, exit 0]"},
+		{Kind: codexapp.TranscriptAgent, Text: "Listen: [loop](" + audioPath + ")."},
+	}}
+	m := Model{codexVisibleProject: projectPath}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	m = drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, snapshot))
+	updated, cmd := m.openCodexArtifactPicker(snapshot)
+	m = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	if m.codexArtifactPicker == nil || len(m.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("script links leaked into picker: %#v", m.codexArtifactPicker)
+	}
+	target := m.codexArtifactPicker.Targets[0]
+	if target.Path != audioPath || codexArtifactTargetFolder(target, projectPath, "") != "build/review-pending/menu-music/military-r2/" {
+		t.Fatalf("audio target lost its folder: %#v", target)
+	}
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error { opened = path; return nil }
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+	_, cmd = m.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("no open command")
+	}
+	cmd()
+	if opened != audioPath {
+		t.Fatalf("opened %q, want %q", opened, audioPath)
+	}
+}
+
+func TestCodexCommandLinkScanSeparatesInputFromOutput(t *testing.T) {
+	command := "python3 - <<'PY'\ntext = '[input](input.wav)'\nPY"
+	output := "[output](/tmp/review/loop.wav)"
+	for _, tt := range []struct{ name, text, command, want string }{
+		{"multiline", "$ " + command + "\n" + output, command, output},
+		{"output delta", output, command, output},
+		{"shortened input", "$ python3 - <<'PY'\n[... shortened ...]\n[input](input.wav)\nPY", command, ""},
+		{"legacy", "$ echo done\n" + output, "", output},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := codexapp.TranscriptEntry{Kind: codexapp.TranscriptCommand, Text: tt.text, CommandText: tt.command}
+			if got := codexCommandResultLinkScanText(entry); got != tt.want {
+				t.Fatalf("scan text = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCodexArtifactMentionShapes(t *testing.T) {
 	for _, accepted := range []string{"README.md", "a/b/clip.mp4", "build/out/", "résumé.pdf", ".github/ci.yml", "main.go."} {
 		if _, ok := codexNormalizeMention(accepted); !ok {

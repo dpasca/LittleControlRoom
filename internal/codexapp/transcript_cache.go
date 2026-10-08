@@ -177,6 +177,7 @@ func exportTranscriptEntry(entry transcriptEntry) (TranscriptEntry, bool) {
 		Kind:           entry.Kind,
 		Text:           truncateExportedTranscriptText(text),
 		DisplayText:    truncateExportedTranscriptText(strings.TrimSpace(entry.DisplayText)),
+		CommandText:    truncateExportedTranscriptText(entry.CommandText),
 		GeneratedImage: cloneGeneratedImageArtifact(entry.GeneratedImage),
 	}, true
 }
@@ -192,7 +193,7 @@ func countExportableTranscriptEntries(entries []transcriptEntry) int {
 }
 
 func transcriptEntryExportBytes(entry TranscriptEntry) int {
-	size := len(entry.Text) + len(entry.DisplayText)
+	size := len(entry.Text) + len(entry.DisplayText) + len(entry.CommandText)
 	return size
 }
 

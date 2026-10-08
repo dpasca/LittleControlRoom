@@ -178,6 +178,7 @@ type transcriptEntry struct {
 	Kind           TranscriptKind
 	Text           string
 	DisplayText    string
+	CommandText    string
 	GeneratedImage *GeneratedImageArtifact
 	codexStderr    bool
 }

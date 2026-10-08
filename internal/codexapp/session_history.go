@@ -143,6 +143,7 @@ func (s *appServerSession) prependHistoryTurnsLocked(turns []resumedTurn) {
 				TurnID:         turnID,
 				Kind:           kind,
 				Text:           text,
+				CommandText:    commandTextFromItem(item),
 				GeneratedImage: cloneGeneratedImageArtifact(image),
 			})
 		}

@@ -1442,6 +1442,11 @@ func codexCommandResultLinkScanText(entry codexapp.TranscriptEntry) string {
 		if strings.HasPrefix(text, prefix) {
 			return strings.TrimLeft(strings.TrimPrefix(text, prefix), "\r\n")
 		}
+		if strings.HasPrefix(strings.TrimSpace(text), "$ ") {
+			// A shortened export may no longer contain the complete input.
+			// Its remaining script lines are not command output.
+			return ""
+		}
 	}
 	if firstLineEnd := strings.IndexByte(text, '\n'); firstLineEnd >= 0 &&
 		strings.HasPrefix(strings.TrimSpace(text[:firstLineEnd]), "$ ") {

@@ -1329,6 +1329,7 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 		}
 	}
 	if itemType == "commandExecution" {
+		s.setCommandTextLocked(itemID, msg.Item)
 		workspaceExcursion, workspaceExcursionHandler, workspaceExcursionDetected = s.captureWorkspaceExcursionLocked(msg.Item)
 	}
 	s.mu.Unlock()

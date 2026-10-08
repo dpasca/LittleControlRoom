@@ -149,8 +149,12 @@ may contribute explicit Markdown links, but standalone artifact paths printed by
 command do not become picker rows. Those paths are retained only as supporting
 evidence for resolving an explicitly mentioned project-relative path to a known
 absolute path. Language-level backticks in command results are not interpreted as
-Markdown, and the command input itself is never scanned. Unexpanded template paths
-such as `${fileName}`, comment-shaped lines, and absolute lines whose terminal
+Markdown, and the command input itself is never scanned. Codex command input is
+retained as structured metadata through live events, history pages, reconnects,
+and interrupted-turn replay, so multiline scripts are excluded in full. If an
+export was shortened and its input boundary no longer matches, the picker skips
+that command text instead of treating script fragments as output. Unexpanded
+template paths such as `${fileName}`, comment-shaped lines, and absolute lines whose terminal
 component contains only punctuation are source-code syntax rather than openable-link
 evidence and are excluded.
 

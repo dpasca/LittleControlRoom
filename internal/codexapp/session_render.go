@@ -286,6 +286,13 @@ func renderResumedUserMessage(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
+func commandTextFromItem(item map[string]json.RawMessage) string {
+	if decodeRawString(item["type"]) != "commandExecution" {
+		return ""
+	}
+	return strings.TrimSpace(decodeRawString(item["command"]))
+}
+
 func renderResumedCommandExecution(item map[string]json.RawMessage) string {
 	command := strings.TrimSpace(decodeRawString(item["command"]))
 	cwd := strings.TrimSpace(decodeRawString(item["cwd"]))

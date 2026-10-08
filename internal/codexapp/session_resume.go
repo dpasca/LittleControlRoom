@@ -253,6 +253,7 @@ func reconnectTranscriptEntries(entries []TranscriptEntry) []transcriptEntry {
 			Kind:           entry.Kind,
 			Text:           entry.Text,
 			DisplayText:    entry.DisplayText,
+			CommandText:    entry.CommandText,
 			GeneratedImage: cloneGeneratedImageArtifact(entry.GeneratedImage),
 		})
 	}
@@ -278,6 +279,7 @@ func mergeReconnectTranscriptSnapshots(current, recovered []TranscriptEntry) []T
 			Kind:           entry.Kind,
 			Text:           entry.Text,
 			DisplayText:    entry.DisplayText,
+			CommandText:    entry.CommandText,
 			GeneratedImage: cloneGeneratedImageArtifact(entry.GeneratedImage),
 		})
 	}
@@ -361,6 +363,7 @@ func mergeReconnectTranscriptEntry(current, preserved transcriptEntry) transcrip
 		out.Kind = preserved.Kind
 		out.Text = preserved.Text
 		out.DisplayText = preserved.DisplayText
+		out.CommandText = preserved.CommandText
 	}
 	if out.Kind == "" || out.Kind == TranscriptOther {
 		out.Kind = preserved.Kind
@@ -369,6 +372,9 @@ func mergeReconnectTranscriptEntry(current, preserved transcriptEntry) transcrip
 	preservedText := strings.TrimSpace(preserved.Text)
 	if currentText == "" || (preservedText != "" && strings.HasPrefix(preservedText, currentText)) {
 		out.Text = preserved.Text
+		if preserved.CommandText != "" {
+			out.CommandText = preserved.CommandText
+		}
 		if strings.TrimSpace(preserved.DisplayText) != "" {
 			out.DisplayText = preserved.DisplayText
 		}
@@ -473,6 +479,7 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 			}
 			itemID, kind, text, image := s.renderThreadItemForTurn(turn.Status, item)
 			s.mergeRenderedHistoryItemLocked(turn.ID, itemID, kind, text, image)
+			s.setCommandTextLocked(itemID, item)
 		}
 		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.diagnosticText()) != "" {
 			s.appendErrorEntryLocked(turn.Error.diagnosticText())
