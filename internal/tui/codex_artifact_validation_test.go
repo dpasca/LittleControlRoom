@@ -56,7 +56,7 @@ func TestCodexArtifactPickerKeepsFinalVideosAfterEarlierRelativeLinks(t *testing
 					t.Fatalf("final video %d = %#v", i, target)
 				}
 			}
-			if picker.Selected != len(picker.Targets)-1 {
+			if picker.Selected != len(picker.activeTargets())-1 {
 				t.Fatalf("selection = %d, want the latest video", picker.Selected)
 			}
 			panel := ansi.Strip(m.renderCodexArtifactPickerContent(120, 50))

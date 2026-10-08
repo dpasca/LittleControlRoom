@@ -35,6 +35,13 @@ type codexArtifactPickerState struct {
 	Title           string
 	Hint            string
 	Targets         []codexArtifactOpenTarget
+	LatestTargets   []codexArtifactOpenTarget
+	LatestReply     codexapp.TranscriptEntry
+	LatestEntry     int
+	LatestHasLinks  bool
+	ShowLatest      bool
+	ScopeChosen     bool
+	TypeFilter      codexArtifactPickerType
 	Filter          string
 	Selected        int
 	PreviewSeq      int64
@@ -49,37 +56,32 @@ func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, t
 	progressiveTargets, complete := m.cachedProgressiveCodexOpenTargetsWithState(snapshot)
 	targets := combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets, complete, projectPath)
 	var scanCmd tea.Cmd
-	if len(targets) == 0 || len(confirmedCodexArtifactOpenTargets(visibleTargets)) < len(visibleTargets) {
+	if !complete {
 		scanCmd = m.maybeStartCodexArtifactLinkScanForPicker(projectPath, snapshot)
-	}
-	if len(targets) == 0 {
-		if scanCmd == nil && !m.codexArtifactLinkScanInFlight(projectPath, m.codexTranscriptRevision(projectPath)) {
-			m.status = "No openable links in this embedded transcript"
-			return m, nil
-		}
-		m.codexArtifactPicker = &codexArtifactPickerState{
-			ProjectPath:     projectPath,
-			Title:           "Open Links",
-			Hint:            "Scanning this embedded transcript for links.",
-			Targets:         nil,
-			Selected:        0,
-			PreviewRequests: make(map[string]int64),
-			PreviewData:     make(map[string][]byte),
-			PreviewErrors:   make(map[string]string),
-		}
-		m.status = "Scanning transcript links..."
-		return m, scanCmd
 	}
 	m.codexArtifactPicker = &codexArtifactPickerState{
 		ProjectPath:     projectPath,
 		Title:           "Open Links",
-		Hint:            "Links found in this embedded transcript. Type to filter by name or folder.",
+		Hint:            "Type to search by filename, link label or folder.",
 		Targets:         targets,
-		Selected:        len(targets) - 1,
+		LatestEntry:     -1,
 		PreviewRequests: make(map[string]int64),
 		PreviewData:     make(map[string][]byte),
 		PreviewErrors:   make(map[string]string),
 	}
+	picker := m.codexArtifactPicker
+	var latestScanned []codexArtifactOpenTarget
+	if state, ok := m.codexArtifactLinkScans[projectPath]; ok && state.sourceRev == m.codexTranscriptRevision(projectPath) {
+		latestScanned = progressiveTargets
+	}
+	picker.updateLatestReply(codexTranscriptEntriesFromSnapshot(snapshot), latestScanned, complete)
+	picker.Targets = reconcileCodexArtifactPickerTargets(picker.Targets, picker.LatestTargets, complete, projectPath)
+	picker.ShowLatest = len(picker.LatestTargets) > 0 || (!complete && picker.LatestHasLinks)
+	if len(targets) == 0 && len(picker.LatestTargets) == 0 && scanCmd == nil && !m.codexArtifactLinkScanInFlight(projectPath, m.codexTranscriptRevision(projectPath)) {
+		m.closeCodexArtifactPicker("No openable links in this embedded transcript")
+		return m, nil
+	}
+	picker.Selected = max(0, codexArtifactPickerFilteredCount(picker)-1)
 	m.status = "Link picker open"
 	return m, batchCmds(m.codexArtifactPickerPreviewCmd(), scanCmd)
 }
@@ -89,15 +91,34 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 	if picker == nil {
 		return m, nil
 	}
-	if len(picker.Targets) == 0 && !m.codexArtifactLinkScanInFlight(picker.ProjectPath, m.codexTranscriptRevision(picker.ProjectPath)) {
+	if len(picker.Targets) == 0 && len(picker.LatestTargets) == 0 && !m.codexArtifactLinkScanInFlight(picker.ProjectPath, m.codexTranscriptRevision(picker.ProjectPath)) {
 		m.closeCodexArtifactPicker("No openable links in this embedded transcript")
 		return m, nil
 	}
 	m.normalizeCodexArtifactPickerSelection()
+	selectionAnchor := codexArtifactPickerSelectionAnchorForCurrent(picker)
 	switch msg.String() {
 	case "esc":
 		m.closeCodexArtifactPicker("Link picker closed")
 		return m, nil
+	case "tab", "shift+tab":
+		picker.ShowLatest = !picker.ShowLatest
+		picker.ScopeChosen = true
+		m.restoreCodexArtifactPickerSelection(selectionAnchor)
+		return m, m.codexArtifactPickerPreviewCmd()
+	case "left", "right":
+		step := 1
+		if msg.String() == "left" {
+			step = -1
+		}
+		picker.TypeFilter = codexArtifactPickerType((int(picker.TypeFilter) + step + int(codexArtifactPickerTypeCount)) % int(codexArtifactPickerTypeCount))
+		m.restoreCodexArtifactPickerSelection(selectionAnchor)
+		return m, m.codexArtifactPickerPreviewCmd()
+	case "ctrl+l":
+		picker.Filter = ""
+		picker.TypeFilter = codexArtifactPickerAll
+		m.restoreCodexArtifactPickerSelection(selectionAnchor)
+		return m, m.codexArtifactPickerPreviewCmd()
 	case "up":
 		if codexArtifactPickerFilteredCount(picker) > 0 {
 			picker.Selected = max(0, picker.Selected-1)
@@ -150,21 +171,21 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		if picker.Filter != "" {
 			runes := []rune(picker.Filter)
 			picker.Filter = string(runes[:len(runes)-1])
-			m.normalizeCodexArtifactPickerSelection()
+			m.restoreCodexArtifactPickerSelection(selectionAnchor)
 			return m, m.codexArtifactPickerPreviewCmd()
 		}
 		return m, nil
 	case "delete":
 		if picker.Filter != "" {
 			picker.Filter = ""
-			m.normalizeCodexArtifactPickerSelection()
+			m.restoreCodexArtifactPickerSelection(selectionAnchor)
 			return m, m.codexArtifactPickerPreviewCmd()
 		}
 		return m, nil
 	}
 	if msg.Type == tea.KeyRunes && !msg.Alt {
 		picker.Filter += string(msg.Runes)
-		m.normalizeCodexArtifactPickerSelection()
+		m.restoreCodexArtifactPickerSelection(selectionAnchor)
 		return m, m.codexArtifactPickerPreviewCmd()
 	}
 	return m, nil
@@ -513,6 +534,18 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 			entry.Kind != codexapp.TranscriptCommand,
 			codexEntryMentionsRelativeFiles(entry.Kind),
 		)
+		if generated, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
+			// The structured image already supplies this file and its preview.
+			// Its plain-text path is another representation of the same artifact.
+			filtered := chunkTargets[:0]
+			for _, target := range chunkTargets {
+				if target.inferredLocalPath && target.Path == generated.Path {
+					continue
+				}
+				filtered = append(filtered, target)
+			}
+			chunkTargets = filtered
+		}
 		targets = append(targets, locateCodexArtifactOpenTargets(chunkTargets, entryIndex)...)
 		if !includeStandalonePaths {
 			// Shell listings can correct an explicitly mentioned relative path,
@@ -576,6 +609,10 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 		previousFilteredCount := codexArtifactPickerFilteredCount(picker)
 		selectionAnchor := codexArtifactPickerSelectionAnchorForCurrent(picker)
 		picker.Targets = reconcileCodexArtifactPickerTargets(confirmedCodexArtifactOpenTargets(state.targets), picker.Targets, state.complete, projectPath)
+		picker.updateLatestReply(msg.sourceEntries, confirmedCodexArtifactOpenTargets(state.targets), state.complete)
+		if state.complete && len(picker.LatestTargets) == 0 && !picker.ScopeChosen {
+			picker.ShowLatest = false
+		}
 		filteredCount := codexArtifactPickerFilteredCount(picker)
 		if selected, ok := codexArtifactPickerSelectionForAnchor(picker, selectionAnchor); ok {
 			picker.Selected = selected
@@ -585,7 +622,6 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 			m.normalizeCodexArtifactPickerSelection()
 		}
 		if previousCount == 0 && len(picker.Targets) > 0 {
-			picker.Hint = "Links found in this embedded transcript. Type to filter by name or folder."
 			m.status = "Link picker open"
 			previewCmd = m.codexArtifactPickerPreviewCmd()
 		} else if filteredCount != previousFilteredCount || len(msg.targets) > 0 {
@@ -628,9 +664,11 @@ func reconcileCodexArtifactPickerTargets(scanned, existing []codexArtifactOpenTa
 }
 
 type codexArtifactPickerSelectionAnchor struct {
-	key        string
-	occurrence int
-	valid      bool
+	key           string
+	occurrence    int
+	valid         bool
+	sourceEntry   int
+	sourceLocated bool
 }
 
 func codexArtifactPickerSelectionAnchorForCurrent(picker *codexArtifactPickerState) codexArtifactPickerSelectionAnchor {
@@ -640,23 +678,32 @@ func codexArtifactPickerSelectionAnchorForCurrent(picker *codexArtifactPickerSta
 	}
 	selected := max(0, min(picker.Selected, len(indexes)-1))
 	targetIndex := indexes[selected]
-	key := codexArtifactOccurrenceKey(picker.Targets[targetIndex])
+	target := picker.activeTargets()[targetIndex]
+	key := codexArtifactOccurrenceKey(target)
 	occurrence := 0
 	for _, index := range indexes[:selected] {
-		if codexArtifactOccurrenceKey(picker.Targets[index]) == key {
+		if codexArtifactOccurrenceKey(picker.activeTargets()[index]) == key {
 			occurrence++
 		}
 	}
-	return codexArtifactPickerSelectionAnchor{key: key, occurrence: occurrence, valid: true}
+	return codexArtifactPickerSelectionAnchor{key: key, occurrence: occurrence, valid: true, sourceEntry: target.sourceEntry, sourceLocated: target.sourceLocated}
 }
 
 func codexArtifactPickerSelectionForAnchor(picker *codexArtifactPickerState, anchor codexArtifactPickerSelectionAnchor) (int, bool) {
 	if !anchor.valid {
 		return 0, false
 	}
+	if anchor.sourceLocated {
+		for selected, index := range codexArtifactPickerFilteredIndexes(picker) {
+			target := picker.activeTargets()[index]
+			if target.sourceLocated && target.sourceEntry == anchor.sourceEntry && codexArtifactOccurrenceKey(target) == anchor.key {
+				return selected, true
+			}
+		}
+	}
 	occurrence := 0
 	for selected, index := range codexArtifactPickerFilteredIndexes(picker) {
-		if codexArtifactOccurrenceKey(picker.Targets[index]) != anchor.key {
+		if codexArtifactOccurrenceKey(picker.activeTargets()[index]) != anchor.key {
 			continue
 		}
 		if occurrence == anchor.occurrence {
@@ -826,18 +873,26 @@ func (m *Model) normalizeCodexArtifactPickerSelection() {
 	}
 }
 
+func (m *Model) restoreCodexArtifactPickerSelection(anchor codexArtifactPickerSelectionAnchor) {
+	if selected, ok := codexArtifactPickerSelectionForAnchor(m.codexArtifactPicker, anchor); ok {
+		m.codexArtifactPicker.Selected = selected
+		return
+	}
+	m.codexArtifactPicker.Selected = max(0, codexArtifactPickerFilteredCount(m.codexArtifactPicker)-1)
+}
+
 func codexArtifactPickerFilteredCount(picker *codexArtifactPickerState) int {
 	return len(codexArtifactPickerFilteredIndexes(picker))
 }
 
 func codexArtifactPickerFilteredIndexes(picker *codexArtifactPickerState) []int {
-	if picker == nil || len(picker.Targets) == 0 {
+	if picker == nil || len(picker.activeTargets()) == 0 {
 		return nil
 	}
 	filter := strings.TrimSpace(picker.Filter)
-	indexes := make([]int, 0, len(picker.Targets))
-	for i, target := range picker.Targets {
-		if codexArtifactTargetMatchesFilter(target, filter, picker.ProjectPath) {
+	indexes := make([]int, 0, len(picker.activeTargets()))
+	for i, target := range picker.activeTargets() {
+		if picker.TypeFilter.matches(target) && codexArtifactTargetMatchesFilter(target, filter, picker.ProjectPath) {
 			indexes = append(indexes, i)
 		}
 	}
@@ -861,7 +916,7 @@ func codexArtifactTargetMatchesFilter(target codexArtifactOpenTarget, filter, pr
 
 func (m Model) currentCodexArtifactTarget() (codexArtifactOpenTarget, bool) {
 	picker := m.codexArtifactPicker
-	if picker == nil || len(picker.Targets) == 0 {
+	if picker == nil || len(picker.activeTargets()) == 0 {
 		return codexArtifactOpenTarget{}, false
 	}
 	indexes := codexArtifactPickerFilteredIndexes(picker)
@@ -875,7 +930,7 @@ func (m Model) currentCodexArtifactTarget() (codexArtifactOpenTarget, bool) {
 	if index >= len(indexes) {
 		index = len(indexes) - 1
 	}
-	return picker.Targets[indexes[index]], true
+	return picker.activeTargets()[indexes[index]], true
 }
 
 func (m Model) renderCodexArtifactPickerOverlay(body string, bodyW, bodyH int) string {
@@ -902,33 +957,42 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	if title == "" {
 		title = "Open Links"
 	}
+	scanning := m.codexArtifactLinkScanInFlight(picker.ProjectPath, m.codexTranscriptRevision(picker.ProjectPath))
 	hint := strings.TrimSpace(picker.Hint)
 	if hint == "" {
-		hint = "Links found in this embedded transcript."
+		hint = "Type to search by filename, link label or folder."
+	}
+	if scanning {
+		hint = "Scanning transcript links… counts may grow."
+	} else if !picker.ShowLatest && len(picker.LatestTargets) == 0 {
+		hint = "No links in the latest reply. Showing all transcript links."
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
-		commandPaletteHintStyle.Render(hint),
-		"",
+		renderCodexArtifactPickerScopes(picker, scanning, width),
+		renderCodexArtifactPickerTypes(picker, width),
 		renderCodexArtifactPickerFilterLine(picker, width),
-		"",
-		renderDialogAction("Enter/Alt+O", "open", commitActionKeyStyle, commitActionTextStyle) + "   " +
-			renderDialogAction("Alt+F", "folder", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+		commandPaletteHintStyle.Render(fitFooterWidth(hint, width)),
+		renderDialogAction("Enter/alt+o", "open", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("alt+f", "folder", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("↑↓", "select", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 		"",
 	}
-	if len(picker.Targets) == 0 {
+	if len(picker.activeTargets()) == 0 {
 		message := "No links found."
-		if m.codexArtifactLinkScanInFlight(picker.ProjectPath, m.codexTranscriptRevision(picker.ProjectPath)) {
-			message = "Checking transcript links..."
+		if picker.ShowLatest {
+			message = "No links in the latest reply. Tab shows all transcript links."
 		}
-		lines = append(lines, commandPaletteHintStyle.Render(message))
+		if scanning {
+			message = "Checking links… You can switch scope with Tab while the scan finishes."
+		}
+		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth(message, width)))
 		return strings.Join(lines, "\n")
 	}
 	indexes := codexArtifactPickerFilteredIndexes(picker)
 	if len(indexes) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No names or folders match the current filter."))
+		lines = append(lines, commandPaletteHintStyle.Render(fitFooterWidth("No matching links. Tab changes scope; ←→ changes type; ctrl+l clears filters.", width)))
 		return strings.Join(lines, "\n")
 	}
 	selected := picker.Selected
@@ -939,11 +1003,35 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 		selected = len(indexes) - 1
 	}
 	selectedTarget, hasSelectedTarget := m.currentCodexArtifactTarget()
+	var details []string
+	if hasSelectedTarget {
+		details = append(details, "", commandPaletteTitleStyle.Render("Selected"))
+		details = append(details, renderCodexArtifactSelectedDetails(selectedTarget, width)...)
+		if bodyH > 0 && bodyH < 32 {
+			details = []string{
+				"",
+				detailField("Selected", detailValueStyle.Render(fitFooterWidth(codexArtifactTargetDisplay(selectedTarget)+" · "+codexArtifactTargetTypeLabel(selectedTarget), max(8, width-10)))),
+				detailField("Path", detailMutedStyle.Render(shortenPathLeft(selectedTarget.Path, max(8, width-6)))),
+			}
+		}
+	}
+	contentRows := max(1, bodyH-2)
+	if bodyH <= 0 {
+		contentRows = 28
+	}
+	// Reserve the header, at least three file rows, overflow indicators and
+	// selected-file details before allocating space to an image preview.
+	listRows := contentRows - len(lines) - len(details) - 3
 	previewRows := 0
 	if hasSelectedTarget && strings.TrimSpace(selectedTarget.Kind) == "image" {
-		previewRows = codexArtifactPickerPreviewMaxRows(bodyH)
+		previewRows = max(0, min(codexArtifactPickerPreviewMaxRows(bodyH), listRows-5))
+		if previewRows >= 3 {
+			listRows -= previewRows + 2
+		} else {
+			previewRows = 0
+		}
 	}
-	start, end := codexArtifactPickerWindow(selected, len(indexes), bodyH, previewRows)
+	start, end := codexArtifactPickerWindow(selected, len(indexes), listRows)
 	layout := newCodexArtifactPickerRowLayout(width)
 	layout.ProjectPath = picker.ProjectPath
 	layout.HomeDir = m.homeDir
@@ -952,16 +1040,18 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
 	}
 	for i := start; i < end; i++ {
-		lines = append(lines, renderCodexArtifactPickerRow(picker.Targets[indexes[i]], i == selected, width, layout))
+		layout.RepeatFolder = i > start && picker.activeTargets()[indexes[i]].Kind != "url" &&
+			codexArtifactTargetFolder(picker.activeTargets()[indexes[i]], picker.ProjectPath, m.homeDir) ==
+				codexArtifactTargetFolder(picker.activeTargets()[indexes[i-1]], picker.ProjectPath, m.homeDir)
+		lines = append(lines, renderCodexArtifactPickerRow(picker.activeTargets()[indexes[i]], i == selected, width, layout))
 	}
 	if end < len(indexes) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(indexes)-end)))
 	}
 	if hasSelectedTarget {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteTitleStyle.Render("Selected"))
-		lines = append(lines, renderCodexArtifactSelectedDetails(selectedTarget, width)...)
-		if preview := strings.TrimSpace(m.renderCodexArtifactPreview(selectedTarget, width, bodyH)); preview != "" {
+		lines = append(lines, details...)
+		if previewRows > 0 {
+			preview := m.renderCodexArtifactPreview(selectedTarget, width, previewRows)
 			lines = append(lines, "")
 			lines = append(lines, commandPaletteTitleStyle.Render("Preview"))
 			lines = append(lines, preview)
@@ -970,7 +1060,7 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderCodexArtifactPreview(target codexArtifactOpenTarget, width, bodyH int) string {
+func (m Model) renderCodexArtifactPreview(target codexArtifactOpenTarget, width, maxRows int) string {
 	if strings.TrimSpace(target.Kind) != "image" {
 		return ""
 	}
@@ -980,7 +1070,6 @@ func (m Model) renderCodexArtifactPreview(target codexArtifactOpenTarget, width,
 	if len(data) == 0 && picker != nil && path != "" {
 		data = picker.PreviewData[path]
 	}
-	maxRows := codexArtifactPickerPreviewMaxRows(bodyH)
 	if len(data) > 0 {
 		return renderANSIImagePreviewWithMaxCols(data, max(12, width), maxRows, 72)
 	}
@@ -1002,14 +1091,11 @@ func codexArtifactPickerPreviewMaxRows(bodyH int) int {
 	return max(3, min(16, bodyH/3))
 }
 
-func codexArtifactPickerWindow(selected, total, bodyH, previewRows int) (int, int) {
+func codexArtifactPickerWindow(selected, total, rows int) (int, int) {
 	if total <= 0 {
 		return 0, 0
 	}
-	if bodyH <= 0 {
-		bodyH = 30
-	}
-	limit := min(total, max(3, min(10, bodyH-max(0, previewRows)-22)))
+	limit := min(total, max(1, min(10, rows)))
 	start := 0
 	if selected >= limit {
 		start = selected - limit + 1
@@ -1029,8 +1115,9 @@ type codexArtifactPickerRowLayout struct {
 	TypeWidth int
 	PathWidth int
 	// ProjectPath and HomeDir shorten the folder column; both may be empty.
-	ProjectPath string
-	HomeDir     string
+	ProjectPath  string
+	HomeDir      string
+	RepeatFolder bool
 }
 
 func newCodexArtifactPickerRowLayout(width int) codexArtifactPickerRowLayout {
@@ -1054,8 +1141,11 @@ func renderCodexArtifactPickerFilterLine(picker *codexArtifactPickerState, width
 		value = detailValueStyle.Render(fitFooterWidth(filter, max(8, width-10)))
 	}
 	count := codexArtifactPickerFilteredCount(picker)
-	total := len(picker.Targets)
+	total := len(picker.activeTargets())
 	summary := fmt.Sprintf("%d/%d", count, total)
+	if filter != "" || picker.TypeFilter != codexArtifactPickerAll {
+		summary += "  ctrl+l clear"
+	}
 	return fitFooterWidth(detailField("Filter", value)+"  "+detailMutedStyle.Render(summary), width)
 }
 
@@ -1086,6 +1176,9 @@ func renderCodexArtifactPickerHeader(layout codexArtifactPickerRowLayout, width 
 func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool, width int, layout codexArtifactPickerRowLayout) string {
 	kind := codexArtifactTargetTypeLabel(target)
 	name := codexArtifactTargetName(target)
+	if label := strings.TrimSpace(target.Label); label != "" && label != name && label != target.Path {
+		name += " · " + label
+	}
 	var location string
 	if strings.TrimSpace(target.Kind) == "url" {
 		location = shortenHeadTail(strings.TrimSpace(target.Path), layout.PathWidth)
@@ -1095,6 +1188,9 @@ func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool,
 	} else {
 		// The tail of a path names the folder; the head is mostly disk prefix.
 		location = shortenPathLeft(codexArtifactTargetFolder(target, layout.ProjectPath, layout.HomeDir), layout.PathWidth)
+		if layout.RepeatFolder {
+			location = "〃"
+		}
 	}
 	row := fmt.Sprintf("  %s  %s  %s",
 		renderCodexArtifactCell(name, layout.NameWidth, codexArtifactNameStyle(selected)),
@@ -1148,6 +1244,8 @@ func codexArtifactTypeStyle(kind string, selected bool) lipgloss.Style {
 		color = lipgloss.Color("42")
 	case "IMAGE":
 		color = lipgloss.Color("213")
+	case "VIDEO":
+		color = lipgloss.Color("216")
 	case "PDF":
 		color = lipgloss.Color("203")
 	case "SOURCE":

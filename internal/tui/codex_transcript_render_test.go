@@ -1683,6 +1683,8 @@ func TestCodexArtifactPickerProgressivelyAppendsAcrossStreamingRevisions(t *test
 		t.Fatalf("opening on the latest image should queue its preview")
 	}
 	got = normalizeUpdateModel(updated)
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if target, ok := got.currentCodexArtifactTarget(); !ok || target.Path != paths[1] {
 		t.Fatalf("selected target before streaming update = %#v, ok=%t", target, ok)
 	}
@@ -1732,8 +1734,10 @@ func TestCodexArtifactPickerReplacesOnlyChangedStreamingTail(t *testing.T) {
 	m := Model{codexVisibleProject: projectPath, codexViewport: viewport.New(100, 20)}
 	m.storeCodexSnapshot(projectPath, first)
 	got := drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, first))
-	updated, _ := got.openCodexArtifactPicker(first)
+	updated, cmd := got.openCodexArtifactPicker(first)
 	got = normalizeUpdateModel(updated)
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	updated, _ = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyUp})
 	got = normalizeUpdateModel(updated)
 
@@ -2047,10 +2051,7 @@ func TestCodexLinkPickerOpensLineSuffixedLocalMarkdownLinksAsFiles(t *testing.T)
 	m.codexViewport.SetContent(rendered)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("link picker state = %#v, want one source target", got.codexArtifactPicker)
 	}
@@ -2112,10 +2113,7 @@ func TestCodexLinkPickerOpensRelativeMarkdownArtifactLinksAgainstProjectPath(t *
 	m.codexViewport.SetContent(rendered)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("link picker state = %#v, want one html target", got.codexArtifactPicker)
 	}
@@ -2283,7 +2281,7 @@ func TestCodexArtifactPickerExposesDirectoryForAsteriskPath(t *testing.T) {
 		t.Fatalf("asterisk path target = %#v, want directory %q with mention %q", target, directory, filepath.Base(pattern))
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(100, 24))
-	for _, want := range []string{"DIR", filepath.Base(directory), "Mention: " + filepath.Base(pattern)} {
+	for _, want := range []string{"DIR", filepath.Base(directory), filepath.Base(pattern)} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("asterisk path picker missing %q: %q", want, overlay)
 		}
@@ -2445,10 +2443,7 @@ func TestCodexLinkPickerReportsMissingExplicitArtifactOnOpen(t *testing.T) {
 	m.codexViewport.SetContent(rendered)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("link picker state = %#v, want one guessed video target", got.codexArtifactPicker)
 	}
@@ -2516,10 +2511,7 @@ func TestCodexLinkPickerOpensPercentEscapedLocalMarkdownLinksAsFiles(t *testing.
 	m.codexViewport.SetContent(rendered)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("link picker state = %#v, want one PDF target", got.codexArtifactPicker)
 	}
@@ -2661,10 +2653,7 @@ func TestCodexArtifactPickerOpensFolderNamedReadmeLinksAsDirectory(t *testing.T)
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("directory artifact should not queue a preview command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("directory artifact picker state = %#v, want one target", got.codexArtifactPicker)
 	}
@@ -2739,10 +2728,7 @@ func TestCodexArtifactPickerOpensDirectExtensionlessDirectoryLinks(t *testing.T)
 	m.codexViewport.SetContent(rendered)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("directory target should not queue a preview command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("direct directory picker state = %#v, want one target", got.codexArtifactPicker)
 	}
@@ -2879,10 +2865,7 @@ func TestGeneratedImageOpenActionsUseSystemOpen(t *testing.T) {
 	m.codexViewport.SetContent(rendered)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil {
 		t.Fatalf("Alt+O should show the artifact picker")
 	}
@@ -2950,10 +2933,11 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnd})
+	got = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil {
 		t.Fatalf("Alt+O should show the artifact picker")
 	}
@@ -2961,7 +2945,7 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 		t.Fatalf("picker selected = %d, want latest image index 1", got.codexArtifactPicker.Selected)
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Open Links", "mockup.png", "generated.png", "Enter/Alt+O", "open", "Esc", "close"} {
+	for _, want := range []string{"Open Links", "mockup.png", "generated.png", "Enter/alt+o", "open", "Esc", "close"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("artifact picker missing %q: %q", want, overlay)
 		}
@@ -2971,23 +2955,10 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 	}
 
 	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyUp})
-	if cmd == nil {
-		t.Fatalf("moving to a path-only image should queue a preview load")
+	got = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	if target, ok := got.currentCodexArtifactTarget(); !ok || target.Path != firstPath {
+		t.Fatalf("selected image = %#v, ok=%t", target, ok)
 	}
-	rawPreviewMsg := cmd()
-	previewMsg, ok := rawPreviewMsg.(codexArtifactPreviewMsg)
-	if !ok {
-		t.Fatalf("preview command returned %T, want codexArtifactPreviewMsg", rawPreviewMsg)
-	}
-	got = normalizeUpdateModel(updated)
-	if got.codexArtifactPicker == nil || got.codexArtifactPicker.Selected != 0 {
-		t.Fatalf("picker selected after up = %#v, want index 0", got.codexArtifactPicker)
-	}
-	updated, cmd = got.Update(previewMsg)
-	if cmd != nil {
-		t.Fatalf("applying preview should not queue a command, got %T", cmd)
-	}
-	got = normalizeUpdateModel(updated)
 	if !strings.Contains(got.renderCodexArtifactPicker(80, 24), "\x1b[38;2;") {
 		t.Fatalf("artifact picker should render loaded markdown image preview")
 	}
@@ -3238,10 +3209,9 @@ func TestCodexArtifactPickerKeepsTranscriptOrderAndRepetitions(t *testing.T) {
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 3 {
 		t.Fatalf("artifact picker targets = %#v, want three transcript-order targets", got.codexArtifactPicker)
 	}
@@ -3284,10 +3254,7 @@ func TestCodexArtifactPickerFiltersByFuzzyFileName(t *testing.T) {
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	for _, r := range []rune("acx") {
 		updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		if cmd != nil {
@@ -3365,15 +3332,12 @@ func TestCodexArtifactPickerRevealsSelectedFileInContainingFolder(t *testing.T) 
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil {
 		t.Fatalf("Alt+O should show the artifact picker")
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Alt+F", "folder"} {
+	for _, want := range []string{"alt+f", "folder"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("artifact picker missing containing-folder action %q: %q", want, overlay)
 		}
@@ -3437,16 +3401,7 @@ func TestCodexArtifactPickerLoadsPreviewForPathOnlyImage(t *testing.T) {
 		t.Fatalf("picker should show loading preview while path image loads: %q", preview)
 	}
 
-	rawPreviewMsg := cmd()
-	msg, ok := rawPreviewMsg.(codexArtifactPreviewMsg)
-	if !ok {
-		t.Fatalf("preview command returned %T, want codexArtifactPreviewMsg", rawPreviewMsg)
-	}
-	updated, cmd = got.Update(msg)
-	if cmd != nil {
-		t.Fatalf("preview message should not queue command, got %T", cmd)
-	}
-	got = normalizeUpdateModel(updated)
+	got = drainCmdMsgs(got, cmd)
 	if !strings.Contains(got.renderCodexArtifactPicker(80, 24), "\x1b[38;2;") {
 		t.Fatalf("picker should render loaded path image preview")
 	}
@@ -3483,10 +3438,7 @@ func TestCodexArtifactPickerListsPDFMarkdownLinksWithoutPreview(t *testing.T) {
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("PDF artifact should not queue a preview command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("PDF artifact picker state = %#v, want one target", got.codexArtifactPicker)
 	}
@@ -3584,7 +3536,7 @@ func TestRenderCodexTranscriptEntriesRendersMarkdownInsideTableCells(t *testing.
 	}
 }
 
-func TestCodexLinkPickerListsOnlyVisibleTranscriptLinks(t *testing.T) {
+func TestCodexLinkPickerDefaultsToLatestReplyLinks(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		ProjectPath: "/tmp/demo",
 		Entries: []codexapp.TranscriptEntry{
@@ -3611,14 +3563,11 @@ func TestCodexLinkPickerListsOnlyVisibleTranscriptLinks(t *testing.T) {
 	m.codexViewport.SetYOffset(2)
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
-	if cmd != nil {
-		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
-	}
-	got := normalizeUpdateModel(updated)
-	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+	got := drainCmdMsgs(normalizeUpdateModel(updated), cmd)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.activeTargets()) != 1 {
 		t.Fatalf("visible link picker state = %#v, want exactly one visible link", got.codexArtifactPicker)
 	}
-	target := got.codexArtifactPicker.Targets[0]
+	target := got.codexArtifactPicker.activeTargets()[0]
 	if target.Kind != "url" || target.Path != "https://visible.example/docs" {
 		t.Fatalf("visible link target = %#v, want visible URL", target)
 	}
