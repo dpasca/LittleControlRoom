@@ -63,6 +63,12 @@ a resumed app-server response or notification replay from temporarily
 reclassifying the same settled turn as active; a different turn id still starts
 a new lifecycle normally.
 
+Cold-resume replay reads complete JSONL records without a fixed scanner token
+limit. Inline images and tool results can exceed 32 MiB in a single record;
+their size must not prevent recovering tool receipts or later turn lifecycle
+markers. Replay holds one raw record at a time and omits tool output bodies
+from the recovered transcript.
+
 Observed recent conversational text usable for model-based "where was work left off?" classification:
 
 - `response_item.payload.type == "message"` with assistant text parts

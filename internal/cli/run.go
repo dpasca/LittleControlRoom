@@ -1041,6 +1041,13 @@ func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (s
 }
 
 func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool, demoRecordingPath string) (int, bool) {
+	closeLog, err := captureTUILog(svc.Config().DataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "prepare TUI diagnostic log: %v\n", err)
+		return 1, false
+	}
+	defer closeLog()
+
 	runCtx, cancel := context.WithCancel(ctx)
 	recordingController := demorecord.NewControllerWithDataDir(svc.Config().DataDir)
 	if strings.TrimSpace(demoRecordingPath) != "" {

@@ -447,8 +447,8 @@ func TestVisibleCodexViewUsesPromptInsteadOfPlaceholder(t *testing.T) {
 	if strings.Contains(rendered, "Message Codex") {
 		t.Fatalf("embedded Codex composer should not render the old placeholder: %q", rendered)
 	}
-	if !strings.Contains(rendered, "> ") {
-		t.Fatalf("embedded Codex composer should render a prompt marker when empty: %q", rendered)
+	if got := strings.Count(rendered, "> "); got != 1 {
+		t.Fatalf("empty embedded composer has %d prompt markers, want exactly one: %q", got, rendered)
 	}
 }
 

@@ -600,6 +600,11 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/update`: Check for a newer stable GitHub release and, after explicit confirmation, verify, install, and restart into it.
 - `/quit`: Quit the TUI.
 
+Background Go log messages during the TUI are saved to a private per-run
+`<data-dir>/crash-dumps/*-tui-*.log` file so they cannot corrupt the terminal
+display. On exit, LCR prints the diagnostic file path if any messages were
+recorded; empty files are removed.
+
 ### Inside an embedded Codex, Claude Code, OpenCode, or LCAgent pane
 
 Embedded providers expose LCR's local command subset, not every slash command

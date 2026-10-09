@@ -2,8 +2,7 @@ package cli
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"log"
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/config"
@@ -16,7 +15,7 @@ func startManagedPlaywrightStateCleanup(ctx context.Context, cfg config.AppConfi
 		cfg.PlaywrightCleanupPolicy,
 		func(_ browserctl.ManagedPlaywrightCleanupResult, err error) {
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "managed Playwright state cleanup failed: %v\n", err)
+				log.Printf("managed Playwright state cleanup failed: %v", err)
 			}
 		},
 	)

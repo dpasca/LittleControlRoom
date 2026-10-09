@@ -2,12 +2,71 @@ package codexapp
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestCodexRolloutReplayContinuesAfterOversizedToolOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout-large-output.jsonl")
+	writeCodexRolloutReplayTestFile(t, path, []any{
+		map[string]any{"type": "session_meta", "payload": map[string]any{"id": "thread-large", "cwd": "/tmp/demo"}},
+		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": "turn-large"}},
+		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "inspect the image"}},
+		map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call", "id": "fc_wait", "call_id": "call_wait", "name": "wait", "arguments": `{"cell_id":"17"}`}},
+	})
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	// Exceed the former 32 MiB scanner cap without allocating the fixture body.
+	if _, err := fmt.Fprint(file, `{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_wait","output":"`); err != nil {
+		t.Fatal(err)
+	}
+	chunk := strings.Repeat("x", 1024*1024)
+	for range 33 {
+		if _, err := file.WriteString(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fmt.Fprint(file, "\"}}\n"+
+		`{"type":"event_msg","payload":{"type":"agent_message","message":"Image inspected."}}`+"\n"+
+		`{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-large"}}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := readCodexRolloutResumeState(path, "thread-large", "/tmp/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.TurnID != "turn-large" || !state.TurnStateKnown || !state.TurnSettled {
+		t.Fatalf("rollout state = %#v, want settled turn-large", state)
+	}
+	requireTranscriptEntriesEqual(t, state.Transcript, []TranscriptEntry{
+		{Kind: TranscriptUser, Text: "inspect the image"},
+		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait completed: cell 17"},
+		{Kind: TranscriptAgent, Text: "Image inspected."},
+	})
+
+	// A malformed record must not hide a subsequent completed turn, including
+	// a valid last record that has no trailing newline yet.
+	if _, err := fmt.Fprint(file, "{invalid record}\n"+
+		`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-next"}}`+"\n"+
+		`{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-next"}}`); err != nil {
+		t.Fatal(err)
+	}
+	state, err = readCodexRolloutResumeState(path, "thread-large", "/tmp/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.TurnID != "turn-next" || !state.TurnStateKnown || !state.TurnSettled || len(state.Transcript) != 0 {
+		t.Fatalf("rollout state = %#v, want completed turn-next without replay", state)
+	}
+}
 
 func TestColdResumeRecoversInterruptedTurnToolCallsFromRollout(t *testing.T) {
 	codexHome := t.TempDir()

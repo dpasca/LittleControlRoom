@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +13,6 @@ import (
 
 	"lcroom/internal/codexstate"
 )
-
-const maxCodexRolloutReplayLineBytes = 32 * 1024 * 1024
 
 // loadCodexInterruptedTurnTranscript rebuilds only the latest unfinished or
 // aborted turn. Codex thread/resume can retain that turn's user and assistant
@@ -105,15 +104,21 @@ func readCodexRolloutResumeState(path, expectedThreadID, expectedProjectPath str
 	defer file.Close()
 
 	var replay codexInterruptedTurnReplay
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutReplayLineBytes)
-	for scanner.Scan() {
-		if err := replay.consume(scanner.Bytes(), expectedThreadID, expectedProjectPath); err != nil {
+	// Tool results and inline images can exceed Scanner's token limit. Read
+	// complete records so their tool receipts and later lifecycle events survive
+	// cold resume, retaining only one raw record at a time.
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if err := replay.consume(line, expectedThreadID, expectedProjectPath); err != nil {
 			return codexRolloutResumeState{}, err
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return codexRolloutResumeState{}, fmt.Errorf("scan codex rollout replay: %w", err)
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return codexRolloutResumeState{}, fmt.Errorf("read codex rollout replay: %w", readErr)
+		}
 	}
 	state := codexRolloutResumeState{
 		TurnID:         strings.TrimSpace(replay.turnID),
