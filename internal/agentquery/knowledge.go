@@ -8,7 +8,7 @@ import (
 
 // KnowledgeInstructions stays short enough for startup context. Detailed,
 // versioned guidance is loaded on demand through the shared query registry.
-const KnowledgeInstructions = "LCR provides built-in operating guidance through the knowledge query domain (knowledge.list and knowledge.get). Before diagnosing submodule dirtiness or changing Git worktree configuration, read the submodule-worktrees topic. LCR can prepare submodules as nested linked worktrees with shared Git configuration; a config write through a task gitdir can affect the canonical checkout and other tasks. Inspect extensions.worktreeConfig and config origins before proposing a repair."
+const KnowledgeInstructions = "LCR provides built-in operating guidance through the knowledge query domain (knowledge.list and knowledge.get). Before diagnosing submodule dirtiness or changing Git worktree configuration, read the submodule-worktrees topic. LCR can prepare submodules as nested linked worktrees with shared Git configuration; a config write through a task gitdir can affect the canonical checkout and other tasks. Inspect extensions.worktreeConfig and config origins before proposing a repair. To bring a reused submodule worktree up to the parent's pinned gitlink after a merge or pull, propose the git.submodule_align control; do not run git checkout in the shared submodule yourself."
 
 //go:embed knowledge/submodule-worktrees.md
 var submoduleWorktreesKnowledge string
@@ -23,7 +23,7 @@ func knowledgeTopics() []knowledgeTopic {
 	return []knowledgeTopic{{
 		ID:      "submodule-worktrees",
 		Title:   "LCR submodules and shared worktree configuration",
-		Summary: "Understand nested submodule worktrees, diagnose false deletions, and preserve canonical and sibling checkouts when repairing configuration.",
+		Summary: "Understand nested submodule worktrees, diagnose false deletions, align a reused worktree to the parent's gitlink with git.submodule_align, and preserve canonical and sibling checkouts when repairing configuration.",
 	}}
 }
 

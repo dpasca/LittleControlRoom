@@ -17,6 +17,9 @@ type PermissionConfirmationOptions struct {
 	ErrorText    string
 	ScrollOffset int
 	ShowDetails  bool
+	// StandingUnavailable explains why saving a standing permission is not
+	// offered for this request even though its arguments are otherwise eligible.
+	StandingUnavailable string
 }
 
 // RenderPermissionConfirmationDialog keeps choices visible while details scroll.
@@ -28,6 +31,10 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 		return "", 0, err
 	}
 	p, eligible := control.PermissionForOperation(op)
+	standingNote := ""
+	if eligible && options.StandingUnavailable != "" {
+		eligible, standingNote = false, options.StandingUnavailable
+	}
 	panelW := minInt(bodyW-4, 96)
 	width := bossPanelInnerWidth(panelW)
 	m := Model{pendingControl: &ControlProposal{Invocation: inv, Preview: options.Preview}}
@@ -62,6 +69,9 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 		if p.Limit > 0 {
 			lines = append(lines, wrappedBlockLines(fmt.Sprintf("Launch limit: %d uses including this action; renew when exhausted.", p.Limit), width)...)
 		}
+	}
+	if standingNote != "" {
+		lines = append(lines, wrappedBlockLines("No standing permission: "+standingNote, width)...)
 	}
 	if op.ResumeOnSuccess {
 		lines = append(lines, wrappedBlockLines("The caller requested automatic continuation after success. New input, stop, replacement, or restart cancels that continuation.", width)...)

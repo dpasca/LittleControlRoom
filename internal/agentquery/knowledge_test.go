@@ -29,7 +29,7 @@ func TestKnowledgeDiscoveryAndReadWithoutProjectData(t *testing.T) {
 		if result["freshness"] != "built_in_documentation" || result["truncated"] != false {
 			t.Fatalf("knowledge envelope = %#v", result)
 		}
-		for _, want := range []string{"extensions.worktreeConfig=true", "config.worktree", "--git-dir", "shared repository config"} {
+		for _, want := range []string{"extensions.worktreeConfig=true", "config.worktree", "--git-dir", "shared repository config", "git.submodule_align", "fast-forward, backward, or diverged", "standing"} {
 			if !strings.Contains(result["markdown"].(string), want) {
 				t.Fatalf("topic %s missing diagnostic guidance %q", topic.ID, want)
 			}

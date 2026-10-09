@@ -433,6 +433,12 @@ func addHelpChatLosslessPacket(args helpChatControlProposalArgs) (json.RawMessag
 }
 
 func (a *Assistant) reviewHelpChatControlProposal(ctx context.Context, req AssistantRequest, invocation control.Invocation, scopeNote string) (control.Invocation, string, model.LLMUsage, error) {
+	if invocation.Capability == control.CapabilityGitSubmoduleAlign {
+		// Its confirmation shows a live ancestry check and gates saved
+		// permissions on repository state, which only the embedded-session
+		// relay provides. Fail closed with a reason the model can relay.
+		return control.Invocation{}, "", model.LLMUsage{}, wrapControlProposalError(fmt.Errorf("%s is proposed by the embedded engineer session that owns the checkout, where the host shows the live ancestry check; Help Chat cannot propose it", invocation.Capability))
+	}
 	if invocation.Capability == control.CapabilityIntegrationsManage {
 		var input control.IntegrationsManageInput
 		if err := json.Unmarshal(invocation.Args, &input); err != nil {

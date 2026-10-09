@@ -5,12 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"lcroom/internal/control"
 	"lcroom/internal/model"
 	"lcroom/internal/store"
+	"lcroom/internal/submodulealign"
 )
+
+// submodulePreflightTimeout bounds the read-only Git inspection that backs a
+// submodule alignment proposal.
+const submodulePreflightTimeout = 30 * time.Second
 
 type Options struct {
 	Store             *store.Store
@@ -113,6 +120,14 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 		}
 		return map[string]any{"success": true, "terminal": true, "operator_confirmation": false, "requires_new_user_turn": false, "task_id": task.ID, "workflow": task.Workflow, "message": "Task metadata recorded. End this turn after submitting a worker result; the host waits for the worker to stop before review. No corrective turn or repository action was started."}, nil
 	}
+	var preflight *submodulealign.Plan
+	if capability.Name == control.CapabilityGitSubmoduleAlign {
+		plan, err := e.preflightSubmoduleAlign(ctx, invocation)
+		if err != nil {
+			return nil, err
+		}
+		preflight = &plan
+	}
 	resume := len(resumeOnSuccess) > 0 && resumeOnSuccess[0]
 	created, err := e.store.CreateControlOperation(ctx, control.Operation{
 		ResumeOnSuccess: resume,
@@ -130,7 +145,76 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 	if err != nil {
 		return nil, err
 	}
-	return e.operationReport(ctx, created, created.ID != operationID)
+	report, err := e.operationReport(ctx, created, created.ID != operationID)
+	if err != nil || preflight == nil {
+		return report, err
+	}
+	report["preflight"] = preflight
+	report["preflight_summary"] = preflight.Preview()
+	return report, nil
+}
+
+// preflightSubmoduleAlign runs the read-only inspection at proposal time so an
+// agent learns a precise refusal immediately instead of after the operator has
+// been asked. A project-scoped caller may align only its own checkout.
+func (e *Executor) preflightSubmoduleAlign(ctx context.Context, invocation control.Invocation) (submodulealign.Plan, error) {
+	var input control.GitSubmoduleAlignInput
+	if err := json.Unmarshal(invocation.Args, &input); err != nil {
+		return submodulealign.Plan{}, err
+	}
+	if e.scope == control.AuthorityScopeProject {
+		if e.originProjectPath == "" {
+			return submodulealign.Plan{}, fmt.Errorf("%s needs the calling project's path, which is unknown for this session", control.CapabilityGitSubmoduleAlign)
+		}
+		if !sameCheckoutPath(input.ParentPath, e.originProjectPath) {
+			return submodulealign.Plan{}, fmt.Errorf("%s with project scope can align only the calling project's own checkout; pass parent_path %s", control.CapabilityGitSubmoduleAlign, e.originProjectPath)
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, submodulePreflightTimeout)
+	defer cancel()
+	plan, err := submodulealign.Inspect(ctx, input.Request())
+	if err != nil {
+		var refusal *submodulealign.Refusal
+		if errors.As(err, &refusal) {
+			return submodulealign.Plan{}, fmt.Errorf("%s refused (%s): %s", control.CapabilityGitSubmoduleAlign, refusal.Code, refusal.Reason)
+		}
+		return submodulealign.Plan{}, fmt.Errorf("%s preflight failed: %w", control.CapabilityGitSubmoduleAlign, err)
+	}
+	return plan, nil
+}
+
+// StandingPermissionApplies reports whether a saved permission may authorize op
+// automatically right now. Permissions match typed arguments only, so a
+// capability whose safety depends on live repository state is rechecked here;
+// every other capability is unaffected. For a submodule alignment, the state
+// must still be a clean fast-forward to the pinned gitlink that needs no fetch.
+func StandingPermissionApplies(ctx context.Context, op control.Operation) bool {
+	if op.Capability != control.CapabilityGitSubmoduleAlign {
+		return true
+	}
+	invocation, err := control.ValidateInvocation(op.Invocation)
+	if err != nil {
+		return false
+	}
+	var input control.GitSubmoduleAlignInput
+	if json.Unmarshal(invocation.Args, &input) != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, submodulePreflightTimeout)
+	defer cancel()
+	plan, err := submodulealign.Inspect(ctx, input.Request())
+	return err == nil && plan.StandingEligible
+}
+
+func sameCheckoutPath(a, b string) bool {
+	clean := func(p string) string {
+		p = filepath.Clean(strings.TrimSpace(p))
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Clean(resolved)
+		}
+		return p
+	}
+	return clean(a) == clean(b)
 }
 
 func (e *Executor) Get(ctx context.Context, operationID string) (map[string]any, error) {
@@ -158,6 +242,9 @@ func (e *Executor) operationReport(ctx context.Context, operation control.Operat
 			allowed, err = e.store.PermissionAllowsOperation(ctx, operation)
 			if err != nil {
 				return nil, err
+			}
+			if allowed {
+				allowed = StandingPermissionApplies(ctx, operation)
 			}
 		}
 		if allowed {

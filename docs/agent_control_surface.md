@@ -214,6 +214,66 @@ scan reconciles missing checkouts and clears their TODO work links. Leftover or
 recreated directories can remain visible as orphaned worktrees. Prefer the
 dedicated operation for prompt display updates and coordinated cleanup.
 
+## Reused submodule worktree alignment
+
+After a merge or pull moves the parent's gitlink, a reused linked submodule
+worktree (the `git worktree add --detach` checkout LCR prepares under a linked
+parent worktree) stays on the old commit and the parent reports it as modified.
+`git.submodule_align` (`git` domain, project scope) moves that one worktree to
+the parent's pinned gitlink with `git -C <submodule> checkout --detach <commit>`.
+Read-only diagnosis and pinning a new gitlink in the parent's own worktree need
+no control; this is the only step that does, because a shell checkout in a
+shared submodule repository is routinely blocked as a shared-resource change.
+
+Arguments are `parent_path`, `submodule_path`, an optional full `target_commit`
+(default: the gitlink in the parent's HEAD, or in its index when staged), and an
+optional `fetch_if_missing`. A project-scoped caller can pass only its own
+checkout as `parent_path`. The host inspects without writing at three points:
+when the agent proposes, when the proposal reaches the TUI, and again at
+execution. Each refusal names its reason and code, and a refused proposal never
+reaches the operator:
+
+- the submodule worktree is not clean (staged, unstaged, or untracked changes),
+  has a branch checked out, holds an index lock, or has a merge, rebase,
+  cherry-pick, revert, or bisect in progress;
+- the checkout is not a registered linked worktree: `.git` must be a file whose
+  `gitdir` is `<common>/worktrees/<id>`, with matching `commondir` and a
+  reciprocal `gitdir` pointer, exactly one registration, and Git must resolve
+  the same top level, git directory and common directory. A canonical checkout,
+  a standalone clone, and the parent's own repository are refused;
+- the parent entry is not a merged gitlink;
+- the target is not in the shared object store and `fetch_if_missing` is unset,
+  or the move would change a nested submodule's pinned commit.
+
+The proposal and the Ctrl+G dialog show the relationship of the target to the
+current HEAD (fast-forward with a commit count, backward, diverged, or already
+aligned) and warn when the current HEAD is reachable from no ref. With
+`fetch_if_missing` and a missing target, the relationship is unknown until the
+host fetches from the submodule's remotes at execution; anything but a
+fast-forward then refuses with `requires_review` so the operator can review the
+real relationship on a new proposal. Fetching adds objects and remote-tracking
+refs to the shared repository and moves no checkout.
+
+Execution runs only `git checkout --detach --no-recurse-submodules <commit>` in
+that worktree. It never runs `git submodule update` or `sync`, never writes Git
+configuration, and never touches the canonical checkout or sibling worktrees.
+It then verifies HEAD equals the target and is detached, the parent shows no
+worktree drift for the path (an explicit target that differs from the pin
+reports `expected_commit_change`), and the `core.worktree` and
+`extensions.worktreeConfig` values and origins are unchanged. A failed check
+leaves the worktree as it is and reports the previous HEAD in the error.
+`get_control_operation` returns a structured `submodule_align` receipt.
+
+Confirmation is required. A saved permission (see Scoped action permissions)
+covers the caller, provider, `parent_path` and `submodule_path`, but only a
+clean fast-forward, or an already-aligned no-op, to the pinned gitlink that
+needs no fetch qualifies. That gate is evaluated from live repository state when
+the agent proposes (it reports `automatic_delivery` only if it holds), when the
+proposal loads, and again inside the execution. A backward, diverged, explicit,
+or fetching request always opens the dialog, which then offers no **s**/**p**.
+Help Chat does not propose this control; it is reachable from embedded engineer
+sessions, which own the checkout and receive the live check.
+
 ## Session-to-session handoffs
 
 An embedded engineer can hand work to another embedded engineer through the
@@ -347,9 +407,10 @@ explicit provider and model and cover **three launches including the action
 being approved**. The limit persists across restart and must be renewed by the
 operator; retries do not consume extra uses. Repository ownership and other
 launch checks still apply. Corrections use the existing task-specific
-`max_corrections` grant and its explicit-stop/review checks. New repository
-creation, worktree deletion, Git actions, settings and integration changes are
-not covered. Saved permissions authorize the operation category and target;
+`max_corrections` grant and its explicit-stop/review checks. `git.submodule_align` is eligible only
+for a clean fast-forward to the pinned gitlink that needs no fetch, rechecked
+against live repository state on each use. New repository creation, worktree
+deletion, other Git actions, settings and integration changes are not covered. Saved permissions authorize the operation category and target;
 they never expand the user's task scope or override an explicit stop.
 
 Matching requests report `automatic_delivery: true`, pass unrelated waiting

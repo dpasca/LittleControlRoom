@@ -30,7 +30,7 @@ func DomainSummaries() []DomainSummary {
 		{Domain: CapabilityDomainWorktree, Description: "Operator-confirmed linked worktree removal and LCR cleanup."},
 		{Domain: CapabilityDomainTodo, Description: "Project TODO capture, completion, worktrees, and tracked engineer work."},
 		{Domain: CapabilityDomainSettings, Description: "Little Control Room application settings."},
-		{Domain: CapabilityDomainGit, Description: "Git review and operator-confirmed commit preparation."},
+		{Domain: CapabilityDomainGit, Description: "Git review, operator-confirmed commit preparation, and reused submodule worktree alignment."},
 	}
 }
 
@@ -98,6 +98,10 @@ func capabilityWithCatalogMetadata(capability Capability) Capability {
 	case CapabilityGitPrepareCommit:
 		capability.Domain = CapabilityDomainGit
 		capability.Scope = AuthorityScopeProject
+	case CapabilityGitSubmoduleAlign:
+		capability.Domain = CapabilityDomainGit
+		capability.Scope = AuthorityScopeProject
+		capability.Async = true
 	}
 	return capability
 }

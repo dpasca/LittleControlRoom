@@ -1,6 +1,7 @@
 package boss
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -102,5 +103,17 @@ func TestWorktreeRemoveConfirmationNeverElidesLongTarget(t *testing.T) {
 	joined := strings.NewReplacer(" ", "", "\n", "", "│", "").Replace(ansi.Strip(view))
 	if err != nil || !strings.Contains(joined, path) || !strings.Contains(view, "no recovery archive") || !strings.Contains(view, "delete") {
 		t.Fatalf("long target confirmation clipped critical details: %s, %v", view, err)
+	}
+}
+
+func TestHelpChatDoesNotProposeSubmoduleAlignment(t *testing.T) {
+	inv, err := control.BuildProposedInvocation("align", control.CapabilityGitSubmoduleAlign,
+		json.RawMessage(`{"parent_path":"/repo","submodule_path":"asset"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = (&Assistant{}).reviewHelpChatControlProposal(context.Background(), AssistantRequest{}, inv, "")
+	if err == nil || !strings.Contains(err.Error(), "embedded engineer session") {
+		t.Fatalf("Help Chat proposal error = %v", err)
 	}
 }

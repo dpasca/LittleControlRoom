@@ -29,6 +29,7 @@ type ControlInvocationCanceledMsg struct {
 
 type ControlInvocationResultMsg struct {
 	WorktreeResult    *control.WorktreeRemoveResult
+	SubmoduleAlign    *control.GitSubmoduleAlignResult
 	IntegrationResult *integrations.Result
 	Invocation        control.Invocation
 	Status            string
@@ -841,6 +842,8 @@ func ControlProposalSubmittingStatus(inv control.Invocation) string {
 		return "Sending request to engineer task..."
 	case control.CapabilityGitPrepareCommit:
 		return "Opening commit preview..."
+	case control.CapabilityGitSubmoduleAlign:
+		return "Aligning submodule worktree..."
 	default:
 		return "Running control action..."
 	}

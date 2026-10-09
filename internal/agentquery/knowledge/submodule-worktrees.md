@@ -74,5 +74,50 @@ Prefer LCR's worktree update/merge flow when available. A repair must preserve
 gitlink commits, unpublished work, and all unrelated checkouts. Equal parent
 gitlinks do not by themselves establish clean submodule contents.
 
+## Aligning a reused worktree after a merge or pull (preferred for agents)
+
+A merge or pull in the parent can move its gitlink while the reused submodule
+worktree stays on the old commit. The parent then reports the submodule as
+modified ("new commits") although no file changed: `git -C <submodule> rev-parse
+HEAD` differs from `git -C <parent> ls-tree HEAD -- <submodule>`.
+
+Propose the `git.submodule_align` control (discover it with
+`list_control_capabilities` in the `git` domain, then
+`describe_control_capability`) instead of running `git checkout --detach` in the
+shared repository yourself. Shell checkouts in a shared submodule worktree are
+commonly blocked as shared-resource changes; the control is the sanctioned path
+and needs no Codex or other delegate.
+
+- Arguments: `parent_path` (your own checkout root), `submodule_path`, optional
+  `target_commit` (default: the gitlink in the parent's HEAD, or its index when
+  staged), optional `fetch_if_missing`.
+- It moves only that one worktree's HEAD with `git checkout --detach`. It never
+  runs `git submodule update` or `sync`, never writes Git configuration, and
+  never touches the canonical checkout or sibling worktrees. Afterwards it
+  verifies HEAD equals the target, the parent shows no gitlink drift, and the
+  `core.worktree` and `extensions.worktreeConfig` origins are unchanged.
+- It refuses, with a precise reason, unless the submodule worktree is clean
+  (staged, unstaged, untracked), detached, a registered linked worktree with
+  reciprocal gitdir pointers, free of an operation in progress, and has the
+  target commit. A target that would change a nested submodule's pin is
+  refused; align those separately. Commits are fetched only with
+  `fetch_if_missing`, from the repository's remotes into the shared object
+  store; the canonical checkout shares that store, so it holds nothing extra.
+- The proposal reports the relationship of the target to the current HEAD:
+  fast-forward, backward, or diverged. A backward or diverged move needs
+  explicit operator confirmation each time. If a fetch was needed, the
+  relationship is unknown when the operator confirms, so anything but a
+  fast-forward is refused afterwards; propose again to review it.
+- Operator confirmation is required. The operator may save a scoped standing
+  permission, but it applies only to a clean fast-forward to the pinned gitlink
+  that needs no fetch, and that is re-checked on every use. Routine post-merge
+  alignment then runs without a prompt; check `get_control_operation` for the
+  result instead of asking again.
+
+This control does not pin a new gitlink. To record a new submodule commit in the
+parent, move the submodule worktree to it and run `git add <submodule>` in the
+parent's own worktree; both are ordinary CLI work. Read-only diagnosis (status,
+`rev-parse`, `ls-tree`, config origins) also needs no control.
+
 Sources: `docs/worktree_prep.md`, `internal/worktreeprep/config.go`, and the Git
 [worktree configuration documentation](https://git-scm.com/docs/git-worktree#_configuration_file).

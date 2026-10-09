@@ -68,6 +68,14 @@ func PermissionForOperation(op Operation) (ControlPermission, bool) {
 		permission.Target = op.ProjectPath
 		permission.Limit = 3
 		remove = append(remove, "prompt", "title")
+	case CapabilityGitSubmoduleAlign:
+		// The host additionally requires a clean fast-forward to the pinned
+		// gitlink that needs no fetch, both when offering and when using a grant,
+		// so the target and fetch choice cannot widen what the grant covers.
+		var input GitSubmoduleAlignInput
+		_ = json.Unmarshal(inv.Args, &input)
+		permission.Target = input.ParentPath
+		remove = append(remove, "target_commit", "fetch_if_missing")
 	case CapabilityAgentTaskClose:
 		var input AgentTaskCloseInput
 		_ = json.Unmarshal(inv.Args, &input)

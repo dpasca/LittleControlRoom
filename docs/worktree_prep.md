@@ -107,6 +107,10 @@ When two parent worktrees update the same submodule pointer differently, Git can
 - If both sides diverged but merge cleanly inside the submodule, LCR creates and pushes an LCR-owned submodule merge branch, then stages the parent gitlink to that merge commit.
 - If the submodule content merge conflicts, LCR leaves a temporary submodule merge worktree in place and reports its path, branch, and ours/theirs SHAs. Running `/resolve` on the parent repo launches a separate background engineer session in that submodule merge worktree with instructions to resolve, verify, commit and push the submodule merge branch, and stage the parent gitlink.
 
+## Aligning A Reused Submodule Worktree
+
+When a merge or pull moves the parent's gitlink, the reused nested submodule worktree stays on its old commit and the parent shows the submodule as modified. Agents should propose the `git.submodule_align` control instead of running `git checkout` in the shared submodule: it moves only that worktree to the pinned gitlink with `git checkout --detach`, refuses unless the worktree is clean, detached, and a registered linked worktree with reciprocal gitdir pointers, and verifies the result without touching shared configuration, the canonical checkout, or sibling worktrees. See [agent_control_surface.md](agent_control_surface.md#reused-submodule-worktree-alignment) and the `submodule-worktrees` knowledge topic.
+
 ## Cleanup
 
 When LCR removes a linked worktree, it also prunes stale nested submodule worktree registrations from initialized root submodules. Merge-back and worktree update also repair canonical submodule `core.worktree` values recursively if an older sync path left one pointing at a removed linked checkout. This includes submodules inside submodules, and keeps a stale nested path from making root `git status` fail.

@@ -144,6 +144,8 @@ func (m Model) controlConfirmationTitle() string {
 		return "Engineer Task"
 	case control.CapabilityGitPrepareCommit:
 		return "Commit Preview"
+	case control.CapabilityGitSubmoduleAlign:
+		return "Align Submodule Worktree"
 	default:
 		return "Confirm Control Action"
 	}
@@ -284,6 +286,11 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 		var input control.WorktreeRemoveInput
 		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
 			return renderWorktreeRemoveConfirmation(input, width)
+		}
+	case control.CapabilityGitSubmoduleAlign:
+		var input control.GitSubmoduleAlignInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			return renderGitSubmoduleAlignConfirmation(input, m.pendingControl.Preview, width)
 		}
 	case control.CapabilityProjectArchive:
 		var input control.ProjectArchiveInput
@@ -521,6 +528,44 @@ func renderWorktreeRemoveConfirmation(input control.WorktreeRemoveInput, width i
 	} {
 		lines = append(lines, wrappedBlockLines(text, width)...)
 	}
+	return strings.Join(lines, "\n")
+}
+
+func renderGitSubmoduleAlignConfirmation(input control.GitSubmoduleAlignInput, preflight string, width int) string {
+	fetch := "no"
+	if input.FetchIfMissing {
+		fetch = "allowed when the commit is missing"
+	}
+	target := "pinned gitlink"
+	if input.TargetCommit != "" {
+		target = input.TargetCommit
+	}
+	lines := []string{
+		bossControlNoticeStyle.Render(fitLine("Write action: move one linked submodule worktree's HEAD", width)),
+		"",
+		renderBossControlDetail("Parent", input.ParentPath, width),
+		renderBossControlDetail("Submodule", input.SubmodulePath, width),
+		renderBossControlDetail("Target", target, width),
+		renderBossControlDetail("Fetch", fetch, width),
+	}
+	if preflight = strings.TrimSpace(preflight); preflight != "" {
+		// Not boxed: a box clips its tail, and the ancestry must stay readable.
+		lines = append(lines, "", bossControlSectionStyle.Render(fitLine("Checked just now", width)))
+		for _, line := range strings.Split(preflight, "\n") {
+			lines = append(lines, wrappedBlockLines(line, width)...)
+		}
+	}
+	lines = append(lines, "")
+	for _, text := range []string{
+		"Runs git checkout --detach in this worktree only. It never runs git submodule update or sync, never writes Git configuration, and leaves the canonical checkout and sibling worktrees alone.",
+		"Everything is checked again when you confirm; a changed or unclean state refuses instead of moving.",
+	} {
+		lines = append(lines, wrappedBlockLines(text, width)...)
+	}
+	lines = append(lines, "", strings.Join([]string{
+		renderBossControlAction("Enter", "align", uistyle.DialogActionPrimary),
+		renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+	}, "   "))
 	return strings.Join(lines, "\n")
 }
 

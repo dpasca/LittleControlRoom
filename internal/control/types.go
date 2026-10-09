@@ -27,6 +27,7 @@ const (
 	CapabilityTodoComplete                       CapabilityName = "todo.complete"
 	CapabilitySettingsUpdate                     CapabilityName = "settings.update"
 	CapabilityGitPrepareCommit                   CapabilityName = "git.prepare_commit"
+	CapabilityGitSubmoduleAlign                  CapabilityName = "git.submodule_align"
 )
 
 func CapabilityNameValues() []CapabilityName {
@@ -48,6 +49,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityTodoComplete,
 		CapabilitySettingsUpdate,
 		CapabilityGitPrepareCommit,
+		CapabilityGitSubmoduleAlign,
 	}
 }
 
@@ -373,6 +375,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateSettingsUpdateInvocation(inv)
 	case CapabilityGitPrepareCommit:
 		return validateGitPrepareCommitInvocation(inv)
+	case CapabilityGitSubmoduleAlign:
+		return validateGitSubmoduleAlignInvocation(inv)
 	case "":
 		return Invocation{}, fmt.Errorf("capability is required")
 	default:

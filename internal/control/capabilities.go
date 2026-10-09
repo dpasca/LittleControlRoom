@@ -443,6 +443,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return capabilityWithCatalogMetadata(SettingsUpdateCapability()), true
 	case CapabilityGitPrepareCommit:
 		return capabilityWithCatalogMetadata(GitPrepareCommitCapability()), true
+	case CapabilityGitSubmoduleAlign:
+		return capabilityWithCatalogMetadata(GitSubmoduleAlignCapability()), true
 	default:
 		return Capability{}, false
 	}

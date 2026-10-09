@@ -18,6 +18,7 @@ import (
 type externalControlProposalLoadedMsg struct {
 	operation control.Operation
 	automatic bool
+	preflight externalControlPreflight
 	err       error
 }
 
@@ -37,13 +38,16 @@ type externalControlCancellationRecordedMsg struct {
 }
 
 type externalControlConfirmationState struct {
-	operation    control.Operation
-	preview      string
-	reviewing    bool
-	submitting   bool
-	errorText    string
-	scrollOffset int
-	showDetails  bool
+	operation control.Operation
+	preview   string
+	// standingUnavailable is set when the arguments could be saved as a standing
+	// permission but the live repository state does not qualify.
+	standingUnavailable string
+	reviewing           bool
+	submitting          bool
+	errorText           string
+	scrollOffset        int
+	showDetails         bool
 }
 
 const externalControlReviewKey = "ctrl+g"
@@ -59,7 +63,13 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 			return externalControlProposalLoadedMsg{err: errors.New("service store unavailable")}
 		}
 		operation, automatic, err := svc.Store().ConfirmProjectCollaboration(parent, operationID)
-		if err == nil && !automatic {
+		var preflight externalControlPreflight
+		if err == nil && !automatic && operation.Status == control.OperationWaitingForConfirmation {
+			// Saved permissions match typed arguments only. Some capabilities also
+			// depend on live repository state, so inspect it before consulting them.
+			preflight = inspectSubmoduleAlignProposal(parent, operation)
+		}
+		if err == nil && !automatic && preflight.allowsStandingPermission() {
 			operation, automatic, err = svc.Store().ConfirmControlPermission(parent, operationID)
 		}
 		if err == nil && !automatic {
@@ -67,7 +77,7 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 			// It consumes one round only when it actually authorizes this run.
 			operation, automatic, err = svc.Store().ConfirmDelegationSupervision(parent, operationID)
 		}
-		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, err: err}
+		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, preflight: preflight, err: err}
 	}
 }
 
@@ -97,6 +107,12 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		}
 		return m, nil
 	}
+	if msg.preflight.refusal != nil {
+		// Never ask the operator to confirm something that would refuse. The
+		// agent learns the precise reason from the failed operation.
+		m.status = "Agent request refused: " + msg.preflight.refusal.Error()
+		return m, m.failExternalControlOperationCmd(msg.operation.ID, msg.preflight.refusal)
+	}
 	if m.externalControlConfirmation != nil {
 		m.status = "Agent control proposal queued behind the current confirmation"
 		return m, m.retryExternalControlProposalCmd(msg.operation)
@@ -112,9 +128,13 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		firstNonEmptyTrimmed(msg.operation.Provider, "An embedded agent"),
 		msg.operation.Capability,
 	)
+	if msg.preflight.applies {
+		preview = msg.preflight.preview
+	}
 	m.externalControlConfirmation = &externalControlConfirmationState{
-		operation: msg.operation,
-		preview:   preview,
+		operation:           msg.operation,
+		preview:             preview,
+		standingUnavailable: msg.preflight.standingNote,
 	}
 	m.status = "Agent request waiting; current input remains active until Ctrl+G opens review"
 	return m, nil
@@ -194,7 +214,7 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 		m.externalControlConfirmation = &state
 		return m, nil
 	case "s", "p":
-		if _, ok := control.PermissionForOperation(m.externalControlConfirmation.operation); !ok {
+		if _, ok := control.PermissionForOperation(m.externalControlConfirmation.operation); !ok || m.externalControlConfirmation.standingUnavailable != "" {
 			return m, nil
 		}
 		state := *m.externalControlConfirmation
@@ -236,7 +256,7 @@ func (m Model) externalControlConfirmationPanel(bodyW, bodyH int) (string, int, 
 	return bossui.RenderPermissionConfirmationDialog(confirmation.operation, bossui.PermissionConfirmationOptions{
 		Preview: confirmation.preview, Busy: confirmation.submitting,
 		ErrorText: confirmation.errorText, ScrollOffset: confirmation.scrollOffset,
-		ShowDetails: confirmation.showDetails,
+		ShowDetails: confirmation.showDetails, StandingUnavailable: confirmation.standingUnavailable,
 	}, bodyW, bodyH)
 }
 
@@ -310,6 +330,9 @@ func (m Model) recordExternalControlResultCmd(msg bossui.ControlInvocationResult
 		resultPayload := map[string]any{"status": strings.TrimSpace(msg.Status)}
 		if msg.WorktreeResult != nil {
 			resultPayload["worktree"] = msg.WorktreeResult
+		}
+		if msg.SubmoduleAlign != nil {
+			resultPayload["submodule_align"] = msg.SubmoduleAlign
 		}
 		if msg.IntegrationResult != nil {
 			resultPayload["integration_result"] = msg.IntegrationResult

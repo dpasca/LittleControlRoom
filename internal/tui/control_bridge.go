@@ -323,6 +323,13 @@ func (m Model) executeValidatedControlInvocation(normalized control.Invocation) 
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeGitPrepareCommitControlWithOutcome(input)
+	case control.CapabilityGitSubmoduleAlign:
+		var input control.GitSubmoduleAlignInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeGitSubmoduleAlignControl(normalized, input)
 	default:
 		err := fmt.Errorf("unsupported capability: %s", normalized.Capability)
 		m.status = "Control request unsupported: " + string(normalized.Capability)
@@ -429,6 +436,9 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 		if removed, ok := msg.(worktreeActionMsg); ok {
 			result.WorktreeResult = removed.controlRemovalResult
 		}
+		if aligned, ok := msg.(submoduleAlignActionMsg); ok {
+			result.SubmoduleAlign = aligned.result
+		}
 		if msg == nil {
 			return result
 		}
@@ -458,6 +468,8 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 	}
 	switch result := msg.(type) {
 	case worktreeActionMsg:
+		return result.status, result.err
+	case submoduleAlignActionMsg:
 		return result.status, result.err
 	case bossAgentTaskClosedMsg:
 		return result.status, result.err
