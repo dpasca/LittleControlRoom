@@ -43,6 +43,7 @@ type externalControlConfirmationState struct {
 	submitting   bool
 	errorText    string
 	scrollOffset int
+	showDetails  bool
 }
 
 const externalControlReviewKey = "ctrl+g"
@@ -157,6 +158,12 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 	}
 	invocation := m.externalControlConfirmation.operation.Invocation
 	switch msg.String() {
+	case "d":
+		state := *m.externalControlConfirmation
+		state.showDetails = !state.showDetails
+		state.scrollOffset = 0
+		m.externalControlConfirmation = &state
+		return m, nil
 	case "up", "down", "pgup", "pgdown", "home", "end":
 		layout := m.bodyLayout()
 		width, height := layout.width, layout.height
@@ -229,6 +236,7 @@ func (m Model) externalControlConfirmationPanel(bodyW, bodyH int) (string, int, 
 	return bossui.RenderPermissionConfirmationDialog(confirmation.operation, bossui.PermissionConfirmationOptions{
 		Preview: confirmation.preview, Busy: confirmation.submitting,
 		ErrorText: confirmation.errorText, ScrollOffset: confirmation.scrollOffset,
+		ShowDetails: confirmation.showDetails,
 	}, bodyW, bodyH)
 }
 

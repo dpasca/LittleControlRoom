@@ -106,4 +106,13 @@ func TestPermissionReviewScrollDoesNotApprove(t *testing.T) {
 	if m.externalControlConfirmation.scrollOffset != 0 {
 		t.Fatal("Home did not reset scroll")
 	}
+	for _, wantDetails := range []bool{true, false} {
+		m.externalControlConfirmation.scrollOffset = 10
+		updated, cmd := m.updateExternalControlConfirmationMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+		m = normalizeUpdateModel(updated)
+		state := m.externalControlConfirmation
+		if cmd != nil || state.submitting || state.showDetails != wantDetails || state.scrollOffset != 0 {
+			t.Fatal("details toggle changed approval state or retained the old scroll position")
+		}
+	}
 }

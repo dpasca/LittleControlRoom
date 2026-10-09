@@ -333,8 +333,9 @@ Permissions match the exact host-bound caller project/provider, capability,
 target and validated settings. Session permissions additionally match the
 host control key. They do not inherit to sibling worktrees or other providers.
 Only explicitly designated content fields (such as the prompt or TODO text)
-may vary. The dialog shows the scope and any use limit; arrows, Page Up/Down and
-Home/End scroll the details while approval choices stay visible. **/collab** lists both
+may vary. The dialog shows the scope and any use limit with colored key labels.
+**d** shows or hides the full request JSON, which is hidden by default. Arrows,
+Page Up/Down and Home/End scroll while approval choices stay visible. **/collab** lists both
 message pairs and action permissions, with lowercase **r** to revoke a selection.
 Revocation affects requests not yet authorized, including already-claimed ones.
 

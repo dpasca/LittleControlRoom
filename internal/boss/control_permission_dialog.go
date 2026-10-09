@@ -16,6 +16,7 @@ type PermissionConfirmationOptions struct {
 	Busy         bool
 	ErrorText    string
 	ScrollOffset int
+	ShowDetails  bool
 }
 
 // RenderPermissionConfirmationDialog keeps choices visible while details scroll.
@@ -36,27 +37,37 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 	if i := strings.LastIndex(content, "\n"); i >= 0 {
 		content = content[:i]
 	}
-	// Summary renderers intentionally shorten prompts and omit advanced settings.
-	// Keep the complete validated request reachable before granting reuse.
-	var details bytes.Buffer
-	if err := json.Indent(&details, inv.Args, "", "  "); err == nil {
-		content += "\n\n" + bossControlSectionStyle.Render("Full request details") + "\n" + strings.Join(wrappedBlockLines(details.String(), width), "\n")
+	// Keep the full request inspectable without making routine approvals taller.
+	if options.ShowDetails {
+		var details bytes.Buffer
+		if err := json.Indent(&details, inv.Args, "", "  "); err == nil {
+			content += "\n\n" + bossControlSectionStyle.Render("Full request details") + "\n" + strings.Join(wrappedBlockLines(details.String(), width), "\n")
+		}
 	}
 	lines := []string{renderBossControlDetail("Caller", op.ProjectPath, width)}
+	permissionTone := uistyle.DialogActionSecondary
+	if options.Busy {
+		permissionTone = uistyle.DialogActionDisabled
+	}
 	if eligible {
 		lines = append(lines, renderBossControlDetail("Permission", string(p.Capability)+" → "+p.Target, width))
-		for _, line := range []string{"s allows matching requests from this calling session; p saves that permission for future sessions of this provider in this caller project.", "Exact target and reviewed model/resource settings stay fixed. Manage or revoke with /collab."} {
-			lines = append(lines, wrappedBlockLines(line, width)...)
+		session := renderBossControlAction("s", "this caller session", permissionTone)
+		saved := renderBossControlAction("p", "future "+op.Provider+" sessions here", permissionTone)
+		if lipgloss.Width(session)+3+lipgloss.Width(saved) <= width {
+			lines = append(lines, session+"   "+saved)
+		} else {
+			lines = append(lines, session, saved)
 		}
+		lines = append(lines, wrappedBlockLines("Same target and settings; manage or revoke with /collab.", width)...)
 		if p.Limit > 0 {
-			lines = append(lines, wrappedBlockLines(fmt.Sprintf("Launch/continuation limit: %d uses including this action; renew explicitly when exhausted.", p.Limit), width)...)
+			lines = append(lines, wrappedBlockLines(fmt.Sprintf("Launch limit: %d uses including this action; renew when exhausted.", p.Limit), width)...)
 		}
 	}
 	if op.ResumeOnSuccess {
 		lines = append(lines, wrappedBlockLines("The caller requested automatic continuation after success. New input, stop, replacement, or restart cancels that continuation.", width)...)
 	}
 	if _, ok := control.CollaborationForOperation(op); ok {
-		lines = append(lines, wrappedBlockLines("a allows messages in both directions between these projects, including future sessions.", width)...)
+		lines = append(lines, renderBossControlAction("a", "messages both ways, including future sessions", permissionTone))
 	}
 	content = strings.Join(lines, "\n") + "\n\n" + content
 	type action struct {
@@ -93,7 +104,12 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 	} else if options.ErrorText != "" {
 		rows = append([]string{fitLine(options.ErrorText, width)}, rows...)
 	}
-	rows = append([]string{renderBossControlAction("↑/↓/PgUp/PgDn", "scroll · Home/End", uistyle.DialogActionNavigate)}, rows...)
+	detailsLabel := "show JSON"
+	if options.ShowDetails {
+		detailsLabel = "hide JSON"
+	}
+	navigation := renderBossControlAction("d", detailsLabel, uistyle.DialogActionNavigate) + "   " + renderBossControlAction("↑/↓/PgUp/PgDn", "scroll · Home/End", uistyle.DialogActionNavigate)
+	rows = append([]string{navigation}, rows...)
 	footer := strings.Join(rows, "\n")
 	footerH := countBlockLines(footer)
 	panelH := minInt(countBlockLines(content)+footerH+4, maxInt(8, bodyH-2))
