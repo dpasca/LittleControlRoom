@@ -95,7 +95,7 @@ func TestSubmoduleAlignDialogShowsAncestryAndOffersAStandingPermissionForFastFor
 	m := h.review(h.propose())
 
 	view := m.View()
-	for _, want := range []string{"Align Submodule Worktree", "fast-forward (+1 commits)", "eligible", "allow for session", "save permission"} {
+	for _, want := range []string{"Align Submodule Worktree", "fast-forward (+1 commits)", "eligible", "For this Claude Code session", "Always, from any Claude Code session"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("dialog missing %q:\n%s", want, view)
 		}
@@ -111,17 +111,17 @@ func TestSubmoduleAlignBackwardMoveShowsAncestryAndNeverOffersAStandingPermissio
 	m := h.review(h.propose())
 
 	view := m.View()
-	for _, want := range []string{"BACKWARD", "No standing permission", "Enter"} {
+	for _, want := range []string{"BACKWARD", "Can't be saved as a permission", "allow once"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("dialog missing %q:\n%s", want, view)
 		}
 	}
-	for _, unwanted := range []string{"allow for session", "save permission"} {
+	for _, unwanted := range []string{"For this Claude Code session", "Always, from any"} {
 		if strings.Contains(view, unwanted) {
 			t.Fatalf("dialog offers %q for a backward move:\n%s", unwanted, view)
 		}
 	}
-	for _, key := range []string{"s", "p"} {
+	for _, key := range []string{"2", "3"} {
 		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 		if cmd != nil || normalizeUpdateModel(updated).externalControlConfirmation.submitting {
 			t.Fatalf("key %q saved a standing permission for a backward move", key)
@@ -157,7 +157,7 @@ func TestSubmoduleAlignSavedPermissionRunsAutomaticallyOnlyForCleanFastForward(t
 	first := h.propose()
 	m := h.review(first)
 
-	updated, save := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	updated, save := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
 	m = normalizeUpdateModel(updated)
 	if save == nil {
 		t.Fatal("eligible request could not save a permission")

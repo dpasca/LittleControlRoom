@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -17,9 +19,85 @@ type PermissionConfirmationOptions struct {
 	ErrorText    string
 	ScrollOffset int
 	ShowDetails  bool
+	// Selected indexes PermissionChoices for the same operation.
+	Selected int
 	// StandingUnavailable explains why saving a standing permission is not
 	// offered for this request even though its arguments are otherwise eligible.
 	StandingUnavailable string
+}
+
+// PermissionChoice is one approval scope offered by the permission dialog.
+type PermissionChoice int
+
+const (
+	PermissionAllowOnce PermissionChoice = iota
+	PermissionAllowSession
+	PermissionAllowAlways
+	PermissionAllowPair
+)
+
+// PermissionChoices lists approval scopes from narrowest to broadest. When a
+// two-way message grant is available it replaces the one-way standing
+// permission, so the dialog never offers two different kinds of "always".
+func PermissionChoices(op control.Operation, standingUnavailable string) []PermissionChoice {
+	choices := []PermissionChoice{PermissionAllowOnce}
+	_, standing := control.PermissionForOperation(op)
+	standing = standing && standingUnavailable == ""
+	if standing {
+		choices = append(choices, PermissionAllowSession)
+	}
+	if _, ok := control.CollaborationForOperation(op); ok {
+		choices = append(choices, PermissionAllowPair)
+	} else if standing {
+		choices = append(choices, PermissionAllowAlways)
+	}
+	return choices
+}
+
+func permissionProviderLabel(op control.Operation) string {
+	if label := control.Provider(op.Provider).Label(); label != "" {
+		return label
+	}
+	if op.Provider != "" {
+		return op.Provider
+	}
+	return "agent"
+}
+
+func permissionChoiceLabel(op control.Operation, choice PermissionChoice) string {
+	provider := permissionProviderLabel(op)
+	switch choice {
+	case PermissionAllowSession:
+		return "For this " + provider + " session"
+	case PermissionAllowAlways:
+		return "Always, from any " + provider + " session in " + filepath.Base(op.ProjectPath)
+	case PermissionAllowPair:
+		target := ""
+		if input, err := engineerSendPromptInputFromInvocation(op.Invocation); err == nil {
+			target = filepath.Base(input.ProjectPath)
+		}
+		return "Always, messages both ways: " + filepath.Base(op.ProjectPath) + " ↔ " + target
+	default:
+		return "Just this once"
+	}
+}
+
+// permissionChoiceHint explains the highlighted choice in plain terms.
+func permissionChoiceHint(op control.Operation, choice PermissionChoice, limit int) string {
+	same := " Same action, target and settings only; revoke with /collab."
+	if limit > 0 {
+		same += fmt.Sprintf(" Covers %d launches including this one.", limit)
+	}
+	switch choice {
+	case PermissionAllowSession:
+		return "Matching requests from this " + permissionProviderLabel(op) + " session run without asking." + same
+	case PermissionAllowAlways:
+		return "Matching requests from this and future " + permissionProviderLabel(op) + " sessions in this project run without asking." + same
+	case PermissionAllowPair:
+		return "Messages between these two projects, in either direction and from any session, are delivered without asking. Revoke with /collab."
+	default:
+		return "Runs this request only; the agent asks again next time."
+	}
 }
 
 // RenderPermissionConfirmationDialog keeps choices visible while details scroll.
@@ -31,10 +109,8 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 		return "", 0, err
 	}
 	p, eligible := control.PermissionForOperation(op)
-	standingNote := ""
-	if eligible && options.StandingUnavailable != "" {
-		eligible, standingNote = false, options.StandingUnavailable
-	}
+	choices := PermissionChoices(op, options.StandingUnavailable)
+	selected := maxInt(0, minInt(options.Selected, len(choices)-1))
 	panelW := minInt(bodyW-4, 96)
 	width := bossPanelInnerWidth(panelW)
 	m := Model{pendingControl: &ControlProposal{Invocation: inv, Preview: options.Preview}}
@@ -51,54 +127,64 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 			content += "\n\n" + bossControlSectionStyle.Render("Full request details") + "\n" + strings.Join(wrappedBlockLines(details.String(), width), "\n")
 		}
 	}
-	lines := []string{renderBossControlDetail("Caller", op.ProjectPath, width)}
-	permissionTone := uistyle.DialogActionSecondary
-	if options.Busy {
-		permissionTone = uistyle.DialogActionDisabled
-	}
-	if eligible {
-		lines = append(lines, renderBossControlDetail("Permission", string(p.Capability)+" → "+p.Target, width))
-		session := renderBossControlAction("s", "this caller session", permissionTone)
-		saved := renderBossControlAction("p", "future "+op.Provider+" sessions here", permissionTone)
-		if lipgloss.Width(session)+3+lipgloss.Width(saved) <= width {
-			lines = append(lines, session+"   "+saved)
-		} else {
-			lines = append(lines, session, saved)
-		}
-		lines = append(lines, wrappedBlockLines("Same target and settings; manage or revoke with /collab.", width)...)
-		if p.Limit > 0 {
-			lines = append(lines, wrappedBlockLines(fmt.Sprintf("Launch limit: %d uses including this action; renew when exhausted.", p.Limit), width)...)
-		}
-	}
-	if standingNote != "" {
-		lines = append(lines, wrappedBlockLines("No standing permission: "+standingNote, width)...)
+	lines := []string{renderBossControlDetail("From", permissionProviderLabel(op)+" · "+op.ProjectPath, width)}
+	if eligible && options.StandingUnavailable != "" {
+		lines = append(lines, wrappedBlockLines("Can't be saved as a permission: "+options.StandingUnavailable, width)...)
 	}
 	if op.ResumeOnSuccess {
 		lines = append(lines, wrappedBlockLines("The caller requested automatic continuation after success. New input, stop, replacement, or restart cancels that continuation.", width)...)
 	}
-	if _, ok := control.CollaborationForOperation(op); ok {
-		lines = append(lines, renderBossControlAction("a", "messages both ways, including future sessions", permissionTone))
-	}
 	content = strings.Join(lines, "\n") + "\n\n" + content
-	type action struct {
-		key, label string
-		tone       uistyle.DialogActionTone
-	}
-	actions := []action{{"Enter", "allow once", uistyle.DialogActionPrimary}}
-	if eligible {
-		actions = append(actions, action{"s", "allow for session", uistyle.DialogActionSecondary}, action{"p", "save permission", uistyle.DialogActionSecondary})
-	}
-	if _, ok := control.CollaborationForOperation(op); ok {
-		actions = append(actions, action{"a", "always allow this pair", uistyle.DialogActionSecondary})
-	}
-	actions = append(actions, action{"Esc", "cancel", uistyle.DialogActionCancel})
+
 	var rows []string
-	row := ""
-	for _, a := range actions {
-		if options.Busy {
-			a.tone = uistyle.DialogActionDisabled
+	if len(choices) > 1 {
+		rows = append(rows, bossControlSectionStyle.Render("Allow this request?"))
+		for i, choice := range choices {
+			marker, tone := "  ", uistyle.DialogActionSecondary
+			if i == selected {
+				marker, tone = "▸ ", uistyle.DialogActionPrimary
+			}
+			if options.Busy {
+				tone = uistyle.DialogActionDisabled
+			}
+			rows = append(rows, fitStyledLine(marker+renderBossControlAction(strconv.Itoa(i+1), permissionChoiceLabel(op, choice), tone), width))
 		}
-		chip := renderBossControlAction(a.key, a.label, a.tone)
+		for _, line := range wrappedBlockLines(permissionChoiceHint(op, choices[selected], p.Limit), width) {
+			rows = append(rows, bossControlLabelStyle.Render(line))
+		}
+	}
+	if options.Busy {
+		rows = append(rows, "Saving approval...")
+	} else if options.ErrorText != "" {
+		rows = append(rows, fitLine(options.ErrorText, width))
+	}
+	confirmLabel := "confirm"
+	if len(choices) == 1 {
+		confirmLabel = "allow once"
+	}
+	actionTone := func(tone uistyle.DialogActionTone) uistyle.DialogActionTone {
+		if options.Busy {
+			return uistyle.DialogActionDisabled
+		}
+		return tone
+	}
+	detailsLabel := "show JSON"
+	if options.ShowDetails {
+		detailsLabel = "hide JSON"
+	}
+	chips := []string{
+		renderBossControlAction("Enter", confirmLabel, actionTone(uistyle.DialogActionPrimary)),
+		renderBossControlAction("Esc", "deny", actionTone(uistyle.DialogActionCancel)),
+	}
+	if len(choices) > 1 {
+		chips = append(chips, renderBossControlAction("↑/↓", "choose", uistyle.DialogActionNavigate))
+	}
+	chips = append(chips,
+		renderBossControlAction("d", detailsLabel, uistyle.DialogActionNavigate),
+		renderBossControlAction("PgUp/PgDn", "scroll", uistyle.DialogActionNavigate),
+	)
+	row := ""
+	for _, chip := range chips {
 		if row != "" && lipgloss.Width(row)+3+lipgloss.Width(chip) > width {
 			rows = append(rows, row)
 			row = ""
@@ -109,17 +195,6 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 		row += chip
 	}
 	rows = append(rows, row)
-	if options.Busy {
-		rows = append([]string{"Saving permission..."}, rows...)
-	} else if options.ErrorText != "" {
-		rows = append([]string{fitLine(options.ErrorText, width)}, rows...)
-	}
-	detailsLabel := "show JSON"
-	if options.ShowDetails {
-		detailsLabel = "hide JSON"
-	}
-	navigation := renderBossControlAction("d", detailsLabel, uistyle.DialogActionNavigate) + "   " + renderBossControlAction("↑/↓/PgUp/PgDn", "scroll · Home/End", uistyle.DialogActionNavigate)
-	rows = append([]string{navigation}, rows...)
 	footer := strings.Join(rows, "\n")
 	footerH := countBlockLines(footer)
 	panelH := minInt(countBlockLines(content)+footerH+4, maxInt(8, bodyH-2))

@@ -16,7 +16,7 @@ import (
 )
 
 func TestScopedPermissionUIRequiresReviewAndIgnoresRepeatSave(t *testing.T) {
-	for _, key := range []string{"s", "p"} {
+	for _, key := range []string{"2", "3", "down+enter"} {
 		t.Run(key, func(t *testing.T) {
 			ctx := t.Context()
 			st, err := store.Open(filepath.Join(t.TempDir(), "state.sqlite"))
@@ -45,12 +45,21 @@ func TestScopedPermissionUIRequiresReviewAndIgnoresRepeatSave(t *testing.T) {
 			}
 			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 			m = normalizeUpdateModel(updated)
-			updated, save := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+			press := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+			if key == "down+enter" {
+				updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+				m = normalizeUpdateModel(updated)
+				if cmd != nil || m.externalControlConfirmation.submitting {
+					t.Fatal("moving the selection approved")
+				}
+				press = tea.KeyMsg{Type: tea.KeyEnter}
+			}
+			updated, save := m.Update(press)
 			m = normalizeUpdateModel(updated)
 			if save == nil || !m.externalControlConfirmation.submitting {
 				t.Fatal("missing submission state")
 			}
-			if _, again := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}); again != nil {
+			if _, again := m.Update(press); again != nil {
 				t.Fatal("repeat save")
 			}
 			updated, execute := m.Update(save())
@@ -66,7 +75,7 @@ func TestScopedPermissionUIRequiresReviewAndIgnoresRepeatSave(t *testing.T) {
 			if err != nil || len(permissions) != 1 {
 				t.Fatal(permissions, err)
 			}
-			if (permissions[0].SessionKey != "") != (key == "s") {
+			if (permissions[0].SessionKey != "") != (key != "3") {
 				t.Fatal("wrong permission lifetime", permissions)
 			}
 			msg := m.projectCollaborationsCmd(path, nil)().(projectCollaborationsLoadedMsg)
@@ -93,7 +102,7 @@ func TestPermissionReviewScrollDoesNotApprove(t *testing.T) {
 		reviewing: true,
 		operation: control.Operation{Capability: control.CapabilityEngineerSendPrompt, ProjectPath: "/caller", Provider: "codex", SessionKey: "key", Invocation: control.Invocation{Capability: control.CapabilityEngineerSendPrompt, Args: args}},
 	}}
-	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyPgDown, tea.KeyEnd, tea.KeyUp, tea.KeyPgUp, tea.KeyHome} {
+	for _, key := range []tea.KeyType{tea.KeyDown, tea.KeyPgDown, tea.KeyEnd, tea.KeyUp, tea.KeyPgUp, tea.KeyHome, tea.KeyDown, tea.KeyDown, tea.KeyDown} {
 		updated, cmd := m.updateExternalControlConfirmationMode(tea.KeyMsg{Type: key})
 		m = normalizeUpdateModel(updated)
 		if cmd != nil || m.externalControlConfirmation == nil || m.externalControlConfirmation.submitting {
@@ -105,6 +114,9 @@ func TestPermissionReviewScrollDoesNotApprove(t *testing.T) {
 	}
 	if m.externalControlConfirmation.scrollOffset != 0 {
 		t.Fatal("Home did not reset scroll")
+	}
+	if m.externalControlConfirmation.selected != 2 {
+		t.Fatal("arrows did not move the selection within the three choices", m.externalControlConfirmation.selected)
 	}
 	for _, wantDetails := range []bool{true, false} {
 		m.externalControlConfirmation.scrollOffset = 10

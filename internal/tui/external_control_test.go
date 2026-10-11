@@ -353,7 +353,7 @@ func TestProjectCollaborationApprovalUIAndAutomaticFollowup(t *testing.T) {
 	m.height = 40
 	updated, _ := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{operation: claimed})
 	m = normalizeUpdateModel(updated)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
 	m = normalizeUpdateModel(updated)
 	pairs, _ := st.ListProjectCollaborations(ctx, origin)
 	if len(pairs) != 0 {
@@ -362,17 +362,20 @@ func TestProjectCollaborationApprovalUIAndAutomaticFollowup(t *testing.T) {
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 	m = normalizeUpdateModel(updated)
 	view := m.View()
-	for _, want := range []string{"Project Collaboration", "always allow this pair", origin, target, "/collab"} {
+	for _, want := range []string{"Project Collaboration", "Always, messages both ways: crypto_desk ↔ crypto", origin} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q from %s", want, view)
 		}
 	}
-	updated, save := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	if strings.Contains(view, "Always, from any") {
+		t.Fatal("handoff offers a second, one-way kind of always")
+	}
+	updated, save := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
 	m = normalizeUpdateModel(updated)
 	if save == nil || !m.externalControlConfirmation.submitting {
 		t.Fatal("approval not submitting")
 	}
-	_, duplicate := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	_, duplicate := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
 	if duplicate != nil {
 		t.Fatal("repeat approval submitted twice")
 	}

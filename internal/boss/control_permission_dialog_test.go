@@ -19,10 +19,13 @@ func TestPermissionChoicesRemainVisibleWithLongPrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 		plain := strings.Join(strings.Fields(ansi.Strip(view)), " ")
-		for _, want := range []string{"Enter allow once", "s allow for session", "p save permission", "a always allow this pair", "Esc cancel"} {
+		for _, want := range []string{"1 Just this once", "2 For this Codex session", "3 Always, messages both ways: caller ↔ target", "Enter confirm", "Esc deny"} {
 			if !strings.Contains(plain, want) {
 				t.Fatalf("height %d missing %q: %s", height, want, plain)
 			}
+		}
+		if strings.Contains(plain, "Always, from any") {
+			t.Fatalf("height %d offers two kinds of always: %s", height, plain)
 		}
 	}
 }
@@ -53,13 +56,34 @@ func TestPermissionDetailsCanBeReadOnShortScreens(t *testing.T) {
 		}
 		plain := strings.Join(strings.Fields(ansi.Strip(view)), " ")
 		readable += plain + "\n"
-		if !strings.Contains(plain, "p save permission") {
+		if !strings.Contains(plain, "1 Just this once") {
 			t.Fatal("scrolling hid permission choices")
 		}
 	}
 	for _, want := range []string{"Current defaults", "worker", "Last prompt line"} {
 		if !strings.Contains(readable, want) {
 			t.Fatalf("cannot review %q on a short screen", want)
+		}
+	}
+}
+
+func TestPermissionChoicesExplainTheHighlightedScope(t *testing.T) {
+	args, _ := json.Marshal(control.TodoAddInput{ProjectPath: "/projects/webshop", Text: "Track progress"})
+	op := control.Operation{Capability: control.CapabilityTodoAdd, ProjectPath: "/projects/webshop", Provider: "codex", SessionKey: "key", Invocation: control.Invocation{Capability: control.CapabilityTodoAdd, Args: args}}
+	if got := PermissionChoices(op, ""); len(got) != 3 || got[2] != PermissionAllowAlways {
+		t.Fatalf("choices = %v", got)
+	}
+	if got := PermissionChoices(op, "needs a fetch"); len(got) != 1 {
+		t.Fatalf("unavailable standing permission still offered: %v", got)
+	}
+	for selected, want := range []string{"asks again next time", "from this Codex session run without asking", "future Codex sessions in this project"} {
+		view, _, err := RenderPermissionConfirmationDialog(op, PermissionConfirmationOptions{Selected: selected}, 100, 40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain := strings.Join(strings.Fields(ansi.Strip(view)), " ")
+		if !strings.Contains(plain, "3 Always, from any Codex session in webshop") || !strings.Contains(plain, want) {
+			t.Fatalf("selection %d missing %q: %s", selected, want, plain)
 		}
 	}
 }

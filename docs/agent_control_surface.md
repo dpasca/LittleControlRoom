@@ -270,7 +270,7 @@ clean fast-forward, or an already-aligned no-op, to the pinned gitlink that
 needs no fetch qualifies. That gate is evaluated from live repository state when
 the agent proposes (it reports `automatic_delivery` only if it holds), when the
 proposal loads, and again inside the execution. A backward, diverged, explicit,
-or fetching request always opens the dialog, which then offers no **s**/**p**.
+or fetching request always opens the dialog, which then offers only one-time approval.
 Help Chat does not propose this control; it is reachable from embedded engineer
 sessions, which own the checkout and receive the live check.
 
@@ -349,9 +349,10 @@ merges, pushes, or worktree removal.
 
 ### Approve collaboration once per project pair
 
-At an eligible engineer handoff, open review with **Ctrl+G**. **Enter** sends
-only that message. **a** approves collaboration between the displayed projects
-and sends the message. This permission is bidirectional, persists in SQLite,
+At an eligible engineer handoff, open review with **Ctrl+G**. **1** (the
+default **Enter** choice) sends only that message. **3**, "Always, messages both
+ways", approves collaboration between the displayed projects and sends the
+message. This permission is bidirectional, persists in SQLite,
 and applies to future sessions in those two exact project paths. It does not
 implicitly include sibling worktrees, renamed folders, or other projects.
 
@@ -383,19 +384,22 @@ provider sessions to refresh their MCP descriptions and generated runtime skill.
 
 ## Scoped action permissions
 
-External embedded callers can choose **s** (allow for this calling session) or
-**p** (save permission for future sessions) in an eligible action's **Ctrl+G**
-review. **Enter** still approves only that action; **a** retains the existing
-bidirectional message-pair grant. No permission is created by merely proposing
-an action. Agents cannot create, edit, or revoke permissions through MCP.
+An eligible action's **Ctrl+G** review lists numbered choices from narrowest to
+broadest: **1** just this once, **2** for this calling session, and **3** always,
+from any session of the same provider in the calling project. Arrows move the
+highlight (initially **1**), **Enter** confirms it, and a number key chooses and
+confirms directly; a short line explains the highlighted scope. On eligible
+engineer handoffs, **3** is instead the bidirectional message-pair grant, so the
+dialog never offers two kinds of "always". **Esc** denies the request. No
+permission is created by merely proposing an action. Agents cannot create, edit, or revoke permissions through MCP.
 
 Permissions match the exact host-bound caller project/provider, capability,
 target and validated settings. Session permissions additionally match the
 host control key. They do not inherit to sibling worktrees or other providers.
 Only explicitly designated content fields (such as the prompt or TODO text)
 may vary. The dialog shows the scope and any use limit with colored key labels.
-**d** shows or hides the full request JSON, which is hidden by default. Arrows,
-Page Up/Down and Home/End scroll while approval choices stay visible. **/collab** lists both
+**d** shows or hides the full request JSON, which is hidden by default. Page
+Up/Down and Home/End scroll while approval choices stay visible. **/collab** lists both
 message pairs and action permissions, with lowercase **r** to revoke a selection.
 Revocation affects requests not yet authorized, including already-claimed ones.
 

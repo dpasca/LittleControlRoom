@@ -48,6 +48,8 @@ type externalControlConfirmationState struct {
 	errorText           string
 	scrollOffset        int
 	showDetails         bool
+	// selected indexes bossui.PermissionChoices for this operation.
+	selected int
 }
 
 const externalControlReviewKey = "ctrl+g"
@@ -184,7 +186,7 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 		state.scrollOffset = 0
 		m.externalControlConfirmation = &state
 		return m, nil
-	case "up", "down", "pgup", "pgdown", "home", "end":
+	case "pgup", "pgdown", "home", "end":
 		layout := m.bodyLayout()
 		width, height := layout.width, layout.height
 		if m.codexVisible() && m.diffView == nil {
@@ -197,10 +199,6 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 		state := *m.externalControlConfirmation
 		state.scrollOffset = min(state.scrollOffset, maxScroll)
 		switch msg.String() {
-		case "up":
-			state.scrollOffset--
-		case "down":
-			state.scrollOffset++
 		case "pgup":
 			state.scrollOffset -= max(1, height/2)
 		case "pgdown":
@@ -213,33 +211,29 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 		state.scrollOffset = max(0, min(state.scrollOffset, maxScroll))
 		m.externalControlConfirmation = &state
 		return m, nil
-	case "s", "p":
-		if _, ok := control.PermissionForOperation(m.externalControlConfirmation.operation); !ok || m.externalControlConfirmation.standingUnavailable != "" {
+	case "up", "down":
+		state := *m.externalControlConfirmation
+		last := len(bossui.PermissionChoices(state.operation, state.standingUnavailable)) - 1
+		if msg.String() == "up" {
+			state.selected = max(0, state.selected-1)
+		} else {
+			state.selected = min(last, state.selected+1)
+		}
+		m.externalControlConfirmation = &state
+		return m, nil
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		choices := bossui.PermissionChoices(m.externalControlConfirmation.operation, m.externalControlConfirmation.standingUnavailable)
+		index := int(msg.String()[0] - '1')
+		if len(choices) < 2 || index >= len(choices) {
 			return m, nil
 		}
-		state := *m.externalControlConfirmation
-		state.submitting = true
-		state.errorText = ""
-		m.externalControlConfirmation = &state
-		return m, m.approveControlPermissionCmd(state.operation.ID, msg.String() == "s")
-	case "a":
-		if _, ok := control.CollaborationForOperation(m.externalControlConfirmation.operation); !ok {
-			return m, nil
-		}
-		state := *m.externalControlConfirmation
-		state.submitting = true
-		state.errorText = ""
-		m.externalControlConfirmation = &state
-		return m, m.approveProjectCollaborationCmd(state.operation.ID)
+		return m.confirmExternalControlChoice(choices[index])
 	case "enter":
-		m.externalControlConfirmation = nil
-		m.status = bossui.ControlProposalSubmittingStatus(invocation)
-		return m, func() tea.Msg {
-			return bossui.ControlInvocationConfirmedMsg{Invocation: invocation}
-		}
+		choices := bossui.PermissionChoices(m.externalControlConfirmation.operation, m.externalControlConfirmation.standingUnavailable)
+		return m.confirmExternalControlChoice(choices[max(0, min(m.externalControlConfirmation.selected, len(choices)-1))])
 	case "esc", "ctrl+c":
 		m.externalControlConfirmation = nil
-		m.status = "Control action canceled"
+		m.status = "Agent request denied"
 		return m, func() tea.Msg {
 			return bossui.ControlInvocationCanceledMsg{Invocation: invocation}
 		}
@@ -251,12 +245,37 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 	return m, nil
 }
 
+// confirmExternalControlChoice applies one of the dialog's approval scopes.
+// Standing scopes save first and execute once the grant is recorded.
+func (m Model) confirmExternalControlChoice(choice bossui.PermissionChoice) (tea.Model, tea.Cmd) {
+	state := *m.externalControlConfirmation
+	switch choice {
+	case bossui.PermissionAllowSession, bossui.PermissionAllowAlways:
+		state.submitting = true
+		state.errorText = ""
+		m.externalControlConfirmation = &state
+		return m, m.approveControlPermissionCmd(state.operation.ID, choice == bossui.PermissionAllowSession)
+	case bossui.PermissionAllowPair:
+		state.submitting = true
+		state.errorText = ""
+		m.externalControlConfirmation = &state
+		return m, m.approveProjectCollaborationCmd(state.operation.ID)
+	}
+	invocation := state.operation.Invocation
+	m.externalControlConfirmation = nil
+	m.status = bossui.ControlProposalSubmittingStatus(invocation)
+	return m, func() tea.Msg {
+		return bossui.ControlInvocationConfirmedMsg{Invocation: invocation}
+	}
+}
+
 func (m Model) externalControlConfirmationPanel(bodyW, bodyH int) (string, int, error) {
 	confirmation := m.externalControlConfirmation
 	return bossui.RenderPermissionConfirmationDialog(confirmation.operation, bossui.PermissionConfirmationOptions{
 		Preview: confirmation.preview, Busy: confirmation.submitting,
 		ErrorText: confirmation.errorText, ScrollOffset: confirmation.scrollOffset,
-		ShowDetails: confirmation.showDetails, StandingUnavailable: confirmation.standingUnavailable,
+		ShowDetails: confirmation.showDetails, Selected: confirmation.selected,
+		StandingUnavailable: confirmation.standingUnavailable,
 	}, bodyW, bodyH)
 }
 
