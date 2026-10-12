@@ -291,6 +291,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		Path:                       projectPath,
 		Now:                        now,
 		CreatedAt:                  createdAt,
+		ExplicitlyRequested:        true,
 		RepoDirty:                  repoDirty,
 		RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
 		RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,

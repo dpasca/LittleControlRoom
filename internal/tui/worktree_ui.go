@@ -1038,14 +1038,24 @@ func projectIsWorktreeRoot(project model.ProjectSummary) bool {
 }
 
 func projectWorktreeLabel(project model.ProjectSummary) string {
-	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
+	if branch := strings.TrimSpace(project.RepoBranch); branch != "" && !projectWorktreeDetached(project) {
 		return branch
 	}
 	name := filepath.Base(strings.TrimSpace(project.Path))
 	if name == "" || name == "." || name == string(filepath.Separator) {
 		return "worktree"
 	}
+	if root := filepath.Base(strings.TrimSpace(project.WorktreeRootPath)); root != "" && root != "." && root != string(filepath.Separator) {
+		if suffix := strings.TrimPrefix(name, root+"--"); suffix != "" {
+			name = suffix
+		}
+	}
 	return name
+}
+
+func projectWorktreeDetached(project model.ProjectSummary) bool {
+	branch := strings.TrimSpace(project.RepoBranch)
+	return branch == "(detached)" || branch == "HEAD"
 }
 
 func orphanedWorktreeListSummary(cleanupKind service.ResidualWorktreeCleanupKind) string {
@@ -1595,9 +1605,8 @@ func worktreeHasPendingIntegration(project model.ProjectSummary) bool {
 	if project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress {
 		return false
 	}
-	return project.RepoDirty ||
-		project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged ||
-		project.WorktreeMergeStatus == model.WorktreeMergeStatusUnknown
+	return project.RepoDirty || project.RepoConflict ||
+		project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged
 }
 
 func worktreePendingIntegrationCount(projects []model.ProjectSummary) int {

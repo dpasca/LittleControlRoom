@@ -1289,6 +1289,12 @@ func (m Model) renderProjectList(width, height int) string {
 					assessmentText = projectListAssessmentWithWorktreeBadge(assessmentText, badge, orphanedCount > 0)
 				}
 			}
+			if p.WorktreeKind == model.WorktreeKindLinked && projectWorktreeDetached(p) {
+				nameLabel = projectWorktreeLabel(p)
+			}
+		}
+		if !selectedRow && p.WorktreeKind == model.WorktreeKindLinked && projectWorktreeDetached(p) {
+			nameLabel = truncateMiddleText(projectListCellText(nameLabel), projectW-ansi.StringWidth(namePrefix))
 		}
 		nameRender := projectListNameCellText(namePrefix, nameLabel, projectW, selectedRow, m.marqueeOffset)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)

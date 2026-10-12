@@ -13,6 +13,7 @@ type Input struct {
 	Now                        time.Time
 	LastActivity               time.Time
 	CreatedAt                  time.Time
+	ExplicitlyRequested        bool
 	RepoDirty                  bool
 	RepoSubmoduleDirtyCount    int
 	RepoSubmoduleUnpushedCount int
@@ -40,7 +41,7 @@ type Output struct {
 const recentAttentionWindow = 72 * time.Hour
 const newProjectAttentionWindow = 48 * time.Hour
 
-// A newly added project should sit above ordinary active work long enough for
+// An explicitly requested project should sit above ordinary active work long enough for
 // the user to notice it and start its first engineer session. More urgent live
 // attention signals can still outrank it.
 const newProjectAttentionWeight = 80
@@ -329,7 +330,7 @@ func recentActivityReason(in Input) *model.AttentionReason {
 }
 
 func newProjectWeight(in Input) (int, bool) {
-	if in.CreatedAt.IsZero() {
+	if !in.ExplicitlyRequested || in.CreatedAt.IsZero() {
 		return 0, false
 	}
 	age := in.Now.Sub(in.CreatedAt)

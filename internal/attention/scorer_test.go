@@ -516,11 +516,12 @@ func TestScoreZeroTodosNoReason(t *testing.T) {
 func TestScoreNewProjectBoost(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{
-		Now:             now,
-		CreatedAt:       now.Add(-1 * time.Hour),
-		HasActivity:     false,
-		ActiveThreshold: 20 * time.Minute,
-		StuckThreshold:  4 * time.Hour,
+		Now:                 now,
+		CreatedAt:           now.Add(-1 * time.Hour),
+		ExplicitlyRequested: true,
+		HasActivity:         false,
+		ActiveThreshold:     20 * time.Minute,
+		StuckThreshold:      4 * time.Hour,
 	}
 
 	out := Score(in)
@@ -545,11 +546,12 @@ func TestScoreNewProjectBoostTapersOver48Hours(t *testing.T) {
 
 	for _, age := range ages {
 		out := Score(Input{
-			Now:             now,
-			CreatedAt:       now.Add(-age),
-			HasActivity:     false,
-			ActiveThreshold: 20 * time.Minute,
-			StuckThreshold:  4 * time.Hour,
+			Now:                 now,
+			CreatedAt:           now.Add(-age),
+			ExplicitlyRequested: true,
+			HasActivity:         false,
+			ActiveThreshold:     20 * time.Minute,
+			StuckThreshold:      4 * time.Hour,
 		})
 		scores = append(scores, out.Score)
 	}
@@ -562,11 +564,12 @@ func TestScoreNewProjectBoostTapersOver48Hours(t *testing.T) {
 func TestScoreNewProjectAfter48HoursFallsBackToBaseline(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{
-		Now:             now,
-		CreatedAt:       now.Add(-49 * time.Hour),
-		HasActivity:     false,
-		ActiveThreshold: 20 * time.Minute,
-		StuckThreshold:  4 * time.Hour,
+		Now:                 now,
+		CreatedAt:           now.Add(-49 * time.Hour),
+		ExplicitlyRequested: true,
+		HasActivity:         false,
+		ActiveThreshold:     20 * time.Minute,
+		StuckThreshold:      4 * time.Hour,
 	}
 
 	out := Score(in)
@@ -599,11 +602,12 @@ func TestScoreNoActivityNoCreatedAtPreservesBaseline(t *testing.T) {
 func TestScoreNewProjectNeverBelowBaseline(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{
-		Now:             now,
-		CreatedAt:       now.Add(-47*time.Hour - 30*time.Minute),
-		HasActivity:     false,
-		ActiveThreshold: 20 * time.Minute,
-		StuckThreshold:  4 * time.Hour,
+		Now:                 now,
+		CreatedAt:           now.Add(-47*time.Hour - 30*time.Minute),
+		ExplicitlyRequested: true,
+		HasActivity:         false,
+		ActiveThreshold:     20 * time.Minute,
+		StuckThreshold:      4 * time.Hour,
 	}
 
 	out := Score(in)
@@ -612,6 +616,36 @@ func TestScoreNewProjectNeverBelowBaseline(t *testing.T) {
 	}
 	if len(out.Reasons) != 1 || out.Reasons[0].Code != "new_project" {
 		t.Fatalf("expected new_project reason, got %#v", out.Reasons)
+	}
+}
+
+func TestScoreDiscoveredProjectDoesNotAwaitFirstSession(t *testing.T) {
+	now := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:             now,
+		CreatedAt:       now.Add(-time.Minute),
+		LastActivity:    now.Add(-time.Minute), // Git age is not agent activity.
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  4 * time.Hour,
+	}
+	out := Score(in)
+	if out.Status != model.StatusIdle || out.Score != noActivityBaseWeight {
+		t.Fatalf("discovered project = %#v, want idle with baseline attention", out)
+	}
+	if len(out.Reasons) != 1 || out.Reasons[0].Code != "no_activity" {
+		t.Fatalf("discovered project reasons = %#v, want only no_activity", out.Reasons)
+	}
+
+	in.RepoDirty = true
+	in.Pinned = true
+	out = Score(in)
+	if out.Score != noActivityBaseWeight+15+30 {
+		t.Fatalf("dirty pinned project score = %d, want real attention signals retained", out.Score)
+	}
+	for _, reason := range out.Reasons {
+		if reason.Code == "new_project" {
+			t.Fatalf("discovery must not imply a requested first session: %#v", out.Reasons)
+		}
 	}
 }
 

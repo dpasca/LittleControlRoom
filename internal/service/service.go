@@ -1929,11 +1929,17 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			createdAt = now
 		}
 
+		worktreeOriginTodoID := old.WorktreeOriginTodoID
+		if worktreeOriginTodoID <= 0 && presentOnDisk && !staleLinkedWorktree && worktreeKind == model.WorktreeKindLinked {
+			worktreeOriginTodoID = uniqueTodoWorktreeOriginID(path, worktreeRootPath, todoWorkProjectLinksByPath)
+		}
+
 		score := attention.Score(attention.Input{
 			Path:                       path,
 			Now:                        now,
 			LastActivity:               lastActivity,
 			CreatedAt:                  createdAt,
+			ExplicitlyRequested:        old.ManuallyAdded || worktreeOriginTodoID > 0,
 			RepoDirty:                  repoDirty,
 			RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
 			RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
@@ -1952,10 +1958,6 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			OpenTodoCount:              old.OpenTODOCount,
 		})
 
-		worktreeOriginTodoID := old.WorktreeOriginTodoID
-		if worktreeOriginTodoID <= 0 && presentOnDisk && !staleLinkedWorktree && worktreeKind == model.WorktreeKindLinked {
-			worktreeOriginTodoID = uniqueTodoWorktreeOriginID(path, worktreeRootPath, todoWorkProjectLinksByPath)
-		}
 		state := model.ProjectState{
 			Path:                       path,
 			Name:                       projectName,
@@ -3675,6 +3677,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		Now:                        now,
 		LastActivity:               lastActivity,
 		CreatedAt:                  detail.Summary.CreatedAt,
+		ExplicitlyRequested:        detail.Summary.ManuallyAdded || detail.Summary.WorktreeOriginTodoID > 0,
 		RepoDirty:                  overrides.repoDirty,
 		RepoSubmoduleDirtyCount:    overrides.repoSubmoduleDirtyCount,
 		RepoSubmoduleUnpushedCount: overrides.repoSubmoduleUnpushedCount,

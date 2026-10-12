@@ -194,6 +194,12 @@ func projectAssessmentRepoFallback(project model.ProjectSummary) string {
 	if worktreeNeedsMergeBack(project) {
 		return worktreeIntegrationStatusSummary(project)
 	}
+	if projectWorktreeDetached(project) {
+		if !project.HasRecordedSession() {
+			return "Detached checkout · no agent session"
+		}
+		return "Detached checkout"
+	}
 	return ""
 }
 
@@ -718,6 +724,20 @@ func truncateText(text string, width int) string {
 		return ansi.Truncate(text, width, "")
 	}
 	return ansi.Truncate(text, width, "...")
+}
+
+// Keep both ends visible so similar checkout names retain their distinguishing suffix.
+func truncateMiddleText(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	textWidth := ansi.StringWidth(text)
+	if textWidth <= width {
+		return text
+	}
+	headWidth := (width - 1) / 2
+	tailWidth := width - 1 - headWidth
+	return ansi.Truncate(text, headWidth, "") + "…" + ansi.Cut(text, textWidth-tailWidth, textWidth)
 }
 
 // projectListCellText flattens external text before sizing single-line cells.

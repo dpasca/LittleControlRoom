@@ -2777,7 +2777,7 @@ func TestWorktreeHasPendingIntegrationMergeStates(t *testing.T) {
 		dirty       bool
 		want        bool
 	}{
-		{name: "unknown clean", mergeStatus: model.WorktreeMergeStatusUnknown, want: true},
+		{name: "unknown clean", mergeStatus: model.WorktreeMergeStatusUnknown, want: false},
 		{name: "unknown dirty", mergeStatus: model.WorktreeMergeStatusUnknown, dirty: true, want: true},
 		{name: "merged clean", mergeStatus: model.WorktreeMergeStatusMerged, want: false},
 		{name: "not merged", mergeStatus: model.WorktreeMergeStatusNotMerged, want: true},
@@ -2800,8 +2800,8 @@ func TestWorktreeHasPendingIntegrationMergeStates(t *testing.T) {
 	merged.WorktreeMergeStatus = model.WorktreeMergeStatusMerged
 	merging := base
 	merging.WorktreeMergeStatus = model.WorktreeMergeStatusMergeInProgress
-	if got := worktreePendingIntegrationCount([]model.ProjectSummary{unknown, merged, merging}); got != 1 {
-		t.Fatalf("worktreePendingIntegrationCount() = %d, want the unknown worktree counted once", got)
+	if got := worktreePendingIntegrationCount([]model.ProjectSummary{unknown, merged, merging}); got != 0 {
+		t.Fatalf("worktreePendingIntegrationCount() = %d, want no pending integration without evidence", got)
 	}
 }
 
