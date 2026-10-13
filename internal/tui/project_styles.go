@@ -436,15 +436,7 @@ func (m *Model) indexByPath(path string) int {
 
 func (m *Model) rowsVisible() int {
 	layout := m.bodyLayout()
-	inner := layout.listPaneHeight - 2 // border
-	if inner < 3 {
-		inner = 3
-	}
-	rows := inner - 1 // list header
-	if rows < 1 {
-		return 1
-	}
-	return rows
+	return max(1, layout.listPaneHeight-4) // borders, archive tabs, column header
 }
 
 func (m *Model) ensureSelectionVisible() {

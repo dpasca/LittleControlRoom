@@ -244,7 +244,6 @@ type Model struct {
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
 
-	mouseEnabled                  bool
 	codexSelection                textSelection
 	terminalHealthCheckTicks      int
 	terminalHealthCheckInFlight   bool
@@ -1326,6 +1325,7 @@ func (m Model) Init() tea.Cmd {
 	done := m.beginUIPhase("Init", "", "")
 	defer done()
 	cmds := []tea.Cmd{
+		tea.EnableMouseCellMotion,
 		m.requestProjectsReloadCmd(),
 		m.requestScanCmd(false),
 		m.loadSuspendedTurnResumeChoicesCmd(),
@@ -1509,19 +1509,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer done()
 	mdl, cmd := m.update(msg)
 	mm := normalizeUpdateModel(mdl)
-	prevWant := m.helpChatMode || m.codexVisible() || m.diffView != nil
-	want := mm.helpChatMode || mm.codexVisible() || mm.diffView != nil
-	mm.mouseEnabled = want
 	mm.syncEmbeddedSessionIdleProtection()
-	if want != prevWant {
-		var mouseCmd tea.Cmd
-		if want {
-			mouseCmd = tea.EnableMouseCellMotion
-		} else {
-			mouseCmd = tea.DisableMouse
-		}
-		return mm, tea.Batch(cmd, mouseCmd)
-	}
 	return mm, cmd
 }
 
@@ -1782,9 +1770,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateDiffSelectionFromScroll()
 			return m, cmd
 		}
-		if cmd, handled := m.handleRuntimePaneMouse(msg); handled {
-			return m, cmd
-		}
 		if m.codexVisible() {
 			// Try composer selection first (bottom area), then viewport.
 			if cmd, handled := m.handleCodexComposerMouseSelection(msg); handled {
@@ -1823,6 +1808,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, batchCmds(cmd, historyCmd)
 		}
+		return m, m.handleDashboardMouse(msg)
 	case tea.KeyMsg:
 		if m.helpChatMode {
 			return m.updateHelpChatModeKey(msg)

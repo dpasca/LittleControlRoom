@@ -34,7 +34,7 @@ func TestParseTmuxTerminalHealthReportsHealthyModes(t *testing.T) {
 }
 
 func TestDamagedTerminalHealthQueuesRepairAndNotifiesUser(t *testing.T) {
-	m := Model{terminalHealthCheckInFlight: true, mouseEnabled: true}
+	m := Model{terminalHealthCheckInFlight: true}
 	updated, cmd := m.applyTerminalHealthCheckMsg(terminalHealthCheckMsg{snapshot: terminalHealthSnapshot{
 		Supported:       true,
 		PaneID:          "%6",

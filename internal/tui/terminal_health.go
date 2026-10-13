@@ -161,11 +161,7 @@ func (m Model) terminalRepairCmd(automatic bool) tea.Cmd {
 		tea.EnterAltScreen,
 		tea.HideCursor,
 		tea.EnableBracketedPaste,
-	}
-	if m.mouseEnabled {
-		commands = append(commands, tea.EnableMouseCellMotion)
-	} else {
-		commands = append(commands, tea.DisableMouse)
+		tea.EnableMouseCellMotion,
 	}
 	commands = append(commands, func() tea.Msg {
 		return terminalRepairFinishedMsg{automatic: automatic}
