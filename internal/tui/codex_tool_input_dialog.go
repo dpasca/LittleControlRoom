@@ -183,8 +183,11 @@ func (m *Model) syncCodexToolInputComposerSize() bool {
 	if !m.codexVisible() {
 		return false
 	}
-	snapshot, ok := m.cachedLiveCodexSnapshot(m.codexVisibleProject)
-	if !ok || snapshot.PendingApproval != nil {
+	snapshot, ok := m.currentCachedCodexSnapshot()
+	if m.codexSnapshots == nil {
+		snapshot, ok = m.cachedLiveCodexSnapshot(m.codexVisibleProject)
+	}
+	if !ok || !snapshot.Started || snapshot.Closed || snapshot.PendingApproval != nil {
 		return false
 	}
 	if _, ok := codexToolInputQuestionsFromSnapshot(snapshot); !ok {

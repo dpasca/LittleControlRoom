@@ -629,24 +629,6 @@ func cloneCodexActivityPreview(entries []codexapp.TranscriptEntry) []codexapp.Tr
 	return cloned
 }
 
-func overlayCodexSnapshotBrowserState(cached, state codexapp.Snapshot) codexapp.Snapshot {
-	cached.BrowserActivity = state.BrowserActivity
-	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
-	cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
-	cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
-	cached.ImageReviewEnabled = state.ImageReviewEnabled
-	if strings.TrimSpace(state.ProjectPath) != "" {
-		cached.ProjectPath = state.ProjectPath
-	}
-	if strings.TrimSpace(state.ThreadID) != "" {
-		cached.ThreadID = state.ThreadID
-	}
-	if state.Provider.Normalized() != "" {
-		cached.Provider = state.Provider
-	}
-	return cached
-}
-
 func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -689,12 +671,15 @@ func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, b
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {
-		if session, sessionOK := m.currentCodexSession(); sessionOK {
-			if state, got := stateSnapshotForCodexSession(session); got {
-				snapshot = overlayCodexSnapshotBrowserState(snapshot, state)
-			}
-		}
+		// Both typing and rendering use the delivered snapshot. Even a
+		// TryStateSnapshot requires a blocking manager lookup first, and a
+		// successful try-lock can still perform expensive snapshot work.
+		// Live changes arrive through the session update commands; submission
+		// separately refreshes and validates the session before sending.
 		return snapshot, true
+	}
+	if m.renderCachedSessionStateOnly && m.codexSnapshots != nil {
+		return codexapp.Snapshot{}, false
 	}
 	session, sessionOK := m.currentCodexSession()
 	if !sessionOK {

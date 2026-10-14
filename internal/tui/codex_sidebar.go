@@ -147,6 +147,11 @@ func (m *Model) normalizeEmbeddedSidebarSelection(snapshot codexapp.Snapshot) {
 	if m.codexSidebarSelected < 0 || m.codexSidebarSelected >= embeddedCodexSidebarSectionCount {
 		m.codexSidebarSelected = embeddedCodexSidebarProcesses
 	}
+	// Typing does not change the selected section. Avoid rebuilding every
+	// section (including recent-turn labels) just to retain a valid selection.
+	if m.embeddedSidebarSectionAvailable(snapshot, m.embeddedSidebarProjectPath(snapshot), m.codexSidebarSelected) {
+		return
+	}
 	sections := m.embeddedSidebarVisibleSections(snapshot)
 	if len(sections) == 0 {
 		return
@@ -866,29 +871,37 @@ func embeddedSidebarRecentTurns(snapshot codexapp.Snapshot, limit int) []embedde
 	if limit <= 0 {
 		return nil
 	}
-	turns := make([]embeddedSidebarRecentTurn, 0, limit)
+	entries := codexTranscriptEntriesFromSnapshot(snapshot)
+	// Retain only the requested first user entries in a ring. Labels can be
+	// large pasted prompts; normalize only the handful that will be displayed.
+	indices := make([]int, min(limit, len(entries)))
+	count := 0
 	seen := make(map[string]struct{})
-	for _, entry := range codexTranscriptEntriesFromSnapshot(snapshot) {
+	for i, entry := range entries {
+		if entry.Kind != codexapp.TranscriptUser {
+			continue
+		}
 		turnID := strings.TrimSpace(entry.TurnID)
-		if entry.Kind != codexapp.TranscriptUser || turnID == "" {
+		if turnID == "" {
 			continue
 		}
 		if _, exists := seen[turnID]; exists {
 			continue
 		}
+		seen[turnID] = struct{}{}
+		indices[count%len(indices)] = i
+		count++
+	}
+	turns := make([]embeddedSidebarRecentTurn, 0, min(count, limit))
+	for offset := 0; offset < min(count, limit); offset++ {
+		entry := entries[indices[(count-1-offset)%len(indices)]]
+		turnID := strings.TrimSpace(entry.TurnID)
 		label := strings.TrimSpace(firstNonEmptyString(entry.DisplayText, entry.Text))
 		label = strings.Join(strings.Fields(label), " ")
 		if label == "" {
 			label = "Turn " + shortID(turnID)
 		}
-		seen[turnID] = struct{}{}
 		turns = append(turns, embeddedSidebarRecentTurn{TurnID: turnID, Label: label})
-	}
-	if len(turns) > limit {
-		turns = turns[len(turns)-limit:]
-	}
-	for left, right := 0, len(turns)-1; left < right; left, right = left+1, right-1 {
-		turns[left], turns[right] = turns[right], turns[left]
 	}
 	return turns
 }
@@ -2194,6 +2207,9 @@ func repoDirtyPlainLabel(project model.ProjectSummary) string {
 }
 
 func (m Model) embeddedSidebarSummary(snapshot codexapp.Snapshot) (string, lipgloss.Style, bool) {
+	// Also called while normalizing sidebar selection on keyboard input.
+	// All assessment helpers must use the same delivered state as the pane.
+	m.renderCachedSessionStateOnly = true
 	projectPath := m.embeddedSidebarProjectPath(snapshot)
 	project, ok := m.embeddedSidebarProjectSummary(projectPath)
 	if !ok {

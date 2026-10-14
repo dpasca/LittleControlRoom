@@ -191,14 +191,6 @@ func (m Model) updateCodexArtifactPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd
 	return m, nil
 }
 
-func (m Model) visibleCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
-	return m.visibleCodexOpenTargetsWithCachePolicy(snapshot, true)
-}
-
-func (m Model) cachedVisibleCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
-	return m.visibleCodexOpenTargetsWithCachePolicy(snapshot, false)
-}
-
 func (m Model) codexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	visibleTargets := m.visibleCodexOpenTargets(snapshot)
@@ -206,11 +198,43 @@ func (m Model) codexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArti
 	return combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets, progressiveComplete, projectPath)
 }
 
-func (m Model) cachedCodexOpenTargetsForPicker(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
+// The banner only needs to know whether a link is available. Rebuilding the
+// picker here reconciles every historical relative path against every absolute
+// path on each keypress, cursor blink, and mouse move in a long session.
+func (m Model) hasCachedCodexOpenTargets(snapshot codexapp.Snapshot) bool {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
-	visibleTargets := m.cachedVisibleCodexOpenTargets(snapshot)
-	progressiveTargets, progressiveComplete := m.cachedProgressiveCodexOpenTargetsWithState(snapshot)
-	return combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets, progressiveComplete, projectPath)
+	if state, ok := m.codexArtifactLinkScans[projectPath]; ok && state.transcriptRev == m.codexTranscriptRevision(projectPath) {
+		for _, target := range state.targets {
+			if !target.inferredLocalPath || target.verifiedPath == target.Path {
+				return true
+			}
+		}
+		// A finished scan is authoritative, including rejected inferred paths.
+		if state.complete {
+			return false
+		}
+	}
+	width := m.codexViewport.Width
+	if width <= 0 {
+		width = m.width
+	}
+	if width <= 0 {
+		width = 80
+	}
+	if projectPath == "" || !m.codexTranscriptCacheMatches(projectPath, width) {
+		return false
+	}
+	startLine := max(0, m.codexViewport.YOffset)
+	endLine := startLine + max(1, m.codexViewport.Height)
+	for _, link := range m.codexTranscriptCache.links {
+		if m.codexViewport.Height > 0 && (link.EndLine <= startLine || link.StartLine >= endLine) {
+			continue
+		}
+		if !link.Target.inferredLocalPath || link.Target.verifiedPath == link.Target.Path {
+			return true
+		}
+	}
+	return false
 }
 
 func combineCodexOpenTargetsForPicker(visibleTargets, progressiveTargets []codexArtifactOpenTarget, progressiveComplete bool, projectPath string) []codexArtifactOpenTarget {
@@ -248,7 +272,7 @@ func (m Model) codexArtifactLinkScanInFlight(projectPath string, transcriptRev u
 	return ok && state.transcriptRev == transcriptRev && state.inFlight
 }
 
-func (m Model) visibleCodexOpenTargetsWithCachePolicy(snapshot codexapp.Snapshot, renderOnMiss bool) []codexArtifactOpenTarget {
+func (m Model) visibleCodexOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	width := m.codexViewport.Width
 	if width <= 0 {
@@ -258,9 +282,6 @@ func (m Model) visibleCodexOpenTargetsWithCachePolicy(snapshot codexapp.Snapshot
 		width = 80
 	}
 	if projectPath == "" || !m.codexTranscriptCacheMatches(projectPath, width) {
-		if !renderOnMiss {
-			return nil
-		}
 		_ = m.renderAndCacheCodexTranscript(projectPath, snapshot, width)
 	}
 	links := m.codexTranscriptCache.links

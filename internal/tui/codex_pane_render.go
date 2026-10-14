@@ -366,7 +366,7 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	}
 	title := strings.Join(parts, codexBannerSeparatorStyle.Render(" | "))
 	actions := []footerAction{}
-	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
+	if codexArtifactPickerAllowed(snapshot) && m.hasCachedCodexOpenTargets(snapshot) {
 		actions = append(actions, footerNavAction("Alt+O", "links"))
 	}
 	actions = append(actions, footerLowAction("Alt+L", "detail"))
@@ -906,6 +906,9 @@ func (m Model) liveManagedBrowserActivityCanReveal(snapshot codexapp.Snapshot) b
 }
 
 func (m Model) attachedManagedBrowserSessionState(snapshot codexapp.Snapshot) (codexapp.Snapshot, bool) {
+	if m.codexManager == nil {
+		return codexapp.Snapshot{}, false
+	}
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	if projectPath == "" {
 		return codexapp.Snapshot{}, false
@@ -913,11 +916,13 @@ func (m Model) attachedManagedBrowserSessionState(snapshot codexapp.Snapshot) (c
 	if normalizeProjectPath(projectPath) != normalizeProjectPath(m.codexVisibleProject) {
 		return codexapp.Snapshot{}, false
 	}
-	session, ok := m.codexSession(projectPath)
-	if !ok {
-		return codexapp.Snapshot{}, false
+	state, ok := m.codexCachedSnapshot(projectPath)
+	if m.codexSnapshots == nil {
+		// Compatibility for models without the normal snapshot delivery loop.
+		if session, sessionOK := m.codexSession(projectPath); sessionOK {
+			state, ok = stateSnapshotForCodexSession(session)
+		}
 	}
-	state, ok := stateSnapshotForCodexSession(session)
 	if !ok || !managedBrowserRevealTargetAttached(state) {
 		return codexapp.Snapshot{}, false
 	}

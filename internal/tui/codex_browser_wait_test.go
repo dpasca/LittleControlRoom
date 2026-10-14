@@ -404,7 +404,7 @@ func TestVisibleLCAgentBrowserWaitShowsBrowserActionAfterStateHydrates(t *testin
 	}
 }
 
-func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrates(t *testing.T) {
+func TestVisibleLCAgentBrowserWaitCanRevealFromDeliveredSnapshotBeforeBrowserStateHydrates(t *testing.T) {
 	stubLiveManagedBrowserStateReader(t)
 	projectPath := "/tmp/lcagent-browser-live"
 	cached := codexapp.Snapshot{
@@ -462,6 +462,16 @@ func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrat
 		height:        24,
 	}
 
+	// Session notifications deliver the browser state asynchronously, even
+	// when TrySnapshot is contended. Rendering must not probe the live session.
+	before, ok := m.currentCodexSnapshot()
+	if !ok || before.ManagedBrowserSessionKey != "" {
+		t.Fatal("expected the previously delivered snapshot before the update")
+	}
+	updatedSnapshot, _ := m.applyCodexDeferredSnapshotMsg(codexDeferredSnapshotMsg{projectPath: projectPath, snapshot: live})
+	m = normalizeUpdateModel(updatedSnapshot)
+	session.snapshotCalls, session.trySnapshotCalls = 0, 0
+	session.stateSnapshotCalls, session.tryStateSnapshotCalls = 0, 0
 	snapshot, ok := m.currentCodexSnapshot()
 	if !ok {
 		t.Fatalf("currentCodexSnapshot() unavailable")
@@ -469,10 +479,6 @@ func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrat
 	if snapshot.ManagedBrowserSessionKey != "managed-login" || snapshot.CurrentBrowserPageURL == "" {
 		t.Fatalf("currentCodexSnapshot() did not include live browser state: %#v", snapshot)
 	}
-	if session.trySnapshotCalls != 0 || session.snapshotCalls != 0 {
-		t.Fatalf("currentCodexSnapshot() should use lightweight state only; TrySnapshot/Snapshot calls = %d/%d", session.trySnapshotCalls, session.snapshotCalls)
-	}
-
 	renderedPanel := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
 	if !strings.Contains(renderedPanel, "Press ctrl+o to reveal the managed browser window") {
 		t.Fatalf("renderCodexBrowserPanel() should offer ctrl+o from live state before browser state hydration: %q", renderedPanel)
@@ -480,6 +486,9 @@ func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrat
 	renderedFooter := ansi.Strip(m.renderCodexFooter(snapshot, 160))
 	if !strings.Contains(renderedFooter, "ctrl+o show browser") {
 		t.Fatalf("renderCodexFooter() should offer ctrl+o from live state before browser state hydration: %q", renderedFooter)
+	}
+	if session.trySnapshotCalls != 0 || session.snapshotCalls != 0 || session.tryStateSnapshotCalls != 0 || session.stateSnapshotCalls != 0 {
+		t.Fatal("delivered snapshot and render paths should not read the live session")
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})

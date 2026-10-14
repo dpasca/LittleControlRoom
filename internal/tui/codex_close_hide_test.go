@@ -1136,8 +1136,8 @@ func TestVisibleCodexAltUpHidesWithoutBlockingOnContendedLiveState(t *testing.T)
 	if session.trySnapshotCalls == 0 {
 		t.Fatalf("alt+up should try the non-blocking full snapshot before using the cache")
 	}
-	if session.tryStateSnapshotCalls == 0 {
-		t.Fatalf("dashboard rebuild should try non-blocking state before using the cache")
+	if session.tryStateSnapshotCalls != 0 {
+		t.Fatalf("hiding should use delivered state; TryStateSnapshot calls = %d", session.tryStateSnapshotCalls)
 	}
 	if session.snapshotCalls != 0 {
 		t.Fatalf("alt+up should not call blocking Snapshot(); calls = %d", session.snapshotCalls)
