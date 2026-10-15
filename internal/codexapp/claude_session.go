@@ -87,6 +87,7 @@ type claudeCodeSession struct {
 	managedBrowserSessionKey string
 	dataDir                  string
 	browserActivity          browserctl.SessionActivity
+	managedBrowserOpen       bool // The stdio MCP browser shares the Claude process lifetime.
 	browserHandoffPending    bool
 	browserHandoffAt         time.Time
 	browserAttentionMessage  string
@@ -100,6 +101,7 @@ type claudeCodeSession struct {
 	managedStream        bool
 	streamState          string
 	streamInitResult     chan error
+	legacyTurnSettled    bool // A terminal assistant/transcript may precede its result envelope.
 	messageDeliveries    []MessageDeliverySnapshot
 	lastParentActivityAt time.Time
 	claudeHome           string
@@ -1023,6 +1025,9 @@ func (s *claudeCodeSession) CompactWithInstructions(instructions string) (Compac
 	case s.busy || s.externalTurnActive:
 		s.mu.Unlock()
 		return CompactionResult{}, fmt.Errorf("Claude Code cannot compact while a turn is active")
+	case s.cmd != nil && s.claudeBrowserOwnsStreamLocked():
+		s.mu.Unlock()
+		return CompactionResult{}, fmt.Errorf("close the managed browser before compacting Claude Code; restarting its process would discard open pages")
 	case strings.TrimSpace(s.sessionID) == "":
 		s.mu.Unlock()
 		return CompactionResult{}, fmt.Errorf("start the Claude Code session with a prompt before compacting it")
@@ -1639,6 +1644,7 @@ func (s *claudeCodeSession) Close() error {
 	s.closed = true
 	s.takeClaudePendingRequestsLocked()
 	s.clearClaudeBrowserHandoffLocked()
+	s.managedBrowserOpen = false
 	s.currentBrowserPageURL = ""
 	cmd := s.cmd
 	s.updateStatusLocked()
@@ -1665,7 +1671,7 @@ func (s *claudeCodeSession) CloseDueToInactivity() error {
 		s.mu.Unlock()
 		return nil
 	}
-	if s.busy || s.externalTurnActive || s.compacting || s.browserHandoffPending {
+	if s.busy || s.externalTurnActive || s.compacting || s.claudeBrowserOwnsStreamLocked() {
 		s.touchLocked()
 		s.mu.Unlock()
 		return nil
@@ -1757,6 +1763,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	s.latestSubmittedAt = time.Time{}
 	s.cmd = nil
 	s.stdin = nil
+	s.legacyTurnSettled = false
 	s.cancel = nil
 	s.runningPID = 0
 	interrupted := s.interruptPending
@@ -1796,6 +1803,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	}
 	browserHandoffLost := s.browserHandoffPending && !s.closed
 	s.clearClaudeBrowserHandoffLocked()
+	s.managedBrowserOpen = false
 	s.currentBrowserPageURL = ""
 	s.setClaudeBrowserActivityIdleLocked()
 
@@ -2060,6 +2068,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 		}
 	case "assistant":
 		s.lastParentActivityAt = time.Now()
+		s.legacyTurnSettled = false
 		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID, env.IsAPIErrorMessage)
 		if claudeartifact.AssistantTurnCompleted(firstNonEmptyTrimmed(assistantStopReason, env.StopReason)) {
 			stdinToClose = s.finishClaudeSubmissionFromAssistantLocked(time.Now())
@@ -2090,9 +2099,10 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 				s.appendSystemErrorLocked(message)
 			}
 		}
-		if !s.managedStream && s.pendingSubmissions > 0 {
+		if !s.managedStream && !s.legacyTurnSettled && s.pendingSubmissions > 0 {
 			s.pendingSubmissions--
 		}
+		s.legacyTurnSettled = false
 		if s.pendingSubmissions == 0 {
 			s.latestSubmittedAt = time.Time{}
 		}
@@ -2101,17 +2111,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			s.lastSystemNotice = claudeInterruptNotice
 		}
 		if !s.managedStream && s.pendingSubmissions == 0 && s.stdin != nil && s.runningBackgroundTaskCountLocked() == 0 {
-			if s.browserHandoffPending {
-				// Keep Claude and its stdio MCP children alive while the user
-				// completes the requested browser step. The next message reuses
-				// this process and therefore the exact managed browser context.
-				s.busy = false
-				s.busySince = time.Time{}
-			} else {
-				stdinToClose = s.stdin
-				s.stdin = nil
-				s.setClaudeBrowserActivityIdleLocked()
-			}
+			stdinToClose = s.settleClaudeTurnInputLocked()
 		}
 		s.updateStatusLocked()
 	default:
@@ -2231,11 +2231,10 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromAssistantLocked(completedA
 	// Some Claude Code stream-json runs persist and emit the terminal assistant
 	// message but never follow it with a result envelope while stdin remains
 	// open. Treat the structured end-of-turn stop reason as the final-submission
-	// boundary so Claude receives EOF and can exit. A queued submission, browser
-	// handoff, compaction, or provider-declared background task still owns the
+	// boundary so Claude can exit unless an open browser needs its MCP children.
+	// A queued submission, compaction, or provider-declared background task owns the
 	// stream and must settle through its normal lifecycle.
 	if s.managedStream || s.compactCommand != nil ||
-		s.browserHandoffPending ||
 		s.pendingSubmissions != 1 ||
 		s.runningBackgroundTaskCountLocked() > 0 ||
 		s.stdin == nil {
@@ -2249,9 +2248,8 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromAssistantLocked(completedA
 	s.latestTurnStateKnown = true
 	s.latestTurnCompleted = true
 	s.latestTurnVerified = true
-	stdin := s.stdin
-	s.stdin = nil
-	s.setClaudeBrowserActivityIdleLocked()
+	s.legacyTurnSettled = true
+	stdin := s.settleClaudeTurnInputLocked()
 	s.updateStatusLocked()
 	return stdin
 }
@@ -2286,16 +2284,14 @@ func (s *claudeCodeSession) finishClaudeSubmissionFromTranscriptLocked() io.Writ
 	}
 	if s.stdin == nil ||
 		s.compactCommand != nil ||
-		s.browserHandoffPending ||
 		s.runningBackgroundTaskCountLocked() > 0 {
 		return nil
 	}
 
 	s.pendingSubmissions = 0
 	s.latestSubmittedAt = time.Time{}
-	stdin := s.stdin
-	s.stdin = nil
-	s.setClaudeBrowserActivityIdleLocked()
+	s.legacyTurnSettled = true
+	stdin := s.settleClaudeTurnInputLocked()
 	s.updateStatusLocked()
 	return stdin
 }
@@ -2495,21 +2491,24 @@ func (s *claudeCodeSession) observeClaudeToolUseLocked(toolUseID, name string, i
 	if pageURL := claudeToolInputPageURL(input); pageURL != "" {
 		s.currentBrowserPageURL = pageURL
 	}
-	if strings.EqualFold(toolName, "browser_close") {
-		s.currentBrowserPageURL = ""
-	}
 }
 
 func (s *claudeCodeSession) observeClaudeToolResultLocked(toolUseID string, call claudeToolCall, isError bool, content any) {
 	serverName, toolName := claudeMCPToolCallInfo(call.Name)
 	if browserctl.IsPlaywrightToolCall(serverName, toolName) {
-		if !isError {
+		if !isError && !claudeStructuredToolResultIsError(content) {
 			if pageURL := extractPageURLFromText(flattenClaudeToolResultContent(content)); pageURL != "" {
 				s.currentBrowserPageURL = pageURL
 			}
-		}
-		if strings.EqualFold(toolName, "browser_close") {
-			s.currentBrowserPageURL = ""
+			if s.playwrightPolicy.Normalize().ManagementMode == browserctl.ManagementModeManaged &&
+				strings.TrimSpace(s.managedBrowserSessionKey) != "" &&
+				!strings.EqualFold(toolName, "browser_install") {
+				s.managedBrowserOpen = !strings.EqualFold(toolName, "browser_close")
+			}
+			if strings.EqualFold(toolName, "browser_close") {
+				s.currentBrowserPageURL = ""
+				s.clearClaudeBrowserHandoffLocked()
+			}
 		}
 		return
 	}
@@ -2523,6 +2522,7 @@ func (s *claudeCodeSession) observeClaudeToolResultLocked(toolUseID string, call
 	}
 
 	s.browserHandoffPending = true
+	s.managedBrowserOpen = true
 	s.browserHandoffAt = time.Now()
 	s.browserAttentionMessage = claudeBrowserAttentionMessage(call.Input)
 	s.setClaudeBrowserHandoffWaitingLocked()

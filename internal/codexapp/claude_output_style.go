@@ -10,8 +10,9 @@ import (
 // Claude Code has no CLI flag for output styles and no mid-turn control for
 // them, so LCR carries the selection in the per-turn `--settings` payload.
 // A managed stream can own background workers across several parent turns.
-// Staged styles, models and effort apply when that work settles and the next
-// prompt starts a fresh process.
+// An open managed browser also retains the process between turns. Staged styles,
+// models and effort apply after that browser closes and work settles, when the
+// next prompt starts a fresh process.
 
 // ListOutputStyles returns the styles discovered for this session, refreshing
 // from disk so a style file added while the session is open becomes

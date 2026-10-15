@@ -15,6 +15,9 @@ import (
 const claudeStreamInitializeID = "lcr-stream-initialize"
 
 func (s *claudeCodeSession) claudeStagedChangeTimingLocked() string {
+	if s.cmd != nil && s.claudeBrowserOwnsStreamLocked() {
+		return "on the next prompt after the managed browser is closed and current work finishes"
+	}
 	if s.managedStream && s.cmd != nil {
 		return "on the next prompt after current work finishes"
 	}
@@ -167,21 +170,32 @@ func (s *claudeCodeSession) handleClaudeSessionStateLocked(state string, at time
 		}
 		s.appendSystemNoticeLocked(claudeRequestWithdrawnNotice)
 	}
-	if s.browserHandoffPending {
-		s.busy = false
-		s.busySince = time.Time{}
-		return nil
-	}
 	// Only an idle event can release the stream. A task terminal event may be
 	// immediately followed by a parent turn that handles its completion; the
 	// previous idle state is insufficient evidence to close stdin then.
-	stdin := s.stdin
-	s.stdin = nil
 	s.latestTurnCompleted = true
 	s.latestTurnStateKnown = true
 	s.latestTurnVerified = true
 	s.latestTurnStateAt = at
+	return s.settleClaudeTurnInputLocked()
+}
+
+func (s *claudeCodeSession) claudeBrowserOwnsStreamLocked() bool {
+	return s.managedBrowserOpen || s.browserHandoffPending
+}
+
+// A completed turn releases work ownership, but an open browser still needs
+// Claude's stdin and stdio MCP children. A follow-up clears attention and may
+// hide the window; neither action should discard its tabs or unsaved form data.
+func (s *claudeCodeSession) settleClaudeTurnInputLocked() io.WriteCloser {
 	s.setClaudeBrowserActivityIdleLocked()
+	if s.claudeBrowserOwnsStreamLocked() {
+		s.busy = false
+		s.busySince = time.Time{}
+		return nil
+	}
+	stdin := s.stdin
+	s.stdin = nil
 	return stdin
 }
 

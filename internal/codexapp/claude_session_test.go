@@ -2254,12 +2254,10 @@ func TestClaudeTerminalAssistantPreservesStatesThatStillOwnStream(t *testing.T) 
 	tests := []struct {
 		name               string
 		pendingSubmissions int
-		browserHandoff     bool
 		compactCommand     *claudeCompactCommand
 		backgroundTasks    map[string]BackgroundTaskSnapshot
 	}{
 		{name: "queued follow-up", pendingSubmissions: 2},
-		{name: "browser handoff", pendingSubmissions: 1, browserHandoff: true},
 		{name: "compaction", pendingSubmissions: 1, compactCommand: &claudeCompactCommand{}},
 		{
 			name:               "background task",
@@ -2274,17 +2272,16 @@ func TestClaudeTerminalAssistantPreservesStatesThatStillOwnStream(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			stdin := &recordingWriteCloser{}
 			session := &claudeCodeSession{
-				projectPath:           "/tmp/demo",
-				busy:                  true,
-				pendingSubmissions:    tt.pendingSubmissions,
-				browserHandoffPending: tt.browserHandoff,
-				compactCommand:        tt.compactCommand,
-				stdin:                 stdin,
-				status:                claudeThinkingStatus,
-				assistantBlocks:       make(map[string]map[string]struct{}),
-				toolCalls:             make(map[string]claudeToolCall),
-				toolResults:           make(map[string]struct{}),
-				backgroundTasks:       tt.backgroundTasks,
+				projectPath:        "/tmp/demo",
+				busy:               true,
+				pendingSubmissions: tt.pendingSubmissions,
+				compactCommand:     tt.compactCommand,
+				stdin:              stdin,
+				status:             claudeThinkingStatus,
+				assistantBlocks:    make(map[string]map[string]struct{}),
+				toolCalls:          make(map[string]claudeToolCall),
+				toolResults:        make(map[string]struct{}),
+				backgroundTasks:    tt.backgroundTasks,
 			}
 
 			session.handleClaudeStdoutLine(`{"type":"assistant","message":{"id":"msg-final","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Done."}]}}`)
