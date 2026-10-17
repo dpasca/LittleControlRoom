@@ -14,7 +14,7 @@ import (
 
 const engineerMessageSelect = `
 	SELECT id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
-		target_session_id, prompt,
+		target_session_id, follow_current_session, submission_uncertain, prompt,
 		reveal, todo_id, todo_label, todo_text, state, attempt_count,
 		last_error, created_at, updated_at, delivered_at, model_selection_json
 	FROM engineer_messages
@@ -32,7 +32,7 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	message.SessionMode = message.SessionMode.Normalized()
 	message.RequestedTargetSessionID = strings.TrimSpace(message.RequestedTargetSessionID)
 	message.TargetSessionID = strings.TrimSpace(message.TargetSessionID)
-	if message.RequestedTargetSessionID == "" {
+	if message.RequestedTargetSessionID == "" && !message.FollowCurrentSession {
 		message.RequestedTargetSessionID = message.TargetSessionID
 	}
 	if err := message.EngineerModelSelection.Normalize(message.Provider); err != nil {
@@ -40,6 +40,14 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	}
 	if message.SelectModel {
 		return control.EngineerMessage{}, errors.New("model picker must complete before queueing")
+	}
+	if message.SubmissionUncertain {
+		return control.EngineerMessage{}, errors.New("new engineer messages cannot have an uncertain prior submission")
+	}
+	if message.FollowCurrentSession && (message.TargetSessionID != "" || message.RequestedTargetSessionID != "" ||
+		message.SessionMode != control.SessionModeResumeOrNew || message.AgentTaskID != "" ||
+		message.TodoID != 0 || message.EngineerModelSelection != (control.EngineerModelSelection{})) {
+		return control.EngineerMessage{}, errors.New("current-session messages require resume_or_new without an exact target, task callback, model change, or TODO redirect")
 	}
 	message.Prompt = strings.TrimSpace(message.Prompt)
 	message.TodoLabel = strings.TrimSpace(message.TodoLabel)
@@ -92,13 +100,13 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO engineer_messages(
 			id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
-			target_session_id, prompt,
+			target_session_id, follow_current_session, prompt,
 			reveal, todo_id, todo_label, todo_text, state, attempt_count,
 			last_error, created_at, updated_at, delivered_at, model_selection_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, message.ID, message.OperationID, message.AgentTaskID, message.AgentTaskRevision, message.ProjectPath, string(message.Provider),
-		string(message.SessionMode), message.RequestedTargetSessionID, message.TargetSessionID, message.Prompt,
+		string(message.SessionMode), message.RequestedTargetSessionID, message.TargetSessionID, boolToInt(message.FollowCurrentSession), message.Prompt,
 		boolToInt(message.Reveal), message.TodoID,
 		message.TodoLabel, message.TodoText, string(message.State), message.AttemptCount,
 		message.LastError, message.CreatedAt.Unix(), message.UpdatedAt.Unix(), nil, modelSelectionJSON(message.EngineerModelSelection))
@@ -151,6 +159,7 @@ func sameEngineerMessageRequest(existing, proposed control.EngineerMessage) bool
 		existing.Provider == proposed.Provider &&
 		existing.SessionMode == proposed.SessionMode &&
 		existing.RequestedTargetSessionID == proposed.RequestedTargetSessionID &&
+		existing.FollowCurrentSession == proposed.FollowCurrentSession &&
 		existing.Prompt == proposed.Prompt &&
 		existing.Reveal == proposed.Reveal &&
 		existing.TodoID == proposed.TodoID &&
@@ -235,7 +244,7 @@ func (s *Store) RequeueDeliveringEngineerMessages(ctx context.Context) error {
 	}
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE engineer_messages
-		SET state = ?, last_error = ?, updated_at = ?
+		SET state = ?, last_error = ?, updated_at = ?, submission_uncertain = 1
 		WHERE state = ?
 	`, string(control.EngineerMessageQueued), "Delivery was interrupted by an LCR restart; retrying.", time.Now().Unix(), string(control.EngineerMessageDelivering))
 	if err != nil {
@@ -265,8 +274,8 @@ func (s *Store) ClaimEngineerMessage(ctx context.Context, id, targetSessionID st
 			attempt_count = attempt_count + 1,
 			last_error = '',
 			updated_at = ?
-		WHERE id = ? AND state = ?
-	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued))
+		WHERE id = ? AND state = ? AND (follow_current_session = 0 OR ? <> '')
+	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued), targetSessionID)
 	if err != nil {
 		return control.EngineerMessage{}, false, fmt.Errorf("claim engineer message: %w", err)
 	}
@@ -330,18 +339,21 @@ func (s *Store) RecordEngineerMessageState(
 	if state == control.EngineerMessageDelivered {
 		deliveredAt = now.Unix()
 	}
+	// Only the host's proven pre-submission refusal may release a current-session
+	// binding. Interrupted/uncertain submissions keep their recipient on retry.
+	clearTarget := current.FollowCurrentSession && !current.SubmissionUncertain && state == control.EngineerMessageQueued && targetSessionID == ""
 	_, err = tx.ExecContext(ctx, `
 		UPDATE engineer_messages
 		SET state = ?,
-			target_session_id = CASE WHEN ? <> '' THEN ? ELSE target_session_id END,
+			target_session_id = CASE WHEN ? THEN '' WHEN ? <> '' THEN ? ELSE target_session_id END,
 			last_error = ?, updated_at = ?, delivered_at = ?
 		WHERE id = ?
-	`, string(state), targetSessionID, targetSessionID, errText, now.Unix(), deliveredAt, id)
+	`, string(state), clearTarget, targetSessionID, targetSessionID, errText, now.Unix(), deliveredAt, id)
 	if err != nil {
 		return control.EngineerMessage{}, fmt.Errorf("record engineer message state: %w", err)
 	}
 	current.State = state
-	if targetSessionID != "" {
+	if clearTarget || targetSessionID != "" {
 		current.TargetSessionID = targetSessionID
 	}
 	if state == control.EngineerMessageDelivered {
@@ -419,12 +431,12 @@ type engineerMessageScanner interface {
 
 func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessage, error) {
 	var (
-		selectionJSON                string
-		message                      control.EngineerMessage
-		provider, sessionMode, state string
-		reveal                       int
-		createdAt, updatedAt         int64
-		deliveredAt                  sql.NullInt64
+		selectionJSON                    string
+		message                          control.EngineerMessage
+		provider, sessionMode, state     string
+		reveal, followCurrent, uncertain int
+		createdAt, updatedAt             int64
+		deliveredAt                      sql.NullInt64
 	)
 	if err := scanner.Scan(
 		&message.ID,
@@ -436,6 +448,8 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 		&sessionMode,
 		&message.RequestedTargetSessionID,
 		&message.TargetSessionID,
+		&followCurrent,
+		&uncertain,
 		&message.Prompt,
 		&reveal,
 		&message.TodoID,
@@ -458,6 +472,8 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 	message.SessionMode = control.NormalizeSessionMode(sessionMode)
 	message.State = control.EngineerMessageState(state)
 	message.Reveal = reveal != 0
+	message.FollowCurrentSession = followCurrent != 0
+	message.SubmissionUncertain = uncertain != 0
 	message.CreatedAt = time.Unix(createdAt, 0)
 	message.UpdatedAt = time.Unix(updatedAt, 0)
 	if deliveredAt.Valid {

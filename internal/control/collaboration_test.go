@@ -14,6 +14,8 @@ func TestCollaborationRequiresExactSessionAndHostOrigin(t *testing.T) {
 		want   bool
 	}{
 		{"exact", func(*EngineerSendPromptInput) {}, "/repos/a", true},
+		{"current", func(i *EngineerSendPromptInput) { i.TargetSessionID = ""; i.FollowCurrentSession = true }, "/repos/a", true},
+		{"mixed addressing", func(i *EngineerSendPromptInput) { i.FollowCurrentSession = true }, "/repos/a", false},
 		{"relative origin", func(*EngineerSendPromptInput) {}, "a", false},
 		{"same project", func(*EngineerSendPromptInput) {}, "/repos/b", false},
 		{"fresh launch", func(i *EngineerSendPromptInput) { i.SessionMode = SessionModeNew; i.TargetSessionID = "" }, "/repos/a", false},

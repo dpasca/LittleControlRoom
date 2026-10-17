@@ -433,6 +433,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 			session_mode TEXT NOT NULL DEFAULT 'resume_or_new',
 			requested_target_session_id TEXT NOT NULL DEFAULT '',
 			target_session_id TEXT NOT NULL DEFAULT '',
+			follow_current_session INTEGER NOT NULL DEFAULT 0,
+			submission_uncertain INTEGER NOT NULL DEFAULT 0,
 			prompt TEXT NOT NULL,
 			reveal INTEGER NOT NULL DEFAULT 0,
 			todo_id INTEGER NOT NULL DEFAULT 0,
@@ -499,6 +501,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureEngineerMessagesRequestedTargetColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureEngineerMessagesFollowCurrentColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureEngineerMessagesRevisionColumn(ctx); err != nil {

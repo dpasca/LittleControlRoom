@@ -769,8 +769,11 @@ type Session interface {
 
 type LaunchRequest struct {
 	RequireLiveIdle bool
-	SubmissionCheck func() error  `json:"-"`
-	TurnAdmission   TurnAdmission `json:"-"`
+	// RequireLiveSession prevents a project-directed message from launching or
+	// replacing a conversation if its selected recipient disappears.
+	RequireLiveSession bool
+	SubmissionCheck    func() error  `json:"-"`
+	TurnAdmission      TurnAdmission `json:"-"`
 	// ImageReviewEnabled is operator-selected for this session only, never a global default.
 	ImageReviewEnabled bool
 	// ImageReviewAPIKey is passed only to the recovery MCP helper environment.
@@ -886,6 +889,9 @@ type WorkspaceExcursionHandler func(WorkspaceExcursion)
 func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
 		return fmt.Errorf("project path required")
+	}
+	if r.RequireLiveSession && !r.RequireResumeID {
+		return fmt.Errorf("live session delivery requires an exact session id")
 	}
 	if r.RequireResumeID {
 		if r.ForceNew {
@@ -1201,6 +1207,10 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		m.mu.Unlock()
 		existing = nil
 		ok = false
+	}
+	if req.RequireLiveSession && (!ok || existingState.Provider.Normalized() != req.Provider.Normalized() ||
+		!sessionMatchesResumeID(existing, existingState, req.ResumeID)) {
+		return nil, false, ErrCurrentSessionUnavailable
 	}
 	if req.RequireLiveIdle && (!ok || existingState.ActiveTurnID != "" || existingState.Busy || existingState.BusyExternal || existingState.Closed || existingState.PendingApproval != nil || existingState.PendingToolInput != nil) {
 		return nil, false, fmt.Errorf("review delivery requires the exact live idle caller; it will not reopen or steer a session")

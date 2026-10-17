@@ -70,7 +70,7 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 		parent = context.Background()
 	}
 	targetSessionID := strings.TrimSpace(input.TargetSessionID)
-	if targetSessionID == "" && input.SessionMode == control.SessionModeResumeOrNew {
+	if targetSessionID == "" && !input.FollowCurrentSession && input.SessionMode == control.SessionModeResumeOrNew {
 		targetSessionID = m.selectedProjectSessionID(project, provider)
 	}
 	message := control.EngineerMessage{
@@ -80,6 +80,7 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 		Provider:               controlProviderFromCodexProvider(provider),
 		SessionMode:            input.SessionMode.Normalized(),
 		TargetSessionID:        targetSessionID,
+		FollowCurrentSession:   input.FollowCurrentSession,
 		Prompt:                 strings.TrimSpace(prompt),
 		Reveal:                 input.Reveal,
 		TodoID:                 input.TodoID,
@@ -224,7 +225,7 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 	}
 	targetSessionID := strings.TrimSpace(message.TargetSessionID)
 	snapshot, live := m.liveEmbeddedSnapshotForProject(project.Path, provider)
-	if !live && message.AgentTaskRevision > 0 {
+	if !live && (message.AgentTaskRevision > 0 || message.FollowCurrentSession) {
 		return engineerMessageDisposition{project: project, wait: true}
 	}
 	if !live {
@@ -335,7 +336,8 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 	}
 	provider := codexProviderFromControlProvider(message.Provider)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
-		requireLiveIdle: message.AgentTaskRevision > 0,
+		requireLiveIdle:    message.AgentTaskRevision > 0,
+		requireLiveSession: message.FollowCurrentSession,
 		submissionCheck: func() error {
 			if message.AgentTaskRevision == 0 {
 				return nil
@@ -357,7 +359,11 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 		if status == "" {
 			status = "Engineer message delivery is waiting for its target session."
 		}
-		return m, m.recordEngineerMessageStateCmd(message, control.EngineerMessageQueued, message.TargetSessionID, status, nil)
+		targetSessionID := message.TargetSessionID
+		if message.FollowCurrentSession && !message.SubmissionUncertain {
+			targetSessionID = "" // No launch command ran, so no input was submitted.
+		}
+		return m, m.recordEngineerMessageStateCmd(message, control.EngineerMessageQueued, targetSessionID, status, nil)
 	}
 	cmd = m.todoEngineerLaunchTrackingCmd(message.ProjectPath, message.TodoID, cmd)
 	return m, m.engineerMessageDeliveryCmd(message, cmd)
@@ -407,7 +413,13 @@ func (m Model) engineerMessageDeliveryCmd(message control.EngineerMessage, cmd t
 		if targetSessionID == "" {
 			targetSessionID = strings.TrimSpace(opened.snapshot.ThreadID)
 		}
-		if opened.snapshot.BusyExternal {
+		if message.FollowCurrentSession && !message.SubmissionUncertain && errors.Is(stateErr, codexapp.ErrCurrentSessionUnavailable) {
+			state = control.EngineerMessageQueued
+			stateErr = nil
+			targetSessionID = ""
+			status = "The current engineer changed before submission; the message remains queued for the current session."
+			opened.deliveryDeferred = true
+		} else if opened.snapshot.BusyExternal {
 			state = control.EngineerMessageQueued
 			stateErr = nil
 			status = "The target session is active outside LCR; the message remains queued."

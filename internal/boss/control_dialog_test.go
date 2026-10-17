@@ -26,6 +26,20 @@ func TestCollaborationConfirmationShowsPromptOnStandardTerminal(t *testing.T) {
 	}
 }
 
+func TestCurrentSessionConfirmationExplainsRecipient(t *testing.T) {
+	inv := validatedControlInvocationForTest(t, control.CapabilityEngineerSendPrompt, control.EngineerSendPromptInput{
+		ProjectPath: "/projects/demo", Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew,
+		FollowCurrentSession: true, Prompt: "Project checkpoint",
+	})
+	view, err := RenderControlConfirmationDialog(inv, "Project update", 100, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(view, "Currently open session") || !strings.Contains(view, "waits if none is open") {
+		t.Fatalf("recipient omitted: %s", view)
+	}
+}
+
 func TestCollaborationConfirmationKeepsActionsVisible(t *testing.T) {
 	inv := validatedControlInvocationForTest(t, control.CapabilityEngineerSendPrompt, control.EngineerSendPromptInput{
 		ProjectPath:     "/projects/crypto",

@@ -42,7 +42,7 @@ func PermissionForOperation(op Operation) (ControlPermission, bool) {
 	case CapabilityEngineerSendPrompt:
 		var input EngineerSendPromptInput
 		_ = json.Unmarshal(inv.Args, &input)
-		if input.SessionMode != SessionModeResumeOrNew || input.TargetSessionID == "" || input.Provider == ProviderAuto || input.TodoID != 0 || input.EngineerModelSelection != (EngineerModelSelection{}) {
+		if input.SessionMode != SessionModeResumeOrNew || (input.TargetSessionID == "" && !input.FollowCurrentSession) || input.Provider == ProviderAuto || input.TodoID != 0 || input.EngineerModelSelection != (EngineerModelSelection{}) {
 			return ControlPermission{}, false
 		}
 		permission.Target = input.ProjectPath

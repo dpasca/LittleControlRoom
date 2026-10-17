@@ -55,7 +55,11 @@ func RenderCollaborationConfirmationDialog(inv control.Invocation, origin string
 	} {
 		lines = append(lines, wrappedBlockLines(explanation, width)...)
 	}
-	lines = append(lines, "", renderBossControlDetail("Session", input.Provider.Label()+" / "+input.TargetSessionID, width),
+	sessionLabel := input.TargetSessionID
+	if input.FollowCurrentSession {
+		sessionLabel = "currently open session (waits if none is open)"
+	}
+	lines = append(lines, "", renderBossControlDetail("Session", input.Provider.Label()+" / "+sessionLabel, width),
 		bossControlSectionStyle.Render("Prompt"), renderBossControlPromptBox(input.Prompt, width))
 	content := strings.Join(lines, "\n")
 	footer := renderCollaborationActions(width, busy)
@@ -191,6 +195,9 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 	}
 	if input.TargetSessionID != "" {
 		lines = append(lines, renderBossControlDetail("Session", input.TargetSessionID, width))
+	}
+	if input.FollowCurrentSession {
+		lines = append(lines, renderBossControlDetail("Session", "Currently open session; waits if none is open", width))
 	}
 	if input.TodoID > 0 {
 		lines = append(lines, renderBossControlDetail("TODO", controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText), width))

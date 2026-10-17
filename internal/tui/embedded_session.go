@@ -44,6 +44,7 @@ type codexSessionOpenedMsg struct {
 	perfDuration     time.Duration
 	restartIntentKey string
 	restartWarmup    bool
+	deliveryDeferred bool
 	err              error
 }
 
@@ -162,6 +163,13 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			m.status = "New session canceled; current session kept"
 		}
 		return m, m.restoreTodoDialogs()
+	}
+	if msg.deliveryDeferred {
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, nil, "message queued")
+		m.finishCodexPendingOpenRequest(msg.projectPath, msg.openRequestID, codexapp.Snapshot{}, false, false)
+		m.completeCodexOpenRequest(msg.openRequestID)
+		m.status = "Current engineer changed before submission; message remains queued."
+		return m, nil
 	}
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 	m.err = nil
@@ -1073,6 +1081,7 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 
 type embeddedLaunchOptions struct {
 	requireLiveIdle          bool
+	requireLiveSession       bool
 	submissionCheck          func() error
 	modelSelection           control.EngineerModelSelection
 	forceNew                 bool
@@ -1093,6 +1102,7 @@ func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.P
 		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
 		RequireResumeID:            options.requireResumeID,
 		RequireLiveIdle:            options.requireLiveIdle,
+		RequireLiveSession:         options.requireLiveSession,
 		SubmissionCheck:            options.submissionCheck,
 		ForceNew:                   options.forceNew,
 		Prompt:                     options.prompt,

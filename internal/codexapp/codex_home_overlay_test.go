@@ -153,7 +153,7 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 			t.Fatalf("overlay runtime skill = %q, want progressive control guidance for %s", runtimeText, want)
 		}
 	}
-	for _, want := range []string{"Communicating with another engineer session", "engineer.send_prompt", "target_session_id", "Do not make the operator relay"} {
+	for _, want := range []string{"Communicating with another engineer session", "engineer.send_prompt", "target_session_id", "follow_current_session: true", "Do not make the operator relay"} {
 		if !strings.Contains(runtimeText, want) {
 			t.Fatalf("overlay runtime skill = %q, want engineer messaging guidance for %s", runtimeText, want)
 		}

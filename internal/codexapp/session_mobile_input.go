@@ -30,6 +30,8 @@ type SessionInputResult struct {
 var (
 	ErrSessionInputUnavailable = errors.New("engineer session input unavailable")
 	ErrSessionChanged          = errors.New("engineer session changed")
+	// This refusal is returned by Manager.Open before any input is submitted.
+	ErrCurrentSessionUnavailable = errors.New("current engineer session changed before submission")
 )
 
 func DescribeSessionInput(snapshot Snapshot) SessionInputAvailability {

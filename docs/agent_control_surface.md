@@ -279,13 +279,25 @@ sessions, which own the checkout and receive the live check.
 An embedded engineer can hand work to another embedded engineer through the
 same confirmed control path. The sender first uses `project.search` and
 `project.session_list` (or `project.detail`) to identify the receiving project,
-provider, and current session, then proposes `engineer.send_prompt` with
+provider, and recorded conversations, then proposes `engineer.send_prompt` with
 `session_mode: resume_or_new`.
 
 When the sender knows the receiving session, it supplies `target_session_id`
 and the matching explicit `provider`. Exact targeting works for Codex,
 OpenCode, Claude Code, and LCAgent. LCAgent accepts both its stable logical
 thread id and the run ids belonging to that thread.
+
+For a project update intended for whichever engineer is currently open, supply
+`follow_current_session: true`, an explicit `provider`, and
+`session_mode: resume_or_new`, without `target_session_id`. The host resolves
+the open session when delivery is possible, rather than binding to a historical
+session from a persisted query. If no matching session is open, the message
+waits; this mode never launches a session, changes models, or redirects TODO
+work. It can follow a replacement while waiting or after a proven refusal
+before submission. Once submission may have occurred, restart retries retain
+the bound recipient to avoid duplicating the message into another conversation.
+Replies intended for the original caller, task reviews, and automatic completion
+reports continue to use exact session addresses.
 
 After confirmation, the host writes the message to SQLite before attempting a
 provider call. It resumes an exact idle target and starts a turn. An eligible
@@ -362,15 +374,15 @@ unapproved/future messages, including requests claimed but not yet authorized;
 it does not cancel messages already authorized for delivery or stop running work.
 
 Automatic delivery requires `engineer.send_prompt`, `resume_or_new`, an explicit
-provider and exact `target_session_id`, and no model selection or TODO-based
-worktree redirect. Fresh launches, model changes, TODO redirects, other project
+provider and either exact `target_session_id` or `follow_current_session: true`,
+and no model selection or TODO-based worktree redirect. Fresh launches, model changes, TODO redirects, other project
 pairs, Help Chat proposals, and other control capabilities still ask normally.
 Agents cannot create or revoke grants through the control catalog. Grant creation
 and approval of the first message are atomic; operations retain
 `confirmation_by: project_collaboration` as audit evidence.
 
 Trusted messages pass unrelated pending confirmations through the existing
-durable mailbox, retaining exact-session validation and delivery receipts.
+durable mailbox, retaining the chosen recipient policy and delivery receipts.
 The proposal/status result reports `automatic_delivery: true` and
 `requires_new_user_turn: false` while an approved message awaits execution.
 Agents should continue independent authorized work instead of asking again;

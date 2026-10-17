@@ -102,6 +102,8 @@ func TestLCRControlToolsAndPromptRequireExplicitEnablement(t *testing.T) {
 		"explicit operator confirmation",
 		"propose engineer.send_prompt",
 		"durable delivery waits for that recipient",
+		"follow_current_session=true",
+		"never substitute another session",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("control-enabled prompt missing %q:\n%s", want, prompt)

@@ -32,8 +32,8 @@ func CollaborationPair(a, b string) (ProjectCollaboration, bool) {
 }
 
 // CollaborationForOperation uses the host-bound caller path, never an origin
-// supplied in tool arguments. Only messages to an inspected exact session are
-// eligible; launches, model changes and TODO-based target redirects still ask.
+// supplied in tool arguments. Exact-session and explicit current-session messages
+// are eligible; launches, model changes and TODO-based target redirects still ask.
 func CollaborationForOperation(op Operation) (ProjectCollaboration, bool) {
 	if op.Capability != CapabilityEngineerSendPrompt || op.SessionKey == "" || op.Provider == "" {
 		return ProjectCollaboration{}, false
@@ -44,7 +44,7 @@ func CollaborationForOperation(op Operation) (ProjectCollaboration, bool) {
 	}
 	var input EngineerSendPromptInput
 	if json.Unmarshal(inv.Args, &input) != nil || input.SessionMode != SessionModeResumeOrNew ||
-		input.TargetSessionID == "" || input.Provider == ProviderAuto || input.TodoID != 0 ||
+		(input.TargetSessionID == "" && !input.FollowCurrentSession) || input.Provider == ProviderAuto || input.TodoID != 0 ||
 		input.EngineerModelSelection != (EngineerModelSelection{}) {
 		return ProjectCollaboration{}, false
 	}

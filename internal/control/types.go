@@ -490,6 +490,8 @@ type EngineerMessage struct {
 	SessionMode              SessionMode          `json:"session_mode"`
 	RequestedTargetSessionID string               `json:"requested_target_session_id,omitempty"`
 	TargetSessionID          string               `json:"target_session_id,omitempty"`
+	FollowCurrentSession     bool                 `json:"follow_current_session,omitempty"`
+	SubmissionUncertain      bool                 `json:"submission_uncertain,omitempty"`
 	Prompt                   string               `json:"prompt"`
 	Reveal                   bool                 `json:"reveal"`
 	TodoID                   int64                `json:"todo_id,omitempty"`

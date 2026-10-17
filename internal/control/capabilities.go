@@ -152,17 +152,18 @@ func (a ProjectArchiveAction) Normalized() ProjectArchiveAction {
 
 type EngineerSendPromptInput struct {
 	EngineerModelSelection
-	RequestID       string      `json:"request_id,omitempty"`
-	ProjectPath     string      `json:"project_path"`
-	ProjectName     string      `json:"project_name"`
-	Provider        Provider    `json:"provider"`
-	SessionMode     SessionMode `json:"session_mode"`
-	TargetSessionID string      `json:"target_session_id,omitempty"`
-	Prompt          string      `json:"prompt"`
-	TodoID          int64       `json:"todo_id,omitempty"`
-	TodoLabel       string      `json:"todo_label,omitempty"`
-	TodoText        string      `json:"todo_text,omitempty"`
-	Reveal          bool        `json:"reveal"`
+	RequestID            string      `json:"request_id,omitempty"`
+	ProjectPath          string      `json:"project_path"`
+	ProjectName          string      `json:"project_name"`
+	Provider             Provider    `json:"provider"`
+	SessionMode          SessionMode `json:"session_mode"`
+	TargetSessionID      string      `json:"target_session_id,omitempty"`
+	FollowCurrentSession bool        `json:"follow_current_session,omitempty"`
+	Prompt               string      `json:"prompt"`
+	TodoID               int64       `json:"todo_id,omitempty"`
+	TodoLabel            string      `json:"todo_label,omitempty"`
+	TodoText             string      `json:"todo_text,omitempty"`
+	Reveal               bool        `json:"reveal"`
 }
 
 type EngineerSendPromptResult struct {
@@ -453,7 +454,7 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 func EngineerSendPromptCapability() Capability {
 	return Capability{
 		Name:         CapabilityEngineerSendPrompt,
-		Description:  "Send a message to an embedded engineer session through a durable queue. Requires confirmation unless the operator already approved collaboration between these exact project paths. Automatic collaboration requires resume_or_new, an explicit provider and target_session_id, no TODO redirect, and no model change. LCR resumes an idle target, steers an eligible active target, or delivers after the exact target becomes idle. When an embedded session sends the request, the worker's completed turn is reported back to that exact calling session, including workers it did not launch.",
+		Description:  "Send a message to an embedded engineer session through a durable queue. For project updates, use follow_current_session=true to resolve the open recipient at delivery time without launching a session. For a reply to a specific caller, use exact target_session_id; replaced exact targets fail closed. Automatic project collaboration requires resume_or_new, an explicit provider and either addressing choice, no TODO redirect, and no model change. LCR resumes an idle exact target, steers an eligible active target, or waits until delivery is possible. Completed worker turns report back to the exact calling session.",
 		InputSchema:  engineerSendPromptInputSchema(),
 		OutputSchema: engineerSendPromptOutputSchema(),
 		Risk:         RiskExternal,
@@ -720,6 +721,14 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 	}
 	if input.TargetSessionID != "" && input.Provider == ProviderAuto {
 		return EngineerSendPromptInput{}, fmt.Errorf("target_session_id requires an explicit engineer provider")
+	}
+	if input.FollowCurrentSession {
+		if input.TargetSessionID != "" || input.SessionMode != SessionModeResumeOrNew || input.Provider == ProviderAuto {
+			return EngineerSendPromptInput{}, fmt.Errorf("follow_current_session requires an explicit provider, session_mode resume_or_new, and no target_session_id")
+		}
+		if input.TodoID != 0 || input.EngineerModelSelection != (EngineerModelSelection{}) {
+			return EngineerSendPromptInput{}, fmt.Errorf("follow_current_session cannot change models or redirect TODO work")
+		}
 	}
 	if input.Prompt == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("prompt is required")
@@ -1585,6 +1594,10 @@ func engineerSendPromptInputSchema() map[string]any {
 			"target_session_id": map[string]any{
 				"type":        "string",
 				"description": "Exact inspected recipient session id. LCR keeps the message bound to this recipient while queued and fails rather than silently retargeting it. Requires an explicit provider and session_mode=resume_or_new.",
+			},
+			"follow_current_session": map[string]any{
+				"type":        "boolean",
+				"description": "For project updates: deliver to the currently open session of the explicit provider, resolving it when delivery becomes possible. Waits if none is open; never launches a session. Mutually exclusive with target_session_id, model changes, and TODO redirects; requires resume_or_new. Use exact target_session_id for replies to a specific caller. Once submission may have occurred, restart retries stay bound to that recipient.",
 			},
 			"prompt": map[string]any{
 				"type":        "string",
