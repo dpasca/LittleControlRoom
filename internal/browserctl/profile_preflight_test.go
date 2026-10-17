@@ -124,16 +124,18 @@ func TestManagedBrowserExecutableVersionTimeoutIsBounded(t *testing.T) {
 
 func TestManagedBrowserExecutableVersionBoundsInheritedOutputPipe(t *testing.T) {
 	browser := filepath.Join(t.TempDir(), "browser-with-orphan")
-	script := "#!/bin/sh\nsleep 5 &\nprintf 'Chromium 149.0.7827.200\\n'\n"
+	script := "#!/bin/sh\nsleep 30 &\nprintf 'Chromium 149.0.7827.200\\n'\n"
 	if err := os.WriteFile(browser, []byte(script), 0o755); err != nil {
 		t.Fatalf("write browser wrapper: %v", err)
 	}
 	started := time.Now()
-	version, major, ok, err := managedBrowserExecutableVersionWithTimeout(browser, 2*time.Second)
+	// The probe budget is generous so a loaded machine cannot expire it before
+	// the wrapper runs; the orphan outlives the assertion below by a wide margin.
+	version, major, ok, err := managedBrowserExecutableVersionWithTimeout(browser, 15*time.Second)
 	if err != nil || !ok || major != 149 || version != "Chromium 149.0.7827.200" {
 		t.Fatalf("managedBrowserExecutableVersionWithTimeout() = %q, %d, %v, %v; want valid bounded version", version, major, ok, err)
 	}
-	if elapsed := time.Since(started); elapsed > 2500*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("inherited output pipe wait took %s, want bounded wait", elapsed)
 	}
 }

@@ -2670,3 +2670,41 @@ func TestLiveClaudeBackgroundWaitSharesOneTimerAcrossListAndFooter(t *testing.T)
 		t.Fatalf("codexFooterStatus() = %q, want %q", got, want)
 	}
 }
+
+func TestRebuildProjectListKeepsTaskOfRemovedWorktreeOffRootRepo(t *testing.T) {
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	rootPath := "/tmp/lcr-intercept"
+	worktreePath := "/tmp/lcr-intercept--carrier"
+	task := model.AgentTask{
+		ID:                 "agt_orphan",
+		Title:              "Task from removed worktree",
+		Status:             model.AgentTaskStatusWaiting,
+		WorkspacePath:      "/tmp/lcroom-agent-task-orphan",
+		OriginProjectPath:  rootPath,
+		OriginWorktreePath: worktreePath,
+		LastTouchedAt:      now,
+	}
+	m := Model{
+		nowFn: func() time.Time { return now },
+		allProjects: []model.ProjectSummary{
+			{Name: "lcr-intercept", Path: rootPath, Kind: model.ProjectKindProject, WorktreeKind: model.WorktreeKindMain, WorktreeRootPath: rootPath, PresentOnDisk: true, ManuallyAdded: true},
+		},
+		openAgentTasks: []model.AgentTask{task},
+		sortMode:       sortByAttention,
+		visibility:     visibilityAIFolders,
+	}
+	m.rebuildProjectList("")
+	found := false
+	for i, project := range m.projects {
+		if project.Path != task.WorkspacePath {
+			continue
+		}
+		found = true
+		if m.projectRows[i].Indent != 0 {
+			t.Fatalf("task of removed worktree still nested: %#v", m.projectRows[i])
+		}
+	}
+	if !found {
+		t.Fatalf("task row missing: %#v", m.projects)
+	}
+}

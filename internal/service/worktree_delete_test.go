@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lcroom/internal/events"
+	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 )
 
@@ -62,6 +63,39 @@ func TestExplicitDeletionWaitingForGitAllowsServiceReads(t *testing.T) {
 	}
 	if _, err := os.Stat(f.path); !os.IsNotExist(err) {
 		t.Fatalf("worktree remains after repository operation finished: %v", err)
+	}
+}
+
+func TestExplicitDeletionArchivesTasksLaunchedFromWorktree(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	ctx := context.Background()
+	create := func(title, worktree string) model.AgentTask {
+		task, err := f.svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+			Title: title, Provider: model.SessionSourceCodex, OriginProjectPath: f.root, OriginWorktreePath: worktree,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}
+	child := create("from worktree", f.path)
+	sibling := create("from root", "")
+	if err := f.svc.RemoveWorktree(ctx, f.path, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.svc.GetAgentTask(ctx, child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.AgentTaskStatusArchived {
+		t.Fatalf("worktree task status = %q, want archived", got.Status)
+	}
+	got, err = f.svc.GetAgentTask(ctx, sibling.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status == model.AgentTaskStatusArchived {
+		t.Fatalf("root task was archived by worktree removal")
 	}
 }
 

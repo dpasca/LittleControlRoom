@@ -1315,6 +1315,21 @@ func filterProjectSummariesByCategory(projects []model.ProjectSummary, categoryI
 	return out
 }
 
+// agentTaskOriginWorktreeRemoved reports whether the task was launched from a
+// linked worktree that is now forgotten, missing from disk, or untracked.
+func (m Model) agentTaskOriginWorktreeRemoved(task model.AgentTask) bool {
+	worktree := cleanAgentTaskPath(task.OriginWorktreePath)
+	if worktree == "" || worktree == cleanAgentTaskPath(task.OriginProjectPath) {
+		return false
+	}
+	for _, project := range m.allProjects {
+		if cleanAgentTaskPath(project.Path) == worktree {
+			return project.Forgotten || !project.PresentOnDisk
+		}
+	}
+	return true
+}
+
 func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.ProjectSummary, []projectListRow) {
 	projects = partitionProjectsByKind(projects)
 	basePaths := make(map[string]struct{}, len(projects))
@@ -1346,6 +1361,13 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 		anchor := cleanAgentTaskPath(task.OriginWorktreePath)
 		if _, ok := basePaths[anchor]; !ok {
 			anchor = cleanAgentTaskPath(task.OriginProjectPath)
+			// A task launched from a worktree that has since been removed must not
+			// slide up under the root repo; it no longer belongs to that checkout.
+			if m.agentTaskOriginWorktreeRemoved(task) {
+				standaloneTasks = append(standaloneTasks, project)
+				standaloneRanks = append(standaloneRanks, index)
+				continue
+			}
 		}
 		// Older merge-recovery tasks stored affiliation only as ordered project resources.
 		if _, ok := basePaths[anchor]; !ok && agentTaskHasCapability(task, "worktree.merge.recover") {

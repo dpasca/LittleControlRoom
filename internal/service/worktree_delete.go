@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -228,12 +229,40 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 		return fmt.Errorf("directory deleted; cannot clear saved launch destination: %w", err)
 	}
 	s.forgetProjectState(path)
+	archivedTasks := s.archiveAgentTasksForRemovedWorktree(ctx, path)
 	now := time.Now()
 	if s.bus != nil {
-		s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: path, Payload: map[string]string{"action": "remove_worktree", "root_path": root}})
+		s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: path, Payload: map[string]string{"action": "remove_worktree", "root_path": root, "archived_tasks": strconv.Itoa(archivedTasks)}})
 	}
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: path, Type: string(events.ActionApplied), Payload: "remove_worktree"})
 	return nil
+}
+
+// archiveAgentTasksForRemovedWorktree moves open agent tasks launched from the
+// removed worktree to the trash so they do not linger as orphans. The checkout
+// is already gone, so failures are best-effort and never fail the removal.
+func (s *Service) archiveAgentTasksForRemovedWorktree(ctx context.Context, worktreePath string) int {
+	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{
+		Statuses: []model.AgentTaskStatus{
+			model.AgentTaskStatusActive,
+			model.AgentTaskStatusWaiting,
+			model.AgentTaskStatusCompleted,
+		},
+	})
+	if err != nil {
+		return 0
+	}
+	archived := 0
+	for _, task := range tasks {
+		origin := strings.TrimSpace(task.OriginWorktreePath)
+		if origin == "" || !samePath(origin, worktreePath) {
+			continue
+		}
+		if _, err := s.ArchiveAgentTask(ctx, task.ID); err == nil {
+			archived++
+		}
+	}
+	return archived
 }
 
 // All traversal is anchored to directory descriptors. Symlinks are unlinked,
