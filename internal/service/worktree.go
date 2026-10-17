@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/events"
 	"lcroom/internal/gitlock"
 	"lcroom/internal/model"
+	"lcroom/internal/projectowner"
 	"lcroom/internal/scanner"
 	"lcroom/internal/store"
 	"lcroom/internal/worktreeprep"
@@ -109,6 +110,12 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, fmt.Errorf("todo id is required")
 	}
 
+	scope, err := projectowner.New(s.store).ResolveRepository(ctx, projectPath)
+	if err != nil {
+		return CreateTodoWorktreeResult{}, err
+	}
+	projectPath = scope.ProjectPath
+
 	todo, err := s.store.GetTodo(ctx, req.TodoID)
 	if err != nil {
 		return CreateTodoWorktreeResult{}, err
@@ -118,10 +125,7 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	}
 	sourceCategoryID, sourceCategoryKnown := s.projectCategoryForWorktreeSource(ctx, projectPath)
 
-	worktreeRootPath, _ := s.readProjectWorktreeInfo(ctx, projectPath)
-	if strings.TrimSpace(worktreeRootPath) == "" {
-		worktreeRootPath = projectPath
-	}
+	worktreeRootPath := scope.ProjectPath
 	sourceRunCommand := s.projectRunCommandForWorktreeSource(ctx, projectPath, worktreeRootPath)
 	if req.Progress != nil {
 		req.Progress(CreateTodoWorktreeProgress{RootProjectPath: worktreeRootPath, WaitingForRepositoryOperations: true})

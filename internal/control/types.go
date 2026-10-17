@@ -24,6 +24,7 @@ const (
 	CapabilityWorktreeRemove                     CapabilityName = "worktree.remove"
 	CapabilityTodoAdd                            CapabilityName = "todo.add"
 	CapabilityTodoCreateWorktreeAndStartEngineer CapabilityName = "todo.create_worktree_and_start_engineer"
+	CapabilityTodoRepairOwner                    CapabilityName = "todo.repair_owner"
 	CapabilityTodoComplete                       CapabilityName = "todo.complete"
 	CapabilitySettingsUpdate                     CapabilityName = "settings.update"
 	CapabilityGitPrepareCommit                   CapabilityName = "git.prepare_commit"
@@ -46,6 +47,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityWorktreeRemove,
 		CapabilityTodoAdd,
 		CapabilityTodoCreateWorktreeAndStartEngineer,
+		CapabilityTodoRepairOwner,
 		CapabilityTodoComplete,
 		CapabilitySettingsUpdate,
 		CapabilityGitPrepareCommit,
@@ -369,6 +371,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateTodoAddInvocation(inv)
 	case CapabilityTodoCreateWorktreeAndStartEngineer:
 		return validateTodoCreateWorktreeAndStartEngineerInvocation(inv)
+	case CapabilityTodoRepairOwner:
+		return validateTodoRepairOwnerInvocation(inv)
 	case CapabilityTodoComplete:
 		return validateTodoCompleteInvocation(inv)
 	case CapabilitySettingsUpdate:

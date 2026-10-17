@@ -16,24 +16,22 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
+	"lcroom/internal/todocontrol/ownertest"
 	"lcroom/internal/uisurface"
 )
 
 func TestMobileProjectTODOActionsUseRepositoryScope(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, "little-control-room.sqlite")
-	st, err := store.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer st.Close()
+	f := ownertest.New(t)
+	dataDir := filepath.Dir(f.DBPath)
+	dbPath := f.DBPath
+	st := f.Store
 
 	now := time.Now()
-	rootPath := filepath.Join(dataDir, "repo")
-	childPath := filepath.Join(dataDir, "repo--feature")
-	otherPath := filepath.Join(dataDir, "other")
+	rootPath := f.Root
+	childPath := f.Caller
+	otherPath := t.TempDir()
 	for _, state := range []model.ProjectState{
 		{Path: rootPath, Name: "Repository", PresentOnDisk: true, InScope: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindMain, UpdatedAt: now},
 		{Path: childPath, Name: "Feature", PresentOnDisk: true, InScope: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, UpdatedAt: now},
@@ -57,6 +55,13 @@ func TestMobileProjectTODOActionsUseRepositoryScope(t *testing.T) {
 	cfg.DBPath = dbPath
 	cfg.MobileInputEnabled = true
 	svc := service.New(cfg, st, events.NewBus(), nil)
+	t.Cleanup(func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := svc.WaitForAsyncProjectRefreshes(waitCtx); err != nil {
+			t.Errorf("drain fixture refreshes: %v", err)
+		}
+	})
 	handler := New(svc).Handler(ctx)
 
 	getTodos := httptest.NewRequest(http.MethodGet, "/api/mobile/projects/todos?path="+url.QueryEscape(childPath), nil)

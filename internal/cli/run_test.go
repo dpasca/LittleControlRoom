@@ -187,16 +187,23 @@ func captureRunStdout(t *testing.T, args []string) (int, string) {
 		os.Stdout = oldStdout
 		_ = reader.Close()
 	}()
+	// Drain while Run writes: the capability corpus can exceed a pipe buffer.
+	type capturedOutput struct {
+		bytes []byte
+		err   error
+	}
+	outputReady := make(chan capturedOutput, 1)
+	go func() { bytes, err := io.ReadAll(reader); outputReady <- capturedOutput{bytes, err} }()
 
 	code := Run("lcroom", args)
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
 	}
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
+	output := <-outputReady
+	if output.err != nil {
+		t.Fatalf("read output: %v", output.err)
 	}
-	return code, string(output)
+	return code, string(output.bytes)
 }
 
 func TestFormatRuntimeConflictMessageIncludesRecovery(t *testing.T) {

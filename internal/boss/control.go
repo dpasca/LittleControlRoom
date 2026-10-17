@@ -862,6 +862,23 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.String() {
+	case "pgup", "pgdown", "home", "end":
+		_, maxScroll, err := RenderPermissionConfirmationDialog(control.Operation{Source: "chat", Invocation: m.pendingControl.Invocation}, PermissionConfirmationOptions{Preview: m.pendingControl.Preview, ScrollOffset: m.controlScrollOffset}, m.width, m.height)
+		if err != nil {
+			return m, nil
+		}
+		switch msg.String() {
+		case "pgup":
+			m.controlScrollOffset -= maxInt(1, m.height/2)
+		case "pgdown":
+			m.controlScrollOffset += maxInt(1, m.height/2)
+		case "home":
+			m.controlScrollOffset = 0
+		case "end":
+			m.controlScrollOffset = maxScroll
+		}
+		m.controlScrollOffset = maxInt(0, minInt(m.controlScrollOffset, maxScroll))
+		return m, nil
 	case "enter":
 		if !m.embedded {
 			m.status = "Control actions need the main TUI host"
@@ -901,6 +918,13 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err != nil {
 			m.status = "Could not prepare TODO-only action: " + err.Error()
 			return m, nil
+		}
+		if input.TodoID > 0 {
+			m.status = "This request uses an existing TODO; Esc keeps it without launching."
+			return m, nil
+		}
+		if input.TodoOwnerPath != "" {
+			input.ProjectPath = input.TodoOwnerPath
 		}
 		args, err := json.Marshal(control.TodoAddInput{
 			RequestID:   strings.TrimSpace(input.RequestID),

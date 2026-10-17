@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"lcroom/internal/control"
@@ -12,17 +14,74 @@ import (
 // AddTodoForLaunch commits the request identity and TODO together. A retry can
 // never allocate a second TODO, even after restart or concurrent delivery.
 func (s *Store) AddTodoForLaunch(ctx context.Context, input control.TodoCreateWorktreeAndStartEngineerInput) (model.TodoItem, error) {
+	return s.AddTodoForLaunchOwned(ctx, input, input.ProjectPath)
+}
+
+// AddTodoForLaunchOwned keeps the original request as provenance while storing
+// TODO ownership separately. Repair never rewrites the historical input JSON.
+func (s *Store) AddTodoForLaunchOwned(ctx context.Context, input control.TodoCreateWorktreeAndStartEngineerInput, owner string) (model.TodoItem, error) {
 	if input.RequestID == "" {
 		return model.TodoItem{}, fmt.Errorf("launch request id is required")
 	}
-	input.TodoID = 0
-	input.TodoLabel = ""
-	input.WorktreePath = ""
-	payload, err := json.Marshal(input)
+	payload, err := todoLaunchRequestPayload(input)
 	if err != nil {
 		return model.TodoItem{}, err
 	}
-	return s.addTodoWithLaunchRequest(ctx, input.ProjectPath, input.TodoText, nil, input.RequestID, string(payload))
+	return s.addTodoWithLaunchRequest(ctx, owner, input.TodoText, nil, input.RequestID, payload, input.TodoID)
+}
+
+func todoLaunchRequestPayload(input control.TodoCreateWorktreeAndStartEngineerInput) (string, error) {
+	input.TodoLabel = ""
+	input.WorktreePath = ""
+	input.TodoOwnerPath = "" // Derived expectation, not original request provenance.
+	payload, err := json.Marshal(input)
+	return string(payload), err
+}
+
+// InspectTodoLaunchRequest checks the durable identity before confirmation.
+// It never rewrites historical input, including an ownership repair's source.
+func (s *Store) InspectTodoLaunchRequest(ctx context.Context, input control.TodoCreateWorktreeAndStartEngineerInput) (model.TodoItem, bool, error) {
+	var id int64
+	var saved string
+	err := s.db.QueryRowContext(ctx, `SELECT todo_id,input_json FROM todo_launch_requests WHERE request_id=?`, input.RequestID).Scan(&id, &saved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.TodoItem{}, false, nil
+	}
+	if err != nil {
+		return model.TodoItem{}, false, err
+	}
+	var prior control.TodoCreateWorktreeAndStartEngineerInput
+	if err := json.Unmarshal([]byte(saved), &prior); err != nil {
+		return model.TodoItem{}, false, err
+	}
+	// The host historically filled display names and resolved provider=auto
+	// before journaling. Compare task intent while retaining that exact journal.
+	input.ProjectName, prior.ProjectName = "", ""
+	if input.ProjectPath == "" || prior.ProjectPath == "" {
+		input.ProjectPath, prior.ProjectPath = "", ""
+	}
+	if input.Provider == control.ProviderAuto {
+		input.Provider = prior.Provider
+	}
+	payload, err := todoLaunchRequestPayload(input)
+	if err != nil {
+		return model.TodoItem{}, false, err
+	}
+	previous, err := todoLaunchRequestPayload(prior)
+	if err != nil {
+		return model.TodoItem{}, false, err
+	}
+	if payload != previous {
+		return model.TodoItem{}, false, fmt.Errorf("launch request id is already bound to a different task; retain the original TODO and launch provenance")
+	}
+	item, err := s.GetTodo(ctx, id)
+	return item, true, err
+}
+
+func (s *Store) TodoHasWorktreeOrigin(ctx context.Context, id int64) (bool, error) {
+	var found bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM projects WHERE worktree_origin_todo_id=?)`, id).Scan(&found)
+	return found, err
 }
 
 func (s *Store) TodoLaunchInput(ctx context.Context, todoID int64) (control.TodoCreateWorktreeAndStartEngineerInput, error) {

@@ -26,6 +26,7 @@ import (
 	"lcroom/internal/keyedmutex"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
+	"lcroom/internal/projectowner"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 	"lcroom/internal/sessionclassify"
@@ -4282,6 +4283,19 @@ func (s *Service) HandleTodoCapture(ctx context.Context, req todocapture.Request
 }
 
 func (s *Service) AddTodoWithAttachments(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment) (model.TodoItem, error) {
+	if s == nil || s.store == nil {
+		return model.TodoItem{}, fmt.Errorf("service unavailable")
+	}
+	scope, err := projectowner.New(s.store).ResolveTodoOwner(ctx, projectPath)
+	if err != nil {
+		return model.TodoItem{}, err
+	}
+	return s.addTodoOwned(ctx, scope.ProjectPath, text, attachments)
+}
+
+// Only called after trusted ownership resolution, including any reviewed
+// expectation. Persistence, suggestions, events and refreshes share that owner.
+func (s *Service) addTodoOwned(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment) (model.TodoItem, error) {
 	item, err := s.store.AddTodoWithAttachments(ctx, projectPath, text, attachments)
 	if err != nil {
 		return model.TodoItem{}, err

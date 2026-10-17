@@ -1295,10 +1295,11 @@ func (m Model) addTodoCmd(projectPath, text string, attachments []model.TodoAtta
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
-		_, err := m.svc.AddTodoWithAttachments(ctx, projectPath, text, attachments)
+		item, err := m.svc.AddTodoWithAttachments(ctx, projectPath, text, attachments)
 		err = timeoutActionError(err, tuiQuickActionTimeout, "adding the TODO")
 		return todoActionMsg{
 			projectPath: projectPath,
+			ownerPath:   item.ProjectPath,
 			status:      "TODO added",
 			err:         err,
 		}

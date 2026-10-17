@@ -151,6 +151,8 @@ func (a ProjectArchiveAction) Normalized() ProjectArchiveAction {
 }
 
 type EngineerSendPromptInput struct {
+	TodoOwnerPath   string `json:"todo_owner_path,omitempty"`
+	DestinationPath string `json:"destination_path,omitempty"`
 	EngineerModelSelection
 	RequestID            string      `json:"request_id,omitempty"`
 	ProjectPath          string      `json:"project_path"`
@@ -253,13 +255,15 @@ type ProjectSetCategoryResult struct {
 }
 
 type TodoAddInput struct {
-	RequestID   string `json:"request_id,omitempty"`
-	ProjectPath string `json:"project_path"`
-	ProjectName string `json:"project_name"`
-	Text        string `json:"text"`
+	TodoOwnerPath string `json:"todo_owner_path,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
+	ProjectPath   string `json:"project_path"`
+	ProjectName   string `json:"project_name"`
+	Text          string `json:"text"`
 }
 
 type TodoCreateWorktreeAndStartEngineerInput struct {
+	TodoOwnerPath string `json:"todo_owner_path,omitempty"`
 	EngineerModelSelection
 	RequestID    string   `json:"request_id,omitempty"`
 	ProjectPath  string   `json:"project_path"`
@@ -438,6 +442,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return capabilityWithCatalogMetadata(TodoAddCapability()), true
 	case CapabilityTodoCreateWorktreeAndStartEngineer:
 		return capabilityWithCatalogMetadata(TodoCreateWorktreeAndStartEngineerCapability()), true
+	case CapabilityTodoRepairOwner:
+		return TodoRepairOwnerCapability(), true
 	case CapabilityTodoComplete:
 		return capabilityWithCatalogMetadata(TodoCompleteCapability()), true
 	case CapabilitySettingsUpdate:
@@ -604,7 +610,7 @@ func ScratchTaskArchiveCapability() Capability {
 func TodoAddCapability() Capability {
 	return Capability{
 		Name:         CapabilityTodoAdd,
-		Description:  "Add a project TODO item to the selected or named loaded project backlog.",
+		Description:  "Add a TODO to the selected or named loaded project's repository backlog. Verified linked checkouts use their repository owner; non-Git projects retain their own backlog. No worktree or engineer is started.",
 		InputSchema:  todoAddInputSchema(),
 		OutputSchema: todoAddOutputSchema(),
 		Risk:         RiskWrite,
@@ -622,7 +628,7 @@ func TodoAddCapability() Capability {
 func TodoCreateWorktreeAndStartEngineerCapability() Capability {
 	return Capability{
 		Name:         CapabilityTodoCreateWorktreeAndStartEngineer,
-		Description:  "Create a tracked project TODO, prepare a dedicated Git worktree, and start an engineer session there. When an embedded session proposes it, that engineer's launch turn and its replies to the same session's later engineer.send_prompt messages are reported back to that exact session.",
+		Description:  "Create a repository-owned TODO (or use an eligible existing todo_id), prepare a dedicated Git worktree, and start an engineer session there. When an embedded session proposes it, that engineer's launch turn and its replies to the same session's later engineer.send_prompt messages are reported back to that exact session.",
 		InputSchema:  todoCreateWorktreeAndStartEngineerInputSchema(),
 		OutputSchema: todoCreateWorktreeAndStartEngineerOutputSchema(),
 		Risk:         RiskExternal,
@@ -1567,6 +1573,8 @@ func engineerSendPromptInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
+			"todo_owner_path":  map[string]any{"type": "string", "description": "Expected resolved path. The host fills it when omitted and refuses if live resolution changes before execution."},
+			"destination_path": map[string]any{"type": "string", "description": "Expected resolved path. The host fills it when omitted and refuses if live resolution changes before execution."},
 			"model":            engineerModelProperty(),
 			"model_provider":   engineerModelProviderProperty(),
 			"reasoning_effort": engineerEffortProperty(),
@@ -1605,7 +1613,7 @@ func engineerSendPromptInputSchema() map[string]any {
 			},
 			"todo_id": map[string]any{
 				"type":        "integer",
-				"description": "Open project TODO id this engineer handoff is meant to address, or 0 when not tied to a TODO.",
+				"description": "Open repository-owned TODO ID, or 0 to omit tracking. project_path may name its repository root or a verified linked checkout; TODO work routing retains the worker checkout and exact session. A different repository is refused before confirmation. To message a session without a TODO redirect, omit todo_id; otherwise use the repository root path.",
 			},
 			"todo_text": map[string]any{
 				"type":        "string",
@@ -1844,9 +1852,10 @@ func todoAddInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"request_id":   map[string]any{"type": "string"},
-			"project_path": map[string]any{"type": "string"},
-			"project_name": map[string]any{"type": "string"},
+			"todo_owner_path": map[string]any{"type": "string", "description": "Expected resolved TODO owner. The host binds it before confirmation and refuses changed ownership at execution; project_path remains the requested checkout and permission scope."},
+			"request_id":      map[string]any{"type": "string"},
+			"project_path":    map[string]any{"type": "string", "description": "Loaded project or linked checkout. TODOs from trusted linked Git checkouts belong to the canonical repository."},
+			"project_name":    map[string]any{"type": "string"},
 			"text": map[string]any{
 				"type":        "string",
 				"description": "The exact TODO text to add to the project backlog.",
@@ -1875,6 +1884,7 @@ func todoCreateWorktreeAndStartEngineerInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
+			"todo_owner_path":  map[string]any{"type": "string", "description": "Expected resolved path. The host fills it when omitted and refuses if live resolution changes before execution."},
 			"model":            engineerModelProperty(),
 			"model_provider":   engineerModelProviderProperty(),
 			"reasoning_effort": engineerEffortProperty(),
@@ -1886,9 +1896,9 @@ func todoCreateWorktreeAndStartEngineerInputSchema() map[string]any {
 			"prompt":           map[string]any{"type": "string"},
 			"provider":         map[string]any{"type": "string", "enum": ProviderStrings(false)},
 			"reveal":           map[string]any{"type": "boolean"},
-			"todo_id":          map[string]any{"type": "integer"},
+			"todo_id":          map[string]any{"type": "integer", "minimum": 0, "description": "Existing open repository TODO to launch without creating another TODO. Must have no other launch, checkout or session assignment. Exact retries reuse the journal. Omit or 0 creates a new root-owned TODO; supplied IDs are never silently ignored."},
 			"todo_label":       map[string]any{"type": "string"},
-			"worktree_path":    map[string]any{"type": "string"},
+			"worktree_path":    map[string]any{"type": "string", "description": "Host result/recovery field. A new proposal cannot choose a destination; leave empty."},
 		},
 		"required": []string{"project_path", "project_name", "todo_text", "prompt", "provider", "reveal"},
 	}

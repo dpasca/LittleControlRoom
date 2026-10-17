@@ -545,6 +545,7 @@ type runCommandPathEntriesMsg struct {
 
 type todoActionMsg struct {
 	projectPath string
+	ownerPath   string
 	status      string
 	err         error
 }
@@ -1645,6 +1646,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossProjectArchiveChangedMsg); ok {
 		return m.applyBossProjectArchiveChanged(msg)
 	}
+	if msg, ok := msg.(todoOwnerRepairedMsg); ok {
+		return m.applyTodoOwnerRepaired(msg)
+	}
 	if msg, ok := msg.(bossTodoCompletedMsg); ok {
 		return m.applyBossTodoCompleted(msg)
 	}
@@ -2702,10 +2706,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(m.todoEditorDrafts, todoEditorKey{m.todoPendingSave.ProjectPath, m.todoPendingSave.TodoID})
 			m.todoPendingSave = nil
 		}
+		if msg.ownerPath != "" && msg.ownerPath != msg.projectPath && m.todoDialog != nil && m.todoDialog.ProjectPath == msg.projectPath {
+			// The owner may be outside the current project filter. Show the
+			// saved TODO's backlog without changing the selected checkout.
+			m.todoDialog.ProjectPath = msg.ownerPath
+			m.todoDialog.ProjectName = filepath.Base(msg.ownerPath)
+			m.todoDialog.Selected, m.todoDialog.Offset = 0, 0
+		}
 		m.todoDeleteConfirm = nil
 		m.err = nil
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
+		}
+		if msg.ownerPath != "" && msg.ownerPath != msg.projectPath {
+			return m, batchCmds(m.requestProjectInvalidationCmd(invalidateProjectData(msg.ownerPath)), m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath)))
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath))
 	case scratchTaskActionMsg:

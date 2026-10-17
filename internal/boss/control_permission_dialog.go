@@ -127,12 +127,17 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 			content += "\n\n" + bossControlSectionStyle.Render("Full request details") + "\n" + strings.Join(wrappedBlockLines(details.String(), width), "\n")
 		}
 	}
-	lines := []string{renderBossControlDetail("From", permissionProviderLabel(op)+" · "+op.ProjectPath, width)}
+	lines := []string{}
+	if op.ProjectPath != "" {
+		lines = append(lines, renderBossControlPath("From", permissionProviderLabel(op)+" · "+op.ProjectPath, width))
+	}
 	if eligible && options.StandingUnavailable != "" {
 		lines = append(lines, wrappedBlockLines("Can't be saved as a permission: "+options.StandingUnavailable, width)...)
 	}
 	if op.ResumeOnSuccess {
-		lines = append(lines, wrappedBlockLines("The caller requested automatic continuation after success. New input, stop, replacement, or restart cancels that continuation.", width)...)
+		lines = append(lines, wrappedBlockLines("Caller continuation: enabled after success for the same eligible session. New input, stop, replacement, failure, or restart suppresses it.", width)...)
+	} else {
+		lines = append(lines, wrappedBlockLines("Caller continuation: disabled. After this succeeds, the caller waits for another message.", width)...)
 	}
 	content = strings.Join(lines, "\n") + "\n\n" + content
 
@@ -162,6 +167,18 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 	if len(choices) == 1 {
 		confirmLabel = "allow once"
 	}
+	if op.Source == "chat" && inv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+		confirmLabel = "start in worktree"
+	}
+	if op.Source == "chat" && inv.Capability == control.CapabilityEngineerSendPrompt {
+		confirmLabel = "send"
+	}
+	if op.Source == "chat" && inv.Capability == control.CapabilityTodoRepairOwner {
+		confirmLabel = "repair owner"
+	}
+	if op.Source == "chat" && inv.Capability == control.CapabilityTodoAdd {
+		confirmLabel = "add"
+	}
 	actionTone := func(tone uistyle.DialogActionTone) uistyle.DialogActionTone {
 		if options.Busy {
 			return uistyle.DialogActionDisabled
@@ -172,6 +189,13 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 	if options.ShowDetails {
 		detailsLabel = "hide JSON"
 	}
+	if op.Source == "chat" && inv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		_ = json.Unmarshal(inv.Args, &input)
+		if input.TodoID == 0 {
+			rows = append(rows, renderBossControlAction("q", "TODO only", uistyle.DialogActionSecondary))
+		}
+	}
 	chips := []string{
 		renderBossControlAction("Enter", confirmLabel, actionTone(uistyle.DialogActionPrimary)),
 		renderBossControlAction("Esc", "deny", actionTone(uistyle.DialogActionCancel)),
@@ -179,10 +203,10 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 	if len(choices) > 1 {
 		chips = append(chips, renderBossControlAction("↑/↓", "choose", uistyle.DialogActionNavigate))
 	}
-	chips = append(chips,
-		renderBossControlAction("d", detailsLabel, uistyle.DialogActionNavigate),
-		renderBossControlAction("PgUp/PgDn", "scroll", uistyle.DialogActionNavigate),
-	)
+	if op.Source != "chat" {
+		chips = append(chips, renderBossControlAction("d", detailsLabel, uistyle.DialogActionNavigate))
+	}
+	chips = append(chips, renderBossControlAction("PgUp/PgDn", "scroll", uistyle.DialogActionNavigate))
 	row := ""
 	for _, chip := range chips {
 		if row != "" && lipgloss.Width(row)+3+lipgloss.Width(chip) > width {

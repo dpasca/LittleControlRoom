@@ -53,7 +53,7 @@ func PermissionForOperation(op Operation) (ControlPermission, bool) {
 	case CapabilityTodoCreateWorktreeAndStartEngineer:
 		var input TodoCreateWorktreeAndStartEngineerInput
 		_ = json.Unmarshal(inv.Args, &input)
-		if input.Provider == ProviderAuto || input.Model == "" || input.SelectModel {
+		if input.Provider == ProviderAuto || input.Model == "" || input.SelectModel || input.TodoID > 0 {
 			return ControlPermission{}, false
 		}
 		permission.Target = input.ProjectPath
