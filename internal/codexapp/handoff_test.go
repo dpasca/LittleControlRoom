@@ -104,6 +104,29 @@ func TestSessionHandoffWritesPrivateMechanicalBrief(t *testing.T) {
 	if !strings.Contains(prompt, "not proof that the prior turn finished") {
 		t.Fatalf("launch prompt should require verification: %q", prompt)
 	}
+	if !strings.Contains(prompt, "failed or unavailable Codex embedded session (model gpt-test)") {
+		t.Fatalf("launch prompt should describe the failed source session: %q", prompt)
+	}
+}
+
+func TestSessionHandoffLaunchPromptDescribesHealthyTransfer(t *testing.T) {
+	handoff, err := NewSessionHandoff(t.TempDir(), Snapshot{
+		Provider:             ProviderCodex,
+		ProjectPath:          "/tmp/healthy-handoff",
+		Model:                "gpt-test",
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}, "", time.Time{})
+	if err != nil {
+		t.Fatalf("NewSessionHandoff() error = %v", err)
+	}
+	prompt := handoff.LaunchPrompt()
+	if strings.Contains(prompt, "failed or unavailable") {
+		t.Fatalf("healthy handoff should not claim a failure: %q", prompt)
+	}
+	if !strings.Contains(prompt, "handed off from a Codex embedded session (model gpt-test)") {
+		t.Fatalf("healthy handoff should name the source provider and model: %q", prompt)
+	}
 }
 
 func TestSessionHandoffBoundsTranscriptAndUsesUniquePaths(t *testing.T) {

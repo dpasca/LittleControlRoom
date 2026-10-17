@@ -91,13 +91,31 @@ func (h SessionHandoff) Path() string {
 // in the file rather than being duplicated into another large prompt.
 func (h SessionHandoff) LaunchPrompt() string {
 	return fmt.Sprintf(
-		"Continue work from a failed or unavailable embedded session.\n\n"+
+		"%s\n\n"+
 			"Little Control Room created a mechanical continuation brief at this exact local path:\n%s\n\n"+
 			"Read it before proceeding. It may be incomplete and is not proof that the prior turn finished. "+
 			"First inspect the current repository state and any relevant running processes, then continue the latest unresolved user request. "+
 			"Do not repeat completed work; verify the current state before changing files.",
+		h.launchHeadline(),
 		strconv.Quote(h.path),
 	)
+}
+
+// launchHeadline only claims a failure when the cached source state shows one;
+// otherwise the handoff is a deliberate transfer to another agent or model.
+func (h SessionHandoff) launchHeadline() string {
+	snapshot := h.snapshot
+	source := snapshot.Provider.Label() + " embedded session"
+	if model := strings.TrimSpace(snapshot.Model); model != "" {
+		source += " (model " + model + ")"
+	}
+	interrupted := snapshot.Closed ||
+		strings.TrimSpace(snapshot.LastError) != "" ||
+		(snapshot.LatestTurnStateKnown && !snapshot.LatestTurnCompleted)
+	if interrupted {
+		return "Continue work from a failed or unavailable " + source + "."
+	}
+	return "Continue work handed off from a " + source + "."
 }
 
 // Write persists the handoff atomically with private file permissions.
