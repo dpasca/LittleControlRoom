@@ -17,6 +17,8 @@ import (
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
+	"lcroom/internal/store"
+	"lcroom/internal/todocontrol"
 )
 
 const (
@@ -90,6 +92,7 @@ type assistantPreparedReadOnlyRoute struct {
 }
 
 type Assistant struct {
+	controlStore        *store.Store
 	agentModel          lcagent.ConversationModel
 	agentProvider       string
 	agentQueryReader    agentquery.Reader
@@ -144,6 +147,7 @@ func NewAssistant(svc *service.Service) *Assistant {
 	}
 	cfg := svc.Config()
 	return &Assistant{
+		controlStore:        svc.Store(),
 		agentModel:          agentModel,
 		agentProvider:       strings.TrimSpace(agentProvider),
 		agentQueryReader:    svc.Store(),
@@ -215,7 +219,8 @@ func (a *Assistant) utilityReasoningEffort() string {
 	return strings.TrimSpace(a.utilityReasoning)
 }
 
-func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
+func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (response AssistantResponse, replyErr error) {
+	defer func() { response, replyErr = a.inspectTodoProposal(ctx, response, replyErr) }()
 	if a == nil || (a.agentModel == nil && a.runner == nil && a.planner == nil) {
 		backend := config.AIBackendUnset
 		if a != nil {
@@ -236,7 +241,8 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	return a.replyDirect(ctx, req)
 }
 
-func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
+func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (response AssistantResponse, replyErr error) {
+	defer func() { response, replyErr = a.inspectTodoProposal(ctx, response, replyErr) }()
 	if a == nil || (a.agentModel == nil && a.runner == nil && a.planner == nil) {
 		backend := config.AIBackendUnset
 		if a != nil {
@@ -1281,4 +1287,35 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// Runs in the assistant command, before the proposal reaches confirmation.
+func (a *Assistant) inspectTodoProposal(ctx context.Context, response AssistantResponse, err error) (AssistantResponse, error) {
+	if err != nil || a == nil || a.controlStore == nil || response.ControlInvocation == nil || !todocontrol.Applies(response.ControlInvocation.Capability) {
+		return response, err
+	}
+	invocation := *response.ControlInvocation
+	if invocation.RequestID == "" && (invocation.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer || invocation.Capability == control.CapabilityTodoRepairOwner) {
+		id, err := control.NewOperationID()
+		if err != nil {
+			return response, err
+		}
+		// Chat owns confirmation directly; lcrop_ identifies only durable
+		// external operations and must not be used without an operation row.
+		invocation, err = control.BuildProposedInvocation("chat_"+strings.TrimPrefix(id, "lcrop_"), invocation.Capability, invocation.Args)
+		if err != nil {
+			return response, err
+		}
+	}
+	inv, plan, err := todocontrol.Inspect(ctx, a.controlStore, invocation)
+	if err != nil {
+		response.ControlInvocation = nil
+		return response, wrapControlProposalError(err)
+	}
+	if plan.OwnerPath == "" {
+		return response, nil
+	}
+	response.ControlInvocation = &inv
+	response.Content = plan.Preview(inv.Capability) + "\n\n" + response.Content
+	return response, nil
 }

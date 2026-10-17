@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/store"
 	"lcroom/internal/submodulealign"
+	"lcroom/internal/todocontrol"
 )
 
 // submodulePreflightTimeout bounds the read-only Git inspection that backs a
@@ -96,9 +97,40 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 	if err != nil {
 		return nil, err
 	}
+	replaying := false
+	var priorOperation *control.Operation
+	// Reuse the stable operation identity before checking launch eligibility.
+	// CreateControlOperation still verifies exact arguments on replay.
+	if strings.TrimSpace(clientRequestID) != "" {
+		prior, found, lookupErr := e.store.FindControlOperationByClientRequest(ctx, e.source, e.sessionKey, strings.TrimSpace(clientRequestID))
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if found {
+			operationID = prior.ID
+			replaying = true
+			priorOperation = &prior
+		}
+	}
 	invocation, err := control.BuildProposedInvocation(operationID, capability.Name, arguments)
 	if err != nil {
 		return nil, err
+	}
+	finishedReplay := priorOperation != nil && (priorOperation.Status.Terminal() && priorOperation.Status != control.OperationFailed || priorOperation.Status == control.OperationRunning)
+	if finishedReplay && todocontrol.Applies(invocation.Capability) {
+		// Derived expectations may be omitted by the caller on an exact retry.
+		// Restore only those fields, then let the store compare the full request.
+		var args, priorArgs map[string]json.RawMessage
+		_ = json.Unmarshal(invocation.Args, &args)
+		_ = json.Unmarshal(priorOperation.Invocation.Args, &priorArgs)
+		for _, key := range []string{"todo_owner_path", "destination_path", "todo_label", "expected_revision"} {
+			if value, ok := args[key]; !ok || string(value) == "\"\"" {
+				if prior, ok := priorArgs[key]; ok {
+					args[key] = prior
+				}
+			}
+		}
+		invocation.Args, _ = json.Marshal(args)
 	}
 	if capability.Name == control.CapabilityAgentTaskSubmitResult || capability.Name == control.CapabilityAgentTaskReviewResult {
 		if len(resumeOnSuccess) > 0 && resumeOnSuccess[0] {
@@ -119,6 +151,21 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 			return nil, err
 		}
 		return map[string]any{"success": true, "terminal": true, "operator_confirmation": false, "requires_new_user_turn": false, "task_id": task.ID, "workflow": task.Workflow, "message": "Task metadata recorded. End this turn after submitting a worker result; the host waits for the worker to stop before review. No corrective turn or repository action was started."}, nil
+	}
+	if !finishedReplay && todocontrol.Applies(invocation.Capability) {
+		if invocation.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+			var input control.TodoCreateWorktreeAndStartEngineerInput
+			_ = json.Unmarshal(invocation.Args, &input)
+			if input.WorktreePath != "" {
+				return nil, fmt.Errorf("worktree_path is a host result field; omit it from proposals")
+			}
+		}
+		ctx, cancel := context.WithTimeout(ctx, submodulePreflightTimeout)
+		defer cancel()
+		invocation, _, err = todocontrol.Inspect(ctx, e.store, invocation)
+		if err != nil {
+			return nil, fmt.Errorf("%s preflight: %w", invocation.Capability, err)
+		}
 	}
 	var preflight *submodulealign.Plan
 	if capability.Name == control.CapabilityGitSubmoduleAlign {
@@ -145,7 +192,7 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 	if err != nil {
 		return nil, err
 	}
-	report, err := e.operationReport(ctx, created, created.ID != operationID)
+	report, err := e.operationReport(ctx, created, created.ID != operationID || replaying)
 	if err != nil || preflight == nil {
 		return report, err
 	}

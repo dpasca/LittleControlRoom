@@ -18,6 +18,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
+	"lcroom/internal/todocontrol"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -230,6 +231,8 @@ func (m Model) executeValidatedControlInvocation(normalized control.Invocation) 
 		return m.executeWorktreeRemoveControl(input)
 	case control.CapabilityIntegrationsManage:
 		return m.executeIntegrationsControl(normalized)
+	case control.CapabilityTodoRepairOwner:
+		return m.executeTodoOwnerRepairControl(normalized)
 	case control.CapabilityEngineerSendPrompt:
 		var input control.EngineerSendPromptInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -478,6 +481,8 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 	case bossProjectArchiveChangedMsg:
 		return result.status, result.err
 	case bossTodoCompletedMsg:
+		return result.status, result.err
+	case todoOwnerRepairedMsg:
 		return result.status, result.err
 	}
 	return "Control action completed.", nil
@@ -898,7 +903,14 @@ func (m Model) loadBossTrackedTodoCmd(inv control.Invocation, input control.Engi
 		}
 		ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
 		defer cancel()
-		msg.todo, msg.err = resolveControlTrackedTodo(ctx, svc, project, input.TodoID, input.TodoText)
+		plan, err := todocontrol.InspectSend(ctx, svc.Store(), input)
+		msg.err = err
+		if err == nil {
+			msg.todo, msg.project = plan.Todo, plan.Project
+			if suggestion, err := svc.Store().GetTodoWorktreeSuggestion(ctx, input.TodoID); err == nil {
+				msg.todo.WorktreeSuggestion = &suggestion
+			}
+		}
 		msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "loading the tracked TODO")
 		return msg
 	}
@@ -1874,8 +1886,16 @@ func (m Model) createBossTodoAddCmd(inv control.Invocation, input control.TodoAd
 		if svc == nil {
 			return bossTodoAddedMsg{inv: inv, input: input, project: project, err: errors.New("service unavailable")}
 		}
-		item, err := svc.AddTodo(ctx, project.Path, input.Text)
-		return bossTodoAddedMsg{inv: inv, input: input, project: project, todo: item, err: err}
+		actionCtx, cancel := context.WithTimeout(ctx, tuiQuickActionTimeout)
+		defer cancel()
+		item, err := svc.AddTodoForControl(actionCtx, input)
+		owner := project
+		if err == nil {
+			// This summary is display-only. Ownership was verified off-thread
+			// by the service; never report/refresh the triggering checkout.
+			owner = model.ProjectSummary{Path: item.ProjectPath, Name: filepath.Base(item.ProjectPath)}
+		}
+		return bossTodoAddedMsg{inv: inv, input: input, project: owner, todo: item, err: err}
 	}
 }
 
@@ -1885,11 +1905,11 @@ func (m Model) applyBossTodoAdded(msg bossTodoAddedMsg) (tea.Model, tea.Cmd) {
 		m.status = status
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
 	}
-	status := fmt.Sprintf("Added TODO #%d to %s. It was not started.", msg.todo.ID, projectNameForPicker(msg.project, msg.project.Path))
+	status := fmt.Sprintf("Added TODO #%d to %s. It was not started.", msg.todo.ID, msg.todo.ProjectPath)
 	m.status = status
 	return m, batchCmds(
 		bossControlResultCmd(msg.inv, status, nil),
-		m.requestProjectInvalidationCmd(invalidateProjectData(msg.project.Path)),
+		m.requestProjectInvalidationCmd(invalidateProjectData(msg.todo.ProjectPath)),
 	)
 }
 
@@ -2111,7 +2131,6 @@ func (m Model) executeTodoCreateWorktreeAndStartEngineerControlWithOutcome(input
 	}
 	input.ProjectPath = strings.TrimSpace(project.Path)
 	input.ProjectName = firstNonEmptyTrimmed(input.ProjectName, projectNameForPicker(project, project.Path))
-	input.Provider = controlProviderFromCodexProvider(provider)
 	inv := todoCreateWorktreeAndStartEngineerInvocationFromInput(input)
 	m.status = "Creating tracked TODO for " + bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath) + "..."
 	return controlInvocationOutcome{
@@ -2131,8 +2150,26 @@ func (m Model) createBossTodoWorktreeTodoCmd(inv control.Invocation, input contr
 		if svc == nil {
 			return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, err: errors.New("service unavailable")}
 		}
+		plan, err := todocontrol.InspectLaunch(ctx, svc.Store(), input)
+		if err != nil {
+			return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, err: err}
+		}
+		if plan.Todo.LaunchRequestID == input.RequestID && input.RequestID != "" {
+			saved, err := svc.Store().TodoLaunchInput(ctx, plan.Todo.ID)
+			if err != nil {
+				return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: plan.Project, provider: provider, err: err}
+			}
+			input = saved
+			provider, err = m.resolveControlEngineerProvider(input.Provider, plan.Project)
+			if err != nil {
+				return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: plan.Project, provider: provider, err: err}
+			}
+		} else {
+			input.Provider = controlProviderFromCodexProvider(provider)
+		}
+		input.TodoOwnerPath = plan.OwnerPath
 		item, err := svc.AddTodoForLaunch(ctx, input)
-		return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, todo: item, err: err}
+		return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: plan.Project, provider: provider, projectSetupAction: projectSetupAction, todo: item, err: err}
 	}
 }
 
@@ -2786,34 +2823,6 @@ func settingsUpdateInvocationFromInput(input control.SettingsUpdateInput) contro
 		RequestID:  strings.TrimSpace(normalized.RequestID),
 		Args:       payload,
 	}
-}
-
-func resolveControlTrackedTodo(ctx context.Context, svc *service.Service, project model.ProjectSummary, todoID int64, todoText string) (model.TodoItem, error) {
-	if todoID <= 0 {
-		return model.TodoItem{ProjectPath: strings.TrimSpace(project.Path), Text: strings.TrimSpace(todoText)}, nil
-	}
-	if svc == nil || svc.Store() == nil {
-		return model.TodoItem{}, errors.New("service unavailable for TODO tracking")
-	}
-	item, err := svc.Store().GetTodo(ctx, todoID)
-	if err != nil {
-		return model.TodoItem{}, err
-	}
-	projectPath := filepath.Clean(strings.TrimSpace(project.Path))
-	todoProjectPath := filepath.Clean(strings.TrimSpace(item.ProjectPath))
-	if projectPath != "" && projectPath != "." && todoProjectPath != "" && todoProjectPath != "." && projectPath != todoProjectPath {
-		return model.TodoItem{}, fmt.Errorf("TODO #%d belongs to %s, not %s", todoID, item.ProjectPath, project.Path)
-	}
-	if item.Done {
-		return model.TodoItem{}, fmt.Errorf("TODO #%d is already complete", todoID)
-	}
-	if strings.TrimSpace(item.Text) == "" {
-		item.Text = strings.TrimSpace(todoText)
-	}
-	if suggestion, err := svc.Store().GetTodoWorktreeSuggestion(ctx, todoID); err == nil {
-		item.WorktreeSuggestion = &suggestion
-	}
-	return item, nil
 }
 
 func (m Model) resolveControlTodoWorkProject(project model.ProjectSummary, todo model.TodoItem) (model.ProjectSummary, error) {

@@ -10,6 +10,7 @@ import (
 
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/control"
+	"lcroom/internal/todocontrol"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -64,20 +65,41 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 		if svc == nil || svc.Store() == nil {
 			return externalControlProposalLoadedMsg{err: errors.New("service store unavailable")}
 		}
-		operation, automatic, err := svc.Store().ConfirmProjectCollaboration(parent, operationID)
+		operation, err := svc.Store().GetControlOperation(parent, operationID)
+		automatic := false
 		var preflight externalControlPreflight
-		if err == nil && !automatic && operation.Status == control.OperationWaitingForConfirmation {
-			// Saved permissions match typed arguments only. Some capabilities also
-			// depend on live repository state, so inspect it before consulting them.
-			preflight = inspectSubmoduleAlignProposal(parent, operation)
+		if err == nil && (operation.Status == control.OperationProposed || operation.Status == control.OperationWaitingForConfirmation) && todocontrol.Applies(operation.Capability) {
+			ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
+			var plan todocontrol.Plan
+			operation.Invocation, plan, err = todocontrol.Inspect(ctx, svc.Store(), operation.Invocation)
+			if err == nil {
+				err = m.preflightTodoTargetSession(operation.Invocation)
+			}
+
+			cancel()
+			preflight = externalControlPreflight{applies: plan.OwnerPath != "" || err != nil, preview: plan.Preview(operation.Capability), refusal: err, standingEligible: err == nil}
+			// A refusal must be persisted, not dropped as a load failure.
+			err = nil
+		}
+		if err == nil && preflight.refusal == nil {
+			inspected := operation.Invocation
+			operation, automatic, err = svc.Store().ConfirmProjectCollaboration(parent, operationID)
+			operation.Invocation = inspected
+			if err == nil && !automatic && operation.Status == control.OperationWaitingForConfirmation && !preflight.applies {
+				preflight = inspectSubmoduleAlignProposal(parent, operation)
+			}
 		}
 		if err == nil && !automatic && preflight.allowsStandingPermission() {
+			inspected := operation.Invocation
 			operation, automatic, err = svc.Store().ConfirmControlPermission(parent, operationID)
+			operation.Invocation = inspected
 		}
-		if err == nil && !automatic {
+		if err == nil && !automatic && preflight.refusal == nil {
 			// A task's own correction grant is the other standing authorization.
 			// It consumes one round only when it actually authorizes this run.
+			inspected := operation.Invocation
 			operation, automatic, err = svc.Store().ConfirmDelegationSupervision(parent, operationID)
+			operation.Invocation = inspected
 		}
 		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, preflight: preflight, err: err}
 	}
@@ -88,6 +110,12 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		m.appendBackgroundErrorLogEntry("Agent control proposal failed", msg.err, "")
 		m.status = "Agent control proposal failed: " + msg.err.Error()
 		return m, nil
+	}
+	if msg.preflight.refusal != nil {
+		// Never ask the operator to confirm something that would refuse. The
+		// agent learns the precise reason from the failed operation.
+		m.status = "Agent request refused: " + msg.preflight.refusal.Error()
+		return m, m.failExternalControlOperationCmd(msg.operation.ID, msg.preflight.refusal)
 	}
 	if msg.automatic {
 		m.status = "Executing an operation covered by an LCR permission"
@@ -108,12 +136,6 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 			m.status = "Agent control proposal already failed; no confirmation is pending"
 		}
 		return m, nil
-	}
-	if msg.preflight.refusal != nil {
-		// Never ask the operator to confirm something that would refuse. The
-		// agent learns the precise reason from the failed operation.
-		m.status = "Agent request refused: " + msg.preflight.refusal.Error()
-		return m, m.failExternalControlOperationCmd(msg.operation.ID, msg.preflight.refusal)
 	}
 	if m.externalControlConfirmation != nil {
 		m.status = "Agent control proposal queued behind the current confirmation"

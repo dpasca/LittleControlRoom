@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
+	"lcroom/internal/todocontrol"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -94,6 +95,15 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 		}
 		ctx, cancel := context.WithTimeout(parent, engineerMessageStoreTimeout)
 		defer cancel()
+		if input.TodoID > 0 {
+			plan, err := todocontrol.InspectSend(ctx, svc.Store(), input)
+			if err != nil {
+				return engineerMessageQueuedMsg{message: message, err: err}
+			}
+			if plan.DestinationPath != message.ProjectPath {
+				return engineerMessageQueuedMsg{message: message, err: errors.New("TODO worker destination changed before queueing; prepare a new proposal")}
+			}
+		}
 		if control.IsExternalOperationID(message.OperationID) {
 			op, err := svc.Store().GetControlOperation(ctx, message.OperationID)
 			if err != nil {

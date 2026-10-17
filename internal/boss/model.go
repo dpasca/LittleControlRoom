@@ -12,6 +12,7 @@ import (
 
 	"lcroom/internal/agentcontext"
 	"lcroom/internal/bossrun"
+	"lcroom/internal/control"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
@@ -59,17 +60,19 @@ type Model struct {
 	width  int
 	height int
 
-	input             textarea.Model
-	inputCopyDialog   *inputcomposer.CopyDialogState
-	inputSelection    *inputcomposer.SelectionState
-	openTargetPicker  *bossOpenTargetPickerState
-	chatViewport      viewport.Model
-	chatSelection     bossTextSelection
-	transcriptTab     bossTranscriptTab
-	messages          []ChatMessage
-	bossSlashSelected int
-	pendingControl    *ControlProposal
-	pendingGoal       *bossrun.GoalProposal
+	input               textarea.Model
+	inputCopyDialog     *inputcomposer.CopyDialogState
+	inputSelection      *inputcomposer.SelectionState
+	openTargetPicker    *bossOpenTargetPickerState
+	chatViewport        viewport.Model
+	chatSelection       bossTextSelection
+	transcriptTab       bossTranscriptTab
+	messages            []ChatMessage
+	bossSlashSelected   int
+	pendingControl      *ControlProposal
+	controlScrollOffset int
+	controlPreflight    func(control.Invocation) error
+	pendingGoal         *bossrun.GoalProposal
 
 	sessionStore  *bossSessionStore
 	sessionID     string
@@ -318,6 +321,24 @@ func (m Model) RefreshCmd() tea.Cmd {
 func (m Model) WithViewContext(view ViewContext) Model {
 	m.viewContext = view
 	return m
+}
+
+// WithControlPreflight installs the host's live-session check. It runs in the
+// assistant command after repository inspection and before showing confirmation.
+func (m Model) WithControlPreflight(check func(control.Invocation) error) Model {
+	m.controlPreflight = check
+	return m
+}
+
+func (m Model) preflightAssistantControl(response AssistantResponse, err error) (AssistantResponse, error) {
+	if err == nil && response.ControlInvocation != nil && m.controlPreflight != nil {
+		err = m.controlPreflight(*response.ControlInvocation)
+		if err != nil {
+			response.ControlInvocation = nil
+			err = wrapControlProposalError(err)
+		}
+	}
+	return response, err
 }
 
 // ReloadAssistant rebuilds the inference clients from the service's current
@@ -1058,6 +1079,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 				m.syncLayout(true)
 				return m, m.saveBossChatMessageCmd(saved)
 			}
+			m.controlScrollOffset = 0
 			m.pendingControl = &ControlProposal{
 				Invocation: copyControlInvocation(*response.ControlInvocation),
 				Preview:    content,
@@ -1289,6 +1311,7 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 		request.Snapshot = snapshot
 		request.View = view
 		resp, err = assistant.Reply(ctx, request)
+		resp, err = m.preflightAssistantControl(resp, err)
 		return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed}
 	}
 }
@@ -1371,6 +1394,7 @@ func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messa
 				return
 			}
 			resp, err = assistant.ReplyStream(ctx, request, emit)
+			resp, err = m.preflightAssistantControl(resp, err)
 			if m.helpChat {
 				state := "done"
 				if err != nil {

@@ -609,16 +609,23 @@ func TestCreateTodoWorktreeWaitsForRootCreationLock(t *testing.T) {
 	unlock := svc.worktreeCreateLocks.Lock(filepath.Clean(projectPath))
 	defer unlock()
 
-	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	// Cancel once the verified owner reaches the lock wait. Live Git
+	// inspection must not race a short wall-clock budget before that stage.
+	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var progress CreateTodoWorktreeProgress
 	_, err = svc.CreateTodoWorktree(waitCtx, CreateTodoWorktreeRequest{
 		ProjectPath: projectPath,
 		TodoID:      item.ID,
-		Progress:    func(update CreateTodoWorktreeProgress) { progress = update },
+		Progress: func(update CreateTodoWorktreeProgress) {
+			progress = update
+			if update.WaitingForRepositoryOperations {
+				cancel()
+			}
+		},
 	})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("CreateTodoWorktree() error = %v, want context deadline while waiting for create lock", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("CreateTodoWorktree() error = %v, want cancellation while waiting for create lock", err)
 	}
 	if !progress.WaitingForRepositoryOperations || progress.RootProjectPath != projectPath {
 		t.Fatalf("progress = %#v, want repository wait for %s", progress, projectPath)

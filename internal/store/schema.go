@@ -107,6 +107,11 @@ func (s *Store) initSchema(ctx context.Context) error {
             todo_id INTEGER NOT NULL UNIQUE REFERENCES project_todos(id) ON DELETE CASCADE,
             input_json TEXT NOT NULL
         );`,
+		`CREATE TABLE IF NOT EXISTS todo_owner_repairs (
+            request_id TEXT PRIMARY KEY,
+            todo_id INTEGER NOT NULL REFERENCES project_todos(id) ON DELETE CASCADE,
+            input_json TEXT NOT NULL
+        );`,
 		`CREATE TABLE IF NOT EXISTS todo_worktree_plans (
             todo_id INTEGER PRIMARY KEY REFERENCES project_todos(id) ON DELETE CASCADE,
             root_path TEXT NOT NULL,

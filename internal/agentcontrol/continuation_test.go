@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 	"lcroom/internal/store"
 )
 
@@ -16,11 +18,18 @@ func TestExplicitContinuationResponseAndSavedPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	executor, err := NewExecutor(Options{Store: st, OriginProjectPath: "/caller", Scope: control.AuthorityScopePortfolio, Source: "mcp", Provider: "codex", SessionKey: "caller"})
+	caller, target := t.TempDir(), t.TempDir()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{Path: target, Name: "Target", PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	executor, err := NewExecutor(Options{Store: st, OriginProjectPath: caller, Scope: control.AuthorityScopePortfolio, Source: "mcp", Provider: "codex", SessionKey: "caller"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := json.RawMessage(`{"project_path":"/target","text":"Track progress"}`)
+	args, err := json.Marshal(control.TodoAddInput{ProjectPath: target, Text: "Track progress"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	first, err := executor.Propose(ctx, string(control.CapabilityTodoAdd), args, "first")
 	if err != nil {
 		t.Fatal(err)

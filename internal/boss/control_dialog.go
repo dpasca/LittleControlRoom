@@ -115,6 +115,12 @@ func (m Model) renderControlConfirmationOverlay(body string, bodyW, bodyH int) s
 }
 
 func (m Model) renderControlConfirmationDialog(bodyW, bodyH int) string {
+	if m.pendingControl != nil && scrollableTodoConfirmation(m.pendingControl.Invocation) {
+		panel, _, err := RenderPermissionConfirmationDialog(control.Operation{Source: "chat", Invocation: m.pendingControl.Invocation}, PermissionConfirmationOptions{Preview: m.pendingControl.Preview, ScrollOffset: m.controlScrollOffset}, bodyW, bodyH)
+		if err == nil {
+			return panel
+		}
+	}
 	panelW := minInt(bodyW, minInt(maxInt(58, bodyW-10), 88))
 	panelInnerW := maxInt(28, panelW-4)
 	content := m.renderControlConfirmationContent(panelInnerW)
@@ -123,6 +129,18 @@ func (m Model) renderControlConfirmationDialog(bodyW, bodyH int) string {
 		panelH = minInt(panelH, maxInt(8, bodyH-2))
 	}
 	return renderBossControlPanel(m.controlConfirmationTitle(), content, panelW, panelH)
+}
+
+func scrollableTodoConfirmation(inv control.Invocation) bool {
+	switch inv.Capability {
+	case control.CapabilityTodoAdd, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityTodoRepairOwner:
+		return true
+	case control.CapabilityEngineerSendPrompt:
+		input, err := engineerSendPromptInputFromInvocation(inv)
+		return err == nil && input.TodoID > 0
+	default:
+		return false
+	}
 }
 
 func (m Model) controlConfirmationTitle() string {
@@ -183,6 +201,8 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 	lines := []string{
 		bossControlNoticeStyle.Render(fitLine("Routine handoff: send a message to an engineer session", width)),
 		"",
+		renderBossControlPath("Repository TODO owner", firstNonEmpty(input.TodoOwnerPath, "no TODO tracking"), width),
+		renderBossControlPath("Worker destination", firstNonEmpty(input.DestinationPath, input.ProjectPath, target), width),
 		renderBossControlDetail("Provider", provider, width),
 		renderBossControlDetail("Project", target, width),
 		renderBossControlDetail("Mode", mode, width),
@@ -348,6 +368,9 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				bossControlNoticeStyle.Render(fitLine("External action: add a project TODO", width)),
 				"",
 				renderBossControlDetail("Project", target, width),
+				renderBossControlPath("Requested checkout", input.ProjectPath, width),
+				renderBossControlPath("Repository TODO owner", firstNonEmpty(input.TodoOwnerPath, "unresolved"), width),
+				strings.Join(wrappedBlockLines("Create one TODO in this backlog; no worktree or engineer session is started.", width), "\n"),
 				"",
 				bossControlSectionStyle.Render(fitLine("TODO", width)),
 				renderBossControlPromptBox(input.Text, width),
@@ -402,9 +425,16 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				provider = "Auto"
 			}
 			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "selected project")
+			effects := "Create one repository TODO, create a separate worktree, start one engineer."
+			if input.TodoID > 0 {
+				effects = fmt.Sprintf("Use existing TODO #%d, create a separate worktree, start one engineer; no new TODO.", input.TodoID)
+			}
 			lines := []string{
 				bossControlNoticeStyle.Render(fitLine("External action: create tracked work in an isolated checkout", width)),
 				"",
+				renderBossControlPath("Repository TODO owner", firstNonEmpty(input.TodoOwnerPath, input.ProjectPath, "unresolved"), width),
+				renderBossControlPath("Worker destination", firstNonEmpty(input.WorktreePath, "not yet fixed; allocated after confirmation"), width),
+				strings.Join(wrappedBlockLines(effects, width), "\n"),
 				renderBossControlDetail("Project", target, width),
 				renderBossControlDetail("Workspace", "dedicated worktree", width),
 				renderBossControlDetail("Engineer", provider, width),
@@ -412,6 +442,9 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				"",
 				bossControlSectionStyle.Render(fitLine("TODO", width)),
 				renderBossControlPromptBox(input.TodoText, width),
+			}
+			if input.TodoID > 0 && input.TodoLabel != "" {
+				lines = append(lines, renderBossControlPath("Existing TODO text", input.TodoLabel, width))
 			}
 			if strings.TrimSpace(input.Prompt) != strings.TrimSpace(input.TodoText) {
 				lines = append(lines,
@@ -424,10 +457,23 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				"",
 				strings.Join([]string{
 					renderBossControlAction("Enter", "start in worktree", uistyle.DialogActionPrimary),
-					renderBossControlAction("q", "TODO only", uistyle.DialogActionSecondary),
+					renderBossControlAction("q", "TODO only (new TODOs)", uistyle.DialogActionSecondary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			)
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityTodoRepairOwner:
+		var input control.TodoRepairOwnerInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			lines := []string{
+				renderBossControlDetail("TODO", fmt.Sprintf("#%d", input.TodoID), width),
+				renderBossControlPath("Expected owner", input.ExpectedOwnerPath, width),
+				renderBossControlPath("Repository TODO owner", input.RepositoryPath, width),
+			}
+			lines = append(lines, wrappedBlockLines(m.pendingControl.Preview, width)...)
+			lines = append(lines, wrappedBlockLines("Repair this TODO's owner and append its ordering. Retain ID, metadata, attachments, work state, checkout, provider, exact session, origin TODO and historical launch provenance. No checkout or session actions.", width)...)
+			lines = append(lines, "", renderBossControlAction("Enter", "repair owner", uistyle.DialogActionPrimary)+"   "+renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel))
 			return strings.Join(lines, "\n")
 		}
 	case control.CapabilityTodoComplete:
@@ -578,6 +624,10 @@ func engineerSendPromptInputFromInvocation(inv control.Invocation) (control.Engi
 		return control.EngineerSendPromptInput{}, err
 	}
 	return input, nil
+}
+
+func renderBossControlPath(label, value string, width int) string {
+	return strings.Join(wrappedBlockLines(label+": "+value, width), "\n")
 }
 
 func renderBossControlDetail(label, value string, width int) string {

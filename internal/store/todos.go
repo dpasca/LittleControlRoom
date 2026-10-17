@@ -263,7 +263,7 @@ func (s *Store) AddTodoWithAttachments(ctx context.Context, projectPath, text st
 	return s.addTodoWithLaunchRequest(ctx, projectPath, text, attachments, "", "")
 }
 
-func (s *Store) addTodoWithLaunchRequest(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment, requestID, inputJSON string) (model.TodoItem, error) {
+func (s *Store) addTodoWithLaunchRequest(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment, requestID, inputJSON string, existingID ...int64) (model.TodoItem, error) {
 	if projectPath == "" {
 		return model.TodoItem{}, fmt.Errorf("project path is required")
 	}
@@ -288,25 +288,55 @@ func (s *Store) addTodoWithLaunchRequest(ctx context.Context, projectPath, text 
 			if err := tx.Rollback(); err != nil {
 				return model.TodoItem{}, err
 			}
-			return s.GetTodo(ctx, id)
+			item, err := s.GetTodo(ctx, id)
+			if err == nil && item.ProjectPath != projectPath {
+				return model.TodoItem{}, fmt.Errorf("launch TODO #%d owner changed to %s; inspect its ownership before retrying", id, item.ProjectPath)
+			}
+			return item, err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return model.TodoItem{}, err
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE project_todos
-		SET position = position + 1
-		WHERE project_path = ? AND done = 0
-	`, projectPath); err != nil {
-		return model.TodoItem{}, err
+	if len(existingID) > 0 && existingID[0] > 0 {
+		id := existingID[0]
+		var eligible bool
+		err := tx.QueryRowContext(ctx, `SELECT project_path = ? AND done = 0 AND work_project_path = '' AND work_session_id = '' AND work_state = '' AND work_claimed_at IS NULL
+            AND NOT EXISTS(SELECT 1 FROM todo_worktree_plans WHERE todo_id = ?)
+            AND NOT EXISTS(SELECT 1 FROM todo_launch_requests WHERE todo_id = ?)
+            AND NOT EXISTS(SELECT 1 FROM projects WHERE worktree_origin_todo_id = ?)
+            FROM project_todos WHERE id = ?`, projectPath, id, id, id, id).Scan(&eligible)
+		if err != nil {
+			return model.TodoItem{}, err
+		}
+		if !eligible || requestID == "" {
+			return model.TodoItem{}, fmt.Errorf("TODO #%d is not eligible for a fresh launch; inspect its owner, worktree and launch journal", id)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO todo_launch_requests(request_id,todo_id,input_json) VALUES(?,?,?)`, requestID, id, inputJSON); err != nil {
+			return model.TodoItem{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return model.TodoItem{}, err
+		}
+		return s.GetTodo(ctx, id)
+	}
+	position := 0
+	if requestID != "" {
+		// Launch adds append without rewriting the caller's existing TODO.
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(position), -1)+1 FROM project_todos WHERE project_path=? AND done=0`, projectPath).Scan(&position); err != nil {
+			return model.TodoItem{}, err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `UPDATE project_todos SET position = position + 1 WHERE project_path = ? AND done = 0`, projectPath); err != nil {
+			return model.TodoItem{}, err
+		}
 	}
 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
-		VALUES (?, ?, 0, 0, ?, ?)
-	`, projectPath, text, now.Unix(), now.Unix())
+		VALUES (?, ?, 0, ?, ?, ?)
+	`, projectPath, text, position, now.Unix(), now.Unix())
 	if err != nil {
 		return model.TodoItem{}, err
 	}
@@ -333,7 +363,7 @@ func (s *Store) addTodoWithLaunchRequest(ctx context.Context, projectPath, text 
 		ProjectPath: projectPath,
 		Text:        text,
 		Attachments: normalizeTodoAttachmentsForSave(attachments),
-		Position:    0,
+		Position:    position,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil

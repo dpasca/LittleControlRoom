@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
+	"lcroom/internal/todocontrol/ownertest"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -762,89 +763,98 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 }
 
 func TestExecuteBossControlInvocationContinuesTodoInRecordedWorktree(t *testing.T) {
-	ctx := context.Background()
-	svc := newControlTestService(t)
-	parent := t.TempDir()
-	projectPath := filepath.Join(parent, "KeyMaster")
-	worktreePath := filepath.Join(parent, "KeyMaster--initialize")
-	for _, path := range []string{projectPath, worktreePath} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			t.Fatalf("MkdirAll(%s) error = %v", path, err)
-		}
-	}
-	for _, state := range []model.ProjectState{
-		{Path: projectPath, Name: "KeyMaster", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()},
-		{Path: worktreePath, Name: "KeyMaster--initialize", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, WorktreeRootPath: projectPath, WorktreeKind: model.WorktreeKindLinked, UpdatedAt: time.Now()},
-	} {
-		if err := svc.Store().UpsertProjectState(ctx, state); err != nil {
-			t.Fatalf("UpsertProjectState(%s) error = %v", state.Path, err)
-		}
-	}
-	todo, err := svc.AddTodo(ctx, projectPath, "Initialize KeyMaster")
-	if err != nil {
-		t.Fatalf("AddTodo() error = %v", err)
-	}
-	if err := svc.Store().AttachTodoWorkSession(ctx, todo.ID, worktreePath, model.SessionSourceCodex, "codex:thread-keymaster-initialize", model.TodoWorkStateIdle, time.Now()); err != nil {
-		t.Fatalf("AttachTodoWorkSession() error = %v", err)
-	}
+	for _, fromWorker := range []bool{false, true} {
+		t.Run(map[bool]string{false: "repository", true: "worker"}[fromWorker], func(t *testing.T) {
+			ctx := context.Background()
+			svc := newControlTestService(t)
+			parent := t.TempDir()
+			projectPath := filepath.Join(parent, "KeyMaster")
+			worktreePath := filepath.Join(parent, "KeyMaster--initialize")
+			ownertest.Git(t, parent, "init", "-b", "master", projectPath)
+			ownertest.Git(t, projectPath, "config", "user.email", "test@example.com")
+			ownertest.Git(t, projectPath, "config", "user.name", "Test")
+			ownertest.Git(t, projectPath, "commit", "--allow-empty", "-m", "fixture")
+			ownertest.Git(t, projectPath, "worktree", "add", "-b", "initialize", worktreePath)
+			for _, state := range []model.ProjectState{
+				{Path: projectPath, Name: "KeyMaster", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()},
+				{Path: worktreePath, Name: "KeyMaster--initialize", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, WorktreeRootPath: projectPath, WorktreeKind: model.WorktreeKindLinked, UpdatedAt: time.Now()},
+			} {
+				if err := svc.Store().UpsertProjectState(ctx, state); err != nil {
+					t.Fatalf("UpsertProjectState(%s) error = %v", state.Path, err)
+				}
+			}
+			todo, err := svc.AddTodo(ctx, projectPath, "Initialize KeyMaster")
+			if err != nil {
+				t.Fatalf("AddTodo() error = %v", err)
+			}
+			if err := svc.Store().AttachTodoWorkSession(ctx, todo.ID, worktreePath, model.SessionSourceCodex, "codex:thread-keymaster-initialize", model.TodoWorkStateIdle, time.Now()); err != nil {
+				t.Fatalf("AttachTodoWorkSession() error = %v", err)
+			}
 
-	projects, err := svc.Store().ListProjects(ctx, false)
-	if err != nil {
-		t.Fatalf("ListProjects() error = %v", err)
-	}
-	var requests []codexapp.LaunchRequest
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		requests = append(requests, req)
-		return &fakeCodexSession{
-			projectPath: req.ProjectPath,
-			snapshot: codexapp.Snapshot{
-				Provider:       req.Provider,
-				ThreadID:       "thread-keymaster-followup",
-				Started:        true,
-				LastActivityAt: time.Now(),
-			},
-		}, nil
-	})
-	m := Model{ctx: ctx, svc: svc, allProjects: projects, projects: projects, codexManager: manager}
+			projects, err := svc.Store().ListProjects(ctx, false)
+			if err != nil {
+				t.Fatalf("ListProjects() error = %v", err)
+			}
+			var requests []codexapp.LaunchRequest
+			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+				requests = append(requests, req)
+				return &fakeCodexSession{
+					projectPath: req.ProjectPath,
+					snapshot: codexapp.Snapshot{
+						Provider:       req.Provider,
+						ThreadID:       "thread-keymaster-initialize",
+						Started:        true,
+						LastActivityAt: time.Now(),
+					},
+				}, nil
+			})
+			m := Model{ctx: ctx, svc: svc, allProjects: projects, projects: projects, codexManager: manager}
 
-	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
-		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
-			ProjectPath: projectPath,
-			ProjectName: "KeyMaster",
-			Provider:    control.ProviderCodex,
-			SessionMode: control.SessionModeResumeOrNew,
-			Prompt:      "KeyMaster is an API key ledger; continue the existing creation task with these requirements.",
-			TodoID:      todo.ID,
-			TodoText:    todo.Text,
-		}),
-	})
-	if cmd == nil {
-		t.Fatal("executeBossControlInvocation() cmd = nil, want tracked TODO load command")
-	}
-	got := updated.(Model)
-	loaded, ok := cmd().(bossTrackedTodoLoadedMsg)
-	if !ok || loaded.err != nil {
-		t.Fatalf("tracked TODO load result = %#v", loaded)
-	}
-	updated, cmd = got.Update(loaded)
-	if cmd == nil {
-		t.Fatal("handling tracked TODO returned nil worktree continuation")
-	}
-	got = updated.(Model)
-	_, msgs := runEngineerMailboxForTest(t, got, cmd)
-	for _, msg := range msgs {
-		if result, ok := msg.(bossui.ControlInvocationResultMsg); ok && result.Err != nil {
-			t.Fatalf("control result error = %v", result.Err)
-		}
-	}
-	if len(requests) != 1 {
-		t.Fatalf("launch requests = %#v, want one worktree continuation", requests)
-	}
-	if requests[0].ProjectPath != worktreePath || requests[0].ForceNew {
-		t.Fatalf("launch request = %#v, want resume-or-new in %s", requests[0], worktreePath)
-	}
-	if !strings.Contains(requests[0].Prompt, "KeyMaster is an API key ledger") || !strings.Contains(requests[0].Prompt, "TODO text: Initialize KeyMaster") {
-		t.Fatalf("launch prompt = %q, want clarification plus tracked TODO context", requests[0].Prompt)
+			requestedPath := projectPath
+			if fromWorker {
+				requestedPath = worktreePath
+			}
+			updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+				Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+					ProjectPath:     requestedPath,
+					TargetSessionID: "thread-keymaster-initialize",
+					ProjectName:     "KeyMaster",
+					Provider:        control.ProviderCodex,
+					SessionMode:     control.SessionModeResumeOrNew,
+					Prompt:          "KeyMaster is an API key ledger; continue the existing creation task with these requirements.",
+					TodoID:          todo.ID,
+					TodoText:        todo.Text,
+				}),
+			})
+			if cmd == nil {
+				t.Fatal("executeBossControlInvocation() cmd = nil, want tracked TODO load command")
+			}
+			got := updated.(Model)
+			loaded, ok := cmd().(bossTrackedTodoLoadedMsg)
+			if !ok || loaded.err != nil {
+				t.Fatalf("tracked TODO load result = %#v", loaded)
+			}
+			updated, cmd = got.Update(loaded)
+			if cmd == nil {
+				t.Fatal("handling tracked TODO returned nil worktree continuation")
+			}
+			got = updated.(Model)
+			_, msgs := runEngineerMailboxForTest(t, got, cmd)
+			for _, msg := range msgs {
+				if result, ok := msg.(bossui.ControlInvocationResultMsg); ok && result.Err != nil {
+					t.Fatalf("control result error = %v", result.Err)
+				}
+			}
+			if len(requests) != 1 {
+				t.Fatalf("launch requests = %#v, want one worktree continuation", requests)
+			}
+			if requests[0].ProjectPath != worktreePath || requests[0].ForceNew {
+				t.Fatalf("launch request = %#v, want resume-or-new in %s", requests[0], worktreePath)
+			}
+			if !strings.Contains(requests[0].Prompt, "KeyMaster is an API key ledger") || !strings.Contains(requests[0].Prompt, "TODO text: Initialize KeyMaster") {
+				t.Fatalf("launch prompt = %q, want clarification plus tracked TODO context", requests[0].Prompt)
+			}
+		})
 	}
 }
 
@@ -1330,7 +1340,7 @@ func TestExecuteBossProjectCreateAndStartEngineerReportsNoSideEffectsWhenParentI
 	waitForControlAsyncRefreshes(t, svc)
 }
 
-func TestExecuteBossTrackedWorktreeLaunchKeepsTodoWhenWorktreeFails(t *testing.T) {
+func TestExecuteBossTrackedWorktreeLaunchRejectsNonGitBeforeCreatingTodo(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)
 	projectPath := filepath.Join(t.TempDir(), "not-a-git-repo")
@@ -1359,29 +1369,21 @@ func TestExecuteBossTrackedWorktreeLaunchKeepsTodoWhenWorktreeFails(t *testing.T
 	})})
 	got := updated.(Model)
 	created := cmd().(bossTodoWorktreeTodoCreatedMsg)
+	if created.err == nil || created.todo.ID != 0 {
+		t.Fatalf("non-Git preflight=%+v", created)
+	}
 	updated, cmd = got.Update(created)
-	got = updated.(Model)
-	var prepared bossTodoWorktreePreparedMsg
-	for _, msg := range collectCmdMsgs(cmd) {
-		if candidate, ok := msg.(bossTodoWorktreePreparedMsg); ok {
-			prepared = candidate
-		}
-	}
-	if prepared.err == nil {
-		t.Fatalf("worktree preparation error = nil, want non-Git failure")
-	}
-	updated, cmd = got.Update(prepared)
 	_ = updated.(Model)
 	result, ok := cmd().(bossui.ControlInvocationResultMsg)
-	if !ok || result.Err == nil || !strings.Contains(result.Status, "No engineer was launched") {
-		t.Fatalf("failure result = %#v, want explicit no-launch receipt", result)
+	if !ok || result.Err == nil || !strings.Contains(result.Status, "no worktree or engineer was started") {
+		t.Fatalf("failure receipt=%+v", result)
 	}
 	if launches != 0 {
-		t.Fatalf("engineer launches = %d, want no root fallback", launches)
+		t.Fatalf("engineer launches=%d", launches)
 	}
-	tracked, err := svc.Store().GetTodo(ctx, created.todo.ID)
-	if err != nil || tracked.Done {
-		t.Fatalf("tracked TODO after failure = %#v, err=%v", tracked, err)
+	todos, _, err := svc.Store().ListOpenTodosForReview(ctx, projectPath)
+	if err != nil || len(todos) != 0 {
+		t.Fatalf("unexpected todos=%+v err=%v", todos, err)
 	}
 	waitForControlAsyncRefreshes(t, svc)
 }

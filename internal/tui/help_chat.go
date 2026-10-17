@@ -63,6 +63,7 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 		initCmd = m.helpChatModel.ActivateCmd()
 	}
 	m.status = "Chat open. Drag transcript text to copy; ask a question, or press Esc/backtick to hide."
+	m.helpChatModel = m.helpChatModel.WithControlPreflight(m.preflightTodoTargetSession)
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
 		m.helpChatModel = normalizeBossModel(updated)
