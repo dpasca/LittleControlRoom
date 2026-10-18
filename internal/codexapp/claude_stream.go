@@ -49,14 +49,29 @@ func initializeClaudeStream(ctx context.Context, stdin io.Writer, result <-chan 
 	}
 }
 
-func (s *claudeCodeSession) handleClaudeControlResponseLocked(raw json.RawMessage) {
+func (s *claudeCodeSession) handleClaudeControlResponseLocked(raw json.RawMessage) io.WriteCloser {
 	var response struct {
 		RequestID string `json:"request_id"`
 		Subtype   string `json:"subtype"`
 		Error     string `json:"error"`
 	}
-	if json.Unmarshal(raw, &response) != nil || response.RequestID != claudeStreamInitializeID || s.streamInitResult == nil {
-		return
+	if json.Unmarshal(raw, &response) != nil {
+		return nil
+	}
+	if change := s.permissionModeChange; change != nil && response.RequestID == change.requestID {
+		if response.Subtype == "success" {
+			s.applyClaudePermissionModeLocked(change.mode)
+			s.completeClaudePermissionModeChangeLocked(nil)
+		} else {
+			s.completeClaudePermissionModeChangeLocked(fmt.Errorf("Claude Code refused the permission mode change: %s", response.Error))
+		}
+		if s.streamState == "idle" && s.pendingSubmissions == 0 && s.runningBackgroundTaskCountLocked() == 0 {
+			return s.settleClaudeTurnInputLocked()
+		}
+		return nil
+	}
+	if response.RequestID != claudeStreamInitializeID || s.streamInitResult == nil {
+		return nil
 	}
 	var err error
 	if response.Subtype != "success" {
@@ -67,6 +82,7 @@ func (s *claudeCodeSession) handleClaudeControlResponseLocked(raw json.RawMessag
 	default:
 	}
 	s.streamInitResult = nil
+	return nil
 }
 
 func (s *claudeCodeSession) addClaudeDeliveryLocked(id, text string, at time.Time) {
@@ -189,6 +205,9 @@ func (s *claudeCodeSession) claudeBrowserOwnsStreamLocked() bool {
 // hide the window; neither action should discard its tabs or unsaved form data.
 func (s *claudeCodeSession) settleClaudeTurnInputLocked() io.WriteCloser {
 	s.setClaudeBrowserActivityIdleLocked()
+	if s.permissionModeChange != nil {
+		return nil
+	}
 	if s.claudeBrowserOwnsStreamLocked() {
 		s.busy = false
 		s.busySince = time.Time{}

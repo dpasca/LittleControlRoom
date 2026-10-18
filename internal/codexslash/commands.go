@@ -59,6 +59,7 @@ type Invocation struct {
 	Prompt              string
 	SessionID           string
 	PermissionLevel     string
+	PermissionMode      string
 	PermissionAction    string
 	PermissionRule      string
 	PermissionRemove    bool

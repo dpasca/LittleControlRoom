@@ -1,6 +1,46 @@
 package codexslash
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+func TestParseClaudePermissionMode(t *testing.T) {
+	for _, mode := range []string{"auto", "manual", "default", "acceptEdits", "dontAsk", "plan", "bypassPermissions"} {
+		input := "/permissions mode " + mode
+		inv, err := ParseClaude(input)
+		if err != nil || inv.Kind != KindPermissions || inv.PermissionMode == "" || inv.PermissionAction != "" {
+			t.Fatalf("%s: %#v, %v", input, inv, err)
+		}
+		if mode == "default" && inv.PermissionMode != "manual" {
+			t.Fatalf("default alias = %q", inv.PermissionMode)
+		}
+		if _, err := Parse(input); err == nil {
+			t.Fatal("Claude modes leaked into other providers")
+		}
+	}
+	for _, input := range []string{"/permissions mode", "/permissions mode unknown", "/permissions mode auto manual", "/permissions mode auto\nmanual", "/permissions mode auto\x00"} {
+		if _, err := ParseClaude(input); err == nil {
+			t.Fatalf("accepted %q", input)
+		}
+	}
+}
+
+func TestClaudePermissionModeSuggestions(t *testing.T) {
+	for _, input := range []string{"/permissions mode", "/permissions mode "} {
+		choices := ClaudePermissionSuggestions(input, nil)
+		if len(choices) != 6 {
+			t.Fatalf("%q: %v", input, choices)
+		}
+		if !slices.ContainsFunc(choices, func(s Suggestion) bool { return s.Insert == "/permissions mode manual" }) {
+			t.Fatal("missing Manual suggestion")
+		}
+	}
+	choices := ClaudePermissionSuggestions("/permissions mode man", nil)
+	if len(choices) != 1 || choices[0].Insert != "/permissions mode manual" {
+		t.Fatalf("mode prefix: %v", choices)
+	}
+}
 
 func TestParseClaudePermissions(t *testing.T) {
 	for _, input := range []string{"/permissions allow Bash(huggingface-cli upload:*)", "/perms remove deny Bash(Git Push:*)"} {

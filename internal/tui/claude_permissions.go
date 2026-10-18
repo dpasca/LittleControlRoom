@@ -15,6 +15,10 @@ type claudePermissionRulesSession interface {
 	EditPermissionRule(action, rule string, remove bool) error
 }
 
+type claudePermissionModeSession interface {
+	SetPermissionMode(mode string) error
+}
+
 func (m Model) runClaudePermissions(inv codexslash.Invocation) (tea.Model, tea.Cmd) {
 	if m.claudePermissionsBusy {
 		return m, nil
@@ -27,10 +31,22 @@ func (m Model) runClaudePermissions(inv codexslash.Invocation) (tea.Model, tea.C
 	m.status = "Reading Claude Code permissions..."
 	if inv.PermissionAction != "" {
 		m.status = "Saving Claude Code permission rule..."
+	} else if inv.PermissionMode != "" {
+		m.status = "Changing Claude Code session permission mode..."
 	}
 	project := m.codexVisibleProject
 	cmd := m.codexSessionCmd(project, nil, func(session codexapp.Session) tea.Msg {
 		result := codexActionMsg{projectPath: project, refreshView: true}
+		if inv.PermissionMode != "" {
+			permissions, ok := session.(claudePermissionModeSession)
+			if !ok {
+				result.err = fmt.Errorf("session does not support Claude Code permission mode changes")
+				return result
+			}
+			result.err = permissions.SetPermissionMode(inv.PermissionMode)
+			result.status = "Claude Code permission mode changed for this session"
+			return result
+		}
 		permissions, ok := session.(claudePermissionRulesSession)
 		if !ok {
 			result.err = fmt.Errorf("session does not support Claude Code permission rules")

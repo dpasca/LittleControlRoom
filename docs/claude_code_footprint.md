@@ -1,6 +1,6 @@
 # Claude Code Footprint Discovery
 
-Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29; embedded stream input and permission callbacks re-verified 2026-08-13; Auto permission mode re-verified 2026-08-25 (Asia/Tokyo)
+Date observed: 2026-03-31; context/compaction and structured async-task fields re-verified 2026-07-29; embedded stream input and permission callbacks re-verified 2026-08-13; Auto permission mode re-verified 2026-08-25; per-session permission controls verified 2026-10-18 (Asia/Tokyo)
 Host: macOS user-home environment
 
 This document summarizes observed Claude Code on-disk artifacts and the detector assumptions Little Control Room currently relies on.
@@ -394,9 +394,10 @@ Auto is the best everyday fit for LCR's embedded Claude lane:
 - LCR's `PreToolUse` recursive-`rm` hook runs before Claude's permission
   decision and remains authoritative in both `auto` and
   `bypassPermissions`.
-- `bypassPermissions` remains available as an explicit escape hatch and does
-  not create an approval bridge. `dontAsk` likewise remains intentionally
-  non-interactive. `acceptEdits`, `manual`, and `plan` retain the bridge.
+- `bypassPermissions` remains available as an explicit escape hatch, and
+  `dontAsk` remains intentionally non-interactive. LCR keeps the approval
+  callback installed in every mode so changing the same session to `manual`,
+  `acceptEdits`, `plan`, or `auto` can route prompts without reopening it.
 - If the bridge cannot initialize, Manual fails closed to `dontAsk`; the other
   modes keep their native behavior and LCR reports that interactive approval is
   unavailable.
@@ -416,6 +417,31 @@ minimums. The live documentation is the source of truth. When Auto is not
 available, Claude starts in Manual mode rather than failing the session. LCR
 parses the stream `init.permissionMode`, shows the effective mode in the pane
 badge, and emits a clear Auto-to-Manual fallback notice.
+
+### Per-session permission changes
+
+`/permissions mode <mode>` changes the open embedded Claude session without
+editing the global default or a Claude settings file. Accepted modes match the
+launch setting; `default` is an alias for `manual`. At idle, the selection is
+retained for the next process launch and subsequent turns in the open pane.
+Reconnecting or reopening uses the global default again.
+
+For an initialized managed stream, LCR sends a `control_request` with subtype
+`set_permission_mode`, a unique `request_id`, and `mode` (`default` on the wire
+for Manual). The matching success response updates the selected mode and badge;
+an error preserves the previous selection and reports Claude's reason. A
+ten-second acknowledgment timeout leaves the change visibly unconfirmed and
+blocks further changes/prompts until a late response arrives or the operator
+reconnects. Session close or process exit releases the waiter immediately.
+Changing modes never answers an already-pending permission or question callback.
+Uninitialized and older foreground streams must finish their current work first.
+Native model/account/policy constraints still apply to live changes.
+
+Verified with Claude Code 2.1.302 on 2026-10-18: initialization followed by
+`set_permission_mode` to `default` and back to `auto` returned matching successful
+control responses, without submitting a user prompt or making a model request.
+The protocol matches Anthropic's [Agent SDK permission control](https://code.claude.com/docs/en/agent-sdk/permissions)
+and [Python control implementation](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py).
 
 Primary references:
 
