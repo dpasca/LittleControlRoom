@@ -429,6 +429,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return IntegrationsManageCapability(), true
 	case CapabilityEngineerSendPrompt:
 		return capabilityWithCatalogMetadata(EngineerSendPromptCapability()), true
+	case CapabilityEngineerCancelWakeup:
+		return capabilityWithCatalogMetadata(EngineerCancelWakeupCapability()), true
 	case CapabilityAgentTaskSubmitResult:
 		return AgentTaskResultCapability(false), true
 	case CapabilityAgentTaskReviewResult:
@@ -1680,7 +1682,7 @@ func engineerSendPromptInputSchema() map[string]any {
 			},
 			"deliver_at": map[string]any{
 				"type":        "string",
-				"description": "Schedules a wakeup: hold the message until this RFC 3339 time with offset, then resume the exact target_session_id. Requires target_session_id; never auto-approved, so the operator confirms the time and the unattended grant. Persists across LCR restarts but only fires while LCR is running; a wakeup later than missed_grace_minutes past its time is reported as missed instead of delivered.",
+				"description": "Schedules a wakeup: hold the message until this RFC 3339 time with offset, then resume the exact target_session_id. Requires target_session_id; never auto-approved, so the operator confirms the time and the unattended grant. Persists across LCR restarts but only fires while LCR is running; a wakeup later than missed_grace_minutes past its time is reported as missed instead of delivered. List pending wakeups with the engineer.wakeup_list query; the session that scheduled one can withdraw it with engineer.cancel_wakeup.",
 			},
 			"missed_grace_minutes": map[string]any{
 				"type":        "integer",

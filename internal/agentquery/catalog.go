@@ -79,6 +79,7 @@ const (
 	QueryKnowledgeList       Name = "knowledge.list"
 	QueryKnowledgeGet        Name = "knowledge.get"
 	QueryEngineerModels      Name = "engineer.models"
+	QueryEngineerWakeupList  Name = "engineer.wakeup_list"
 	QueryIntegrationsList    Name = "integrations.list"
 	QueryIntegrationsCatalog Name = "integrations.catalog"
 	QueryPortfolioOverview   Name = "portfolio.overview"
@@ -154,6 +155,7 @@ func Capabilities() []Capability {
 		knowledgeCapability(QueryKnowledgeList),
 		knowledgeCapability(QueryKnowledgeGet),
 		engineerModelsCapability(),
+		engineerWakeupListCapability(),
 		integrationListCapability(),
 		integrationCatalogCapability(),
 		collectionCapability(

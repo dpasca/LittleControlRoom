@@ -435,6 +435,35 @@ and atomically consumes any bounded use. The operation retains
 `confirmation_by: scoped_permission`. Codex/provider approval presets remain
 independent of these LCR permissions.
 
+## Scheduled wakeups
+
+`engineer.send_prompt` with `deliver_at` (RFC 3339 with offset) holds the
+message in the durable queue until that time, then resumes the exact
+`target_session_id`. Wakeups survive LCR restarts but fire only while LCR is
+running; one still undelivered `missed_grace_minutes` (default 60) after its
+time is failed as missed and logged, never replayed later. A wakeup is never
+covered by project collaboration or saved scoped permissions: the operator
+confirms the time and the `unattended` grant together.
+
+The grant is what the woken turn may do while the operator is away:
+`commands` or word-boundary `command_prefixes` (chained commands never match),
+`file_changes` inside the project, `tools` (trailing `*` matches a prefix),
+free-text `notes` for limits approvals cannot express, and `valid_minutes`.
+The host answers covered approval requests once with a one-shot accept; anything
+else stays pending, is logged, and raises the question notification. The grant
+is held in memory and ends with the woken turn, its validity window, a session
+change, or an LCR restart, so later approvals fall back to the operator. A
+session that raises no approvals (for example YOLO mode) cannot be blocked by
+the host; the delivery prompt states the grant and tells the engineer to stop
+and report instead of exceeding it.
+
+`engineer.wakeup_list` lists a project's pending wakeups with their grant.
+`engineer.cancel_wakeup` withdraws one immediately, but only for the embedded
+session that scheduled it; other callers are refused and pointed at the
+operator. **`/wakeups`** on the dashboard lists every project's pending
+wakeups, and from an embedded pane lists that project's; `c` cancels the
+selected one.
+
 ## Intentional continuation after an action
 
 `propose_control_operation` accepts optional `resume_on_success: true` for

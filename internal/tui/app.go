@@ -150,6 +150,7 @@ type Model struct {
 	helpChatModel                       bossui.Model
 	externalControlConfirmation         *externalControlConfirmationState
 	projectCollaborationDialog          *projectCollaborationDialog
+	wakeupsDialog                       *wakeupsDialog
 	controlContinuationsInFlight        bool
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
@@ -1546,6 +1547,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateProjectCollaborations(key)
 	}
 	if _, ok := msg.(tea.MouseMsg); ok && m.projectCollaborationDialog != nil {
+		return m, nil
+	}
+	if msg, ok := msg.(wakeupsLoadedMsg); ok {
+		return m.applyWakeupsLoaded(msg)
+	}
+	if msg, ok := msg.(wakeupCanceledMsg); ok {
+		return m.applyWakeupCanceled(msg)
+	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.wakeupsDialog != nil {
+		return m.updateWakeups(key)
+	}
+	if _, ok := msg.(tea.MouseMsg); ok && m.wakeupsDialog != nil {
 		return m, nil
 	}
 	if _, ok := msg.(bossui.ExitMsg); ok {

@@ -132,6 +132,14 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 		}
 		invocation.Args, _ = json.Marshal(args)
 	}
+	if capability.Name == control.CapabilityEngineerCancelWakeup {
+		if len(resumeOnSuccess) > 0 && resumeOnSuccess[0] {
+			return nil, errors.New("wakeup cancellation is immediate and does not support resume_on_success")
+		}
+		var input control.EngineerCancelWakeupInput
+		_ = json.Unmarshal(invocation.Args, &input)
+		return e.cancelOwnWakeup(ctx, input.WakeupID)
+	}
 	if capability.Name == control.CapabilityAgentTaskSubmitResult || capability.Name == control.CapabilityAgentTaskReviewResult {
 		if len(resumeOnSuccess) > 0 && resumeOnSuccess[0] {
 			return nil, errors.New("immediate task metadata does not support resume_on_success")
@@ -365,4 +373,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// cancelOwnWakeup lets the session that scheduled a wakeup withdraw it without
+// operator confirmation; cancellation only removes pending authority. Wakeups
+// scheduled by anyone else stay with the operator's /wakeups dialog.
+func (e *Executor) cancelOwnWakeup(ctx context.Context, wakeupID string) (map[string]any, error) {
+	message, err := e.store.GetEngineerMessage(ctx, wakeupID)
+	if err != nil {
+		return nil, fmt.Errorf("wakeup %s not found: %w", wakeupID, err)
+	}
+	if !message.Scheduled() {
+		return nil, fmt.Errorf("%s is not a scheduled wakeup", wakeupID)
+	}
+	owned := false
+	if message.OperationID != "" && e.sessionKey != "" {
+		if op, err := e.store.GetControlOperation(ctx, message.OperationID); err == nil {
+			owned = op.Source == e.source && op.Provider == e.provider && op.SessionKey == e.sessionKey &&
+				filepath.Clean(op.ProjectPath) == filepath.Clean(e.originProjectPath)
+		}
+	}
+	if !owned {
+		return nil, errors.New("only the session that scheduled this wakeup can cancel it; ask the operator to cancel it with /wakeups")
+	}
+	updated, canceled, err := e.store.CancelScheduledEngineerMessage(ctx, message.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !canceled {
+		return nil, fmt.Errorf("wakeup %s can no longer be canceled (state %s)", message.ID, updated.State)
+	}
+	return map[string]any{
+		"success": true, "terminal": true, "operator_confirmation": false, "requires_new_user_turn": false,
+		"wakeup_id": updated.ID, "state": updated.State, "message": "Wakeup canceled; it will not be delivered.",
+	}, nil
 }

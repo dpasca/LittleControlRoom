@@ -34,7 +34,7 @@ func (m *Model) handleDashboardMouse(msg tea.MouseMsg) tea.Cmd {
 // different input surface. Keep this aligned with the key routing in update.
 func (m Model) dashboardMouseBlocked() bool {
 	return m.helpChatMode || m.codexVisible() || m.diffView != nil ||
-		m.projectCollaborationDialog != nil || m.claudeAPIKeyWarning != nil ||
+		m.projectCollaborationDialog != nil || m.wakeupsDialog != nil || m.claudeAPIKeyWarning != nil ||
 		m.externalControlReviewActive() || m.quitConfirm != nil || m.busySessionReplacement != nil ||
 		m.actionNoticeDialog != nil || m.selfUpdateDialog != nil || m.attentionDialog != nil ||
 		m.bossSetupPrompt != nil || m.codexArtifactPicker != nil || m.codexLCAgentProviderSetup != nil ||

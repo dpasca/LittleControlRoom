@@ -256,6 +256,8 @@ func (m Model) executeValidatedControlInvocation(normalized control.Invocation) 
 		return m.executeAgentTaskContinueControlWithOutcome(normalized, input)
 	case control.CapabilityAgentTaskSubmitResult, control.CapabilityAgentTaskReviewResult:
 		return m.executeTaskResultControl(normalized)
+	case control.CapabilityEngineerCancelWakeup:
+		return m.executeCancelWakeupControl(normalized)
 	case control.CapabilityAgentTaskClose:
 		var input control.AgentTaskCloseInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -475,6 +477,8 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 	case submoduleAlignActionMsg:
 		return result.status, result.err
 	case bossAgentTaskClosedMsg:
+		return result.status, result.err
+	case wakeupCanceledMsg:
 		return result.status, result.err
 	case bossScratchTaskArchivedMsg:
 		return result.status, result.err

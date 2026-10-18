@@ -150,6 +150,8 @@ func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMes
 		result, err = readKnowledge(capability.Name, arguments)
 	case QueryEngineerModels:
 		result, err = e.engineerModels(ctx, arguments)
+	case QueryEngineerWakeupList:
+		result, err = e.engineerWakeupList(ctx, arguments)
 	case QueryIntegrationsList:
 		result, err = e.integrationList(ctx, arguments)
 	case QueryIntegrationsCatalog:

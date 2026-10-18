@@ -401,6 +401,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.openSkillsDialog()
 			case codexslash.KindCollab:
 				return m, m.openProjectCollaborations(m.codexVisibleProject)
+			case codexslash.KindWakeups:
+				return m, m.openWakeups(m.codexVisibleProject)
 			case codexslash.KindSettings:
 				if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
 					return m, m.openEmbeddedLCAgentSettingsMode(m.codexVisibleProject)

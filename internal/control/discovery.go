@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const ConfirmationContract = "Controls execute after operator confirmation or under an existing scoped permission, project collaboration grant, or task correction grant. Exact-worker result submission and exact-caller review record bounded metadata immediately. Set resume_on_success only for unfinished work when you will end this turn immediately. Follow end_turn first: end the turn without polling; the host may resume the exact waiting workflow after success. New input, stop, replacement, failure, or host restart suppresses continuation. Otherwise automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping. Saved permissions never expand task scope."
+const ConfirmationContract = "Controls execute after operator confirmation or under an existing scoped permission, project collaboration grant, or task correction grant. Exact-worker result submission, exact-caller review, and a session canceling its own scheduled wakeup are recorded immediately. Set resume_on_success only for unfinished work when you will end this turn immediately. Follow end_turn first: end the turn without polling; the host may resume the exact waiting workflow after success. New input, stop, replacement, failure, or host restart suppresses continuation. Otherwise automatic_delivery permits continued authorized work; requires_new_user_turn requires stopping. Saved permissions never expand task scope."
 
 // ListReport returns the transport-neutral progressive control catalog. MCP and
 // in-process agent hosts should expose this result rather than duplicating the

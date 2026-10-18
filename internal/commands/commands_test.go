@@ -21,6 +21,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "wakeups",
+			raw:  "/wakeups",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindWakeups || inv.Canonical != "/wakeups" {
+					t.Fatalf("wakeups invocation = %#v, want canonical /wakeups", inv)
+				}
+			},
+		},
+		{
 			name: "legacy help alias",
 			raw:  "/help",
 			check: func(t *testing.T, inv Invocation) {
