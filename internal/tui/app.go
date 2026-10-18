@@ -1681,6 +1681,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := msg.(bossui.ControlInvocationResultMsg); ok {
 		m = m.recordBossTrackedTodoFromControlResult(msg)
+		if msg.Err != nil && !msg.OperationPending && !errors.Is(msg.Err, context.Canceled) {
+			// Control failures set only the transient status line; keep the full
+			// error reachable from /errors.
+			m.appendErrorLogEntry("Control request failed", msg.Err, "")
+		}
 	}
 	if msg, ok := msg.(helpChatHostNoticePersistedMsg); ok {
 		if msg.err != nil {

@@ -45,6 +45,7 @@ type codexSessionOpenedMsg struct {
 	restartIntentKey string
 	restartWarmup    bool
 	deliveryDeferred bool
+	trackingErr      error
 	err              error
 }
 
@@ -173,6 +174,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	}
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 	m.err = nil
+	if msg.trackingErr != nil {
+		m.appendErrorLogEntry("TODO tracking update failed", msg.trackingErr, msg.projectPath)
+	}
 	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
 	if msg.err != nil {
 		_, todoLaunch := m.todoLaunchDraftFor(msg.projectPath)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	bossui "lcroom/internal/boss"
 	"lcroom/internal/commands"
 	"lcroom/internal/model"
 
@@ -223,5 +224,16 @@ func TestErrorLogJoinedErrorsStayWithinViewportAndScroll(t *testing.T) {
 	}
 	if !strings.Contains(formatErrorLogCopyText(m.errorLogEntries[0]), message) {
 		t.Fatal("full copy was truncated")
+	}
+}
+
+func TestControlInvocationFailureIsLogged(t *testing.T) {
+	updated, _ := Model{}.Update(bossui.ControlInvocationResultMsg{
+		Status: "Control request failed: git index.lock already exists",
+		Err:    errors.New("git index.lock already exists"),
+	})
+	got := updated.(Model)
+	if len(got.errorLogEntries) != 1 || !strings.Contains(got.errorLogEntries[0].Message, "index.lock") {
+		t.Fatalf("control failure missing from /errors: %#v", got.errorLogEntries)
 	}
 }
