@@ -278,6 +278,7 @@ type claudeStreamEnvelope struct {
 	Result            string                      `json:"result"`
 	IsError           bool                        `json:"is_error"`
 	IsAPIErrorMessage bool                        `json:"isApiErrorMessage"`
+	APIError          json.RawMessage             `json:"error"`
 	Errors            []string                    `json:"errors"`
 	StopReason        string                      `json:"stop_reason"`
 	LastMessage       string                      `json:"last_message"`
@@ -2069,7 +2070,9 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	case "assistant":
 		s.lastParentActivityAt = time.Now()
 		s.legacyTurnSettled = false
-		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID, env.IsAPIErrorMessage)
+		var apiErrorCode string
+		_ = json.Unmarshal(env.APIError, &apiErrorCode)
+		assistantStopReason := s.handleClaudeAssistantLocked(env.Message, env.UUID, env.IsAPIErrorMessage, apiErrorCode)
 		if claudeartifact.AssistantTurnCompleted(firstNonEmptyTrimmed(assistantStopReason, env.StopReason)) {
 			stdinToClose = s.finishClaudeSubmissionFromAssistantLocked(time.Now())
 		}
@@ -2131,7 +2134,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 	s.notifyAsync()
 }
 
-func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string, isAPIError bool) string {
+func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, envelopeUUID string, isAPIError bool, apiErrorCode string) string {
 	var msg claudeStreamMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return ""
@@ -2161,14 +2164,17 @@ func (s *claudeCodeSession) handleClaudeAssistantLocked(raw json.RawMessage, env
 			}
 			seen[key] = struct{}{}
 			kind := TranscriptAgent
+			displayText := ""
 			if isAPIError {
 				kind = TranscriptError
 				s.lastError = text
+				displayText = claudeAPIErrorDisplayText(apiErrorCode, text)
 			}
 			s.appendEntryLocked(TranscriptEntry{
-				ItemID: msg.ID,
-				Kind:   kind,
-				Text:   text,
+				ItemID:      msg.ID,
+				Kind:        kind,
+				Text:        text,
+				DisplayText: displayText,
 			})
 		case "thinking":
 			thinking := strings.TrimSpace(block.Thinking)
@@ -3179,6 +3185,9 @@ func startClaudeTurnWithMCP(ctx context.Context, projectPath, resumeID, model, r
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderClaudeCode, policy)
 	applyEmbeddedClaudeProcessEnvironment(cmd, managedStream)
+	if err := applyClaudeSubscriptionToken(cmd); err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -3556,7 +3565,7 @@ func parseCCLineEntriesWithInterruptedTools(
 	case "assistant":
 		entries := extractCCAssistantEntries(raw.Message.Content, raw.UUID, toolCalls)
 		if raw.IsAPIErrorMessage {
-			entries = classifyClaudeAPIErrorEntries(entries)
+			entries = classifyClaudeAPIErrorEntries(entries, raw.Error)
 		}
 		return entries, raw.Type, reasoningEffort, state
 
@@ -3575,7 +3584,7 @@ func parseCCLineEntriesWithInterruptedTools(
 	}
 }
 
-func classifyClaudeAPIErrorEntries(entries []TranscriptEntry) []TranscriptEntry {
+func classifyClaudeAPIErrorEntries(entries []TranscriptEntry, code string) []TranscriptEntry {
 	// server_error also covers local failures such as OAuth refresh contention.
 	// Preserve the provider's explanation and recovery advice for every error;
 	// the structured API-error flag identifies failures without guessing at prose.
@@ -3584,6 +3593,7 @@ func classifyClaudeAPIErrorEntries(entries []TranscriptEntry) []TranscriptEntry 
 			continue
 		}
 		entries[i].Kind = TranscriptError
+		entries[i].DisplayText = claudeAPIErrorDisplayText(code, entries[i].Text)
 	}
 	return entries
 }

@@ -89,3 +89,23 @@ func TestParseStoredClaudeAccessToken(t *testing.T) {
 		t.Fatal("empty stored credential reported an access token")
 	}
 }
+
+func TestPlanUsageReaderSkipsModelOnlySubscriptionToken(t *testing.T) {
+	t.Parallel()
+	reader := &PlanUsageReader{
+		ReadAccessToken: func(context.Context, string) (string, bool, error) {
+			t.Fatal("model-only token fell back to another account's credentials")
+			return "", false, nil
+		},
+		LookupEnv: func(key string) (string, bool) {
+			if key == SubscriptionTokenEnv {
+				return "sk-ant-oat01-test", true
+			}
+			return "", false
+		},
+	}
+	usage, err := reader.Read(context.Background(), "/unused")
+	if err != nil || usage.Available {
+		t.Fatalf("model-only token usage: available=%v, err=%v", usage.Available, err)
+	}
+}

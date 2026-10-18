@@ -50,3 +50,12 @@ func TestAuthenticationDetailIncludesMethodAndSubscription(t *testing.T) {
 		t.Fatalf("AuthenticationDetail() = %q, want %q", got, want)
 	}
 }
+
+func TestParseAuthenticationStatusRejectsInconclusiveJSON(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{`{}`, `null`, `{"error":"refresh unavailable"}`, `{"loggedIn":null}`, `{"loggedIn":"false"}`} {
+		if _, ok := ParseAuthenticationStatus(raw); ok {
+			t.Fatalf("inconclusive status accepted as a missing login: %s", raw)
+		}
+	}
+}

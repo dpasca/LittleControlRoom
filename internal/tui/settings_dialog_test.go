@@ -1535,7 +1535,7 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Claude permissions", "Auto", "Codex launch mode", "Conflict resolver", "Codex", "Show reasoning"} {
+	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Claude connection", "Claude permissions", "Auto", "Codex launch mode", "Conflict resolver", "Codex", "Show reasoning"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("providers and models section missing %q: %q", want, rendered)
 		}
@@ -1546,6 +1546,7 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 		}
 	}
 
+	_ = m.setSettingsSelection(settingsFieldClaudePermissionMode)
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyTab})
 	if cmd == nil {
 		t.Fatalf("Tab should refocus the next compact setting")

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/model"
 )
 
@@ -331,7 +332,16 @@ func (r *ClaudePrintRunner) run(parent context.Context, req JSONSchemaRequest) (
 		args = append(args, "--effort", effort)
 	}
 
-	stdout, stderr, err := runCommandWithInputAndOutputInDir(ctx, workDir, buildSchemaPrompt(req, true), r.command, args...)
+	cmd := exec.CommandContext(ctx, r.command, args...)
+	cmd.Dir = workDir
+	cmd.Stdin = strings.NewReader(buildSchemaPrompt(req, true))
+	if err := claudecli.ApplySubscriptionToken(cmd); err != nil {
+		return JSONSchemaResponse{}, err
+	}
+	var stdoutBuffer, stderrBuffer bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdoutBuffer, &stderrBuffer
+	err = cmd.Run()
+	stdout, stderr := stdoutBuffer.String(), stderrBuffer.String()
 	if err != nil {
 		return JSONSchemaResponse{}, formatRunnerCommandError("claude print", err, stderr, stdout)
 	}

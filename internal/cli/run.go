@@ -19,6 +19,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/buildinfo"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/claudehook"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
@@ -69,6 +70,9 @@ func Run(programName string, args []string) int {
 	}
 	if subcmd == "browser" {
 		return runBrowser(args[1:])
+	}
+	if subcmd == "claude-auth" {
+		return runClaudeAuth(args[1:])
 	}
 	if subcmd == "demo" {
 		return runDemo(programName, args[1:])
@@ -147,6 +151,9 @@ func Run(programName string, args []string) int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if err := claudecli.InitializeSubscriptionTokens(ctx, cfg.DataDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Claude subscription token: %v (open /claude-auth to reconnect)\n", err)
+	}
 
 	if subcmd == "model-eval" {
 		return runModelEval(ctx, cfg, modelEvalOpts)
@@ -1495,7 +1502,8 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|demo|help-meta|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|demo|help-meta|claude-auth|tui|serve> [flags]\n", name)
+	fmt.Println("Claude subscription token: claude-auth <setup|set|status|remove> [--config path] [--db path]")
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")

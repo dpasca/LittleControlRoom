@@ -11,6 +11,7 @@ import (
 
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/claudecli"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/lcagent/modeladapter"
@@ -89,6 +90,7 @@ const (
 	settingsFieldBossUtilityReasoning
 	settingsFieldLCAgentUtilityReasoning
 	settingsFieldLCAgentVisionReasoning
+	settingsFieldClaudeAuth
 )
 
 type settingsSectionID string
@@ -225,6 +227,7 @@ func settingsSections() []settingsSection {
 			summary: "Shared provider defaults",
 			hint:    "A compact inventory of shared provider connections and global model display defaults. Use Getting Started for feature setup.",
 			fieldOrder: []int{
+				settingsFieldClaudeAuth,
 				settingsFieldClaudePermissionMode,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldConflictResolverProvider,
@@ -423,7 +426,8 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 }
 
 func settingsFieldUsesPicker(index int) bool {
-	return index == settingsFieldAIBackend ||
+	return index == settingsFieldClaudeAuth ||
+		index == settingsFieldAIBackend ||
 		index == settingsFieldBossChatBackend ||
 		index == settingsFieldLCAgentUtilityProvider ||
 		index == settingsFieldLCAgentVisionProvider ||
@@ -792,6 +796,8 @@ func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
 		m.settingsSelected = fieldIndex
 	}
 	switch fieldIndex {
+	case settingsFieldClaudeAuth:
+		return m.openClaudeAuthDialog()
 	case settingsFieldAIBackend:
 		return m.openSettingsAIBackendPicker()
 	case settingsFieldBossChatBackend:
@@ -3612,6 +3618,15 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 		switch fieldIndex {
 		case settingsFieldAIBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
+		case settingsFieldClaudeAuth:
+			state := "Claude login · Enter to connect"
+			if claudecli.HasSubscriptionToken() {
+				state = "Subscription token · Enter to manage"
+			}
+			if claudecli.SubscriptionTokens().Info().Error != "" {
+				state = "Token unavailable · Enter to reconnect"
+			}
+			row = labelStyle.Width(labelWidth).Render(label) + " " + truncateText(state, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentVisionProvider:
@@ -4294,6 +4309,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settings.LCAgentVisionReasoning,
 			32,
 			settingsSectionLCAgent,
+		),
+		newSettingsField(
+			"Claude connection",
+			"Press Enter to connect or replace a one-year subscription token. Stored separately from settings; supports macOS Keychain and private Linux token files.",
+			"",
+			0,
+			settingsSectionAI,
 		),
 	}
 }

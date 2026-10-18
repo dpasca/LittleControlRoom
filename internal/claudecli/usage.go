@@ -67,10 +67,17 @@ func (r *PlanUsageReader) Read(ctx context.Context, configDir string) (PlanUsage
 		return PlanUsage{}, nil
 	}
 
-	token := ""
+	// setup-token credentials are scoped to model requests. Do not poll the
+	// account-usage endpoint with them or fall back to another account's login.
 	if value, ok := lookupEnv("CLAUDE_CODE_OAUTH_TOKEN"); ok {
-		token = strings.TrimSpace(value)
+		if strings.TrimSpace(value) != "" {
+			return PlanUsage{}, nil
+		}
 	}
+	if info := SubscriptionTokens().Info(); info.Saved || info.Error != "" {
+		return PlanUsage{}, nil
+	}
+	token := ""
 	if token == "" {
 		readAccessToken := r.ReadAccessToken
 		if readAccessToken == nil {

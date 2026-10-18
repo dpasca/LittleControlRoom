@@ -23,6 +23,7 @@ const (
 	KindCodexGC         Kind = "codex-gc"
 	KindSessionGC       Kind = "session-gc"
 	KindClaudeGC        Kind = "claude-gc"
+	KindClaudeAuth      Kind = "claude-auth"
 	KindRepairTerminal  Kind = "repair-terminal"
 	KindUpdate          Kind = "update"
 	KindSort            Kind = "sort"
@@ -211,6 +212,7 @@ var specs = []Spec{
 	{Name: "new-codex", Usage: "/new-codex [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "claude", Usage: "/claude [prompt]", Summary: "Resume the selected project's latest Claude Code session, or start a new one"},
 	{Name: "claude-gc", Usage: "/claude-gc", Summary: "Review Claude Code session storage before permanent deletion"},
+	{Name: "claude-auth", Usage: "/claude-auth", Summary: "Connect or replace a long-lived Claude subscription token"},
 	{Name: "new-claude", Usage: "/new-claude [prompt]", Summary: "Start a fresh Claude Code session in the selected project"},
 	{Name: "opencode", Usage: "/opencode [prompt]", Summary: "Resume the selected project's latest OpenCode session, or start a new one"},
 	{Name: "new-opencode", Usage: "/new-opencode [prompt]", Summary: "Start a fresh OpenCode session in the selected project"},
@@ -482,6 +484,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /clean")
 		}
 		return Invocation{Kind: KindClean, Canonical: "/clean"}, nil
+	case "claude-auth":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /claude-auth (paste tokens only in the connection dialog)")
+		}
+		return Invocation{Kind: KindClaudeAuth, Canonical: "/claude-auth"}, nil
 	case "session-gc", "claude-gc":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /%s", name)

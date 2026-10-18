@@ -504,6 +504,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.openSessionCleanup(codexapp.ProviderCodex)
 	case commands.KindClaudeGC:
 		return m.openSessionCleanup(codexapp.ProviderClaudeCode)
+	case commands.KindClaudeAuth:
+		return m.openClaudeAuthDialog()
 	case commands.KindCodexGC:
 		return m.openCodexCleanup()
 	case commands.KindRepairTerminal:

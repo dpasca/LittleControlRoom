@@ -313,7 +313,7 @@ func detectClaudeCode(ctx context.Context) Status {
 		Backend:   config.AIBackendClaude,
 		Label:     config.AIBackendClaude.Label(),
 		Detail:    "Claude Code CLI is not installed.",
-		LoginHint: "Run `claude auth login`, then press r to refresh.",
+		LoginHint: "Open /claude-auth to connect a subscription token, or run `claude auth login`, then press r to refresh.",
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		return status
@@ -321,13 +321,9 @@ func detectClaudeCode(ctx context.Context) Status {
 	status.Installed = true
 	status.Detail = "Claude Code installed, but not logged in."
 
-	out, err := runCommand(ctx, "claude", "auth", "status", "--json")
-	trimmed := strings.TrimSpace(out)
-	auth, ok := parseClaudeAuthStatus(trimmed)
-	if !ok {
-		if trimmed != "" {
-			status.Detail = trimmed
-		}
+	auth, err := claudecli.ReadAuthenticationStatus(ctx)
+	if err != nil {
+		status.Detail = "Claude Code authentication could not be checked: " + err.Error()
 		return status
 	}
 	if auth.LoggedIn {
@@ -335,9 +331,6 @@ func detectClaudeCode(ctx context.Context) Status {
 		status.Ready = true
 		status.Detail = claudeAuthDetail(auth)
 		return status
-	}
-	if err == nil && trimmed != "" {
-		status.Detail = trimmed
 	}
 	return status
 }

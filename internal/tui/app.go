@@ -41,6 +41,7 @@ type Model struct {
 	codexFastModeBusy     bool
 	claudePermissionsBusy bool
 	claudeOutputStyleBusy bool
+	claudeAuthDialog      *claudeAuthDialogState
 
 	allProjects               []model.ProjectSummary
 	archivedProjects          []model.ProjectSummary
@@ -1596,6 +1597,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(claudeAPIKeyWarningRequestedMsg); ok {
 		return m.applyClaudeAPIKeyWarningRequested(msg)
 	}
+	if msg, ok := msg.(claudeAuthResultMsg); ok {
+		return m.applyClaudeAuthResult(msg)
+	}
+	if msg, ok := msg.(claudeAuthSetupFinishedMsg); ok {
+		return m.applyClaudeAuthSetupFinished(msg)
+	}
+	if m.claudeAuthDialog != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			return m.updateClaudeAuthDialog(key)
+		}
+		if _, ok := msg.(tea.MouseMsg); ok {
+			return m, nil
+		}
+	}
 	if key, ok := msg.(tea.KeyMsg); ok && m.claudeAPIKeyWarning != nil {
 		return m.updateClaudeAPIKeyWarningMode(key)
 	}
@@ -1746,6 +1761,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, codexTranscriptCmd
 	case cursor.BlinkMsg:
+		if m.claudeAuthDialog != nil {
+			var cmd tea.Cmd
+			m.claudeAuthDialog.Input, cmd = m.claudeAuthDialog.Input.Update(msg)
+			return m, cmd
+		}
 		if m.skillsDialog != nil && m.skillsDialog.Editor != nil {
 			e := m.skillsDialog.Editor
 			var cmd tea.Cmd
