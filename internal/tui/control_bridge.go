@@ -996,6 +996,7 @@ func (m Model) todoEngineerLaunchTrackingCmd(projectPath string, todoID int64, c
 		}
 		provider := modelSessionSourceFromCodexProvider(embeddedProvider(snapshot))
 		if err := m.svc.MarkTodoWorkStarted(m.ctx, path, todoID, provider, sessionID, at); err != nil {
+			opened.trackingErr = err
 			if opened.status != "" {
 				opened.status += "; TODO tracking update failed"
 			} else {

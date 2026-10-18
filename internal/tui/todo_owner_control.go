@@ -72,6 +72,7 @@ func (m Model) executeTodoOwnerRepairControl(inv control.Invocation) controlInvo
 func (m Model) applyTodoOwnerRepaired(msg todoOwnerRepairedMsg) (tea.Model, tea.Cmd) {
 	m.status = msg.status
 	if msg.err != nil {
+		m.appendErrorLogEntry("TODO owner repair refused", msg.err, msg.input.RepositoryPath)
 		return m, nil
 	}
 	return m, batchCmds(m.requestProjectInvalidationCmd(invalidateProjectData(msg.input.ExpectedOwnerPath)), m.requestProjectInvalidationCmd(invalidateProjectData(msg.input.RepositoryPath)))
