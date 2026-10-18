@@ -13,6 +13,7 @@ type Kind string
 
 const (
 	KindCollab          Kind = "collab"
+	KindWakeups         Kind = "wakeups"
 	KindChat            Kind = "chat"
 	KindAIStats         Kind = "ai-stats"
 	KindPerf            Kind = "perf"
@@ -179,6 +180,7 @@ var specs = []Spec{
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
 	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
 	{Name: "collab", Usage: "/collab", Summary: "View or revoke LCR permissions and message collaboration"},
+	{Name: "wakeups", Usage: "/wakeups", Summary: "View or cancel scheduled engineer wakeups across projects"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Manage agent skills, MCP connections, and plugins"},
 	{Name: "integrations", Usage: "/integrations", Summary: "Manage agent skills, MCP connections, and plugins"},
@@ -545,6 +547,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /collab")
 		}
 		return Invocation{Kind: KindCollab, Canonical: "/collab"}, nil
+	case "wakeups":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /wakeups")
+		}
+		return Invocation{Kind: KindWakeups, Canonical: "/wakeups"}, nil
 	case "settings":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /settings")

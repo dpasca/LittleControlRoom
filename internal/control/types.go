@@ -12,6 +12,7 @@ type CapabilityName string
 const (
 	CapabilityIntegrationsManage                 CapabilityName = "integrations.manage"
 	CapabilityEngineerSendPrompt                 CapabilityName = "engineer.send_prompt"
+	CapabilityEngineerCancelWakeup               CapabilityName = "engineer.cancel_wakeup"
 	CapabilityAgentTaskSubmitResult              CapabilityName = "agent_task.submit_result"
 	CapabilityAgentTaskReviewResult              CapabilityName = "agent_task.review_result"
 	CapabilityAgentTaskCreate                    CapabilityName = "agent_task.create"
@@ -35,6 +36,7 @@ func CapabilityNameValues() []CapabilityName {
 	return []CapabilityName{
 		CapabilityIntegrationsManage,
 		CapabilityEngineerSendPrompt,
+		CapabilityEngineerCancelWakeup,
 		CapabilityAgentTaskSubmitResult,
 		CapabilityAgentTaskReviewResult,
 		CapabilityAgentTaskCreate,
@@ -349,6 +351,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateIntegrationsManageInvocation(inv)
 	case CapabilityEngineerSendPrompt:
 		return validateEngineerSendPromptInvocation(inv)
+	case CapabilityEngineerCancelWakeup:
+		return validateEngineerCancelWakeupInvocation(inv)
 	case CapabilityAgentTaskSubmitResult, CapabilityAgentTaskReviewResult:
 		return validateAgentTaskResultInvocation(inv)
 	case CapabilityAgentTaskCreate:

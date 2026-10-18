@@ -71,6 +71,9 @@ func capabilityWithCatalogMetadata(capability Capability) Capability {
 		capability.Domain = CapabilityDomainEngineer
 		capability.Scope = AuthorityScopeProject
 		capability.Async = true
+	case CapabilityEngineerCancelWakeup:
+		capability.Domain = CapabilityDomainEngineer
+		capability.Scope = AuthorityScopeProject
 	case CapabilityAgentTaskCreate, CapabilityAgentTaskContinue:
 		capability.Domain = CapabilityDomainTask
 		capability.Scope = AuthorityScopePortfolio

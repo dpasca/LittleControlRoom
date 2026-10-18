@@ -538,6 +538,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openQuickSetupSettingsMode(true)
 	case commands.KindCollab:
 		return m, m.openProjectCollaborations(m.currentSelectedProjectPath())
+	case commands.KindWakeups:
+		return m, m.openWakeups("")
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindSkills:
