@@ -507,7 +507,15 @@ type EngineerMessage struct {
 	CreatedAt                time.Time            `json:"created_at"`
 	UpdatedAt                time.Time            `json:"updated_at"`
 	DeliveredAt              time.Time            `json:"delivered_at,omitempty"`
+	// DeliverAt holds a scheduled wakeup until that time; ExpiresAt is when a
+	// late wakeup stops being worth delivering. Both are zero for ordinary messages.
+	DeliverAt  time.Time        `json:"deliver_at,omitempty"`
+	ExpiresAt  time.Time        `json:"expires_at,omitempty"`
+	Unattended *UnattendedGrant `json:"unattended,omitempty"`
 }
+
+// Scheduled reports whether the message is a timed wakeup.
+func (m EngineerMessage) Scheduled() bool { return !m.DeliverAt.IsZero() }
 
 type EngineerMessageReceipt struct {
 	MessageID       string               `json:"message_id"`

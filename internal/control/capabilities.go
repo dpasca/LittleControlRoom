@@ -8,6 +8,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -166,6 +167,16 @@ type EngineerSendPromptInput struct {
 	TodoLabel            string      `json:"todo_label,omitempty"`
 	TodoText             string      `json:"todo_text,omitempty"`
 	Reveal               bool        `json:"reveal"`
+	// DeliverAt schedules a wakeup: the message stays queued until this RFC 3339
+	// time. MissedGraceMinutes is how long after it delivery is still worthwhile.
+	DeliverAt          string           `json:"deliver_at,omitempty"`
+	MissedGraceMinutes int              `json:"missed_grace_minutes,omitempty"`
+	Unattended         *UnattendedGrant `json:"unattended,omitempty"`
+}
+
+// Scheduled reports whether the message is a timed wakeup.
+func (i EngineerSendPromptInput) Scheduled() bool {
+	return strings.TrimSpace(i.DeliverAt) != "" || i.Unattended != nil
 }
 
 type EngineerSendPromptResult struct {
@@ -742,7 +753,47 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 	if err := input.EngineerModelSelection.Normalize(input.Provider); err != nil {
 		return EngineerSendPromptInput{}, err
 	}
+	if err := normalizeWakeup(&input); err != nil {
+		return EngineerSendPromptInput{}, err
+	}
 	return input, nil
+}
+
+func normalizeWakeup(input *EngineerSendPromptInput) error {
+	input.DeliverAt = strings.TrimSpace(input.DeliverAt)
+	if input.DeliverAt == "" {
+		if input.Unattended != nil || input.MissedGraceMinutes != 0 {
+			return fmt.Errorf("unattended and missed_grace_minutes require deliver_at")
+		}
+		return nil
+	}
+	at, err := ParseWakeupTime(input.DeliverAt)
+	if err != nil {
+		return err
+	}
+	input.DeliverAt = at.UTC().Format(time.RFC3339)
+	if input.TargetSessionID == "" {
+		return fmt.Errorf("a scheduled wakeup requires an exact target_session_id so it resumes the session you inspected")
+	}
+	if input.TodoID != 0 || input.EngineerModelSelection != (EngineerModelSelection{}) {
+		return fmt.Errorf("a scheduled wakeup cannot change models or redirect TODO work")
+	}
+	if input.MissedGraceMinutes < 0 || input.MissedGraceMinutes > MaxWakeupGraceMinutes {
+		return fmt.Errorf("missed_grace_minutes must be between 0 and %d", MaxWakeupGraceMinutes)
+	}
+	if input.MissedGraceMinutes == 0 {
+		input.MissedGraceMinutes = DefaultWakeupGraceMinutes
+	}
+	grant := UnattendedGrant{}
+	if input.Unattended != nil {
+		grant = *input.Unattended
+	}
+	grant, err = NormalizeUnattendedGrant(grant)
+	if err != nil {
+		return err
+	}
+	input.Unattended = &grant
+	return nil
 }
 
 func NormalizeAgentTaskCreateInput(input AgentTaskCreateInput) (AgentTaskCreateInput, error) {
@@ -1627,6 +1678,15 @@ func engineerSendPromptInputSchema() map[string]any {
 				"type":        "boolean",
 				"description": "Whether the host should reveal the engineer session after sending.",
 			},
+			"deliver_at": map[string]any{
+				"type":        "string",
+				"description": "Schedules a wakeup: hold the message until this RFC 3339 time with offset, then resume the exact target_session_id. Requires target_session_id; never auto-approved, so the operator confirms the time and the unattended grant. Persists across LCR restarts but only fires while LCR is running; a wakeup later than missed_grace_minutes past its time is reported as missed instead of delivered.",
+			},
+			"missed_grace_minutes": map[string]any{
+				"type":        "integer",
+				"description": "Minutes after deliver_at during which a late wakeup is still delivered. Default 60, maximum 1440. Requires deliver_at.",
+			},
+			"unattended": unattendedGrantSchema(),
 		},
 		"required": []string{"project_path", "project_name", "provider", "session_mode", "prompt", "reveal"},
 	}
@@ -2092,6 +2152,22 @@ func resourceRefsSchema() map[string]any {
 				"label":        map[string]any{"type": "string"},
 			},
 			"required": []string{"kind", "id", "path", "project_path", "provider", "session_id", "todo_id", "pid", "port", "label"},
+		},
+	}
+}
+
+func unattendedGrantSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"description":          "What the woken session may do while the operator is away. Only approval requests it raises are answered, and only when covered; everything else stays pending for the operator. Omit or leave empty to pre-approve nothing. A session that is not approval-gated (for example YOLO mode) is not blocked by the host, so notes is also sent to the engineer as an instruction to stop at those limits.",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"commands":         map[string]any{"type": "boolean", "description": "Accept any command approval."},
+			"command_prefixes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Accept commands that start with one of these words, such as \"go test\". Chained commands never match. Ignored when commands is true."},
+			"file_changes":     map[string]any{"type": "boolean", "description": "Accept file-change approvals."},
+			"tools":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Accept use of these tool names; a trailing * matches a prefix, such as mcp__playwright__*."},
+			"notes":            map[string]any{"type": "string", "description": "Limits approvals cannot express, such as \"publish the already-approved queue, nothing new\". Irreversible actions (publishing, pushing, deleting, spending) must be named here to be allowed."},
+			"valid_minutes":    map[string]any{"type": "integer", "description": "Minutes after delivery that the grant answers approvals. Default 120, maximum 1440."},
 		},
 	}
 }

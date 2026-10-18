@@ -35,6 +35,7 @@ type engineerMessagesLoadedMsg struct {
 	recovered      bool
 	afterCreatedAt time.Time
 	afterID        string
+	expired        []control.EngineerMessage
 	err            error
 }
 
@@ -89,6 +90,15 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 		TodoText:               input.TodoText,
 		State:                  control.EngineerMessageQueued,
 	}
+	if deliverAt, err := control.ParseWakeupTime(input.DeliverAt); err == nil && !deliverAt.IsZero() {
+		grace := input.MissedGraceMinutes
+		if grace <= 0 {
+			grace = control.DefaultWakeupGraceMinutes
+		}
+		message.DeliverAt = deliverAt
+		message.ExpiresAt = deliverAt.Add(time.Duration(grace) * time.Minute)
+		message.Unattended = input.Unattended
+	}
 	return func() tea.Msg {
 		message := message // Keep repeat command execution/idempotent retries stable.
 		if svc == nil || svc.Store() == nil {
@@ -142,13 +152,15 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 				return engineerMessagesLoadedMsg{err: err}
 			}
 		}
+		expired, expireErr := svc.Store().ExpireOverdueEngineerMessages(ctx, time.Now())
 		messages, err := svc.Store().ListQueuedEngineerMessagesAfter(ctx, afterCreatedAt, afterID, engineerMessagePollLimit)
 		return engineerMessagesLoadedMsg{
 			messages:       messages,
 			recovered:      recoverDeliveries,
 			afterCreatedAt: afterCreatedAt,
 			afterID:        afterID,
-			err:            err,
+			expired:        expired,
+			err:            errors.Join(err, expireErr),
 		}
 	}
 }
@@ -187,6 +199,9 @@ func engineerMessageStatus(message control.EngineerMessage) string {
 		provider = "engineer"
 	}
 	verb := "queued for"
+	if message.Scheduled() && message.State == control.EngineerMessageQueued && message.DeliverAt.After(time.Now()) {
+		verb = "scheduled for " + message.DeliverAt.Local().Format("Mon 15:04") + " to wake"
+	}
 	switch message.State {
 	case control.EngineerMessageDelivered:
 		verb = "delivered to"
@@ -284,6 +299,9 @@ func (m Model) applyEngineerMessagesLoaded(msg engineerMessagesLoadedMsg) (tea.M
 	if m.engineerMessageDeliveries == nil {
 		m.engineerMessageDeliveries = make(map[string]struct{})
 	}
+	for _, missed := range msg.expired {
+		m.appendBackgroundErrorLogEntry("Scheduled wakeup missed", errors.New(strings.TrimSpace(missed.LastError)), missed.ProjectPath)
+	}
 	if msg.err != nil {
 		m.appendBackgroundErrorLogEntry("Engineer message mailbox refresh failed", msg.err, "")
 		return m, nil
@@ -376,11 +394,19 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 		return m, m.recordEngineerMessageStateCmd(message, control.EngineerMessageQueued, targetSessionID, status, nil)
 	}
 	cmd = m.todoEngineerLaunchTrackingCmd(message.ProjectPath, message.TodoID, cmd)
+	m.registerWakeupGrant(message)
 	return m, m.engineerMessageDeliveryCmd(message, cmd)
 }
 
 func engineerMessageDeliveryPrompt(message control.EngineerMessage) string {
 	prompt := strings.TrimSpace(message.Prompt)
+	if message.Scheduled() {
+		grant := control.UnattendedGrant{}
+		if message.Unattended != nil {
+			grant = *message.Unattended
+		}
+		prompt = control.WakeupPromptPreamble(message.DeliverAt, grant) + "\n\n" + prompt
+	}
 	messageID := strings.TrimSpace(message.ID)
 	if messageID == "" {
 		return prompt

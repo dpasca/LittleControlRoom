@@ -517,6 +517,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureEngineerMessagesAgentTaskColumn(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureEngineerMessagesWakeupColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureProjectsInScopeColumn(ctx); err != nil {
 		return err
 	}

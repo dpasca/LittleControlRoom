@@ -202,8 +202,12 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 		visibility = "show after send"
 	}
 
+	headline := "Routine handoff: send a message to an engineer session"
+	if input.Scheduled() {
+		headline = "Scheduled wakeup: resume an engineer session later, possibly while you are away"
+	}
 	lines := []string{
-		bossControlNoticeStyle.Render(fitLine("Routine handoff: send a message to an engineer session", width)),
+		bossControlNoticeStyle.Render(fitLine(headline, width)),
 		"",
 		renderBossControlPath("Repository TODO owner", firstNonEmpty(input.TodoOwnerPath, "no TODO tracking"), width),
 		renderBossControlPath("Worker destination", firstNonEmpty(input.DestinationPath, input.ProjectPath, target), width),
@@ -222,13 +226,18 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 	if input.TodoID > 0 {
 		lines = append(lines, renderBossControlDetail("TODO", controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText), width))
 	}
+	lines = append(lines, renderWakeupConfirmationLines(input, width)...)
+	sendLabel := "send"
+	if input.Scheduled() {
+		sendLabel = "schedule"
+	}
 	lines = append(lines,
 		"",
 		bossControlSectionStyle.Render(fitLine("Prompt", width)),
 		renderBossControlPromptBox(input.Prompt, width),
 		"",
 		strings.Join([]string{
-			renderBossControlAction("Enter", "send", uistyle.DialogActionPrimary),
+			renderBossControlAction("Enter", sendLabel, uistyle.DialogActionPrimary),
 			renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 		}, "   "),
 	)
@@ -731,4 +740,28 @@ func taskRepositoryWriteLabel(enabled bool) string {
 		return "Exclusive managed writer; clean checkout required"
 	}
 	return "Existing task permissions (no write lease)"
+}
+
+func renderWakeupConfirmationLines(input control.EngineerSendPromptInput, width int) []string {
+	if !input.Scheduled() {
+		return nil
+	}
+	var lines []string
+	if at, err := control.ParseWakeupTime(input.DeliverAt); err == nil && !at.IsZero() {
+		lines = append(lines, renderBossControlDetail("Wakes at", at.Local().Format("Mon 2006-01-02 15:04 MST"), width))
+		grace := input.MissedGraceMinutes
+		if grace <= 0 {
+			grace = control.DefaultWakeupGraceMinutes
+		}
+		lines = append(lines, renderBossControlDetail("If late", fmt.Sprintf("still runs within %d min; after that it is reported as missed", grace), width))
+	}
+	grant := control.UnattendedGrant{}
+	if input.Unattended != nil {
+		grant = *input.Unattended
+	}
+	lines = append(lines,
+		renderBossControlDetail("Runs unattended", "Only while this Mac is awake and LCR is running", width),
+		renderBossControlDetail("Authority", "Session "+grant.Summary(), width),
+	)
+	return lines
 }

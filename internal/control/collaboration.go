@@ -43,7 +43,7 @@ func CollaborationForOperation(op Operation) (ProjectCollaboration, bool) {
 		return ProjectCollaboration{}, false
 	}
 	var input EngineerSendPromptInput
-	if json.Unmarshal(inv.Args, &input) != nil || input.SessionMode != SessionModeResumeOrNew ||
+	if json.Unmarshal(inv.Args, &input) != nil || input.Scheduled() || input.SessionMode != SessionModeResumeOrNew ||
 		(input.TargetSessionID == "" && !input.FollowCurrentSession) || input.Provider == ProviderAuto || input.TodoID != 0 ||
 		input.EngineerModelSelection != (EngineerModelSelection{}) {
 		return ProjectCollaboration{}, false

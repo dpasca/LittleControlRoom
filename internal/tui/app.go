@@ -372,6 +372,7 @@ type Model struct {
 	engineerMessagesCursorAt      time.Time
 	engineerMessagesCursorID      string
 	engineerMessageDeliveries     map[string]struct{}
+	wakeupGrants                  map[string]*activeWakeupGrant
 
 	pendingG      bool
 	todoLaunchSeq int64

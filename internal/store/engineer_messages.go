@@ -16,7 +16,8 @@ const engineerMessageSelect = `
 	SELECT id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
 		target_session_id, follow_current_session, submission_uncertain, prompt,
 		reveal, todo_id, todo_label, todo_text, state, attempt_count,
-		last_error, created_at, updated_at, delivered_at, model_selection_json
+		last_error, created_at, updated_at, delivered_at, model_selection_json,
+		deliver_at, expires_at, unattended_json
 	FROM engineer_messages
 `
 
@@ -67,6 +68,32 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	if message.Prompt == "" {
 		return control.EngineerMessage{}, errors.New("engineer message prompt is required")
 	}
+	unattendedJSON := ""
+	if message.Unattended != nil && message.DeliverAt.IsZero() {
+		return control.EngineerMessage{}, errors.New("an unattended grant requires a scheduled delivery time")
+	}
+	if !message.DeliverAt.IsZero() {
+		if message.TargetSessionID == "" || message.FollowCurrentSession || message.AgentTaskID != "" || message.TodoID != 0 {
+			return control.EngineerMessage{}, errors.New("a scheduled wakeup requires an exact target session without task callbacks or TODO redirects")
+		}
+		if message.ExpiresAt.IsZero() || message.ExpiresAt.Before(message.DeliverAt) {
+			return control.EngineerMessage{}, errors.New("a scheduled wakeup requires an expiry at or after its delivery time")
+		}
+		grant := control.UnattendedGrant{}
+		if message.Unattended != nil {
+			grant = *message.Unattended
+		}
+		grant, err := control.NormalizeUnattendedGrant(grant)
+		if err != nil {
+			return control.EngineerMessage{}, err
+		}
+		message.Unattended = &grant
+		encoded, err := json.Marshal(grant)
+		if err != nil {
+			return control.EngineerMessage{}, err
+		}
+		unattendedJSON = string(encoded)
+	}
 	if message.State == "" {
 		message.State = control.EngineerMessageQueued
 	}
@@ -102,14 +129,16 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 			id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
 			target_session_id, follow_current_session, prompt,
 			reveal, todo_id, todo_label, todo_text, state, attempt_count,
-			last_error, created_at, updated_at, delivered_at, model_selection_json
+			last_error, created_at, updated_at, delivered_at, model_selection_json,
+			deliver_at, expires_at, unattended_json
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, message.ID, message.OperationID, message.AgentTaskID, message.AgentTaskRevision, message.ProjectPath, string(message.Provider),
 		string(message.SessionMode), message.RequestedTargetSessionID, message.TargetSessionID, boolToInt(message.FollowCurrentSession), message.Prompt,
 		boolToInt(message.Reveal), message.TodoID,
 		message.TodoLabel, message.TodoText, string(message.State), message.AttemptCount,
-		message.LastError, message.CreatedAt.Unix(), message.UpdatedAt.Unix(), nil, modelSelectionJSON(message.EngineerModelSelection))
+		message.LastError, message.CreatedAt.Unix(), message.UpdatedAt.Unix(), nil, modelSelectionJSON(message.EngineerModelSelection),
+		unixOrZero(message.DeliverAt), unixOrZero(message.ExpiresAt), unattendedJSON)
 	if err != nil {
 		if message.OperationID != "" {
 			existing, found, lookupErr := s.FindEngineerMessageByOperation(ctx, message.OperationID)
@@ -164,7 +193,26 @@ func sameEngineerMessageRequest(existing, proposed control.EngineerMessage) bool
 		existing.Reveal == proposed.Reveal &&
 		existing.TodoID == proposed.TodoID &&
 		existing.TodoLabel == proposed.TodoLabel &&
-		existing.TodoText == proposed.TodoText
+		existing.TodoText == proposed.TodoText &&
+		existing.DeliverAt.Unix() == proposed.DeliverAt.Unix() &&
+		existing.ExpiresAt.Unix() == proposed.ExpiresAt.Unix() &&
+		sameUnattended(existing.Unattended, proposed.Unattended)
+}
+
+func sameUnattended(a, b *control.UnattendedGrant) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return string(left) == string(right)
+}
+
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 func (s *Store) GetEngineerMessage(ctx context.Context, id string) (control.EngineerMessage, error) {
@@ -209,9 +257,9 @@ func (s *Store) ListQueuedEngineerMessagesAfter(ctx context.Context, afterCreate
 	}
 	afterID = strings.TrimSpace(afterID)
 	query := engineerMessageSelect + `
-		WHERE state = ?
+		WHERE state = ? AND deliver_at <= ?
 	`
-	args := []any{string(control.EngineerMessageQueued)}
+	args := []any{string(control.EngineerMessageQueued), time.Now().Unix()}
 	if !afterCreatedAt.IsZero() && afterID != "" {
 		query += ` AND (created_at > ? OR (created_at = ? AND id > ?))`
 		afterUnix := afterCreatedAt.Unix()
@@ -274,8 +322,8 @@ func (s *Store) ClaimEngineerMessage(ctx context.Context, id, targetSessionID st
 			attempt_count = attempt_count + 1,
 			last_error = '',
 			updated_at = ?
-		WHERE id = ? AND state = ? AND (follow_current_session = 0 OR ? <> '')
-	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued), targetSessionID)
+		WHERE id = ? AND state = ? AND (follow_current_session = 0 OR ? <> '') AND deliver_at <= ?
+	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued), targetSessionID, time.Now().Unix())
 	if err != nil {
 		return control.EngineerMessage{}, false, fmt.Errorf("claim engineer message: %w", err)
 	}
@@ -437,6 +485,8 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 		reveal, followCurrent, uncertain int
 		createdAt, updatedAt             int64
 		deliveredAt                      sql.NullInt64
+		deliverAt, expiresAt             int64
+		unattendedJSON                   string
 	)
 	if err := scanner.Scan(
 		&message.ID,
@@ -462,6 +512,9 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 		&updatedAt,
 		&deliveredAt,
 		&selectionJSON,
+		&deliverAt,
+		&expiresAt,
+		&unattendedJSON,
 	); err != nil {
 		return control.EngineerMessage{}, err
 	}
@@ -476,8 +529,111 @@ func scanEngineerMessage(scanner engineerMessageScanner) (control.EngineerMessag
 	message.SubmissionUncertain = uncertain != 0
 	message.CreatedAt = time.Unix(createdAt, 0)
 	message.UpdatedAt = time.Unix(updatedAt, 0)
+	if deliverAt > 0 {
+		message.DeliverAt = time.Unix(deliverAt, 0)
+	}
+	if expiresAt > 0 {
+		message.ExpiresAt = time.Unix(expiresAt, 0)
+	}
+	if strings.TrimSpace(unattendedJSON) != "" {
+		var grant control.UnattendedGrant
+		if err := json.Unmarshal([]byte(unattendedJSON), &grant); err != nil {
+			return control.EngineerMessage{}, err
+		}
+		message.Unattended = &grant
+	}
 	if deliveredAt.Valid {
 		message.DeliveredAt = time.Unix(deliveredAt.Int64, 0)
 	}
 	return message, nil
+}
+
+// ListScheduledEngineerMessages returns wakeups that have not been delivered,
+// soonest first, including due ones still waiting for their session.
+func (s *Store) ListScheduledEngineerMessages(ctx context.Context, limit int) ([]control.EngineerMessage, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store unavailable")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, engineerMessageSelect+`
+		WHERE state IN (?, ?) AND deliver_at > 0
+		ORDER BY deliver_at ASC, id ASC LIMIT ?
+	`, string(control.EngineerMessageQueued), string(control.EngineerMessageDelivering), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list scheduled engineer messages: %w", err)
+	}
+	defer rows.Close()
+	var messages []control.EngineerMessage
+	for rows.Next() {
+		message, err := scanEngineerMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, rows.Err()
+}
+
+// ExpireOverdueEngineerMessages fails queued wakeups whose grace window has
+// passed, so a Mac that slept through them reports a miss instead of replaying
+// stale work later. It returns the messages it expired.
+func (s *Store) ExpireOverdueEngineerMessages(ctx context.Context, now time.Time) ([]control.EngineerMessage, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store unavailable")
+	}
+	rows, err := s.db.QueryContext(ctx, engineerMessageSelect+`
+		WHERE state = ? AND expires_at > 0 AND expires_at < ?
+		ORDER BY deliver_at ASC, id ASC LIMIT 32
+	`, string(control.EngineerMessageQueued), now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list overdue engineer messages: %w", err)
+	}
+	var overdue []control.EngineerMessage
+	for rows.Next() {
+		message, err := scanEngineerMessage(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		overdue = append(overdue, message)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var expired []control.EngineerMessage
+	for _, message := range overdue {
+		reason := fmt.Sprintf("Missed wakeup: scheduled for %s and not delivered by %s.",
+			message.DeliverAt.Format(time.RFC3339), message.ExpiresAt.Format(time.RFC3339))
+		updated, err := s.RecordEngineerMessageState(ctx, message.ID, control.EngineerMessageFailed, "", reason, errors.New(reason))
+		if err != nil {
+			return expired, err
+		}
+		expired = append(expired, updated)
+	}
+	return expired, nil
+}
+
+// CancelScheduledEngineerMessage withdraws a wakeup that has not started
+// delivery. It reports false when the wakeup was already claimed or settled.
+func (s *Store) CancelScheduledEngineerMessage(ctx context.Context, id string) (control.EngineerMessage, bool, error) {
+	if s == nil || s.db == nil {
+		return control.EngineerMessage{}, false, errors.New("store unavailable")
+	}
+	message, err := s.GetEngineerMessage(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return control.EngineerMessage{}, false, err
+	}
+	if !message.Scheduled() || message.State != control.EngineerMessageQueued {
+		return message, false, nil
+	}
+	reason := "Wakeup canceled by the operator."
+	updated, err := s.RecordEngineerMessageState(ctx, message.ID, control.EngineerMessageFailed, "", reason, errors.New(reason))
+	if err != nil {
+		return message, false, err
+	}
+	return updated, updated.State == control.EngineerMessageFailed, nil
 }
