@@ -101,6 +101,7 @@ type claudeCodeSession struct {
 	managedStream        bool
 	streamState          string
 	streamInitResult     chan error
+	permissionModeChange *claudePermissionModeChange
 	legacyTurnSettled    bool // A terminal assistant/transcript may precede its result envelope.
 	messageDeliveries    []MessageDeliverySnapshot
 	lastParentActivityAt time.Time
@@ -342,14 +343,13 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	ensureManagedPlaywrightSessionKey(&req)
 	ensureTodoCaptureSessionKey(&req)
 	policy := req.PlaywrightPolicy.Normalize()
-	var approvalServer *claudeapproval.Server
-	if requestedPermissionMode.UsesApprovalBridge() {
-		approvalServer, err = claudeapproval.NewServer()
-		if err != nil {
-			return nil, err
-		}
-		req.ClaudeApprovalSocket = approvalServer.SocketPath()
+	// Keep the callback available when a session switches out of a
+	// non-interactive permission mode later.
+	approvalServer, err := claudeapproval.NewServer()
+	if err != nil {
+		return nil, err
 	}
+	req.ClaudeApprovalSocket = approvalServer.SocketPath()
 	mcpOptions, err := buildClaudeMCPOptions(req)
 	if err != nil {
 		_ = approvalServer.Close()
@@ -883,6 +883,8 @@ func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode
 		return fmt.Errorf("Claude Code compaction request is no longer active")
 	case s.interruptPending:
 		return fmt.Errorf("Claude Code is stopping the interrupted turn; wait for it to settle before sending another prompt")
+	case s.permissionModeChange != nil:
+		return fmt.Errorf("Claude Code has not confirmed the permission mode change; wait or use /reconnect before sending another prompt")
 	case s.pendingApproval != nil || s.pendingToolInput != nil:
 		return fmt.Errorf("Claude Code is waiting for your response")
 	case s.busyExternal:
@@ -1643,6 +1645,7 @@ func (s *claudeCodeSession) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.completeClaudePermissionModeChangeLocked(fmt.Errorf("Claude Code session is closed"))
 	s.takeClaudePendingRequestsLocked()
 	s.clearClaudeBrowserHandoffLocked()
 	s.managedBrowserOpen = false
@@ -1750,6 +1753,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	defer s.mu.Unlock()
 
 	compactCommand := s.compactCommand
+	s.completeClaudePermissionModeChangeLocked(fmt.Errorf("Claude Code exited before confirming the permission mode change"))
 	s.finishClaudeDeliveriesLocked(s.interruptPending)
 	if s.streamInitResult != nil {
 		select {
@@ -2013,7 +2017,7 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 
 	switch env.Type {
 	case "control_response":
-		s.handleClaudeControlResponseLocked(env.Response)
+		stdinToClose = s.handleClaudeControlResponseLocked(env.Response)
 	case "command_lifecycle":
 		s.updateClaudeDeliveryLocked(env.CommandUUID, env.State, time.Now())
 	case "system":
@@ -2022,6 +2026,13 @@ func (s *claudeCodeSession) handleClaudeStdoutLine(line string) {
 			stdinToClose = s.handleClaudeSessionStateLocked(env.State, time.Now())
 		case "thinking_tokens":
 			s.lastParentActivityAt = time.Now()
+		case "status":
+			if modeRaw := strings.TrimSpace(env.PermissionMode); modeRaw != "" {
+				if mode, err := claudecli.ParsePermissionMode(modeRaw); err == nil && mode != s.effectivePermissionModeLocked() {
+					s.permissionMode = mode
+					s.appendSystemNoticeLocked("Claude Code reported permission mode: " + mode.DisplayName())
+				}
+			}
 		case "init":
 			if sessionID := strings.TrimSpace(env.SessionID); sessionID != "" {
 				s.sessionID = sessionID

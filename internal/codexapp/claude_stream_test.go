@@ -36,6 +36,7 @@ func TestClaudeManagedStreamProcess(t *testing.T) {
 	s, _ := managedClaudeTestSession()
 	s.cmd, s.stdin, s.busy, s.pendingSubmissions, s.messageDeliveries = nil, nil, false, 0, nil
 	s.projectPath, s.claudeHome, s.safetySettings = dir, dir, `{}`
+	s.mcpOptions.PermissionPromptTool = claudeRuntimeMCPApprovalTool
 	s.checkAuthentication = func(context.Context) error { return nil }
 	t.Cleanup(func() { _ = s.Close(); s.WaitClosed(time.Second) })
 	if err := s.Submit("Start worker"); err != nil {
@@ -57,6 +58,12 @@ func TestClaudeManagedStreamProcess(t *testing.T) {
 	wait(func(snapshot Snapshot) bool {
 		return snapshot.ParentStatus == "Parent idle · background tasks still reported"
 	})
+	if err := s.SetPermissionMode("manual"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.StateSnapshot().PermissionLevel; got != "manual" {
+		t.Fatalf("live permission mode=%s", got)
+	}
 	if err := s.Submit("Steer worker"); err != nil {
 		t.Fatal(err)
 	}
@@ -82,21 +89,42 @@ func TestClaudeManagedStreamProcessHelper(t *testing.T) {
 	emit := func(message string) { fmt.Fprintln(os.Stdout, message) }
 	scanner := bufio.NewScanner(os.Stdin)
 	initialized, prompts := false, 0
+	permissionMode := "auto"
 	for scanner.Scan() {
 		var env claudeStreamEnvelope
 		if json.Unmarshal(scanner.Bytes(), &env) != nil {
 			fail("invalid stream input")
 		}
 		if env.Type == "control_request" {
-			initialized = true
-			emit(`{"type":"control_response","response":{"request_id":"lcr-stream-initialize","subtype":"success","response":{"session_state":"idle"}}}`)
+			var control struct {
+				ID      string `json:"request_id"`
+				Request struct {
+					Subtype string `json:"subtype"`
+					Mode    string `json:"mode"`
+				} `json:"request"`
+			}
+			if json.Unmarshal(scanner.Bytes(), &control) != nil {
+				fail("invalid control request")
+			}
+			switch control.Request.Subtype {
+			case "initialize":
+				initialized = true
+			case "set_permission_mode":
+				if !initialized || control.Request.Mode != "default" {
+					fail("invalid permission mode change")
+				}
+				permissionMode = control.Request.Mode
+			default:
+				fail("unexpected control request")
+			}
+			emit(`{"type":"control_response","response":{"request_id":"` + control.ID + `","subtype":"success","response":{"session_state":"idle"}}}`)
 			continue
 		}
 		if !initialized || env.Type != "user" || env.UUID == "" {
 			fail("input arrived before initialize or without identity")
 		}
 		prompts++
-		emit(`{"type":"system","subtype":"init","session_id":"test-stream"}`)
+		emit(`{"type":"system","subtype":"init","session_id":"test-stream","permissionMode":"` + permissionMode + `"}`)
 		emit(`{"type":"system","subtype":"session_state_changed","state":"running"}`)
 		emit(`{"type":"command_lifecycle","command_uuid":"` + env.UUID + `","state":"started"}`)
 		if prompts == 1 {

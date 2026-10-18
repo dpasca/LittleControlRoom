@@ -14,6 +14,14 @@ type fakeClaudePermissionSession struct {
 	action, rule string
 	remove       bool
 	edits        int
+	mode         string
+	modeChanges  int
+}
+
+func (s *fakeClaudePermissionSession) SetPermissionMode(mode string) error {
+	s.mode = mode
+	s.modeChanges++
+	return nil
 }
 
 func (s *fakeClaudePermissionSession) EditPermissionRule(action, rule string, remove bool) error {
@@ -23,7 +31,7 @@ func (s *fakeClaudePermissionSession) EditPermissionRule(action, rule string, re
 }
 
 func TestClaudePermissionsDispatchPreservesRuleAndRunsLocally(t *testing.T) {
-	for _, input := range []string{"/permissions", "/permissions allow Bash(huggingface-cli upload:*)", "/permissions remove deny Bash(Git Push:*)"} {
+	for _, input := range []string{"/permissions", "/permissions allow Bash(huggingface-cli upload:*)", "/permissions remove deny Bash(Git Push:*)", "/permissions mode manual", "/permissions mode default"} {
 		t.Run(input, func(t *testing.T) {
 			session := &fakeClaudePermissionSession{fakeCodexSession: &fakeCodexSession{projectPath: "/tmp/demo", snapshot: codexapp.Snapshot{Provider: codexapp.ProviderClaudeCode, Started: true, ThreadID: "claude-demo"}}}
 			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) { return session, nil })
@@ -49,6 +57,10 @@ func TestClaudePermissionsDispatchPreservesRuleAndRunsLocally(t *testing.T) {
 			if input == "/permissions" {
 				if session.permissionCalls != 1 {
 					t.Fatal("did not show permissions")
+				}
+			} else if input == "/permissions mode manual" || input == "/permissions mode default" {
+				if session.modeChanges != 1 || session.mode != "manual" || session.edits != 0 {
+					t.Fatalf("mode change: %#v", session)
 				}
 			} else {
 				if session.edits != 1 {
