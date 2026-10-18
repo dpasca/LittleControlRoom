@@ -8,8 +8,10 @@ import (
 )
 
 var ErrClaudeCodeAuthenticationRequired = errors.New(
-	"Claude Code sign-in is missing or expired. Run `claude auth login` in a terminal, complete sign-in, then retry this prompt.",
+	"Claude Code authentication is missing or expired. Open /claude-auth to connect or replace a subscription token, or run `claude auth login` in a terminal. Use /reconnect for an existing Claude session, then retry this prompt.",
 )
+
+var applyClaudeSubscriptionToken = claudecli.ApplySubscriptionToken
 
 func CheckClaudeCodeAuthentication(ctx context.Context) error {
 	status, err := claudecli.ReadAuthenticationStatus(ctx)
@@ -23,4 +25,14 @@ func CheckClaudeCodeAuthentication(ctx context.Context) error {
 		return ErrClaudeCodeAuthenticationRequired
 	}
 	return nil
+}
+
+func claudeAPIErrorDisplayText(code, text string) string {
+	// These are SDK error codes, not guesses based on the provider's prose.
+	switch code {
+	case "authentication_failed", "authentication_error":
+		return text + "\n\nOpen /claude-auth to connect or replace your subscription token, then reconnect the Claude session and retry. If you use native login, run `claude auth login` in a terminal instead."
+	default:
+		return ""
+	}
 }

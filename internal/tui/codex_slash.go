@@ -87,6 +87,7 @@ func codexHostSlashCommand(input string) (commands.Invocation, bool) {
 		commands.KindCodexGC,
 		commands.KindSessionGC,
 		commands.KindClaudeGC,
+		commands.KindClaudeAuth,
 		commands.KindRecord,
 		commands.KindResolve,
 		commands.KindRepairTerminal,

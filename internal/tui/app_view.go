@@ -69,6 +69,9 @@ func (m Model) View() string {
 	if m.projectCollaborationDialog != nil {
 		return m.renderProjectCollaborations(body, m.width, m.height)
 	}
+	if m.claudeAuthDialog != nil {
+		return m.renderClaudeAuthOverlay(body, m.width, m.height)
+	}
 	return body
 }
 

@@ -35,7 +35,11 @@ func ReadAuthenticationStatus(parent context.Context) (AuthenticationStatus, err
 		defer cancel()
 	}
 
-	output, commandErr := exec.CommandContext(ctx, "claude", "auth", "status", "--json").CombinedOutput()
+	cmd := exec.CommandContext(ctx, "claude", "auth", "status", "--json")
+	if err := ApplySubscriptionToken(cmd); err != nil {
+		return AuthenticationStatus{}, err
+	}
+	output, commandErr := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return AuthenticationStatus{}, fmt.Errorf("read Claude Code authentication status: %w", ctx.Err())
 	}
@@ -60,15 +64,21 @@ func ParseAuthenticationStatus(raw string) (AuthenticationStatus, bool) {
 		return AuthenticationStatus{}, false
 	}
 	var status AuthenticationStatus
-	if err := json.Unmarshal([]byte(raw), &status); err == nil {
-		return status, true
+	if !json.Valid([]byte(raw)) {
+		start := strings.Index(raw, "{")
+		end := strings.LastIndex(raw, "}")
+		if start < 0 || end <= start {
+			return AuthenticationStatus{}, false
+		}
+		raw = raw[start : end+1]
 	}
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end <= start {
+	var fields struct {
+		LoggedIn *bool `json:"loggedIn"`
+	}
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields.LoggedIn == nil {
 		return AuthenticationStatus{}, false
 	}
-	if err := json.Unmarshal([]byte(raw[start:end+1]), &status); err != nil {
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
 		return AuthenticationStatus{}, false
 	}
 	return status, true
