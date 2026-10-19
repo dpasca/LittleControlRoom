@@ -121,8 +121,12 @@ done
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "--executable-path") || !strings.Contains(string(raw), "Brave Browser") {
-		t.Fatalf("mcp args = %q, want configured Brave executable", raw)
+	if !strings.Contains(string(raw), "--executable-path\n"+filepath.Join(session.paths.SessionDir, "browser-launcher.sh")) {
+		t.Fatalf("mcp args = %q, want guarded executable", raw)
+	}
+	launcher, err := os.ReadFile(filepath.Join(session.paths.SessionDir, "browser-launcher.sh"))
+	if err != nil || !strings.Contains(string(launcher), "Brave Browser") {
+		t.Fatalf("launcher = %q, %v; want configured Brave executable", launcher, err)
 	}
 	if strings.Contains(string(raw), "--headless") {
 		t.Fatalf("background handoff should be headed for reveal, args = %q", raw)

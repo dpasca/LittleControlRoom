@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/buildinfo"
 	"lcroom/internal/claudecli"
 	"lcroom/internal/claudehook"
@@ -61,6 +62,9 @@ func Run(programName string, args []string) int {
 	}
 	if subcmd == "playwright-mcp" {
 		return runPlaywrightMCP(args[1:])
+	}
+	if subcmd == browserctl.ManagedBrowserLaunchCommand {
+		return browserctl.RunManagedBrowserLaunch(args[1:], os.Stderr)
 	}
 	if subcmd == "runtime-mcp" {
 		return runRuntimeMCP(args[1:])

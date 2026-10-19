@@ -219,6 +219,10 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	s.markProfilePreflight(preflight)
+	guardedExecutable, err := PrepareManagedBrowserExecutable(s.paths, browserPath)
+	if err != nil {
+		return err
+	}
 	audio, err := PrepareManagedBrowserAudio(s.paths, browserPath)
 	if err != nil {
 		return err
@@ -235,7 +239,7 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 		"launchMode":     string(s.paths.LaunchMode),
 		"browserChannel": browserChannel,
 		"viewport":       playwrightWorkerViewport(s.paths.LaunchMode),
-		"executablePath": browserPath,
+		"executablePath": guardedExecutable,
 		"launchOptions":  audio.LaunchOptions,
 	}
 	configRaw, err := json.Marshal(config)

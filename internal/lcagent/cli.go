@@ -49,6 +49,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case browserctl.ManagedBrowserLaunchCommand:
+		return browserctl.RunManagedBrowserLaunch(args[1:], stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, buildinfo.Summary("lcagent"))
 		return 0

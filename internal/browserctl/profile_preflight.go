@@ -93,6 +93,9 @@ func prepareManagedPlaywrightProfileForLaunch(paths ManagedPlaywrightPaths, brow
 	if evidence.Major <= browserMajor {
 		return preflight, nil
 	}
+	if err := checkManagedBrowserProfileOwner(profileDir); err != nil {
+		return preflight, fmt.Errorf("cannot quarantine an occupied browser profile: %w", err)
+	}
 	backupPath, err := quarantineManagedPlaywrightProfile(profileDir, now())
 	if err != nil {
 		return ManagedPlaywrightProfilePreflight{}, err

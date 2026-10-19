@@ -93,7 +93,12 @@ func runPlaywrightMCP(args []string) int {
 		return 1
 	}
 
-	childArgs := playwrightMCPChildArgsWithExecutable(paths, opts.launchMode, browserExecutable)
+	guardedExecutable, err := browserctl.PrepareManagedBrowserExecutable(paths, browserExecutable)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "playwright-mcp launch guard: %v\n", err)
+		return 1
+	}
+	childArgs := playwrightMCPChildArgsWithExecutable(paths, opts.launchMode, guardedExecutable)
 	audio, err := browserctl.PrepareManagedBrowserAudio(paths, browserExecutable)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "playwright-mcp audio setup failed: %v\n", err)

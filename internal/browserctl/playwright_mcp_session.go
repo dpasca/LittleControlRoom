@@ -315,12 +315,16 @@ func (s *PlaywrightMCPBrowserSession) ensureStarted(ctx context.Context) error {
 	}
 	s.markProfilePreflight(preflight)
 
+	guardedExecutable, err := PrepareManagedBrowserExecutable(s.paths, browserPath)
+	if err != nil {
+		return err
+	}
 	args := []string{"--output-dir", s.paths.OutputDir, "--user-data-dir", s.paths.ProfileDir}
 	if s.paths.LaunchMode == ManagedLaunchModeHeadless {
 		args = append([]string{"--headless"}, args...)
 	}
-	if browserPath != "" {
-		args = append(args, "--executable-path", browserPath)
+	if guardedExecutable != "" {
+		args = append(args, "--executable-path", guardedExecutable)
 	} else if browser := strings.TrimSpace(s.cfg.BrowserChannel); browser != "" {
 		args = append(args, "--browser", browser)
 	}

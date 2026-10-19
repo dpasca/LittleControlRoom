@@ -66,6 +66,28 @@ func TestPrepareManagedPlaywrightProfileKeepsCompatibleProfile(t *testing.T) {
 	}
 }
 
+func TestPrepareManagedPlaywrightProfileNeverQuarantinesLiveBrowser(t *testing.T) {
+	paths, err := ManagedPlaywrightPathsFor(t.TempDir(), "codex", "/tmp/demo", "session-demo", "profile-demo", ManagedLaunchModeBackground)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeProfileVersionFiles(t, paths.ProfileDir, "149.0.7827.200", "", "")
+	host, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(host+"-"+strconv.Itoa(os.Getpid()), filepath.Join(paths.ProfileDir, "SingletonLock")); err != nil {
+		t.Fatal(err)
+	}
+	preflight, err := prepareManagedPlaywrightProfileForLaunch(paths, fakeBrowserVersionExecutable(t, "Chromium 141.0.7390.37"), time.Now)
+	if err == nil || !strings.Contains(err.Error(), "occupied browser profile") || preflight.ProfileBackupPath != "" {
+		t.Fatalf("occupied profile preflight = %#v, %v", preflight, err)
+	}
+	if _, err := os.Stat(filepath.Join(paths.ProfileDir, "Default", "Preferences")); err != nil {
+		t.Fatalf("live profile was moved: %v", err)
+	}
+}
+
 func TestPrepareManagedPlaywrightProfileRecordsVersionProbeErrorWithoutBlockingLaunch(t *testing.T) {
 	paths, err := ManagedPlaywrightPathsFor(t.TempDir(), "codex", "/tmp/demo", "session-demo", "profile-demo", ManagedLaunchModeBackground)
 	if err != nil {
