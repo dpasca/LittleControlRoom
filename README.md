@@ -217,7 +217,7 @@ be copied with `c`, and **Add TODO** turns a failure into an editable TODO.
 | Key | Action |
 | --- | --- |
 | `↑` `↓` | Move through projects |
-| `Enter` | Open or resume the selected project's latest session |
+| `Enter` | Open or resume the selected project's session, preferring the assistant you last opened there |
 | `Esc` | Hide the embedded pane; the session keeps working |
 | `t` | TODO list for the selected project |
 | `f` | Filter the project list |

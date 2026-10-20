@@ -353,6 +353,69 @@ func TestProjectPreferredSessionSourceSurvivesStateRefresh(t *testing.T) {
 	}
 }
 
+func TestProjectLastOpenedSessionSourceSurvivesRefreshAndMove(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	oldPath := "/tmp/last-opened-old"
+	newPath := "/tmp/last-opened-new"
+	state := model.ProjectState{
+		Path:          oldPath,
+		Name:          "last-opened",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := st.SetProjectLastOpenedSessionSource(ctx, oldPath, model.SessionSourceClaudeCode); err != nil {
+		t.Fatalf("set last opened session source: %v", err)
+	}
+	state.UpdatedAt = now.Add(time.Second)
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("refresh project state: %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, oldPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.LastOpenedSessionSource != model.SessionSourceClaudeCode {
+		t.Fatalf("last opened source = %q, want %q", summary.LastOpenedSessionSource, model.SessionSourceClaudeCode)
+	}
+	detail, err := st.GetProjectDetail(ctx, oldPath, 1)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.LastOpenedSessionSource != model.SessionSourceClaudeCode {
+		t.Fatalf("detail last opened source = %q, want %q", detail.Summary.LastOpenedSessionSource, model.SessionSourceClaudeCode)
+	}
+
+	if err := st.MoveProjectPath(ctx, oldPath, newPath, now); err != nil {
+		t.Fatalf("MoveProjectPath() error = %v", err)
+	}
+	moved, err := st.GetProjectSummary(ctx, newPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary(moved) error = %v", err)
+	}
+	if moved.LastOpenedSessionSource != model.SessionSourceClaudeCode {
+		t.Fatalf("moved last opened source = %q, want %q", moved.LastOpenedSessionSource, model.SessionSourceClaudeCode)
+	}
+
+	if err := st.SetProjectLastOpenedSessionSource(ctx, "/tmp/last-opened-missing", model.SessionSourceCodex); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("set on unknown project error = %v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestProjectMissingSincePersistsUntilRediscovered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

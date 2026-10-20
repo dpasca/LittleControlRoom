@@ -881,6 +881,24 @@ func TestPreferredEmbeddedProviderUsesPersistedPreferredSourceWhenNoSession(t *t
 	}
 }
 
+func TestPreferredEmbeddedProviderUsesLastOpenedAgentBeforeLatestSession(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                    "/tmp/demo",
+		Name:                    "demo",
+		LatestSessionFormat:     "modern",
+		PreferredSessionSource:  model.SessionSourceOpenCode,
+		LastOpenedSessionSource: model.SessionSourceClaudeCode,
+	}
+	m := Model{}
+
+	if got := m.preferredEmbeddedProviderForProject(project); got != codexapp.ProviderClaudeCode {
+		t.Fatalf("preferred provider = %q, want last opened Claude Code", got)
+	}
+	if got, ok := m.embeddedProviderHintForProject(project); !ok || got != codexapp.ProviderClaudeCode {
+		t.Fatalf("provider hint = %q, %v, want last opened Claude Code", got, ok)
+	}
+}
+
 func TestPreferredEmbeddedProviderKeepsLiveSessionBeforeOneShotOverride(t *testing.T) {
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{

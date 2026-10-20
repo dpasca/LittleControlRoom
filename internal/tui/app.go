@@ -2308,6 +2308,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.requestProjectInvalidationCmd(msg.refresh)
+	case projectLastOpenedAgentSavedMsg:
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Could not remember the opened agent", msg.err, msg.path)
+		}
+		return m, nil
 	case embeddedSessionActivityRecordedMsg:
 		followUp := m.finishEmbeddedSessionActivityRecordCmd(msg)
 		if msg.err != nil {

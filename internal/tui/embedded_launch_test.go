@@ -735,6 +735,67 @@ func TestLaunchCodexForSelectionShowsOpeningStateInsteadOfPreviousSession(t *tes
 	}
 }
 
+func TestLaunchEmbeddedForSelectionRemembersOpenedAgent(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{projectPath: req.ProjectPath, snapshot: codexapp.Snapshot{Provider: req.Provider.Normalized(), Started: true}}, nil
+	})
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		Name:                "demo",
+		PresentOnDisk:       true,
+		LatestSessionFormat: "modern",
+	}
+	m := Model{
+		codexManager: manager,
+		projects:     []model.ProjectSummary{project},
+		allProjects:  []model.ProjectSummary{project},
+		detail:       model.ProjectDetail{Summary: project},
+		selected:     0,
+	}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, false, "")
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("launchEmbeddedForSelection() should return an open command")
+	}
+	for name, source := range map[string]model.SessionSource{
+		"projects":    got.projects[0].LastOpenedSessionSource,
+		"allProjects": got.allProjects[0].LastOpenedSessionSource,
+		"detail":      got.detail.Summary.LastOpenedSessionSource,
+	} {
+		if source != model.SessionSourceClaudeCode {
+			t.Fatalf("%s last opened source = %q, want Claude Code", name, source)
+		}
+	}
+}
+
+func TestLaunchEmbeddedWithoutUserOpenDoesNotRememberAgent(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{projectPath: req.ProjectPath, snapshot: codexapp.Snapshot{Provider: req.Provider.Normalized(), Started: true}}, nil
+	})
+	project := model.ProjectSummary{
+		Path:                    "/tmp/demo",
+		Name:                    "demo",
+		PresentOnDisk:           true,
+		LatestSessionFormat:     "modern",
+		LastOpenedSessionSource: model.SessionSourceCodex,
+	}
+	m := Model{
+		codexManager: manager,
+		projects:     []model.ProjectSummary{project},
+		selected:     0,
+	}
+
+	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, codexapp.ProviderClaudeCode, embeddedLaunchOptions{reveal: true})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("launchEmbeddedForProjectWithOptions() should return an open command")
+	}
+	if source := got.projects[0].LastOpenedSessionSource; source != model.SessionSourceCodex {
+		t.Fatalf("last opened source = %q, want handoff-style launch to keep Codex", source)
+	}
+}
+
 func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -795,6 +856,9 @@ func TestLaunchEmbeddedForSelectionBlocksWhileAnotherEmbeddedProviderIsActive(t 
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the original Claude open", len(requests))
+	}
+	if source := got.projects[0].LastOpenedSessionSource; source != "" {
+		t.Fatalf("last opened source = %q, want blocked launch to record nothing", source)
 	}
 }
 

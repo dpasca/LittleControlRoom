@@ -559,6 +559,7 @@ type ProjectSummary struct {
 	MovedFromPath                                 string
 	MovedAt                                       time.Time
 	PreferredSessionSource                        SessionSource
+	LastOpenedSessionSource                       SessionSource
 	LatestSessionSource                           SessionSource
 	LatestSessionID                               string
 	LatestRawSessionID                            string

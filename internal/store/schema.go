@@ -74,6 +74,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			moved_from_path TEXT NOT NULL DEFAULT '',
 			moved_at INTEGER,
 			preferred_session_source TEXT NOT NULL DEFAULT '',
+			last_opened_session_source TEXT NOT NULL DEFAULT '',
 			created_at INTEGER,
 			updated_at INTEGER NOT NULL
 		);`,
@@ -551,6 +552,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureProjectsPreferredSessionSourceColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProjectsLastOpenedSessionSourceColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectSessionsDetectedPathColumn(ctx); err != nil {
@@ -1558,6 +1562,20 @@ func (s *Store) ensureProjectsPreferredSessionSourceColumn(ctx context.Context) 
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN preferred_session_source TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("add projects.preferred_session_source column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectsLastOpenedSessionSourceColumn(ctx context.Context) error {
+	columns, err := s.projectTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["last_opened_session_source"]; ok {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN last_opened_session_source TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add projects.last_opened_session_source column: %w", err)
 	}
 	return nil
 }
