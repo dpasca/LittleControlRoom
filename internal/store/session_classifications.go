@@ -781,6 +781,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			p.run_command,
 			p.moved_from_path, p.moved_at,
 			COALESCE(p.preferred_session_source, ''),
+			COALESCE(p.last_opened_session_source, ''),
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.source, ''),
 			COALESCE(ps.raw_session_id, ''),

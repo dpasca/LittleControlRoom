@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -1079,9 +1080,10 @@ func (m Model) launchEmbeddedForSelection(provider codexapp.Provider, forceNew b
 
 func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexapp.Provider, forceNew bool, prompt string) (tea.Model, tea.Cmd) {
 	return m.launchEmbeddedForProjectWithOptions(p, provider, embeddedLaunchOptions{
-		forceNew: forceNew,
-		prompt:   prompt,
-		reveal:   true,
+		forceNew:   forceNew,
+		prompt:     prompt,
+		reveal:     true,
+		userOpened: true,
 	})
 }
 
@@ -1099,6 +1101,9 @@ type embeddedLaunchOptions struct {
 	interruptedTurnID        string
 	interruptedTurnStartedAt time.Time
 	restartWarmup            bool
+	// userOpened marks a launch the user asked for directly, unlike handoffs,
+	// message deliveries, or restart recovery.
+	userOpened bool
 }
 
 func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) codexapp.LaunchRequest {
@@ -1168,7 +1173,8 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		if updated, ok := m.revealPendingEmbeddedOpen(p.Path); ok {
-			return updated, nil
+			rememberCmd := updated.rememberUserOpenedEmbeddedProvider(options, p.Path, updated.codexPendingOpenProvider())
+			return updated, rememberCmd
 		}
 	}
 	if !p.PresentOnDisk {
@@ -1211,7 +1217,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 				m.status = "Embedded " + provider.Label() + " session is already open in the background"
 				return m, nil
 			}
-			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+			rememberCmd := m.rememberUserOpenedEmbeddedProvider(options, p.Path, provider)
+			updated, cmd := m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+			return updated, batchCmds(cmd, rememberCmd)
 		}
 		if !recoverEmpty && m.hasRestorableEmbeddedSession(p.Path, provider) {
 			m.rememberEmbeddedProvider(provider)
@@ -1219,7 +1227,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 				m.status = "Embedded " + provider.Label() + " session is already available in the background"
 				return m, nil
 			}
-			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+			rememberCmd := m.rememberUserOpenedEmbeddedProvider(options, p.Path, provider)
+			updated, cmd := m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
+			return updated, batchCmds(cmd, rememberCmd)
 		}
 	}
 
@@ -1259,7 +1269,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	} else {
 		m.status = "Opening embedded " + provider.Label() + " session..."
 	}
-	return m, m.openCodexSessionCmdWithVisibilityAndWarmup(req, options.reveal, options.restartWarmup)
+	rememberCmd := m.rememberUserOpenedEmbeddedProvider(options, p.Path, provider)
+	openCmd := m.openCodexSessionCmdWithVisibilityAndWarmup(req, options.reveal, options.restartWarmup)
+	return m, batchCmds(openCmd, rememberCmd)
 }
 
 func (m Model) hasRestorableEmbeddedSession(projectPath string, provider codexapp.Provider) bool {
@@ -1800,6 +1812,9 @@ func providerForSessionFormat(format string) codexapp.Provider {
 }
 
 func preferredEmbeddedProviderFromProjectSummary(project model.ProjectSummary) codexapp.Provider {
+	if provider := codexProviderFromSessionSource(project.LastOpenedSessionSource); provider != "" {
+		return provider
+	}
 	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
 		return provider
 	}
@@ -1919,6 +1934,9 @@ func (m Model) embeddedProviderHintForProject(project model.ProjectSummary) (cod
 	if provider, ok := m.embeddedLaunchProviderOverride(project.Path); ok {
 		return provider, true
 	}
+	if provider := codexProviderFromSessionSource(project.LastOpenedSessionSource); provider != "" {
+		return provider, true
+	}
 	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
 		return provider, true
 	}
@@ -1947,6 +1965,56 @@ func (m *Model) rememberEmbeddedProvider(provider codexapp.Provider) {
 	}
 	if provider := explicitEmbeddedProvider(provider); provider != "" {
 		m.lastEmbeddedProvider = provider
+	}
+}
+
+func (m *Model) rememberUserOpenedEmbeddedProvider(options embeddedLaunchOptions, projectPath string, provider codexapp.Provider) tea.Cmd {
+	if !options.userOpened {
+		return nil
+	}
+	return m.rememberOpenedEmbeddedProvider(projectPath, provider)
+}
+
+// rememberOpenedEmbeddedProvider records the agent the user opened in a
+// project, so Enter and restarts reopen it rather than whichever agent's
+// session saw activity last. Only direct user opens should call this.
+func (m *Model) rememberOpenedEmbeddedProvider(projectPath string, provider codexapp.Provider) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	path := filepath.Clean(strings.TrimSpace(projectPath))
+	source := modelSessionSourceFromCodexProvider(provider)
+	if path == "" || path == "." || source == model.SessionSourceUnknown {
+		return nil
+	}
+	changed := false
+	remember := func(projects []model.ProjectSummary) {
+		for i := range projects {
+			if filepath.Clean(projects[i].Path) == path && projects[i].LastOpenedSessionSource != source {
+				projects[i].LastOpenedSessionSource = source
+				changed = true
+			}
+		}
+	}
+	remember(m.allProjects)
+	remember(m.archivedProjects)
+	remember(m.projects)
+	if filepath.Clean(m.detail.Summary.Path) == path && m.detail.Summary.LastOpenedSessionSource != source {
+		m.detail.Summary.LastOpenedSessionSource = source
+		changed = true
+	}
+	if !changed || m.svc == nil || m.svc.Store() == nil || m.isAgentTaskProjectPath(path) {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.Store().SetProjectLastOpenedSessionSource(ctx, path, source)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
+		}
+		err = timeoutActionError(err, tuiQuickActionTimeout, "remembering the opened agent")
+		return projectLastOpenedAgentSavedMsg{path: path, err: err}
 	}
 }
 

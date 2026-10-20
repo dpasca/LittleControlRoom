@@ -63,6 +63,11 @@ type projectSessionSeenMsg struct {
 	err     error
 }
 
+type projectLastOpenedAgentSavedMsg struct {
+	path string
+	err  error
+}
+
 type projectStatusRefreshedMsg struct {
 	projectPath string
 	err         error

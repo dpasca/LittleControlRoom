@@ -619,13 +619,25 @@ func pickerSummaryForProject(project model.ProjectSummary, provider codexapp.Pro
 }
 
 func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea.Cmd) {
+	return m.openCodexSessionChoiceRemembering(choice, true)
+}
+
+// openCodexSessionChoiceRemembering opens a picked session. rememberProvider
+// is false when LCR routes the open itself, such as resolver inspection, so it
+// does not count as the user choosing that agent for the project.
+func (m Model) openCodexSessionChoiceRemembering(choice codexSessionChoice, rememberProvider bool) (tea.Model, tea.Cmd) {
 	label := choice.Provider.Label()
 	if choice.Live {
+		rememberCmd := tea.Cmd(nil)
+		if rememberProvider {
+			rememberCmd = m.rememberOpenedEmbeddedProvider(choice.ProjectPath, choice.Provider)
+		}
 		if strings.TrimSpace(choice.ProjectPath) == strings.TrimSpace(m.codexVisibleProject) {
 			m.status = "Already showing that live embedded " + label + " session"
-			return m, nil
+			return m, rememberCmd
 		}
-		return m.showCodexProject(choice.ProjectPath, "Switched to the selected embedded "+label+" session")
+		updated, cmd := m.showCodexProject(choice.ProjectPath, "Switched to the selected embedded "+label+" session")
+		return updated, batchCmds(cmd, rememberCmd)
 	}
 	if choice.Missing {
 		m.status = "Resuming " + label + " requires a folder present on disk"
@@ -673,7 +685,11 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 	m.beginCodexPendingOpen(choice.ProjectPath, choice.Provider)
 	m.status = fmt.Sprintf("Opening embedded %s session %s...", label, shortID(choice.SessionID))
 	focusCmd := m.focusProjectPath(choice.ProjectPath)
-	return m, tea.Batch(m.openCodexSessionCmd(req), focusCmd)
+	rememberCmd := tea.Cmd(nil)
+	if rememberProvider {
+		rememberCmd = m.rememberOpenedEmbeddedProvider(choice.ProjectPath, choice.Provider)
+	}
+	return m, tea.Batch(m.openCodexSessionCmd(req), focusCmd, rememberCmd)
 }
 
 func (m Model) resumeEmbeddedSession(projectPath string, provider codexapp.Provider, sessionID string) (tea.Model, tea.Cmd) {
@@ -704,7 +720,7 @@ func (m Model) resumeEmbeddedSession(projectPath string, provider codexapp.Provi
 		choice.Busy = snapshot.Busy
 		choice.BusyExternal = snapshot.BusyExternal
 	}
-	return m.openCodexSessionChoice(choice)
+	return m.openCodexSessionChoiceRemembering(choice, false)
 }
 
 func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd) {
