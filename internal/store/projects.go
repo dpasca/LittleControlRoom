@@ -1398,6 +1398,23 @@ func sessionClassificationCanonicalRankExpr(alias string) string {
 	)
 }
 
+// sessionClassificationHasCanonicalPeerExpr matches when a non-canonical row
+// has a canonical row with the same logical session ID. Canonical rows always
+// carry raw_session_id, so the peer lookup probes that index instead of
+// evaluating the logical-ID expression against every classification row.
+func sessionClassificationHasCanonicalPeerExpr(peerAlias, alias string) string {
+	peerAlias = strings.TrimSpace(peerAlias)
+	return fmt.Sprintf(`
+		EXISTS (
+			SELECT 1
+			FROM session_classifications %[1]s
+			WHERE %[1]s.raw_session_id = %[2]s
+			  AND %[3]s = 1
+			  AND %[4]s = 0
+		)
+	`, peerAlias, sessionClassificationLogicalIDExpr(alias), sessionClassificationCanonicalRankExpr(peerAlias), sessionClassificationCanonicalRankExpr(alias))
+}
+
 func preferredSessionClassificationIDExpr(sessionIDExpr string) string {
 	sessionIDExpr = strings.TrimSpace(sessionIDExpr)
 	return fmt.Sprintf(`

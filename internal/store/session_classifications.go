@@ -393,15 +393,10 @@ func (s *Store) ClaimNextPendingSessionClassification(ctx context.Context, stale
 		FROM session_classifications sc
 		JOIN projects p ON p.path = sc.project_path
 		WHERE sc.status = ? AND p.in_scope = 1 AND p.archived = 0
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM session_classifications sc_pref
-			WHERE %s = %s
-			  AND %s > %s
-		  )
+		  AND NOT %s
 		ORDER BY p.attention_score DESC, p.last_activity DESC, sc.updated_at ASC
 		LIMIT 1
-	`, sessionClassificationLogicalIDExpr("sc_pref"), sessionClassificationLogicalIDExpr("sc"), sessionClassificationCanonicalRankExpr("sc_pref"), sessionClassificationCanonicalRankExpr("sc"))
+	`, sessionClassificationHasCanonicalPeerExpr("sc_pref", "sc"))
 
 	row := tx.QueryRowContext(ctx, query, string(model.ClassificationPending))
 
