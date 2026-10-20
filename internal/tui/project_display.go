@@ -247,7 +247,8 @@ func projectListColumnWidths(totalWidth int) (int, int) {
 	}
 
 	remaining := totalWidth - baseWidth
-	projectWidth := min(28, max(16, remaining/4))
+	// Let long worktree names grow with the terminal while keeping summaries larger.
+	projectWidth := max(16, (remaining-2)/3)
 	assessmentWidth := remaining - projectWidth - 2
 	if assessmentWidth < 18 {
 		projectWidth = max(14, remaining-20)

@@ -117,7 +117,7 @@ func TestStaleWorktreeCuesShowInRowDetailFamilyAndFooter(t *testing.T) {
 		},
 	}
 	m.rebuildProjectList(child.Path)
-	rendered := ansi.Strip(m.renderProjectList(120, 8))
+	rendered := ansi.Strip(m.renderProjectList(140, 8))
 	for _, want := range []string{"stale", "idle Codex open", "[1 linked, 1 stale]"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("project list missing %q: %s", want, rendered)
