@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,12 +24,10 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
-	db, err := sql.Open("lcroom-sqlite", sqliteDSN(path))
+	db, err := openSQLite(path)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(sqliteMaxOpenConns)
-	db.SetMaxIdleConns(sqliteMaxOpenConns)
 
 	s := &Store{db: db}
 	if err := s.initSchema(context.Background()); err != nil {
@@ -36,6 +35,35 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// OpenExisting opens a database whose schema the LCR host has already
+// initialized, as for the runtime helpers it launches. It skips the schema
+// migrations, which need the write lock, so helper startup never waits behind
+// a writer. A missing or empty database falls back to Open.
+func OpenExisting(path string) (*Store, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && info.Size() == 0) {
+		return Open(path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stat db: %w", err)
+	}
+	db, err := openSQLite(path)
+	if err != nil {
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
+func openSQLite(path string) (*sql.DB, error) {
+	db, err := sql.Open("lcroom-sqlite", sqliteDSN(path))
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	db.SetMaxOpenConns(sqliteMaxOpenConns)
+	db.SetMaxIdleConns(sqliteMaxOpenConns)
+	return db, nil
 }
 
 func (s *Store) Close() error {

@@ -116,7 +116,7 @@ func New(opts Options) (*Server, error) {
 	dbPath := strings.TrimSpace(opts.DBPath)
 	if stateStore == nil && dbPath != "" {
 		var err error
-		stateStore, err = store.Open(dbPath)
+		stateStore, err = store.OpenExisting(dbPath)
 		if err != nil {
 			return nil, fmt.Errorf("open runtime MCP store: %w", err)
 		}

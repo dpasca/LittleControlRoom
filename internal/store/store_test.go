@@ -353,6 +353,55 @@ func TestProjectPreferredSessionSourceSurvivesStateRefresh(t *testing.T) {
 	}
 }
 
+func TestOpenExistingReadsWhileHostHoldsWriteLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+
+	host, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open host store: %v", err)
+	}
+	defer host.Close()
+	if err := host.UpsertProjectState(ctx, model.ProjectState{Path: "/tmp/open-existing", Name: "open-existing", Status: model.StatusIdle, InScope: true, UpdatedAt: time.Now()}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	tx, err := host.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin host write transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	helper, err := OpenExisting(dbPath)
+	if err != nil {
+		t.Fatalf("OpenExisting() error = %v", err)
+	}
+	defer helper.Close()
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	projects, err := helper.ListProjects(readCtx, true)
+	if err != nil {
+		t.Fatalf("ListProjects() while host holds the write lock error = %v", err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("projects = %d, want 1", len(projects))
+	}
+}
+
+func TestOpenExistingInitializesMissingDatabase(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := OpenExisting(filepath.Join(t.TempDir(), "nested", "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("OpenExisting() error = %v", err)
+	}
+	defer st.Close()
+	if _, err := st.ListProjects(ctx, true); err != nil {
+		t.Fatalf("ListProjects() on a fresh database error = %v", err)
+	}
+}
+
 func TestProjectLastOpenedSessionSourceSurvivesRefreshAndMove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
