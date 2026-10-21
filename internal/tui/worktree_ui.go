@@ -1322,6 +1322,9 @@ func (m Model) agentTaskOriginWorktreeRemoved(task model.AgentTask) bool {
 	if worktree == "" || worktree == cleanAgentTaskPath(task.OriginProjectPath) {
 		return false
 	}
+	if _, found := m.agentTaskForProjectPath(worktree); found {
+		return false
+	}
 	for _, project := range m.allProjects {
 		if cleanAgentTaskPath(project.Path) == worktree {
 			return project.Forgotten || !project.PresentOnDisk
@@ -1334,9 +1337,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 	projects = partitionProjectsByKind(projects)
 	basePaths := make(map[string]struct{}, len(projects))
 	for _, project := range projects {
-		if model.NormalizeProjectKind(project.Kind) != model.ProjectKindAgentTask {
-			basePaths[cleanAgentTaskPath(project.Path)] = struct{}{}
-		}
+		basePaths[cleanAgentTaskPath(project.Path)] = struct{}{}
 	}
 	baseProjects := make([]model.ProjectSummary, 0, len(projects))
 	// `projects` arrives already sorted, so an entry's incoming index is the
@@ -1453,8 +1454,14 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 
 	rows := make([]model.ProjectSummary, 0, len(projects))
 	meta := make([]projectListRow, 0, len(projects))
-	appendAffiliatedTasks := func(anchor string, indent int) {
+	appended := make(map[string]bool)
+	var appendAffiliatedTasks func(string, int)
+	appendAffiliatedTasks = func(anchor string, indent int) {
 		for _, task := range affiliatedTasks[cleanAgentTaskPath(anchor)] {
+			if appended[task.Path] {
+				continue
+			}
+			appended[task.Path] = true
 			rows = append(rows, task)
 			meta = append(meta, projectListRow{
 				Kind:        projectListRowAgentTask,
@@ -1462,6 +1469,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 				RootPath:    cleanAgentTaskPath(anchor),
 				Indent:      indent,
 			})
+			appendAffiliatedTasks(task.Path, indent+1)
 		}
 	}
 	for _, group := range order {
@@ -1477,6 +1485,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.Projec
 				ProjectPath: task.Path,
 				RootPath:    task.Path,
 			})
+			appendAffiliatedTasks(task.Path, 1)
 			continue
 		}
 		if !projectUsesRepoUI(group.members[0]) {

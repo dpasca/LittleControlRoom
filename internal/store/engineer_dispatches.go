@@ -246,6 +246,7 @@ func armEngineerDispatchForDelivery(ctx context.Context, tx *sql.Tx, message con
 			WHERE worker_project_path = ? AND worker_provider = ?
 			  AND (worker_session_id = '' OR worker_session_id = ?)
 			  AND caller_project_path = ? AND caller_provider = ? AND caller_session_key = ?
+			  AND origin_operation_id NOT LIKE 'engineer-message-notice:%'
 			  AND reply_state IN (?, ?)
 			ORDER BY updated_at DESC, id DESC LIMIT 1
 		)

@@ -512,7 +512,8 @@ type EngineerMessage struct {
 	UpdatedAt                time.Time            `json:"updated_at"`
 	DeliveredAt              time.Time            `json:"delivered_at,omitempty"`
 	// DeliverAt holds a scheduled wakeup until that time; ExpiresAt is when a
-	// late wakeup stops being worth delivering. Both are zero for ordinary messages.
+	// late wakeup stops being worth delivering. Ordinary messages also expire,
+	// while DeliverAt remains zero for immediate delivery.
 	DeliverAt  time.Time        `json:"deliver_at,omitempty"`
 	ExpiresAt  time.Time        `json:"expires_at,omitempty"`
 	Unattended *UnattendedGrant `json:"unattended,omitempty"`
@@ -528,4 +529,5 @@ type EngineerMessageReceipt struct {
 	ProjectPath     string               `json:"project_path"`
 	TargetSessionID string               `json:"target_session_id,omitempty"`
 	Status          string               `json:"status"`
+	ExpiresAt       time.Time            `json:"expires_at,omitempty"`
 }

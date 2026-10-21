@@ -99,6 +99,7 @@ type bossAgentTaskClosedMsg struct {
 }
 
 type agentTaskCreationContext struct {
+	parentTaskID       string
 	originOperationID  string
 	originProjectPath  string
 	originWorktreePath string
@@ -877,6 +878,11 @@ func (m Model) executeEngineerSendPromptControl(input control.EngineerSendPrompt
 func (m Model) executeEngineerSendPromptControlWithOutcome(inv control.Invocation, input control.EngineerSendPromptInput) controlInvocationOutcome {
 	project, err := m.resolveControlProject(input)
 	if err != nil {
+		// An explicit address can be recovered from persisted project state while
+		// the startup scan is still rebuilding the in-memory project list.
+		if input.ProjectPath != "" && m.svc != nil && m.svc.Store() != nil {
+			return controlInvocationOutcome{model: m, inv: inv, cmd: m.queueUnloadedEngineerMessageCmd(inv, input)}
+		}
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
@@ -891,6 +897,37 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(inv control.Invocatio
 	}
 	trackedTodo := model.TodoItem{ProjectPath: strings.TrimSpace(project.Path), Text: strings.TrimSpace(input.TodoText)}
 	return m.executeEngineerSendPromptWithTrackedTodo(input, project, trackedTodo)
+}
+
+func (m Model) queueUnloadedEngineerMessageCmd(inv control.Invocation, input control.EngineerSendPromptInput) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(engineerMessageStoreTimeout)
+		defer cancel()
+		project, err := m.svc.Store().GetProjectSummary(ctx, input.ProjectPath, true)
+		if err != nil {
+			if task, found, taskErr := m.svc.Store().AgentTaskForWorkspace(ctx, input.ProjectPath); taskErr == nil && found {
+				project, err = projectSummaryForAgentTask(task)
+			}
+		}
+		if err != nil {
+			return engineerMessageQueuedMsg{err: fmt.Errorf("load persisted message destination: %w", err)}
+		}
+		if input.TodoID > 0 {
+			plan, err := todocontrol.InspectSend(ctx, m.svc.Store(), input)
+			if err != nil {
+				return engineerMessageQueuedMsg{err: err}
+			}
+			project, err = m.svc.Store().GetProjectSummary(ctx, plan.DestinationPath, true)
+			if err != nil {
+				return engineerMessageQueuedMsg{err: err}
+			}
+		}
+		provider, err := m.resolveControlEngineerProvider(input.Provider, project)
+		if err != nil {
+			return engineerMessageQueuedMsg{err: err}
+		}
+		return m.createEngineerMessageCmd(inv, input, project, provider, input.Prompt)()
+	}
 }
 
 func (m Model) loadBossTrackedTodoCmd(inv control.Invocation, input control.EngineerSendPromptInput, project model.ProjectSummary) tea.Cmd {
@@ -947,11 +984,6 @@ func (m Model) executeEngineerSendPromptWithTrackedTodo(input control.EngineerSe
 	provider, err := m.resolveControlEngineerProvider(input.Provider, project)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-	if !project.PresentOnDisk {
-		err := fmt.Errorf("%s launch requires a folder present on disk", provider.Label())
-		m.status = err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
 	input.TodoText = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoText, trackedTodo.Text))
@@ -1104,7 +1136,7 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			msg.err = errors.New("service unavailable")
 			return msg
 		}
-		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
 		defer cancel()
 		creationContext, err := resolveAgentTaskCreationContext(ctx, svc, inv, input)
 		if err != nil {
@@ -1116,7 +1148,7 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			Repository:         model.AgentTaskRepository{Write: input.RepositoryWrite},
 			ModelSelection:     taskModelChoice(provider, input.EngineerModelSelection),
 			Provider:           modelSessionSourceFromCodexProvider(provider),
-			ParentTaskID:       strings.TrimSpace(input.ParentTaskID),
+			ParentTaskID:       firstNonEmptyTrimmed(input.ParentTaskID, creationContext.parentTaskID),
 			Title:              input.Title,
 			Kind:               modelAgentTaskKindFromControl(input.Kind),
 			CategoryID:         creationContext.categoryID,
@@ -1129,7 +1161,7 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			OriginSessionID:    creationContext.originSessionID,
 			OriginSessionKey:   creationContext.originSessionKey,
 		})
-		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "creating the agent task")
+		msg.err = timeoutActionError(msg.err, tuiGitActionTimeout, "creating the agent task workspace")
 		return msg
 	}
 }
@@ -1159,6 +1191,15 @@ func resolveAgentTaskCreationContext(ctx context.Context, svc *service.Service, 
 		result.originSessionID, err = svc.Store().ResolveEngineerSession(ctx, result.originWorktreePath, result.originProvider, result.originSessionKey)
 		if err != nil {
 			return agentTaskCreationContext{}, fmt.Errorf("resolve task caller: %w", err)
+		}
+		parent, found, err := svc.Store().AgentTaskForWorkspace(ctx, result.originWorktreePath)
+		if err != nil {
+			return agentTaskCreationContext{}, err
+		}
+		if found {
+			result.parentTaskID = parent.ID
+			result.originProjectPath = parent.OriginProjectPath
+			result.categoryID = parent.CategoryID
 		}
 	}
 	lookupPaths := compactStrings(result.originWorktreePath, result.originProjectPath)
@@ -3058,6 +3099,9 @@ func projectSummaryForAgentTask(task model.AgentTask) (model.ProjectSummary, err
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: agentTaskClassificationType(task),
 		LatestSessionSummary:            summary,
+		RepoBranch:                      task.WorkspaceGit.Branch,
+		RepoDirty:                       task.WorkspaceGit.Dirty,
+		RepoConflict:                    task.WorkspaceGit.Conflict,
 	}, nil
 }
 
@@ -3093,7 +3137,15 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string, options agentTas
 		"Kind: " + string(model.NormalizeAgentTaskKind(task.Kind)),
 	}
 	if task.Repository.Write {
-		lines = append(lines, "Repository write contract: edit only "+task.Repository.Root+". The task workspace is for staging artifacts. Do not commit, push, switch branches, or leave write-capable processes running. Return the changes to the caller for review; do not ask the operator to commit.")
+		lines = append(lines, "Repository write contract: edit only "+task.Repository.Root+". Do not commit, push, switch branches, or leave write-capable processes running. Return the changes to the caller for review; do not ask the operator to commit.")
+	}
+	if task.Repository.Isolated {
+		lines = append(lines, "Assigned workspace: "+task.WorkspacePath+". Keep commands, edits and generated files here. Do not edit the caller's checkout. Return this workspace path with your result for review and integration.")
+		if task.Repository.InitialBranch != "" {
+			lines = append(lines, "Workspace branch: "+task.Repository.InitialBranch+". This is a separate checkout of the caller's committed HEAD; uncommitted caller edits were not copied. Do not switch branches.")
+		}
+	} else if task.Repository.Write {
+		lines = append(lines, "Workspace sharing warning: this task has an explicit write lease on its affiliated checkout. The caller and worker share that repository. Keep its branch unchanged; other managed writers must remain idle until handoff.")
 	}
 	if parent := strings.TrimSpace(task.ParentTaskID); parent != "" {
 		lines = append(lines, "Parent task: "+parent)
@@ -3381,6 +3433,9 @@ func (m Model) resolveControlProject(input control.EngineerSendPromptInput) (mod
 
 func (m Model) resolveControlProjectRef(projectPath, projectName string) (model.ProjectSummary, error) {
 	if path := normalizeProjectPath(projectPath); path != "" {
+		if task, ok := m.agentTaskForProjectPath(path); ok {
+			return projectSummaryForAgentTask(task)
+		}
 		if project, ok := m.projectSummaryByPathAllProjects(path); ok {
 			return project, nil
 		}

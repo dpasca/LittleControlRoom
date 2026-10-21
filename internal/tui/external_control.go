@@ -66,6 +66,15 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 			return externalControlProposalLoadedMsg{err: errors.New("service store unavailable")}
 		}
 		operation, err := svc.Store().GetControlOperation(parent, operationID)
+		if err == nil && operation.Status == control.OperationRunning && operation.Confirmed && operation.Capability == control.CapabilityEngineerSendPrompt {
+			_, queued, lookupErr := svc.Store().FindEngineerMessageByOperation(parent, operation.ID)
+			if lookupErr != nil {
+				return externalControlProposalLoadedMsg{err: lookupErr}
+			}
+			if !queued {
+				return externalControlProposalLoadedMsg{operation: operation, automatic: true}
+			}
+		}
 		automatic := false
 		var preflight externalControlPreflight
 		if err == nil && (operation.Status == control.OperationProposed || operation.Status == control.OperationWaitingForConfirmation) && todocontrol.Applies(operation.Capability) {

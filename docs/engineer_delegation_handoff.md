@@ -56,11 +56,20 @@ shown separately. Codex, Claude Code, OpenCode and LCAgent are supported.
 
 ### Exclusive managed repository ownership
 
-`agent_task.create` supports opt-in `repository_write: true`. It requires an exact
-affiliated checkout, a clean baseline and idle managed engineers/processes. It
-records a durable lease and baseline HEAD/branch. Another managed writer cannot
-enter while ownership is held. This conservatively blocks caller turns too;
-transcript inspection is still available.
+Session-created repository tasks, including nested tasks, receive a dedicated
+Git worktree under the internal workspace directory. It starts at the caller's
+committed HEAD on a unique `agent-task/...` branch; caller edits are not copied.
+Nested tasks retain their canonical project affiliation and exact originating
+session, and appear under their parent task with branch and checkout state.
+
+`agent_task.create` supports opt-in `repository_write: true` to lease that worker
+checkout. It requires a clean baseline and idle managed writers in the worker
+checkout; the caller can continue in its separate checkout. The host records a
+durable lease and baseline HEAD/branch. Host-created repair tasks and older tasks
+can retain an explicit affiliated-checkout lease, which blocks writers in that
+checkout and displays a sharing warning. An explicitly supplied workspace that
+overlaps the caller's checkout is refused. Managed processes for isolated tasks
+must stay inside the assigned workspace.
 
 Native provider submissions, new-session launch/registration, Codex goal/review
 entry points and managed process starts use admission guards. Ownership is
@@ -310,3 +319,25 @@ kill the leftover `lcroom tui` and `go run` processes before retrying. Startup s
 with separate Esc presses. `/` then `perf` + Enter opens performance. Quit uses
 `q`, then select Quit with Tab if necessary, then Enter. Never press Enter on a
 fixture task: that would launch a provider rather than merely inspect its details.
+
+### Restart-safe engineer message delivery
+
+Confirmed `engineer.send_prompt` messages survive an unloaded destination project.
+They remain queued while the project list reloads, and delivery resumes on later
+mailbox polls after the project loads. Immediate messages expire 24 hours after
+the original confirmed enqueue time; restart never renews the deadline. Scheduled
+wakeups retain their existing delivery/grace window. The deadline is included in
+delivery receipts. Confirmed sends interrupted before the mailbox insert are
+recovered from their operation record.
+
+A failure, deadline expiry, or wait for a missing current session writes an
+exact-sender notice into the durable dispatch outbox in the receipt transaction.
+Outbox draining retries after restart and late caller identity binding. Waiting
+notices are deduplicated by message and reason. A missing-current-session notice
+explains how to offer a separate explicit session launch; it does not launch one.
+Callback failures do not generate recursive callbacks. Exact recipient replacement
+still fails closed, including uncertain submissions recovered after restart.
+
+Turn reports name normal endings, required input, errors and interruptions
+separately. A normal ended turn does not establish task completion, and dashboard
+classification must not describe an ordinary ending as an explicit pause.

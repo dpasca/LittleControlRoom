@@ -29,11 +29,13 @@ type EngineerDispatchLaunch struct {
 // EngineerTurnCompletion is a settled embedded turn. Summary is the worker's
 // bounded final message; Problem explains a turn that ended without one.
 type EngineerTurnCompletion struct {
-	ProjectPath string
-	Provider    model.SessionSource
-	SessionID   string
-	Summary     string
-	Problem     string
+	ProjectPath     string
+	Provider        model.SessionSource
+	SessionID       string
+	Summary         string
+	Problem         string
+	WaitingForInput bool
+	Interrupted     bool
 }
 
 // RecordEngineerDispatch gives a launched engineer a return address when an
@@ -146,9 +148,36 @@ func (s *Service) QueueEngineerDispatchReply(ctx context.Context, id int64) (mod
 	return s.store.RecordEngineerDispatchReplySent(ctx, dispatch.ID, dispatch.ReplySeq, created.ID)
 }
 
+// QueuePendingEngineerDispatchReplies drains durable completion and delivery
+// notices after startup as well as during normal mailbox polling.
+func (s *Service) QueuePendingEngineerDispatchReplies(ctx context.Context, limit int) error {
+	dispatches, err := s.store.ListReadyEngineerDispatches(ctx, limit)
+	if err != nil {
+		return err
+	}
+	for _, dispatch := range dispatches {
+		_, queueErr := s.QueueEngineerDispatchReply(ctx, dispatch.ID)
+		err = errors.Join(err, queueErr)
+	}
+	return err
+}
+
 func engineerDispatchReplyPrompt(dispatch model.EngineerDispatch, sessionID, branch string, completion EngineerTurnCompletion) string {
 	provider := agentTaskResultCallbackProvider(dispatch.WorkerProvider)
 	lines := []string{"An engineer you dispatched through Little Control Room finished the turn you requested."}
+	switch {
+	case completion.WaitingForInput:
+		lines[0] = "An engineer you dispatched through Little Control Room is waiting for input on the turn you requested."
+		lines = append(lines, "Turn state: waiting for input. The worker needs an answer or approval to proceed.")
+	case strings.TrimSpace(completion.Problem) != "":
+		lines[0] = "An engineer you dispatched through Little Control Room reported a turn failure."
+		lines = append(lines, "Turn state: failed. Inspect the reported error before continuing.")
+	case completion.Interrupted:
+		lines[0] = "An engineer you dispatched through Little Control Room stopped before normal turn completion."
+		lines = append(lines, "Turn state: interrupted. The requested work was stopped before normal turn completion.")
+	default:
+		lines = append(lines, "Turn state: ended. The worker returned control; this does not establish task completion or an explicit pause. Read its final message for any remaining work or questions.")
+	}
 	if dispatch.TodoID > 0 {
 		todo := fmt.Sprintf("TODO #%d", dispatch.TodoID)
 		if text := strings.Join(strings.Fields(dispatch.TodoText), " "); text != "" {

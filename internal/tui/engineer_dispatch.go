@@ -68,11 +68,13 @@ func (m Model) routeEngineerDispatchReplyCmd(projectPath string, snapshot codexa
 		ctx, cancel := context.WithTimeout(parent, engineerMessageStoreTimeout)
 		defer cancel()
 		completion := service.EngineerTurnCompletion{
-			ProjectPath: projectPath,
-			Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
-			SessionID:   strings.TrimSpace(snapshot.ThreadID),
-			Summary:     latestEngineerDispatchOutput(snapshot),
-			Problem:     strings.TrimSpace(snapshot.LastError),
+			ProjectPath:     projectPath,
+			Provider:        modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+			SessionID:       strings.TrimSpace(snapshot.ThreadID),
+			Summary:         latestEngineerDispatchOutput(snapshot),
+			Problem:         strings.TrimSpace(snapshot.LastError),
+			WaitingForInput: snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil,
+			Interrupted:     snapshot.LatestTurnStateKnown && !snapshot.LatestTurnCompleted,
 		}
 		dispatches, err := svc.RouteEngineerTurnCompletion(ctx, completion)
 		var replies []tea.Cmd

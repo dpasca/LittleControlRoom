@@ -603,6 +603,7 @@ Reasoning/tool transcript items can reflect earlier planning; when they conflict
 If a transcript item contains "[...]", treat it as middle-content compaction for brevity, not evidence that the assistant stopped mid-sentence.
 If the latest assistant message says requested repo actions already happened (for example committed, pushed, built, deployed, or published) and the git snapshot agrees, prefer completed over needs_follow_up.
 Return a short factual dashboard summary under 140 characters.
+Distinguish a turn ending normally from waiting for a required answer and from an explicit stop. Do not describe an ordinary ended turn as "Paused". Use "Waiting for input" only when required input, approval or a decision remains; use "Stopped" or "Interrupted" only with explicit interruption evidence.
 Prefer brief direct phrasing over full sentences when natural.
 Write from the implicit assistant point of view rather than naming the assistant as the subject.
 Omit leading scaffolding like "Assistant is" or "The assistant is".

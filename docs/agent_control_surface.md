@@ -89,8 +89,15 @@ no work. These fields describe the current task, not a per-run accounting ledger
 
 ### Repository write ownership for delegated tasks
 
-`agent_task.create` accepts optional `repository_write: true`. The checkout comes
-from the task's exact worktree/project affiliation, not an arbitrary worker path.
+Session-created repository tasks get a dedicated internal Git worktree by default,
+including tasks launched by another task. It starts at the caller's committed HEAD
+on a unique branch and does not copy caller edits. The TUI nests tasks under their
+origin, showing their branch, checkout state and full originating session ID.
+
+`agent_task.create` accepts optional `repository_write: true`. For new
+session-created tasks, ownership covers the worker's separate checkout. Legacy
+and host repair tasks can retain their explicit affiliated-checkout lease with a
+visible sharing warning. Explicit workspaces overlapping the caller are refused.
 The host persists the visible task before preflight. An attached Git branch,
 clean tracked/untracked state, writable checkout, no unfinished Git operation,
 and idle managed engineers/processes are required. Failure leaves a visible task
@@ -292,8 +299,8 @@ For a project update intended for whichever engineer is currently open, supply
 `session_mode: resume_or_new`, without `target_session_id`. The host resolves
 the open session when delivery is possible, rather than binding to a historical
 session from a persisted query. If no matching session is open, the message
-waits; this mode never launches a session, changes models, or redirects TODO
-work. It can follow a replacement while waiting or after a proven refusal
+waits and sends its exact caller a durable notice offering an explicit session
+launch; this mode never launches a session, changes models, or redirects TODO work. It can follow a replacement while waiting or after a proven refusal
 before submission. Once submission may have occurred, restart retries retain
 the bound recipient to avoid duplicating the message into another conversation.
 Replies intended for the original caller, task reviews, and automatic completion
@@ -310,6 +317,12 @@ If the inspected target has been replaced or
 can no longer be resumed, LCR fails the message instead of delivering it to the
 replacement. The originating control operation remains `running` while a
 message is queued and becomes terminal only after delivery or terminal failure.
+An unloaded destination remains queued across restarts until it loads. Immediate
+messages keep a 24-hour deadline from their original confirmed enqueue; scheduled
+wakeups use their delivery/grace window. Receipts expose `expires_at`. Failures and
+deadlines notify the exact sender through the durable dispatch outbox, including
+failures before queueing. Notices are deduplicated and survive restart and delayed
+caller identity binding; callbacks do not generate recursive failure callbacks.
 
 This gives handoff documents a delivery path: the document can hold the full
 context, while the control message tells the receiving engineer what to read

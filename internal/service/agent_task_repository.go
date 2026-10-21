@@ -61,7 +61,15 @@ func repositoryPathsOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+string(os.PathSeparator)) || strings.HasPrefix(b, a+string(os.PathSeparator))
 }
 
+func repositoryPathContains(root, path string) bool {
+	root, path = canonicalRepositoryPath(root), canonicalRepositoryPath(path)
+	return root != "" && path != "" && (root == path || strings.HasPrefix(path, root+string(os.PathSeparator)))
+}
+
 func taskRepositoryPath(task model.AgentTask) string {
+	if task.Repository.Isolated {
+		return task.WorkspacePath
+	}
 	if task.Repository.Root != "" {
 		return task.Repository.Root
 	}
@@ -312,6 +320,9 @@ func (s *Service) BeginRepositoryProcess(projectPath, cwd string) (func(), error
 		}
 		if err == nil && ok && task.Repository.Write && task.Repository.State != "held" {
 			err = fmt.Errorf("task must acquire repository ownership before starting a managed process")
+		}
+		if err == nil && ok && task.Repository.Isolated && !repositoryPathContains(task.WorkspacePath, cwd) {
+			err = fmt.Errorf("isolated agent task processes must run within %s; refusing the caller's or another checkout", task.WorkspacePath)
 		}
 	}
 	if err != nil {

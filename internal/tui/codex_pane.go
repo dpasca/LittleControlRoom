@@ -1417,7 +1417,12 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 		req.TurnAdmission = m.svc.BeginRepositoryTurn
 	}
 	if task, ok := m.agentTaskForProjectPath(req.ProjectPath); ok {
-		if root := firstNonEmptyString(task.OriginWorktreePath, task.OriginProjectPath); root != "" {
+		root := firstNonEmptyString(task.OriginWorktreePath, task.OriginProjectPath)
+		if task.Repository.Isolated {
+			root = task.WorkspacePath
+			req.WorkspaceContract = codexapp.WorkspaceContract{AssignedPath: task.WorkspacePath, RepositoryRootPath: firstNonEmptyString(task.OriginProjectPath, task.OriginWorktreePath), CallerWorkspacePath: firstNonEmptyString(task.OriginWorktreePath, task.OriginProjectPath)}
+		}
+		if root != "" {
 			req.LCAgentWritableRoots = []string{root}
 		}
 	}

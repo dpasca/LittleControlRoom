@@ -2018,6 +2018,10 @@ func TestOpenBackfillsWorktreeInitialBranchFromCreationEvent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("record worktree creation event: %v", err)
 	}
+	// Emulate an older database which had no initial-branch identity.
+	if _, err := st.db.ExecContext(ctx, `UPDATE projects SET worktree_initial_branch = '' WHERE path = ?`, projectPath); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Close(); err != nil {
 		t.Fatalf("close store before migration: %v", err)
 	}

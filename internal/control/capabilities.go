@@ -1715,6 +1715,7 @@ func engineerSendPromptOutputSchema() map[string]any {
 					},
 					"project_path":      map[string]any{"type": "string"},
 					"target_session_id": map[string]any{"type": "string"},
+					"expires_at":        map[string]any{"type": "string", "format": "date-time"},
 					"status":            map[string]any{"type": "string"},
 				},
 				"required": []string{"message_id", "state", "provider", "project_path", "status"},
@@ -1731,7 +1732,7 @@ func agentTaskCreateInputSchema() map[string]any {
 		"properties": map[string]any{
 			"structured_results": map[string]any{"type": "boolean", "description": "Require a worker-bound structured result and exact-caller revision review. Authorizes only these task metadata submissions."},
 			"max_corrections":    map[string]any{"type": "integer", "minimum": 0, "maximum": MaxSupervisedCorrections, "description": "Correction rounds this one confirmation also covers, so a rejected revision can be reopened without asking the operator again. Requires structured_results. Omit or use 0 to confirm every correction. The grant covers only the same caller reopening this task in its existing session with its saved model; it is revoked by an explicit stop."},
-			"repository_write":   map[string]any{"type": "boolean", "description": "Acquire exclusive managed write ownership of the exact affiliated checkout. Requires a clean initial baseline and idle managed writers. No automatic stash or commit."},
+			"repository_write":   map[string]any{"type": "boolean", "description": "Acquire exclusive managed write ownership. Session-created repository tasks use a dedicated worktree of the caller's committed HEAD by default, including nested tasks. The worker's checkout needs a clean initial baseline and idle managed writers. No automatic stash or commit."},
 			"model":              engineerModelProperty(),
 			"model_provider":     engineerModelProviderProperty(),
 			"reasoning_effort":   engineerEffortProperty(),

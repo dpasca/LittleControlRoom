@@ -682,6 +682,9 @@ func projectBucket(project model.ProjectSummary, category model.SessionCategory,
 
 func projectBadges(project model.ProjectSummary, assessment Status, bucket ProjectBucket, source string) []Badge {
 	badges := []Badge{{Kind: "status", Label: assessment.Label, Tone: assessment.Tone}}
+	if project.WorktreeBranchChanged() {
+		badges = append(badges, Badge{Kind: "branch_changed", Label: "Branch changed", Tone: ToneWarning})
+	}
 	if project.RepoConflict {
 		badges = append(badges, Badge{Kind: "repository", Label: "Conflict", Tone: ToneConflict})
 	} else if project.RepoDirty {

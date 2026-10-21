@@ -260,6 +260,8 @@ type AgentTaskModelSelection struct {
 // AgentTaskRepository is the host-captured boundary for an opted-in writer.
 // A lease coordinates LCR sessions; it is not an OS filesystem sandbox.
 type AgentTaskRepository struct {
+	Isolated           bool   `json:"isolated,omitempty"`
+	InitialBranch      string `json:"initial_branch,omitempty"`
 	Write              bool   `json:"write,omitempty"`
 	Root               string `json:"root,omitempty"`
 	State              string `json:"state,omitempty"`
@@ -277,6 +279,7 @@ type AgentTaskRepository struct {
 }
 
 type AgentTask struct {
+	WorkspaceGit        AgentTaskWorkspaceGit
 	Workflow            AgentTaskWorkflow
 	Repository          AgentTaskRepository
 	ModelSelection      AgentTaskModelSelection
@@ -313,6 +316,15 @@ type AgentTask struct {
 	ArchivedAt          time.Time
 	UpdatedAt           time.Time
 	Resources           []AgentTaskResource
+}
+
+// AgentTaskWorkspaceGit is a background-refreshed view, never read from disk by
+// render or input handlers. Initial branch identity lives in Repository.
+type AgentTaskWorkspaceGit struct {
+	Branch   string
+	Dirty    bool
+	Conflict bool
+	Error    string
 }
 
 type AgentTaskResource struct {

@@ -40,6 +40,22 @@ func TestManagedTurnContextKnowledgeRequiresRuntime(t *testing.T) {
 	}
 }
 
+func TestNestedTaskCommandFromCallerWorkspaceWarns(t *testing.T) {
+	session := &appServerSession{entryIndex: make(map[string]int), workspaceContract: WorkspaceContract{
+		AssignedPath: "/internal/child", RepositoryRootPath: "/repos/demo", CallerWorkspacePath: "/internal/parent",
+	}}
+	context := managedWorkspaceTurnContextText(session.workspaceContract)
+	if !strings.Contains(context, "/internal/parent") || !strings.Contains(context, "files and branch unchanged") {
+		t.Fatalf("nested caller boundary missing: %s", context)
+	}
+	excursion, _, reported := session.captureWorkspaceExcursionLocked(map[string]json.RawMessage{
+		"id": json.RawMessage(`"nested-command"`), "cwd": json.RawMessage(`"/internal/parent/src"`), "command": json.RawMessage(`"git status"`),
+	})
+	if !reported || excursion.CWD != "/internal/parent/src" || !strings.Contains(session.lastSystemNotice, "calling session's checkout") {
+		t.Fatalf("nested caller excursion was silent: %+v %s", excursion, session.lastSystemNotice)
+	}
+}
+
 func TestCommandFromCanonicalRootWarnsAndReportsExcursionOnce(t *testing.T) {
 	reported := make(chan WorkspaceExcursion, 2)
 	session := &appServerSession{

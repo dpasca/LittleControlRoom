@@ -98,7 +98,7 @@ func projectHasRepoWarning(project model.ProjectSummary) bool {
 	if !projectUsesRepoUI(project) {
 		return false
 	}
-	return project.RepoConflict || project.RepoDirty || projectHasSubmoduleAttention(project) || (projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus))
+	return project.WorktreeBranchChanged() || project.RepoConflict || project.RepoDirty || projectHasSubmoduleAttention(project) || (projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus))
 }
 
 func projectHasSubmoduleAttention(project model.ProjectSummary) bool {
@@ -184,6 +184,9 @@ func projectAssessmentRepoFallback(project model.ProjectSummary) string {
 	}
 	if project.RepoConflict {
 		return "unmerged files"
+	}
+	if project.WorktreeBranchChanged() {
+		return "branch changed"
 	}
 	if project.RepoDirty {
 		return "dirty worktree"
@@ -928,6 +931,9 @@ func repoSyncDetailLine(project model.ProjectSummary) string {
 
 func (m Model) repoCombinedDetailValue(project model.ProjectSummary) string {
 	var parts []string
+	if project.WorktreeBranchChanged() {
+		parts = append(parts, detailWarningStyle.Render("branch changed"))
+	}
 	if op, ok := m.pendingGitOperation(project.Path); ok {
 		parts = append(parts, detailValueStyle.Render(op.summaryText()))
 	} else if project.RepoConflict {

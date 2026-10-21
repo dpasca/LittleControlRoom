@@ -310,7 +310,12 @@ func (s *Store) UpdateControlOperationStatus(ctx context.Context, id string, sta
 	default:
 		return control.Operation{}, fmt.Errorf("unsupported control operation status: %s", status)
 	}
-	current, err := s.GetControlOperation(ctx, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return control.Operation{}, err
+	}
+	defer tx.Rollback()
+	current, err := scanControlOperation(tx.QueryRowContext(ctx, controlOperationSelect+` WHERE id = ?`, id))
 	if err != nil {
 		return control.Operation{}, err
 	}
@@ -341,7 +346,7 @@ func (s *Store) UpdateControlOperationStatus(ctx context.Context, id string, sta
 	if result == nil {
 		result = current.Result
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE control_operations
 		SET status = ?, confirmed = ?, confirmation_by = ?, result_json = ?, error = ?,
 			updated_at = ?, started_at = ?, completed_at = ?
@@ -349,6 +354,19 @@ func (s *Store) UpdateControlOperationStatus(ctx context.Context, id string, sta
 	`, string(status), boolToInt(confirmed), confirmationBy, string(result), errText, now.Unix(),
 		nullableTimeUnixValue(startedAt), nullableTimeUnixValue(completedAt), id); err != nil {
 		return control.Operation{}, fmt.Errorf("update control operation: %w", err)
+	}
+	if status == control.OperationFailed && current.Capability == control.CapabilityEngineerSendPrompt {
+		var input control.EngineerSendPromptInput
+		// Even a malformed legacy request must retain its failure and notify
+		// the caller; decoding its optional destination is not a prerequisite.
+		_ = json.Unmarshal(current.Invocation.Args, &input)
+		message := control.EngineerMessage{ID: id, OperationID: id, ProjectPath: input.ProjectPath, Provider: input.Provider, TargetSessionID: input.TargetSessionID}
+		if err := recordEngineerMessageNotice(ctx, tx, message, "failed", "Engineer message request failed before delivery: "+errText, now); err != nil {
+			return control.Operation{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return control.Operation{}, err
 	}
 	return s.GetControlOperation(ctx, id)
 }
@@ -361,6 +379,27 @@ const controlOperationSelect = `
         COALESCE((SELECT reason FROM control_continuations WHERE operation_id=control_operations.id),'')
     FROM control_operations
 `
+
+// These confirmed sends died between recording confirmation and persisting
+// their mailbox entry. Delivery cannot have started without that entry.
+func (s *Store) ListUnqueuedEngineerOperations(ctx context.Context) ([]control.Operation, error) {
+	rows, err := s.db.QueryContext(ctx, controlOperationSelect+` WHERE status = ? AND confirmed = 1 AND capability = ?
+		AND NOT EXISTS (SELECT 1 FROM engineer_messages m WHERE m.operation_id = control_operations.id)
+		ORDER BY created_at, id`, string(control.OperationRunning), string(control.CapabilityEngineerSendPrompt))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var operations []control.Operation
+	for rows.Next() {
+		op, err := scanControlOperation(rows)
+		if err != nil {
+			return nil, err
+		}
+		operations = append(operations, op)
+	}
+	return operations, rows.Err()
+}
 
 type controlOperationScanner interface {
 	Scan(dest ...any) error

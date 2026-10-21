@@ -867,9 +867,10 @@ type LaunchRequest struct {
 }
 
 type WorkspaceContract struct {
-	AssignedPath       string
-	RepositoryRootPath string
-	ExpectedRootBranch string
+	AssignedPath        string
+	RepositoryRootPath  string
+	ExpectedRootBranch  string
+	CallerWorkspacePath string
 }
 
 type WorkspaceExcursion struct {

@@ -84,7 +84,7 @@ func ready(summary string) model.AgentTaskResultPayload {
 func TestCorrectionRunContinuesOnReviewedDirtyCheckout(t *testing.T) {
 	f := newCorrectionFixture(t)
 	ctx := t.Context()
-	worker := filepath.Join(f.root, "worker.txt")
+	worker := filepath.Join(f.task.Repository.Root, "worker.txt")
 	f.runWorker(t, 1, func() {
 		if err := os.WriteFile(worker, []byte("incomplete"), 0600); err != nil {
 			t.Fatal(err)
@@ -135,11 +135,11 @@ func TestCorrectionRunContinuesOnReviewedDirtyCheckout(t *testing.T) {
 func TestCorrectionRejectsUnreviewedInterveningChanges(t *testing.T) {
 	f := newCorrectionFixture(t)
 	f.runWorker(t, 1, func() {
-		os.WriteFile(filepath.Join(f.root, "worker.txt"), []byte("incomplete"), 0600)
+		os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("incomplete"), 0600)
 	}, ready("Added worker.txt"))
 	f.review(t, "changes_requested")
 
-	stray := filepath.Join(f.root, "elsewhere.txt")
+	stray := filepath.Join(f.task.Repository.Root, "elsewhere.txt")
 	if err := os.WriteFile(stray, []byte("unrelated human edit"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestCorrectionRejectsUnreviewedInterveningChanges(t *testing.T) {
 	if data, _ := os.ReadFile(stray); string(data) != "unrelated human edit" {
 		t.Fatalf("intervening edit was not preserved: %q", data)
 	}
-	if data, _ := os.ReadFile(filepath.Join(f.root, "worker.txt")); string(data) != "incomplete" {
+	if data, _ := os.ReadFile(filepath.Join(f.task.Repository.Root, "worker.txt")); string(data) != "incomplete" {
 		t.Fatalf("worker edit was not preserved: %q", data)
 	}
 	leases, err := f.svc.Store().AgentTaskRepositoryLeases(t.Context())
@@ -168,7 +168,7 @@ func TestCaptureCorrectionBaselineAdmitsCallerFixes(t *testing.T) {
 	f := newCorrectionFixture(t)
 	ctx := t.Context()
 	f.runWorker(t, 1, func() {
-		os.WriteFile(filepath.Join(f.root, "worker.txt"), []byte("incomplete"), 0600)
+		os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("incomplete"), 0600)
 	}, ready("Added worker.txt"))
 
 	if _, err := f.svc.CaptureAgentTaskCorrectionBaseline(ctx, f.task.ID); err == nil {
@@ -176,7 +176,7 @@ func TestCaptureCorrectionBaselineAdmitsCallerFixes(t *testing.T) {
 	}
 	f.review(t, "changes_requested")
 
-	fix := filepath.Join(f.root, "caller_fix.txt")
+	fix := filepath.Join(f.task.Repository.Root, "caller_fix.txt")
 	if err := os.WriteFile(fix, []byte("caller fix"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestCorrectionBaselineDoesNotSurviveItsRevision(t *testing.T) {
 	f := newCorrectionFixture(t)
 	ctx := t.Context()
 	f.runWorker(t, 1, func() {
-		os.WriteFile(filepath.Join(f.root, "worker.txt"), []byte("incomplete"), 0600)
+		os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("incomplete"), 0600)
 	}, ready("Added worker.txt"))
 	f.review(t, "changes_requested")
 	if _, err := f.svc.CaptureAgentTaskCorrectionBaseline(ctx, f.task.ID); err != nil {
@@ -216,7 +216,7 @@ func TestCorrectionBaselineDoesNotSurviveItsRevision(t *testing.T) {
 	captured := f.task.Repository.CorrectionBaseline
 
 	f.runWorker(t, 2, func() {
-		os.WriteFile(filepath.Join(f.root, "worker.txt"), []byte("still incomplete"), 0600)
+		os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("still incomplete"), 0600)
 	}, ready("Second attempt"))
 	current := f.reload(t)
 	if current.Repository.CorrectionBaseline != captured || current.Repository.CorrectionRevision != 1 {
@@ -233,7 +233,7 @@ func TestCorrectionBaselineDoesNotSurviveItsRevision(t *testing.T) {
 func TestAcceptedResultDoesNotAuthorizeCorrection(t *testing.T) {
 	f := newCorrectionFixture(t)
 	f.runWorker(t, 1, func() {
-		os.WriteFile(filepath.Join(f.root, "worker.txt"), []byte("good enough"), 0600)
+		os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("good enough"), 0600)
 	}, ready("Added worker.txt"))
 	f.review(t, "accept")
 	if _, err := f.svc.CaptureAgentTaskCorrectionBaseline(t.Context(), f.task.ID); err == nil {
@@ -250,7 +250,7 @@ func TestCaptureCorrectionBaselineRefusesHeldOwnershipAndBusyWriters(t *testing.
 	f := newCorrectionFixture(t)
 	ctx := t.Context()
 	f.runWorker(t, 1, func() {
-		os.WriteFile(filepath.Join(f.root, "worker.txt"), []byte("incomplete"), 0600)
+		os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("incomplete"), 0600)
 	}, ready("Added worker.txt"))
 	f.review(t, "changes_requested")
 

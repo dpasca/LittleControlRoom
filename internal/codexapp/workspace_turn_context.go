@@ -72,6 +72,9 @@ func managedWorkspaceTurnContextText(contract WorkspaceContract) string {
 	if contract.ExpectedRootBranch != "" {
 		lines = append(lines, "- The canonical root is expected to remain on branch "+contract.ExpectedRootBranch+".")
 	}
+	if contract.CallerWorkspacePath != "" && !sameWorkspacePath(contract.AssignedPath, contract.CallerWorkspacePath) {
+		lines = append(lines, "- The calling session's checkout is "+contract.CallerWorkspacePath+". Keep its files and branch unchanged; your task has its own workspace.")
+	}
 	if sameWorkspacePath(contract.AssignedPath, contract.RepositoryRootPath) {
 		lines = append(lines,
 			"- Do not switch the canonical root onto a feature/task branch for isolated work. Propose a linked worktree and ask the user before changing the root branch.",
@@ -90,6 +93,7 @@ func normalizeWorkspaceContract(contract WorkspaceContract) WorkspaceContract {
 	contract.AssignedPath = cleanWorkspacePath(contract.AssignedPath)
 	contract.RepositoryRootPath = cleanWorkspacePath(contract.RepositoryRootPath)
 	contract.ExpectedRootBranch = strings.TrimSpace(contract.ExpectedRootBranch)
+	contract.CallerWorkspacePath = cleanWorkspacePath(contract.CallerWorkspacePath)
 	return contract
 }
 
@@ -99,7 +103,8 @@ func (s *appServerSession) captureWorkspaceExcursionLocked(item map[string]json.
 		return WorkspaceExcursion{}, nil, false
 	}
 	cwd := cleanWorkspacePath(decodeRawString(item["cwd"]))
-	if cwd == "" || workspacePathContains(contract.AssignedPath, cwd) || !workspacePathContains(contract.RepositoryRootPath, cwd) {
+	if cwd == "" || workspacePathContains(contract.AssignedPath, cwd) ||
+		(!workspacePathContains(contract.RepositoryRootPath, cwd) && !workspacePathContains(contract.CallerWorkspacePath, cwd)) {
 		return WorkspaceExcursion{}, nil, false
 	}
 	itemID := strings.TrimSpace(decodeRawString(item["id"]))
@@ -125,7 +130,11 @@ func (s *appServerSession) captureWorkspaceExcursionLocked(item map[string]json.
 		CWD:                cwd,
 	}
 	if !s.workspaceWarningShown {
-		notice := fmt.Sprintf("Workspace boundary warning: this session is assigned to %s, but a command ran from the canonical root at %s. LCR did not block it; return to the assigned worktree before making changes.", contract.AssignedPath, cwd)
+		location := "canonical root"
+		if workspacePathContains(contract.CallerWorkspacePath, cwd) {
+			location = "calling session's checkout"
+		}
+		notice := fmt.Sprintf("Workspace boundary warning: this session is assigned to %s, but a command ran from the %s at %s. LCR did not block it; return to the assigned worktree before making changes.", contract.AssignedPath, location, cwd)
 		noticeID := "lcr-workspace-warning"
 		if itemID != "" {
 			noticeID += "-" + itemID

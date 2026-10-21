@@ -10,7 +10,7 @@ const (
 	// EngineerDispatchReplyAwaiting: the dispatcher started a worker turn and
 	// has not been told how it ended.
 	EngineerDispatchReplyAwaiting EngineerDispatchReplyState = "awaiting"
-	// EngineerDispatchReplyReady: the turn ended and the reply is stored but
+	// EngineerDispatchReplyReady: a turn report or delivery notice is stored but
 	// not yet in the mailbox, usually because the caller's identity is unknown.
 	EngineerDispatchReplyReady EngineerDispatchReplyState = "ready"
 	// EngineerDispatchReplySent: the reply is in the engineer mailbox.

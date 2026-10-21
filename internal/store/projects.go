@@ -563,6 +563,9 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		state.Name = filepath.Base(state.Path)
 	}
 	state.Kind = model.NormalizeProjectKind(state.Kind)
+	if state.WorktreeKind == model.WorktreeKindLinked && strings.TrimSpace(state.WorktreeInitialBranch) == "" {
+		state.WorktreeInitialBranch = strings.TrimSpace(state.RepoBranch)
+	}
 	state.PreferredSessionSource = model.NormalizeSessionSource(state.PreferredSessionSource)
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now()
@@ -617,6 +620,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			END,
 			worktree_initial_branch=CASE
 				WHEN projects.worktree_initial_branch != '' THEN projects.worktree_initial_branch
+				WHEN projects.worktree_kind = 'linked' AND projects.repo_branch != '' THEN projects.repo_branch
 				ELSE excluded.worktree_initial_branch
 			END,
 			worktree_merge_status=excluded.worktree_merge_status,

@@ -25,7 +25,7 @@ func TestStructuredRepositoryHandoffAndStoppedCaller(t *testing.T) {
 	}
 	snap := codexapp.Snapshot{ProjectPath: task.WorkspacePath, ThreadID: "worker-thread", Busy: true}
 	svc.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot { return []codexapp.Snapshot{snap} }, func() []projectrun.Snapshot { return nil })
-	if err := os.WriteFile(filepath.Join(root, "change.txt"), []byte("worker edit"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(task.Repository.Root, "change.txt"), []byte("worker edit"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	task, err = svc.store.SubmitAgentTaskResult(ctx, model.AgentTaskActor{ProjectPath: task.WorkspacePath, Provider: task.Provider, SessionKey: "worker"}, control.AgentTaskSubmitResultInput{TaskID: task.ID, RunID: 1, AgentTaskResultPayload: model.AgentTaskResultPayload{Outcome: "ready_for_review", Summary: "Added change.txt"}})

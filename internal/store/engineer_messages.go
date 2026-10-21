@@ -21,6 +21,9 @@ const engineerMessageSelect = `
 	FROM engineer_messages
 `
 
+// Unscheduled handoffs must not wait forever after an unavailable destination.
+const EngineerMessageDeliveryDeadline = 24 * time.Hour
+
 func (s *Store) CreateEngineerMessage(ctx context.Context, message control.EngineerMessage) (control.EngineerMessage, error) {
 	if s == nil || s.db == nil {
 		return control.EngineerMessage{}, errors.New("store unavailable")
@@ -119,11 +122,15 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 		}
 		message.ID = id
 	}
+	request := message
 	now := time.Now()
 	if message.CreatedAt.IsZero() {
 		message.CreatedAt = now
 	}
 	message.UpdatedAt = now
+	if message.DeliverAt.IsZero() && message.ExpiresAt.IsZero() {
+		message.ExpiresAt = message.CreatedAt.Add(EngineerMessageDeliveryDeadline)
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO engineer_messages(
 			id, operation_id, agent_task_id, agent_task_revision, project_path, provider, session_mode, requested_target_session_id,
@@ -143,7 +150,7 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 		if message.OperationID != "" {
 			existing, found, lookupErr := s.FindEngineerMessageByOperation(ctx, message.OperationID)
 			if lookupErr == nil && found {
-				if !sameEngineerMessageRequest(existing, message) {
+				if !sameEngineerMessageRequest(existing, request) {
 					return control.EngineerMessage{}, errors.New("control operation is already bound to a different engineer message")
 				}
 				return existing, s.linkEngineerMessageToAgentTask(ctx, existing)
@@ -195,7 +202,7 @@ func sameEngineerMessageRequest(existing, proposed control.EngineerMessage) bool
 		existing.TodoLabel == proposed.TodoLabel &&
 		existing.TodoText == proposed.TodoText &&
 		existing.DeliverAt.Unix() == proposed.DeliverAt.Unix() &&
-		existing.ExpiresAt.Unix() == proposed.ExpiresAt.Unix() &&
+		(proposed.ExpiresAt.IsZero() && proposed.DeliverAt.IsZero() || existing.ExpiresAt.Unix() == proposed.ExpiresAt.Unix()) &&
 		sameUnattended(existing.Unattended, proposed.Unattended)
 }
 
@@ -298,6 +305,13 @@ func (s *Store) RequeueDeliveringEngineerMessages(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("requeue delivering engineer messages: %w", err)
 	}
+	// Older immediate messages had no deadline. Derive it from the original
+	// enqueue time, never from restart time, so repeated restarts cannot extend it.
+	_, err = s.db.ExecContext(ctx, `UPDATE engineer_messages SET expires_at = created_at + ?
+		WHERE state = ? AND expires_at = 0 AND deliver_at = 0`, int64(EngineerMessageDeliveryDeadline/time.Second), string(control.EngineerMessageQueued))
+	if err != nil {
+		return fmt.Errorf("backfill engineer message deadlines: %w", err)
+	}
 	return nil
 }
 
@@ -323,7 +337,8 @@ func (s *Store) ClaimEngineerMessage(ctx context.Context, id, targetSessionID st
 			last_error = '',
 			updated_at = ?
 		WHERE id = ? AND state = ? AND (follow_current_session = 0 OR ? <> '') AND deliver_at <= ?
-	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued), targetSessionID, time.Now().Unix())
+		  AND (expires_at = 0 OR expires_at >= ?)
+	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued), targetSessionID, time.Now().Unix(), time.Now().Unix())
 	if err != nil {
 		return control.EngineerMessage{}, false, fmt.Errorf("claim engineer message: %w", err)
 	}
@@ -352,6 +367,16 @@ func (s *Store) RecordEngineerMessageState(
 	statusText string,
 	stateErr error,
 ) (control.EngineerMessage, error) {
+	return s.recordEngineerMessageState(ctx, id, state, targetSessionID, statusText, stateErr, "")
+}
+
+// RecordEngineerMessageWaiting persists both the running receipt and a single
+// exact-caller notice per waiting reason, in the same transaction.
+func (s *Store) RecordEngineerMessageWaiting(ctx context.Context, id, reason, status string) (control.EngineerMessage, error) {
+	return s.recordEngineerMessageState(ctx, id, control.EngineerMessageQueued, "", status, nil, reason)
+}
+
+func (s *Store) recordEngineerMessageState(ctx context.Context, id string, state control.EngineerMessageState, targetSessionID, statusText string, stateErr error, waitingReason string) (control.EngineerMessage, error) {
 	if s == nil || s.db == nil {
 		return control.EngineerMessage{}, errors.New("store unavailable")
 	}
@@ -383,6 +408,9 @@ func (s *Store) RecordEngineerMessageState(
 	if stateErr != nil {
 		errText = strings.TrimSpace(stateErr.Error())
 	}
+	if waitingReason != "" {
+		errText = statusText
+	}
 	var deliveredAt any
 	if state == control.EngineerMessageDelivered {
 		deliveredAt = now.Unix()
@@ -409,6 +437,15 @@ func (s *Store) RecordEngineerMessageState(
 			return control.EngineerMessage{}, err
 		}
 	}
+	if state == control.EngineerMessageFailed || waitingReason != "" {
+		kind := waitingReason
+		if state == control.EngineerMessageFailed {
+			kind = "failed"
+		}
+		if err := recordEngineerMessageNotice(ctx, tx, current, kind, firstNonEmptyString(statusText, errText), now); err != nil {
+			return control.EngineerMessage{}, err
+		}
+	}
 	receipt := control.EngineerMessageReceipt{
 		MessageID:       current.ID,
 		State:           state,
@@ -416,6 +453,7 @@ func (s *Store) RecordEngineerMessageState(
 		ProjectPath:     current.ProjectPath,
 		TargetSessionID: current.TargetSessionID,
 		Status:          statusText,
+		ExpiresAt:       current.ExpiresAt,
 	}
 	resultJSON, _ := json.Marshal(map[string]any{
 		"status":   statusText,
@@ -576,9 +614,8 @@ func (s *Store) ListScheduledEngineerMessages(ctx context.Context, limit int) ([
 	return messages, rows.Err()
 }
 
-// ExpireOverdueEngineerMessages fails queued wakeups whose grace window has
-// passed, so a Mac that slept through them reports a miss instead of replaying
-// stale work later. It returns the messages it expired.
+// ExpireOverdueEngineerMessages fails queued handoffs after their delivery
+// deadline, including scheduled wakeups outside their grace window.
 func (s *Store) ExpireOverdueEngineerMessages(ctx context.Context, now time.Time) ([]control.EngineerMessage, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("store unavailable")
@@ -608,6 +645,9 @@ func (s *Store) ExpireOverdueEngineerMessages(ctx context.Context, now time.Time
 	for _, message := range overdue {
 		reason := fmt.Sprintf("Missed wakeup: scheduled for %s and not delivered by %s.",
 			message.DeliverAt.Format(time.RFC3339), message.ExpiresAt.Format(time.RFC3339))
+		if !message.Scheduled() {
+			reason = fmt.Sprintf("Engineer message delivery deadline exceeded: queued at %s and not delivered by %s.", message.CreatedAt.Format(time.RFC3339), message.ExpiresAt.Format(time.RFC3339))
+		}
 		updated, err := s.RecordEngineerMessageState(ctx, message.ID, control.EngineerMessageFailed, "", reason, errors.New(reason))
 		if err != nil {
 			return expired, err

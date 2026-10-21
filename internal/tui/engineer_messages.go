@@ -36,6 +36,7 @@ type engineerMessagesLoadedMsg struct {
 	afterCreatedAt time.Time
 	afterID        string
 	expired        []control.EngineerMessage
+	noticeErr      error
 	err            error
 }
 
@@ -120,6 +121,10 @@ func (m Model) createEngineerMessageCmd(inv control.Invocation, input control.En
 			if err != nil {
 				return engineerMessageQueuedMsg{message: message, err: err}
 			}
+			message.CreatedAt = op.StartedAt
+			if message.CreatedAt.IsZero() {
+				message.CreatedAt = op.CreatedAt
+			}
 			if op.ConfirmationBy == control.ConfirmationProjectCollaboration {
 				message.Prompt = "LCR project collaboration is approved between " + op.ProjectPath + " and " + message.ProjectPath + ". Coordinate through engineer.send_prompt using exact session targets. Continue already-authorized work without new approval checkpoints; respect task limits and explicit stops. Do not send acknowledgment-only replies.\n\n" + message.Prompt
 			}
@@ -153,6 +158,7 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 			}
 		}
 		expired, expireErr := svc.Store().ExpireOverdueEngineerMessages(ctx, time.Now())
+		noticeErr := svc.QueuePendingEngineerDispatchReplies(ctx, engineerMessagePollLimit)
 		messages, err := svc.Store().ListQueuedEngineerMessagesAfter(ctx, afterCreatedAt, afterID, engineerMessagePollLimit)
 		return engineerMessagesLoadedMsg{
 			messages:       messages,
@@ -160,6 +166,7 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 			afterCreatedAt: afterCreatedAt,
 			afterID:        afterID,
 			expired:        expired,
+			noticeErr:      noticeErr,
 			err:            errors.Join(err, expireErr),
 		}
 	}
@@ -224,21 +231,32 @@ type engineerMessageDisposition struct {
 	deliver       bool
 	wait          bool
 	failure       error
+	waitReason    string
+	waitStatus    string
 }
 
 func (m Model) engineerMessageDisposition(message control.EngineerMessage) engineerMessageDisposition {
 	project, err := m.resolveControlProjectRef(message.ProjectPath, "")
 	if err != nil {
-		return engineerMessageDisposition{failure: err}
+		return engineerMessageDisposition{wait: true, waitReason: "project-unloaded", waitStatus: "Message is waiting for the destination project to load; delivery will retry automatically until its deadline."}
 	}
 	if !project.PresentOnDisk {
-		return engineerMessageDisposition{project: project, failure: fmt.Errorf("%s delivery requires a folder present on disk", message.Provider.Label())}
+		return engineerMessageDisposition{project: project, wait: true, waitReason: "workspace-unavailable", waitStatus: "Message is waiting for the destination folder to become available; delivery will retry automatically until its deadline."}
 	}
 	provider := codexProviderFromControlProvider(message.Provider)
 	if provider == "" {
 		return engineerMessageDisposition{project: project, failure: errors.New("engineer message provider is unavailable")}
 	}
 	forceNew := message.SessionMode == control.SessionModeNew
+	snapshot, live := m.liveEmbeddedSnapshotForProject(project.Path, provider)
+	if !forceNew && !live && (message.AgentTaskRevision > 0 || message.FollowCurrentSession) {
+		d := engineerMessageDisposition{project: project, wait: true}
+		if message.FollowCurrentSession {
+			d.waitReason = "no-current-session"
+			d.waitStatus = "Message is waiting: no current engineer session is open. Open or start a session to receive it before its delivery deadline."
+		}
+		return d
+	}
 	if block, blocked := m.embeddedLaunchBlock(project, provider, forceNew); blocked {
 		return engineerMessageDisposition{project: project, wait: true, failure: errors.New(block.Message)}
 	}
@@ -249,10 +267,6 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 		return engineerMessageDisposition{project: project, deliver: true}
 	}
 	targetSessionID := strings.TrimSpace(message.TargetSessionID)
-	snapshot, live := m.liveEmbeddedSnapshotForProject(project.Path, provider)
-	if !live && (message.AgentTaskRevision > 0 || message.FollowCurrentSession) {
-		return engineerMessageDisposition{project: project, wait: true}
-	}
 	if !live {
 		return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 	}
@@ -300,7 +314,10 @@ func (m Model) applyEngineerMessagesLoaded(msg engineerMessagesLoadedMsg) (tea.M
 		m.engineerMessageDeliveries = make(map[string]struct{})
 	}
 	for _, missed := range msg.expired {
-		m.appendBackgroundErrorLogEntry("Scheduled wakeup missed", errors.New(strings.TrimSpace(missed.LastError)), missed.ProjectPath)
+		m.appendBackgroundErrorLogEntry("Engineer message delivery deadline exceeded", errors.New(strings.TrimSpace(missed.LastError)), missed.ProjectPath)
+	}
+	if msg.noticeErr != nil {
+		m.appendBackgroundErrorLogEntry("Engineer delivery notice queue failed; retrying", msg.noticeErr, "")
 	}
 	if msg.err != nil {
 		m.appendBackgroundErrorLogEntry("Engineer message mailbox refresh failed", msg.err, "")
@@ -322,6 +339,10 @@ func (m Model) applyEngineerMessagesLoaded(msg engineerMessagesLoadedMsg) (tea.M
 			m.engineerMessageDeliveries[message.ID] = struct{}{}
 			return m, m.recordEngineerMessageStateCmd(message, control.EngineerMessageFailed, disposition.bindSessionID, "Engineer message delivery failed: "+disposition.failure.Error(), disposition.failure)
 		case disposition.wait:
+			if disposition.waitReason != "" && message.LastError != disposition.waitStatus {
+				m.engineerMessageDeliveries[message.ID] = struct{}{}
+				return m, m.recordEngineerMessageWaitingCmd(message, disposition.waitReason, disposition.waitStatus)
+			}
 			continue
 		case disposition.deliver:
 			m.engineerMessageDeliveries[message.ID] = struct{}{}
@@ -360,7 +381,7 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 	message := msg.message
 	project, err := m.resolveControlProjectRef(message.ProjectPath, "")
 	if err != nil {
-		return m, m.recordEngineerMessageStateCmd(message, control.EngineerMessageFailed, message.TargetSessionID, "Engineer message delivery failed: "+err.Error(), err)
+		return m, m.recordEngineerMessageWaitingCmd(message, "project-unloaded", "Message is waiting for the destination project to load; delivery will retry automatically until its deadline.")
 	}
 	provider := codexProviderFromControlProvider(message.Provider)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
@@ -396,6 +417,23 @@ func (m Model) applyEngineerMessageClaimed(msg engineerMessageClaimedMsg) (tea.M
 	cmd = m.todoEngineerLaunchTrackingCmd(message.ProjectPath, message.TodoID, cmd)
 	m.registerWakeupGrant(message)
 	return m, m.engineerMessageDeliveryCmd(message, cmd)
+}
+
+func (m Model) recordEngineerMessageWaitingCmd(message control.EngineerMessage, reason, status string) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, engineerMessageStoreTimeout)
+		defer cancel()
+		recorded, err := svc.Store().RecordEngineerMessageWaiting(ctx, message.ID, reason, status)
+		if err != nil {
+			recorded = message // The next poll can retry this atomic receipt/notice.
+		}
+		return engineerMessageDeliveryRecordedMsg{message: recorded, desiredState: control.EngineerMessageQueued, status: status, recordErr: err}
+	}
 }
 
 func engineerMessageDeliveryPrompt(message control.EngineerMessage) string {
@@ -679,6 +717,7 @@ func engineerMessageReceipt(message control.EngineerMessage, status string) *con
 		ProjectPath:     message.ProjectPath,
 		TargetSessionID: message.TargetSessionID,
 		Status:          strings.TrimSpace(status),
+		ExpiresAt:       message.ExpiresAt,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,7 +31,14 @@ func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTa
 		input.Repository = model.AgentTaskRepository{Write: true, Root: canonicalRepositoryPath(root), State: "pending"}
 	}
 	createdWorkspace := ""
+	origin := firstNonEmpty(input.OriginWorktreePath, input.OriginProjectPath)
+	if origin != "" && input.WorkspacePath != "" && repositoryPathsOverlap(origin, input.WorkspacePath) {
+		return model.AgentTask{}, fmt.Errorf("agent task workspace must be separate from the caller's checkout %s", origin)
+	}
 	if input.WorkspacePath == "" && agentTaskNeedsWorkspace(input.Kind) {
+		if repositoryPathContains(origin, appfs.InternalWorkspaceRoot(s.cfg.DataDir)) {
+			return model.AgentTask{}, fmt.Errorf("agent task data directory must be outside the caller's checkout %s", origin)
+		}
 		workspace, err := appfs.CreateInternalWorkspace(s.cfg.DataDir, agentTaskWorkspacePrefix)
 		if err != nil {
 			return model.AgentTask{}, err
@@ -38,10 +46,29 @@ func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTa
 		input.WorkspacePath = workspace
 		createdWorkspace = workspace
 	}
+	if createdWorkspace != "" && repositoryPathsOverlap(origin, createdWorkspace) {
+		_ = os.RemoveAll(createdWorkspace)
+		return model.AgentTask{}, fmt.Errorf("agent task data directory must be outside the caller's checkout %s", origin)
+	}
+	// Session-created tasks get a checkout of their own, including nested tasks.
+	// Host-created repair tasks keep their explicit repository lease contract.
+	if createdWorkspace != "" && origin != "" && (input.OriginSessionKey != "" || input.OriginSessionID != "" || input.ParentTaskID != "") {
+		if _, err := os.Stat(filepath.Join(origin, ".git")); err == nil {
+			if err := s.prepareAgentTaskCheckout(ctx, origin, &input); err != nil {
+				_ = s.removeAgentTaskWorkspace(context.Background(), input.WorkspacePath, origin)
+				return model.AgentTask{}, err
+			}
+		} else if os.IsNotExist(err) && !input.Repository.Write {
+			input.Repository = model.AgentTaskRepository{Isolated: true, Root: canonicalRepositoryPath(input.WorkspacePath), State: "isolated"}
+		} else {
+			_ = os.RemoveAll(createdWorkspace)
+			return model.AgentTask{}, fmt.Errorf("cannot prepare isolated repository task from %s: %w", origin, err)
+		}
+	}
 	task, err := s.store.CreateAgentTask(ctx, input)
 	if err != nil {
 		if createdWorkspace != "" {
-			_ = os.RemoveAll(createdWorkspace)
+			_ = s.removeAgentTaskWorkspace(context.Background(), createdWorkspace, origin)
 		}
 		return model.AgentTask{}, err
 	}
@@ -49,7 +76,7 @@ func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTa
 		if err := s.store.SetResourceCategory(ctx, model.CategoryResourceAgentTask, task.ID, input.CategoryID); err != nil {
 			_ = s.store.DeleteAgentTask(ctx, task.ID)
 			if createdWorkspace != "" {
-				_ = os.RemoveAll(createdWorkspace)
+				_ = s.removeAgentTaskWorkspace(context.Background(), createdWorkspace, origin)
 			}
 			return model.AgentTask{}, err
 		}
@@ -58,7 +85,7 @@ func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTa
 			return model.AgentTask{}, err
 		}
 	}
-	return task, nil
+	return s.refreshAgentTaskWorkspace(ctx, task), nil
 }
 
 func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.AgentTask, error) {
@@ -86,6 +113,7 @@ func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.Ag
 		if strings.TrimSpace(updated.ID) != "" {
 			tasks[i] = updated
 		}
+		tasks[i] = s.refreshAgentTaskWorkspace(ctx, tasks[i])
 	}
 	return tasks, nil
 }
@@ -105,7 +133,7 @@ func (s *Service) PurgeExpiredAgentTasks(ctx context.Context, now time.Time) (in
 		}
 		workspace := strings.TrimSpace(task.WorkspacePath)
 		if workspace != "" && appfs.IsManagedInternalPath(workspace, managedRoots) {
-			if err := os.RemoveAll(workspace); err != nil {
+			if err := s.removeAgentTaskWorkspace(ctx, workspace, firstNonEmpty(task.OriginProjectPath, task.OriginWorktreePath)); err != nil {
 				return purged, err
 			}
 		}
@@ -118,7 +146,11 @@ func (s *Service) PurgeExpiredAgentTasks(ctx context.Context, now time.Time) (in
 }
 
 func (s *Service) GetAgentTask(ctx context.Context, taskID string) (model.AgentTask, error) {
-	return s.store.GetAgentTask(ctx, taskID)
+	task, err := s.store.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return task, err
+	}
+	return s.refreshAgentTaskWorkspace(ctx, task), nil
 }
 
 // RecordAgentTaskEngineerSession retains an identity announced after launch (or

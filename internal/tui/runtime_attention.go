@@ -259,6 +259,9 @@ func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinner
 	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
 		return detailWarningStyle.Render("!")
 	}
+	if project.WorktreeBranchChanged() {
+		return detailWarningStyle.Render("!")
+	}
 	if project.RepoDirty {
 		return detailDangerStyle.Render("!")
 	}

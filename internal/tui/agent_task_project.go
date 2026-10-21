@@ -250,9 +250,25 @@ func agentTaskListStatus(task model.AgentTask) string {
 }
 
 func agentTaskListSummary(task model.AgentTask) string {
+	metadata := ""
+	if branch := task.WorkspaceGit.Branch; branch != "" {
+		state := "clean"
+		if task.WorkspaceGit.Dirty {
+			state = "dirty"
+		}
+		if task.WorkspaceGit.Conflict {
+			state = "conflicts"
+		}
+		if initial := task.Repository.InitialBranch; initial != "" && initial != branch {
+			state += ", branch changed"
+		}
+		metadata = branch + " · " + state + " · "
+	} else if task.WorkspaceGit.Error != "" {
+		metadata = "workspace unavailable · "
+	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		if compact := liveEngineerCompactSummary(summary); compact != "" {
-			return compact
+			return metadata + compact
 		}
 	}
 	parts := []string{fmt.Sprintf("%s task", agentTaskListStatus(task))}
@@ -264,7 +280,7 @@ func agentTaskListSummary(task model.AgentTask) string {
 	if sessionID := taskSessionIDForProvider(task, codexProviderFromSessionSource(agentTaskDisplaySource(task))); sessionID != "" {
 		parts = append(parts, shortID(sessionID))
 	}
-	return strings.Join(parts, " - ")
+	return metadata + strings.Join(parts, " - ")
 }
 
 // Recovery tasks persist their entire engineer prompt as the summary so the
@@ -293,6 +309,22 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 	}
 	lines := []string{renderWrappedDetailFieldLimited("Summary", summaryStyle, width, summary, agentTaskDetailSummaryMaxLines)}
 	lines = append(lines, detailField("Path", detailValueStyle.Render(task.WorkspacePath)))
+	if branch := task.WorkspaceGit.Branch; branch != "" {
+		state := "clean"
+		if task.WorkspaceGit.Dirty {
+			state = "local changes"
+		}
+		if task.WorkspaceGit.Conflict {
+			state = "conflicts"
+		}
+		lines = append(lines, renderWrappedDetailField("Workspace", detailValueStyle, width, branch+" · "+state))
+		if initial := task.Repository.InitialBranch; initial != "" && branch != initial {
+			lines = append(lines, renderWrappedDetailField("Branch warning", detailAttentionValueStyle, width, "Branch changed from "+initial+" to "+branch+"."))
+		}
+	}
+	if problem := task.WorkspaceGit.Error; problem != "" {
+		lines = append(lines, renderWrappedDetailField("Workspace issue", detailAttentionValueStyle, width, problem))
+	}
 	lines = appendDetailFields(lines, width,
 		detailField("Kind", detailValueStyle.Render("agent task")),
 		detailField("Status", agentTaskStatusStyle(task).Render(string(model.NormalizeAgentTaskStatus(task.Status)))),
@@ -326,6 +358,9 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 			owner = "owned by this task"
 		}
 		lines = append(lines, renderWrappedDetailField("Write ownership", detailValueStyle, width, owner))
+		if !task.Repository.Isolated {
+			lines = append(lines, renderWrappedDetailField("Workspace warning", detailAttentionValueStyle, width, "This task shares the affiliated checkout with its caller. Keep the branch unchanged and wait for write ownership to be released before other work."))
+		}
 		if boundary := agentTaskCorrectionBoundarySummary(task); boundary != "" {
 			lines = append(lines, renderWrappedDetailField("Correction baseline", detailValueStyle, width, boundary))
 		}
@@ -461,7 +496,7 @@ func agentTaskOriginSummary(task model.AgentTask) string {
 		parts = append(parts, provider.Label())
 	}
 	if sessionID := strings.TrimSpace(task.OriginSessionID); sessionID != "" {
-		parts = append(parts, shortID(sessionID))
+		parts = append(parts, sessionID)
 	}
 	return strings.Join(parts, " ")
 }

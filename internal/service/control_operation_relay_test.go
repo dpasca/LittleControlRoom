@@ -81,3 +81,51 @@ func TestControlOperationRelayClaimsAndPublishesProposal(t *testing.T) {
 		t.Fatalf("claimed status = %q, want waiting_for_confirmation", claimed.Status)
 	}
 }
+
+func TestControlOperationRelayRetriesRecoveredSendUntilMailboxAcknowledges(t *testing.T) {
+	svc, st := newEngineerDispatchTestService(t)
+	op := createDispatchTestOperation(t, st, "lcrop_recover_buffered_send", dispatchCallerPath, "codex", dispatchCallerKey,
+		control.CapabilityEngineerSendPrompt, control.EngineerSendPromptInput{ProjectPath: dispatchWorkerPath, Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew, Prompt: "Recover queued work"})
+	if _, err := st.UpdateControlOperationStatus(t.Context(), op.ID, control.OperationRunning, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	bus := events.NewBus()
+	svc = New(svc.cfg, st, bus, nil)
+	ch, unsubscribe := bus.Subscribe(1)
+	defer unsubscribe()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); svc.StartControlOperationRelay(ctx) }()
+	defer func() { cancel(); <-done }()
+	select {
+	case event := <-ch:
+		if event.Type != events.ControlProposed || event.Payload["operation_id"] != op.ID {
+			t.Fatalf("expected recovered send: %+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay did not publish recovery")
+	}
+	// The UI has not acknowledged recovery. A startup burst overflows its
+	// event buffer; delivery must still be retried rather than forgotten.
+	bus.Publish(events.Event{Type: events.ScanCompleted})
+	bus.Publish(events.Event{Type: events.ScanCompleted})
+	select {
+	case event := <-ch:
+		if event.Type != events.EventsDropped {
+			t.Fatalf("expected a dropped startup event, got %+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("relay did not publish recovery")
+	}
+	select {
+	case event := <-ch:
+		if event.Type != events.ControlProposed || event.Payload["operation_id"] != op.ID {
+			t.Fatalf("lost recovery was not retried: %+v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("confirmed send was silently lost after startup overflow")
+	}
+	if _, err := st.CreateEngineerMessage(t.Context(), control.EngineerMessage{OperationID: op.ID, ProjectPath: dispatchWorkerPath, Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew, Prompt: "Recover queued work"}); err != nil {
+		t.Fatal(err)
+	}
+}
