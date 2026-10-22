@@ -399,6 +399,13 @@ func (s *Service) ArchiveAgentTask(ctx context.Context, taskID string) (model.Ag
 		task, _ := s.store.GetAgentTask(ctx, taskID)
 		return task, err
 	}
+	task, err := s.store.GetAgentTask(ctx, taskID)
+	if err != nil {
+		return model.AgentTask{}, err
+	}
+	if err := s.store.StopStructuredTask(ctx, task, false); err != nil {
+		return task, err
+	}
 	if _, err := s.ConsumeAgentTaskResult(ctx, taskID, "operator"); err != nil {
 		return model.AgentTask{}, err
 	}

@@ -151,6 +151,56 @@ func TestWorktreeRemoveControlCleansGitStoreAndTUI(t *testing.T) {
 	}
 }
 
+func TestWorktreeRemoveControlRemovesOwningTaskImmediately(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "legacy"}[legacy], func(t *testing.T) {
+			m, root, path := newWorktreeControlFixture(t)
+			workspace := path
+			if legacy {
+				workspace = filepath.Join(filepath.Dir(path), "legacy-task")
+				if err := os.Mkdir(workspace, 0700); err != nil {
+					t.Fatal(err)
+				}
+				nested := filepath.Join(workspace, "repo")
+				runTUITestGit(t, root, "worktree", "move", path, nested)
+				path = nested
+				if err := m.svc.Store().UpsertProjectState(t.Context(), model.ProjectState{
+					Path: path, Name: "repo", PresentOnDisk: true, InScope: true,
+					WorktreeKind: model.WorktreeKindLinked, WorktreeRootPath: root, UpdatedAt: time.Now(),
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			task, err := m.svc.Store().CreateAgentTask(t.Context(), model.CreateAgentTaskInput{
+				Title: "finished worker", WorkspacePath: workspace, OriginProjectPath: root, Status: model.AgentTaskStatusCompleted,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.openAgentTasks = []model.AgentTask{task}
+			m.rebuildProjectList(workspace)
+			msg := m.removeWorktreeControlCmd(control.WorktreeRemoveInput{WorktreePath: path})().(worktreeActionMsg)
+			if msg.err != nil || !msg.controlRemovalResult.WorktreeRemoved {
+				t.Fatalf("removal failed: %+v", msg)
+			}
+			updated, _ := m.Update(msg)
+			m = updated.(Model)
+			if len(m.openAgentTasks) != 0 {
+				t.Fatal("deleted task stayed visible until a later reload")
+			}
+			for _, row := range m.projects {
+				if row.Kind == model.ProjectKindAgentTask && row.Path == workspace {
+					t.Fatal("deleted task row remains")
+				}
+			}
+			archived, err := m.svc.Store().GetAgentTask(t.Context(), task.ID)
+			if err != nil || archived.Status != model.AgentTaskStatusArchived {
+				t.Fatalf("task record not archived: %+v, %v", archived, err)
+			}
+		})
+	}
+}
+
 func TestWorktreeRemoveControlRejectsUnsafeTargetsAndReportsFailure(t *testing.T) {
 	for _, target := range []string{"primary", "untracked", "symlink"} {
 		t.Run(target, func(t *testing.T) {

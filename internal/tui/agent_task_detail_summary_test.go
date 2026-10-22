@@ -17,6 +17,23 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func TestAgentTaskSummaryUsesCachedWorkspacePresence(t *testing.T) {
+	task := model.AgentTask{
+		ID: "task-missing", WorkspacePath: "/missing/task", Status: model.AgentTaskStatusCompleted,
+		WorkspaceGit: model.AgentTaskWorkspaceGit{Missing: true, Error: "Workspace unavailable"},
+	}
+	summary, err := projectSummaryForAgentTask(task)
+	if err != nil || summary.PresentOnDisk || !strings.Contains(summary.LatestSessionSummary, "workspace unavailable") {
+		t.Fatalf("missing workspace presented as available: %+v, %v", summary, err)
+	}
+	// A refreshed cache is authoritative; rendering must not stat this fake path.
+	task.WorkspaceGit = model.AgentTaskWorkspaceGit{}
+	summary, err = projectSummaryForAgentTask(task)
+	if err != nil || !summary.PresentOnDisk {
+		t.Fatalf("renderer ignored cached presence: %+v, %v", summary, err)
+	}
+}
+
 func TestRenderAgentTaskDetailCondensesLongSummary(t *testing.T) {
 	cleanup := staleWorktreeRecoveryError{Result: staleWorktreeCleanupResult{
 		Candidate: service.StaleWorktreeCleanupCandidate{

@@ -143,7 +143,7 @@ Opt coding delegations into structured_results=true. This authorizes bounded res
 
 ## Progressive LCR control discovery
 
-For linked worktree cleanup, discover the worktree control domain and describe worktree.remove. Resolve the exact absolute path with project queries, then propose removal through LCR. Confirmation permanently deletes all checkout contents, cleans Git registrations and LCR work state, and refreshes the TUI on completion. Branches and conversation history are retained. Removing a directory outside LCR is only reconciled by a later scan and can leave Git registrations or visible residue behind.
+For linked worktree cleanup, discover the worktree control domain and describe worktree.remove. Resolve the exact absolute path with project queries, then propose removal through LCR. Confirmation permanently deletes all checkout contents, cleans Git registrations and LCR work state, moves the owning agent task and tasks launched from that checkout to Trash, and refreshes the TUI on completion. This includes legacy task checkouts at workspace/repo. For task removal without immediate disk reclamation, use agent_task.close with status=archived; its workspace is retained for seven days. Branches and conversation history are retained. Removing a directory outside LCR is only reconciled by a later scan and can leave Git registrations or visible residue behind.
 
 For an LCR action beyond the direct runtime and repository-scoped TODO tools:
 

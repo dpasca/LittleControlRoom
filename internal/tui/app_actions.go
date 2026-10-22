@@ -378,6 +378,13 @@ func (m *Model) applyRemovedProjectLocally(projectPath, selectPath string) {
 	}
 	currentSelectedPath := m.currentSelectedProjectPath()
 	m.removeProjectSummary(projectPath)
+	retainedTasks := make([]model.AgentTask, 0, len(m.openAgentTasks))
+	for _, task := range m.openAgentTasks {
+		if !model.AgentTaskMatchesRemovedWorktree(task, projectPath) {
+			retainedTasks = append(retainedTasks, task)
+		}
+	}
+	m.openAgentTasks = retainedTasks
 
 	if normalizeProjectPath(m.detail.Summary.Path) == projectPath {
 		if selectPath != "" {

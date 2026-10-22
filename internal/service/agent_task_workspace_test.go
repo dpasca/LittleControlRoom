@@ -12,6 +12,31 @@ import (
 	"lcroom/internal/projectrun"
 )
 
+func TestAgentTaskWorkspacePresenceRefreshClearsStaleGitState(t *testing.T) {
+	svc, _, root := repositoryTestFixture(t)
+	task, err := svc.CreateAgentTask(t.Context(), model.CreateAgentTaskInput{Title: "workspace presence", OriginProjectPath: root, OriginSessionKey: "caller"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.WorkspaceGit.Missing || task.WorkspaceGit.Branch == "" {
+		t.Fatalf("existing workspace unavailable: %+v", task.WorkspaceGit)
+	}
+	if err := os.RemoveAll(task.WorkspacePath); err != nil {
+		t.Fatal(err)
+	}
+	task = svc.refreshAgentTaskWorkspace(t.Context(), task)
+	if !task.WorkspaceGit.Missing || task.WorkspaceGit.Error == "" || task.WorkspaceGit.Branch != "" {
+		t.Fatalf("missing workspace retained stale state: %+v", task.WorkspaceGit)
+	}
+	if err := os.Mkdir(task.WorkspacePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	task = svc.refreshAgentTaskWorkspace(t.Context(), task)
+	if task.WorkspaceGit.Missing || task.WorkspaceGit.Error != "Isolated workspace is missing its Git metadata" {
+		t.Fatalf("restored directory retained missing state: %+v", task.WorkspaceGit)
+	}
+}
+
 func TestSessionAgentTasksIsolateNestedWorkAndPreserveCaller(t *testing.T) {
 	svc, _, root := repositoryTestFixture(t)
 	if err := os.WriteFile(filepath.Join(root, "catalog.txt"), []byte("parent edits"), 0600); err != nil {

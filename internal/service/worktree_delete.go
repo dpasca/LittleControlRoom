@@ -229,19 +229,22 @@ func (s *Service) deleteWorktree(ctx context.Context, path string) error {
 		return fmt.Errorf("directory deleted; cannot clear saved launch destination: %w", err)
 	}
 	s.forgetProjectState(path)
-	archivedTasks := s.archiveAgentTasksForRemovedWorktree(ctx, path)
+	archivedTasks, taskErr := s.archiveAgentTasksForRemovedWorktree(ctx, path)
 	now := time.Now()
 	if s.bus != nil {
 		s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: path, Payload: map[string]string{"action": "remove_worktree", "root_path": root, "archived_tasks": strconv.Itoa(archivedTasks)}})
 	}
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: path, Type: string(events.ActionApplied), Payload: "remove_worktree"})
+	if taskErr != nil {
+		return fmt.Errorf("worktree deleted; agent task cleanup incomplete: %w", taskErr)
+	}
 	return nil
 }
 
-// archiveAgentTasksForRemovedWorktree moves open agent tasks launched from the
-// removed worktree to the trash so they do not linger as orphans. The checkout
-// is already gone, so failures are best-effort and never fail the removal.
-func (s *Service) archiveAgentTasksForRemovedWorktree(ctx context.Context, worktreePath string) int {
+// archiveAgentTasksForRemovedWorktree also handles the task owning the deleted
+// checkout. Report failures so a retry can finish lifecycle cleanup after the
+// directory and its Git registration have already been removed.
+func (s *Service) archiveAgentTasksForRemovedWorktree(ctx context.Context, worktreePath string) (int, error) {
 	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{
 		Statuses: []model.AgentTaskStatus{
 			model.AgentTaskStatusActive,
@@ -250,19 +253,26 @@ func (s *Service) archiveAgentTasksForRemovedWorktree(ctx context.Context, workt
 		},
 	})
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	archived := 0
+	var errs []error
+	worktreePath = canonicalRepositoryPath(worktreePath)
 	for _, task := range tasks {
-		origin := strings.TrimSpace(task.OriginWorktreePath)
-		if origin == "" || !samePath(origin, worktreePath) {
+		ownership := task
+		ownership.WorkspacePath = canonicalRepositoryPath(task.WorkspacePath)
+		ownership.OriginWorktreePath = canonicalRepositoryPath(task.OriginWorktreePath)
+		ownership.Repository.Root = canonicalRepositoryPath(task.Repository.Root)
+		if !model.AgentTaskMatchesRemovedWorktree(ownership, worktreePath) {
 			continue
 		}
-		if _, err := s.ArchiveAgentTask(ctx, task.ID); err == nil {
-			archived++
+		if _, err := s.ArchiveAgentTask(ctx, task.ID); err != nil {
+			errs = append(errs, fmt.Errorf("archive task %s: %w", task.ID, err))
+			continue
 		}
+		archived++
 	}
-	return archived
+	return archived, errors.Join(errs...)
 }
 
 // All traversal is anchored to directory descriptors. Symlinks are unlinked,

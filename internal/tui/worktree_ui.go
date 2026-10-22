@@ -2891,6 +2891,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	if !confirm.ResidualCleanup || individualResidualCleanup {
 		lines = append(lines, "")
 		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, "Permanently deletes this directory and everything inside it, including uncommitted changes, ignored files, and nested repositories. No recovery archive is created. Git branches and conversation history are kept.")...)
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "The owning agent task and tasks launched from this checkout move to Trash.")...)
 		if confirm.HasIdleSession {
 			lines = append(lines, "The idle embedded session will close.")
 		}

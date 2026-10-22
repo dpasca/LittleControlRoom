@@ -586,6 +586,7 @@ func renderWorktreeRemoveConfirmation(input control.WorktreeRemoveInput, width i
 		"Deletes all contents: uncommitted files, untracked files, and build output. There is no recovery archive.",
 		"Keeps branches, conversation history, and TODO completion state.",
 		"Cleans Git registrations and LCR work state; closes idle embedded sessions.",
+		"Moves the owning agent task and tasks launched from this checkout to Trash.",
 		"Active engineers and runtimes are not stopped and may recreate files.",
 	} {
 		lines = append(lines, wrappedBlockLines(text, width)...)

@@ -3090,7 +3090,7 @@ func projectSummaryForAgentTask(task model.AgentTask) (model.ProjectSummary, err
 		LastActivity:                    agentTaskLastActivity(task),
 		Status:                          agentTaskProjectStatus(task),
 		AttentionScore:                  agentTaskAttentionScore(task),
-		PresentOnDisk:                   true,
+		PresentOnDisk:                   !task.WorkspaceGit.Missing,
 		ManuallyAdded:                   true,
 		LatestSessionSource:             source,
 		LatestSessionID:                 sessionID,

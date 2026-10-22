@@ -58,8 +58,16 @@ func (s *Service) removeAgentTaskWorkspace(ctx context.Context, workspace, origi
 }
 
 func (s *Service) refreshAgentTaskWorkspace(ctx context.Context, task model.AgentTask) model.AgentTask {
-	if _, err := os.Stat(task.WorkspacePath); err != nil {
+	task.WorkspaceGit = model.AgentTaskWorkspaceGit{}
+	info, err := os.Stat(task.WorkspacePath)
+	if err != nil {
+		task.WorkspaceGit.Missing = os.IsNotExist(err)
 		task.WorkspaceGit.Error = "Workspace unavailable: " + err.Error()
+		return task
+	}
+	if !info.IsDir() {
+		task.WorkspaceGit.Missing = true
+		task.WorkspaceGit.Error = "Workspace unavailable: path is not a directory"
 		return task
 	}
 	if _, err := os.Lstat(filepath.Join(task.WorkspacePath, ".git")); err != nil {

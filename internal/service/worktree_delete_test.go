@@ -10,10 +10,112 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 )
+
+func TestExplicitDeletionArchivesOwningTask(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, missing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("legacy=%t/missing=%t", legacy, missing), func(t *testing.T) {
+				f := newRemovalFixture(t, nil)
+				workspace := f.path
+				if legacy {
+					workspace = filepath.Join(filepath.Dir(f.path), "legacy-task")
+					if err := os.Mkdir(workspace, 0700); err != nil {
+						t.Fatal(err)
+					}
+					path := filepath.Join(workspace, "repo")
+					runGit(t, f.root, "git", "worktree", "move", f.path, path)
+					f.path = path
+					if err := f.st.UpsertProjectState(t.Context(), model.ProjectState{
+						Path: path, Name: "repo", PresentOnDisk: true, InScope: true,
+						WorktreeKind: model.WorktreeKindLinked, WorktreeRootPath: f.root,
+						UpdatedAt: time.Now(),
+					}); err != nil {
+						t.Fatal(err)
+					}
+					writeTestFile(t, filepath.Join(workspace, "build.log"), "retained wrapper", 0600)
+				}
+				owner, err := f.st.CreateAgentTask(t.Context(), model.CreateAgentTaskInput{
+					Title: "owning task", WorkspacePath: workspace, Status: model.AgentTaskStatusCompleted,
+					OriginProjectPath: f.root, OriginWorktreePath: f.other,
+					Workflow: model.AgentTaskWorkflow{Enabled: true, Phase: "queued", MaxCorrections: 2},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				sibling, err := f.st.CreateAgentTask(t.Context(), model.CreateAgentTaskInput{
+					Title: "retained sibling", WorkspacePath: workspace + "-sibling", OriginWorktreePath: f.other,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if missing {
+					if err := os.RemoveAll(f.path); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for attempt := 0; attempt < 2; attempt++ {
+					if err := f.svc.RemoveWorktree(t.Context(), f.path, false); err != nil {
+						t.Fatalf("remove attempt %d: %v", attempt, err)
+					}
+				}
+				got, err := f.st.GetAgentTask(t.Context(), owner.ID)
+				if err != nil || got.Status != model.AgentTaskStatusArchived || got.ExpiresAt.IsZero() || !got.Workflow.SupervisionRevoked {
+					t.Fatalf("owning task was not fully archived: %+v, %v", got, err)
+				}
+				got, err = f.st.GetAgentTask(t.Context(), sibling.ID)
+				if err != nil || got.Status == model.AgentTaskStatusArchived {
+					t.Fatalf("sibling changed: %+v, %v", got, err)
+				}
+				if _, err := os.Stat(f.path); !os.IsNotExist(err) {
+					t.Fatalf("checkout remains: %v", err)
+				}
+				if legacy {
+					if _, err := os.Stat(filepath.Join(workspace, "build.log")); err != nil {
+						t.Fatalf("removal expanded beyond selected checkout: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestExplicitDeletionReportsTaskCleanupFailureAndRetries(t *testing.T) {
+	f := newRemovalFixture(t, nil)
+	task, err := f.st.CreateAgentTask(t.Context(), model.CreateAgentTaskInput{
+		Title: "write owner", WorkspacePath: f.path, Status: model.AgentTaskStatusWaiting,
+		Repository: model.AgentTaskRepository{Isolated: true, Write: true, Root: f.path, State: "held"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	busy := true
+	f.svc.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot {
+		if busy {
+			return []codexapp.Snapshot{{ProjectPath: f.path, Busy: true}}
+		}
+		return nil
+	}, func() []projectrun.Snapshot { return nil })
+	if err := f.svc.RemoveWorktree(t.Context(), f.path, false); err == nil || !strings.Contains(err.Error(), "agent task cleanup incomplete") {
+		t.Fatalf("expected explicit partial failure, got %v", err)
+	}
+	if _, err := os.Stat(f.path); !os.IsNotExist(err) {
+		t.Fatalf("checkout remains: %v", err)
+	}
+	busy = false
+	if err := f.svc.RemoveWorktree(t.Context(), f.path, false); err != nil {
+		t.Fatalf("retry cleanup: %v", err)
+	}
+	got, err := f.st.GetAgentTask(t.Context(), task.ID)
+	if err != nil || got.Status != model.AgentTaskStatusArchived || got.Repository.State == "held" {
+		t.Fatalf("task not archived after retry: %+v, %v", got, err)
+	}
+}
 
 func TestExplicitDeletionWaitingForGitAllowsServiceReads(t *testing.T) {
 	f := newRemovalFixture(t, nil)

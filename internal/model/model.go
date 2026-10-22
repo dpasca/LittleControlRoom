@@ -321,6 +321,7 @@ type AgentTask struct {
 // AgentTaskWorkspaceGit is a background-refreshed view, never read from disk by
 // render or input handlers. Initial branch identity lives in Repository.
 type AgentTaskWorkspaceGit struct {
+	Missing  bool
 	Branch   string
 	Dirty    bool
 	Conflict bool
