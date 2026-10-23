@@ -113,7 +113,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.focusEmbeddedCodexSidebar()
 		return m, cmd
 	}
-	if m.codexPanelFocus == embeddedCodexFocusSidebar {
+	if m.codexPanelFocus == embeddedCodexFocusSidebar && msg.String() != "ctrl+c" {
 		return m.updateCodexSidebarMode(snapshot, msg)
 	}
 

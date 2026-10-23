@@ -704,6 +704,69 @@ func TestVisibleCodexCtrlCInterruptsStalledBusySession(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCtrlCInterruptsFromSidebar(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot:    codexapp.Snapshot{Started: true, Busy: true, ActiveTurnID: "turn-live"},
+	}
+	manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: session.projectPath}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{
+		codexManager: manager, codexVisibleProject: session.projectPath,
+		codexPanelFocus: embeddedCodexFocusSidebar, codexInput: newCodexTextarea(),
+		codexViewport: viewport.New(0, 0), width: 100, height: 24,
+	}
+	_, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c was swallowed by the sidebar")
+	}
+	if action := cmd().(codexActionMsg); action.err != nil {
+		t.Fatal(action.err)
+	}
+	if !session.interrupted {
+		t.Fatal("session was not interrupted")
+	}
+}
+
+func TestVisibleCodexInterruptDoesNotDependOnTaskBookkeeping(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close() // Force bookkeeping to fail; stopping the provider must still work.
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot:    codexapp.Snapshot{Started: true, Busy: true, ActiveTurnID: "turn-live"},
+	}
+	manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: session.projectPath}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{
+		codexManager: manager, codexVisibleProject: session.projectPath,
+		svc: service.New(config.Default(), st, events.NewBus(), nil),
+	}
+	batch, ok := m.interruptVisibleCodexCmd()().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatal("interrupt and bookkeeping must run as independent commands")
+	}
+	// The interrupt completes even when bookkeeping has not been scheduled yet.
+	action := batch[0]().(codexActionMsg)
+	if action.err != nil || !session.interrupted {
+		t.Fatalf("interrupt failed: %+v", action)
+	}
+	cleanup := batch[1]().(codexActionMsg)
+	if cleanup.err == nil || !strings.Contains(cleanup.err.Error(), "structured tasks") {
+		t.Fatalf("bookkeeping failure was not reported: %+v", cleanup)
+	}
+}
+
 func TestVisibleLCAgentCtrlCInterruptsBusySession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

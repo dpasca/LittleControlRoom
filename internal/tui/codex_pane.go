@@ -2374,21 +2374,28 @@ func (m Model) interruptVisibleCodexCmd() tea.Cmd {
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
 	}
-	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
-		if m.svc != nil {
-			snapshot := session.Snapshot()
-			ctx, cancel := m.actionContext(tuiQuickActionTimeout)
-			err := m.svc.StopStructuredTasksForEngineer(ctx, projectPath, embeddedSessionSource(snapshot.Provider), snapshot.ControlSessionKey, snapshot.ThreadID)
-			cancel()
-			if err != nil {
-				return codexActionMsg{projectPath: projectPath, err: err}
-			}
-		}
+	interruptCmd := m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.Interrupt(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
 		return codexActionMsg{projectPath: projectPath, status: "Interrupt sent to " + label}
 	})
+	if m.svc == nil {
+		return interruptCmd
+	}
+	// Task bookkeeping can wait on repository locks and the database. Never
+	// make the provider's stop request depend on its completion or success.
+	stopTasksCmd := m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		snapshot := session.Snapshot()
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		err := m.svc.StopStructuredTasksForEngineer(ctx, projectPath, embeddedSessionSource(snapshot.Provider), snapshot.ControlSessionKey, snapshot.ThreadID)
+		cancel()
+		if err != nil {
+			return codexActionMsg{projectPath: projectPath, err: fmt.Errorf("stopping structured tasks: %w", err)}
+		}
+		return nil
+	})
+	return batchCmds(interruptCmd, stopTasksCmd)
 }
 
 func (m Model) closeVisibleCodexCmd() tea.Cmd {
