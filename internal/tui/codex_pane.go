@@ -2211,6 +2211,8 @@ func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
 	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
 	}
+	succession := newHandoffSuccession(m.svc, projectPath, source, targetProvider)
+	succession.apply(&req)
 
 	handoffSaved := false
 	cmd := m.openCodexSessionCmdPreparedWithModelPreference(req, true, false, func() error {
@@ -2218,6 +2220,7 @@ func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
 			return fmt.Errorf("save embedded session handoff: %w", err)
 		}
 		handoffSaved = true
+		succession.record()
 		return nil
 	}, !modelSelected)
 	return mapDeferredClaudeLaunchCommand(cmd, func(msg tea.Msg) tea.Msg {
@@ -2225,6 +2228,7 @@ func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
 		if !ok {
 			return msg
 		}
+		routing := succession.finish(opened)
 		if opened.err != nil {
 			if handoffSaved {
 				opened.err = fmt.Errorf(
@@ -2237,6 +2241,9 @@ func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
 			return opened
 		}
 		prefix := "Handoff saved to " + handoff.Path() + ". "
+		if routing != "" {
+			prefix += routing + " "
+		}
 		opened.status = prefix + strings.TrimSpace(opened.status)
 		opened.visibleStatus = prefix + strings.TrimSpace(opened.visibleStatus)
 		opened.backgroundStatus = prefix + strings.TrimSpace(opened.backgroundStatus)

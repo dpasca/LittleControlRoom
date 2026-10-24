@@ -338,6 +338,21 @@ explains how to offer a separate explicit session launch; it does not launch one
 Callback failures do not generate recursive callbacks. Exact recipient replacement
 still fails closed, including uncertain submissions recovered after restart.
 
+The one sanctioned replacement is an operator `/handoff`. Before the fresh
+session launches, LCR records a succession from the replaced conversation and
+pre-assigns the successor's control key. While the successor starts, messages
+addressed to the replaced session are held with a visible waiting status rather
+than resuming the old conversation. When the successor announces that exact key
+(or its thread ID is known at launch), LCR forwards queued exact messages, task
+caller bindings (including review authority) and awaiting dispatch reports to it
+in one transaction; later messages to the old ID resolve on creation and keep the
+original as `requested_target_session_id`. Possibly-submitted messages are not
+forwarded. The replaced session keeps its transcript and read access but its LCR
+control proposals are refused. A failed or canceled launch reinstates it.
+`/handoff` is refused in delegated-task worker sessions, whose task record is
+bound to the exact worker conversation. Successions stay within one workspace;
+an LCAgent successor whose thread ID is not known at launch is not linked.
+
 Turn reports name normal endings, required input, errors and interruptions
 separately. A normal ended turn does not establish task completion, and dashboard
 classification must not describe an ordinary ending as an explicit pause.

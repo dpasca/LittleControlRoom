@@ -305,9 +305,17 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.reconnectVisibleCodexSessionCmd()
 			case codexslash.KindHandoff:
+				if reason := m.handoffBlockedReason(m.codexVisibleProject); reason != "" {
+					m.status = reason
+					return m, nil
+				}
 				m.openCodexHandoffDialog(snapshot, inv.HandoffNote)
 				return m, nil
 			case codexslash.KindLCAgentHandoff:
+				if reason := m.handoffBlockedReason(m.codexVisibleProject); reason != "" {
+					m.status = reason
+					return m, nil
+				}
 				m.status = "Saving a continuation brief and starting a fresh embedded LCAgent session..."
 				m.beginNewCodexPendingOpen(m.codexVisibleProject, codexapp.ProviderLCAgent)
 				return m, m.handoffVisibleCodexSessionToProviderCmd(snapshot, inv.HandoffNote, codexapp.ProviderLCAgent)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 	"lcroom/internal/store"
 )
 
@@ -149,5 +150,35 @@ func TestApprovedCollaborationReportDoesNotAskAgain(t *testing.T) {
 	report, err := executor.Get(ctx, nextOp.ID)
 	if err != nil || report["requires_new_user_turn"] != true {
 		t.Fatal("revoked proposal does not ask", report, err)
+	}
+}
+
+func TestReplacedSessionCannotProposeControls(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "lcr.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	organizer, worker := t.TempDir(), t.TempDir()
+	if _, err := st.RecordEngineerSessionSuccession(ctx, store.EngineerSessionSuccession{
+		ProjectPath: organizer, Provider: model.SessionSourceCodex, SessionID: "old-thread", SessionKey: "old-key",
+		SuccessorProvider: model.SessionSourceCodex, SuccessorSessionKey: "new-key", SuccessorSessionID: "new-thread",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(control.EngineerSendPromptInput{ProjectPath: worker, Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew, TargetSessionID: "worker", Prompt: "Start the overnight queue"})
+	for _, tc := range []struct {
+		key     string
+		refused bool
+	}{{"old-key", true}, {"new-key", false}} {
+		executor, err := NewExecutor(Options{Store: st, OriginProjectPath: organizer, Scope: control.AuthorityScopePortfolio, Source: "codex", Provider: "codex", SessionKey: tc.key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = executor.Propose(ctx, string(control.CapabilityEngineerSendPrompt), args, tc.key)
+		if refused := err != nil && strings.Contains(err.Error(), "replaced through /handoff by new-thread"); refused != tc.refused {
+			t.Fatalf("key %s: refused=%t err=%v", tc.key, refused, err)
+		}
 	}
 }

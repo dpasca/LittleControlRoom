@@ -93,6 +93,9 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 	if !control.AuthorityAllows(e.scope, capability.Scope) {
 		return nil, fmt.Errorf("control capability %q requires %s scope; this agent has %s scope", capability.Name, capability.Scope, e.scope)
 	}
+	if err := e.refuseReplacedSession(ctx); err != nil {
+		return nil, err
+	}
 	operationID, err := control.NewOperationID()
 	if err != nil {
 		return nil, err
@@ -407,4 +410,25 @@ func (e *Executor) cancelOwnWakeup(ctx context.Context, wakeupID string) (map[st
 		"success": true, "terminal": true, "operator_confirmation": false, "requires_new_user_turn": false,
 		"wakeup_id": updated.ID, "state": updated.State, "message": "Wakeup canceled; it will not be delivered.",
 	}, nil
+}
+
+// refuseReplacedSession keeps a conversation replaced through /handoff from
+// acting for LCR. Its reports, tasks and permissions moved to the successor;
+// letting it dispatch again would split that work across two sessions.
+func (e *Executor) refuseReplacedSession(ctx context.Context) error {
+	if e.sessionKey == "" || e.originProjectPath == "" {
+		return nil
+	}
+	succession, replaced, err := e.store.EngineerSessionSupersededByKey(ctx, e.originProjectPath, model.SessionSource(e.provider), e.sessionKey)
+	if err != nil {
+		return fmt.Errorf("check whether this session was replaced: %w", err)
+	}
+	if !replaced {
+		return nil
+	}
+	successor := succession.SuccessorSessionID
+	if successor == "" {
+		successor = "a session that is still starting"
+	}
+	return fmt.Errorf("this session was replaced through /handoff by %s; LCR actions are disabled here so its reports, tasks and messages stay with the successor. Continue the work in the successor session", successor)
 }

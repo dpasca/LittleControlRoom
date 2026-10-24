@@ -473,7 +473,7 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 func EngineerSendPromptCapability() Capability {
 	return Capability{
 		Name:         CapabilityEngineerSendPrompt,
-		Description:  "Send a message to an embedded engineer session through a durable queue. For project updates, use follow_current_session=true to resolve the open recipient at delivery time without launching a session. For a reply to a specific caller, use exact target_session_id; replaced exact targets fail closed. Automatic project collaboration requires resume_or_new, an explicit provider and either addressing choice, no TODO redirect, and no model change. LCR resumes an idle exact target, steers an eligible active target, or waits until delivery is possible. Completed worker turns report back to the exact calling session.",
+		Description:  "Send a message to an embedded engineer session through a durable queue. For project updates, use follow_current_session=true to resolve the open recipient at delivery time without launching a session. For a reply to a specific caller, use exact target_session_id; a target replaced through /handoff is forwarded to its recorded successor, and other replaced exact targets fail closed. Automatic project collaboration requires resume_or_new, an explicit provider and either addressing choice, no TODO redirect, and no model change. LCR resumes an idle exact target, steers an eligible active target, or waits until delivery is possible. Completed worker turns report back to the exact calling session.",
 		InputSchema:  engineerSendPromptInputSchema(),
 		OutputSchema: engineerSendPromptOutputSchema(),
 		Risk:         RiskExternal,

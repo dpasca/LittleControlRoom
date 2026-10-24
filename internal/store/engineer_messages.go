@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lcroom/internal/control"
+	"lcroom/internal/model"
 )
 
 const engineerMessageSelect = `
@@ -20,6 +21,14 @@ const engineerMessageSelect = `
 		deliver_at, expires_at, unattended_json
 	FROM engineer_messages
 `
+
+// A replaced exact target is never delivered. Completed successions forward
+// such messages in the same transaction, so this only holds back messages
+// whose successor has not announced its identity yet, and claim races.
+const engineerMessageTargetNotReplaced = `NOT EXISTS (
+		SELECT 1 FROM engineer_session_successions ss
+		WHERE engineer_messages.target_session_id <> '' AND ss.project_path = engineer_messages.project_path
+			AND ss.provider = engineer_messages.provider AND ss.session_id = engineer_messages.target_session_id)`
 
 // Unscheduled handoffs must not wait forever after an unavailable destination.
 const EngineerMessageDeliveryDeadline = 24 * time.Hour
@@ -38,6 +47,27 @@ func (s *Store) CreateEngineerMessage(ctx context.Context, message control.Engin
 	message.TargetSessionID = strings.TrimSpace(message.TargetSessionID)
 	if message.RequestedTargetSessionID == "" && !message.FollowCurrentSession {
 		message.RequestedTargetSessionID = message.TargetSessionID
+	}
+	if message.TargetSessionID != "" && !message.FollowCurrentSession && message.ProjectPath != "" {
+		// Exact addresses follow an operator-declared replacement. The requested
+		// target is kept so receipts and idempotent retries still name the original.
+		current, pending, err := s.ResolveEngineerSessionSuccessor(ctx, EngineerSessionRef{
+			ProjectPath: message.ProjectPath,
+			Provider:    model.SessionSource(message.Provider),
+			SessionID:   message.TargetSessionID,
+		})
+		if err != nil {
+			return control.EngineerMessage{}, fmt.Errorf("resolve engineer session successor: %w", err)
+		}
+		if current.SessionID != message.TargetSessionID || current.Provider != model.SessionSource(message.Provider) {
+			message.ProjectPath = current.ProjectPath
+			message.Provider = control.Provider(current.Provider)
+			message.TargetSessionID = current.SessionID
+			message.LastError = fmt.Sprintf("Forwarded from session %s, which was replaced through /handoff.", message.RequestedTargetSessionID)
+		}
+		if pending {
+			message.LastError = engineerSuccessionPendingStatus(current.SessionID)
+		}
 	}
 	if err := message.EngineerModelSelection.Normalize(message.Provider); err != nil {
 		return control.EngineerMessage{}, err
@@ -264,7 +294,7 @@ func (s *Store) ListQueuedEngineerMessagesAfter(ctx context.Context, afterCreate
 	}
 	afterID = strings.TrimSpace(afterID)
 	query := engineerMessageSelect + `
-		WHERE state = ? AND deliver_at <= ?
+		WHERE state = ? AND deliver_at <= ? AND ` + engineerMessageTargetNotReplaced + `
 	`
 	args := []any{string(control.EngineerMessageQueued), time.Now().Unix()}
 	if !afterCreatedAt.IsZero() && afterID != "" {
@@ -337,7 +367,7 @@ func (s *Store) ClaimEngineerMessage(ctx context.Context, id, targetSessionID st
 			last_error = '',
 			updated_at = ?
 		WHERE id = ? AND state = ? AND (follow_current_session = 0 OR ? <> '') AND deliver_at <= ?
-		  AND (expires_at = 0 OR expires_at >= ?)
+		  AND (expires_at = 0 OR expires_at >= ?) AND `+engineerMessageTargetNotReplaced+`
 	`, string(control.EngineerMessageDelivering), targetSessionID, time.Now().Unix(), id, string(control.EngineerMessageQueued), targetSessionID, time.Now().Unix(), time.Now().Unix())
 	if err != nil {
 		return control.EngineerMessage{}, false, fmt.Errorf("claim engineer message: %w", err)

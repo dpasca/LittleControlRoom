@@ -480,6 +480,22 @@ func (s *Store) initSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_engineer_dispatches_operation ON engineer_dispatches(origin_operation_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_engineer_dispatches_worker ON engineer_dispatches(worker_project_path, worker_provider);`,
 		`CREATE INDEX IF NOT EXISTS idx_engineer_dispatches_caller ON engineer_dispatches(caller_project_path, caller_provider, caller_session_key);`,
+		`CREATE TABLE IF NOT EXISTS engineer_session_successions (
+			project_path TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			session_key TEXT NOT NULL DEFAULT '',
+			successor_project_path TEXT NOT NULL,
+			successor_provider TEXT NOT NULL,
+			successor_session_key TEXT NOT NULL DEFAULT '',
+			successor_session_id TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			completed_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(project_path, provider, session_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_engineer_session_successions_successor
+			ON engineer_session_successions(successor_project_path, successor_provider, successor_session_key);`,
 		`CREATE TABLE IF NOT EXISTS agent_task_resources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id TEXT NOT NULL,

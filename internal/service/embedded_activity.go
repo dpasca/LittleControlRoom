@@ -377,6 +377,12 @@ func (s *Service) RecordEmbeddedSessionIdentity(ctx context.Context, activity Em
 	if err := s.store.BindEngineerSession(ctx, activity.ProjectPath, activity.Source, activity.ControlSessionKey, activity.SessionID); err != nil {
 		return err
 	}
+	// A /handoff successor announces the control key it was launched with.
+	// Completing the succession forwards the predecessor's queued messages,
+	// task callers and dispatch reports to this key before they are drained.
+	if _, err := s.store.CompleteEngineerSessionSuccessions(ctx, activity.ProjectPath, activity.Source, activity.ControlSessionKey, activity.SessionID); err != nil {
+		return err
+	}
 	ids, err := s.store.AgentTaskIDsAwaitingCaller(ctx, activity.ProjectPath, activity.Source, activity.ControlSessionKey)
 	if err != nil {
 		return err
