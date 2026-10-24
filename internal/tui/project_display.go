@@ -1531,5 +1531,7 @@ func projectMatchesFilter(project model.ProjectSummary, projectFilter string) bo
 	return fuzzyfilter.Match(projectFilter,
 		project.Name,
 		filepath.Base(filepath.Clean(project.Path)),
+		projectWorktreeLabel(project),
+		project.RepoBranch,
 	)
 }
