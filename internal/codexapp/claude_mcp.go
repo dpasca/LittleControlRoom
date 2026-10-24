@@ -33,8 +33,11 @@ type claudeMCPServer struct {
 }
 
 type claudeMCPOptions struct {
-	Config               string
-	Prompt               string
+	Config string
+	Prompt string
+	// ReportContract rides the system prompt even when no MCP servers are
+	// configured, because Prompt is only meaningful alongside Config.
+	ReportContract       string
 	AllowedTools         []string
 	PermissionPromptTool string
 }
@@ -90,19 +93,14 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 		promptParts = append(promptParts, strings.TrimSpace(managedBrowserTurnContextText))
 	}
 
+	reportContract := reportContractInstructionsFor(req)
 	if len(servers) == 0 {
-		return claudeMCPOptions{}, nil
+		return claudeMCPOptions{ReportContract: reportContract}, nil
 	}
 	promptParts = append(promptParts, claudePathMentionInstructions)
 	encoded, err := json.Marshal(claudeMCPConfig{Servers: servers})
 	if err != nil {
 		return claudeMCPOptions{}, err
-	}
-	compactPromptParts := make([]string, 0, len(promptParts))
-	for _, part := range promptParts {
-		if part = strings.TrimSpace(part); part != "" {
-			compactPromptParts = append(compactPromptParts, part)
-		}
 	}
 	permissionPromptTool := ""
 	if runtimeEnabled && strings.TrimSpace(req.ClaudeApprovalSocket) != "" {
@@ -110,7 +108,8 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 	}
 	return claudeMCPOptions{
 		Config:               string(encoded),
-		Prompt:               strings.Join(compactPromptParts, "\n\n"),
+		Prompt:               joinNonEmptyStrings(promptParts, "\n\n"),
+		ReportContract:       reportContract,
 		AllowedTools:         allowedTools,
 		PermissionPromptTool: permissionPromptTool,
 	}, nil
@@ -123,13 +122,21 @@ func claudeTurnArgsWithMCP(resumeID, model, reasoning, permissionMode string, mc
 		args = append(args, "--settings", safetySettings)
 	}
 	mcp.Config = strings.TrimSpace(mcp.Config)
+	promptParts := make([]string, 0, 2)
+	if mcp.Config != "" {
+		promptParts = append(promptParts, strings.TrimSpace(mcp.Prompt))
+	}
+	promptParts = append(promptParts, strings.TrimSpace(mcp.ReportContract))
+	systemPrompt := joinNonEmptyStrings(promptParts, "\n\n")
 	if mcp.Config == "" {
+		if systemPrompt != "" {
+			args = append(args, "--append-system-prompt", systemPrompt)
+		}
 		return args
 	}
 	args = append(args, "--mcp-config", mcp.Config)
-	mcp.Prompt = strings.TrimSpace(mcp.Prompt)
-	if mcp.Prompt != "" {
-		args = append(args, "--append-system-prompt", mcp.Prompt)
+	if systemPrompt != "" {
+		args = append(args, "--append-system-prompt", systemPrompt)
 	}
 	mcp.PermissionPromptTool = strings.TrimSpace(mcp.PermissionPromptTool)
 	if mcp.PermissionPromptTool != "" {
@@ -148,4 +155,14 @@ func claudeTurnArgsWithMCP(resumeID, model, reasoning, permissionMode string, mc
 		"--allowedTools",
 		strings.Join(allowedTools, ","),
 	)
+}
+
+func joinNonEmptyStrings(parts []string, sep string) string {
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, sep)
 }

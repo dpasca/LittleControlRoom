@@ -826,6 +826,7 @@ type LaunchRequest struct {
 	TodoCaptureMode            todocapture.CaptureMode
 	TodoCaptureHandler         todocapture.Handler
 	TodoCaptureSessionKey      string
+	ReportContract             bool
 	OpenCodeDataHome           string
 	CodexHome                  string
 	LCAgentPath                string

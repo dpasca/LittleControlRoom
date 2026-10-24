@@ -260,7 +260,7 @@ func (m Model) applyRepositoryIntegrityActionMsg(msg repositoryIntegrityActionMs
 			m.reportError("Repository integrity engineer task failed", err, msg.State.RootPath)
 			return m, nil
 		}
-		prompt := m.agentTaskLaunchPromptWithRuntimeContext(msg.Task, repositoryIntegrityEngineerPrompt(msg.State))
+		prompt := m.agentTaskLaunchPromptWithRuntimeContext(msg.Task, repositoryIntegrityEngineerPrompt(msg.State), agentTaskPromptOptions{Provider: msg.Provider})
 		updated, cmd := m.launchEmbeddedForProjectWithOptions(project, msg.Provider, embeddedLaunchOptions{
 			forceNew: true,
 			prompt:   prompt,

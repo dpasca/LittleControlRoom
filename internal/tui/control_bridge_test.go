@@ -109,6 +109,9 @@ func TestExecuteControlEngineerSendPromptRoutesOpenCodeHidden(t *testing.T) {
 			t.Fatalf("request prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
+	if requests[0].ReportContract {
+		t.Fatalf("OpenCode request ReportContract = true, want inline contract only")
+	}
 
 	updated, _ = got.Update(opened)
 	got = updated.(Model)
@@ -311,8 +314,6 @@ func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testin
 	}
 	for _, want := range []string{
 		"Little Control Room engineer task:",
-		"Report contract:",
-		"whether content changed and summarize the meaningful changes",
 		"please test the app",
 		"Little Control Room testing context:",
 		"use runtime/test URL http://127.0.0.1:3000/demo",
@@ -324,6 +325,7 @@ func TestExecuteControlEngineerSendPromptIncludesRuntimeTestingContext(t *testin
 			t.Fatalf("prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
+	assertReportContractCarriedBySession(t, requests[0])
 }
 
 func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T) {
@@ -368,8 +370,6 @@ func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T)
 	}
 	for _, want := range []string{
 		"Little Control Room engineer task:",
-		"Report contract:",
-		"Do not final-report only success/failure plus artifact links",
 		"please test the app",
 		"Little Control Room testing context:",
 		"no runtime/test URL detected",
@@ -380,6 +380,7 @@ func TestExecuteControlEngineerSendPromptCallsOutMissingRuntimeURL(t *testing.T)
 			t.Fatalf("prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
+	assertReportContractCarriedBySession(t, requests[0])
 }
 
 func TestExecuteControlEngineerSendPromptAutoProviderUsesProjectPreference(t *testing.T) {
@@ -2610,18 +2611,13 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 	for _, want := range []string{
 		"Resume signal:",
 		"explicit instruction to resume that goal now",
-		"Report contract:",
-		"Answer the user's exact request directly",
-		"Preserve source, metric, timeframe, scope, negations, and explicit exclusions",
-		"what was compared, what was kept, what was discarded, and the substantive differences",
-		"whether content changed and summarize the meaningful changes",
-		"Do not final-report only success/failure plus artifact links",
 		"User request:\nCheck whether the ports stayed clear.",
 	} {
 		if !strings.Contains(requests[0].Prompt, want) {
 			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
+	assertReportContractCarriedBySession(t, requests[0])
 	if requests[0].ForceNew {
 		t.Fatalf("request ForceNew = true, want resume")
 	}
@@ -3273,5 +3269,18 @@ func waitForControlAsyncRefreshes(t *testing.T, svc *service.Service) {
 	defer cancel()
 	if err := svc.WaitForAsyncProjectRefreshes(ctx); err != nil {
 		t.Fatalf("wait for async project refreshes: %v", err)
+	}
+}
+
+// assertReportContractCarriedBySession checks the dedupe contract: Codex and
+// Claude Code sessions hold the report contract in session instructions, so the
+// prompt must not repeat it.
+func assertReportContractCarriedBySession(t *testing.T, request codexapp.LaunchRequest) {
+	t.Helper()
+	if !request.ReportContract {
+		t.Fatalf("%s request ReportContract = false, want session-level contract", request.Provider)
+	}
+	if strings.Contains(request.Prompt, "Report contract:") || strings.Contains(request.Prompt, "Do not final-report only success/failure") {
+		t.Fatalf("prompt repeats the report contract the session already carries:\n%s", request.Prompt)
 	}
 }

@@ -43,6 +43,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightPolicy:          policy,
 		playwrightMCPExpected:     shouldShadowPlaywrightSkill(policy),
 		runtimeMCPExpected:        shouldShadowRuntimeSkill(req),
+		reportContract:            req.ReportContract,
 		imageReviewEnabled:        req.ImageReviewEnabled,
 		controlSessionKey:         strings.TrimSpace(req.TodoCaptureSessionKey),
 		managedBrowserSessionKey:  strings.TrimSpace(req.ManagedBrowserSessionKey),

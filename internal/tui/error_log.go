@@ -351,7 +351,7 @@ func (m Model) startEngineerTaskForSelectedError() (tea.Model, tea.Cmd) {
 	}
 
 	provider := codexapp.ProviderCodex
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, errorLogEngineerPrompt(entry))
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, errorLogEngineerPrompt(entry), agentTaskPromptOptions{Provider: provider})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: true,
 		prompt:   prompt,

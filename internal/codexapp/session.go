@@ -70,6 +70,7 @@ type appServerSession struct {
 	playwrightPolicy          browserctl.Policy
 	playwrightMCPExpected     bool
 	runtimeMCPExpected        bool
+	reportContract            bool
 	imageReviewEnabled        bool
 	controlSessionKey         string
 	managedBrowserSessionKey  string

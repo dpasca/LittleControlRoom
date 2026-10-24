@@ -34,6 +34,12 @@ func (s *appServerSession) SetWorkspaceContract(contract WorkspaceContract, hand
 
 func (s *appServerSession) managedTurnContext() map[string]additionalContextEntry {
 	contextEntries := s.managedBrowserTurnContext()
+	if s.reportContract {
+		if contextEntries == nil {
+			contextEntries = make(map[string]additionalContextEntry)
+		}
+		contextEntries[reportContractContextSource] = additionalContextEntry{Kind: applicationContextKind, Value: ReportContractInstructions()}
+	}
 	if s.runtimeMCPExpected {
 		if contextEntries == nil {
 			contextEntries = make(map[string]additionalContextEntry)

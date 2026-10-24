@@ -161,7 +161,7 @@ func (m Model) applyBossLCAgentGoalPrepared(msg bossLCAgentGoalPreparedMsg) (tea
 		return m, bossGoalResultCmd(msg.result, msg.err)
 	}
 	m.upsertOpenAgentTask(msg.task)
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(msg.task, lcagentGoalTaskPrompt(msg.proposal))
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(msg.task, lcagentGoalTaskPrompt(msg.proposal), agentTaskPromptOptions{Provider: codexapp.ProviderLCAgent})
 	updated, launchCmd := m.launchEmbeddedForProjectWithOptions(msg.project, codexapp.ProviderLCAgent, embeddedLaunchOptions{
 		forceNew: true,
 		prompt:   prompt,

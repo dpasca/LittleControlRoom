@@ -988,7 +988,7 @@ func (m Model) executeEngineerSendPromptWithTrackedTodo(input control.EngineerSe
 	}
 	input.TodoText = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoText, trackedTodo.Text))
 	input.TodoLabel = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoLabel, todoDisplayLabelFromItem(trackedTodo)))
-	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt, trackedTodo)
+	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt, trackedTodo, provider)
 	if controlPromptWillSteerActiveEmbeddedSession(input, m, project.Path, provider) {
 		prompt = m.promptWithRuntimeContext(engineerPromptWithTrackedTodo(input.Prompt, trackedTodo), m.projectRuntimeContextLines(project))
 	}
@@ -1253,7 +1253,7 @@ func (m Model) applyBossAgentTaskCreated(msg bossAgentTaskCreatedMsg) (tea.Model
 		m.status = "Control request failed: " + err.Error()
 		return m, bossControlResultCmd(msg.inv, m.status, err)
 	}
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, msg.input.Prompt)
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, msg.input.Prompt, agentTaskPromptOptions{Provider: msg.provider})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, msg.provider, embeddedLaunchOptions{
 		modelSelection: msg.input.EngineerModelSelection,
 		forceNew:       true,
@@ -1375,6 +1375,7 @@ func (m Model) applyBossAgentTaskContinueLoaded(msg bossAgentTaskContinueLoadedM
 	resumeID := taskSessionIDForProvider(task, provider)
 	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt, agentTaskPromptOptions{
 		ResumePausedGoal: input.SessionMode != control.SessionModeNew && resumeID != "",
+		Provider:         provider,
 	})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		modelSelection: input.EngineerModelSelection,
@@ -2298,7 +2299,7 @@ func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (t
 		WorktreeOriginTodoID:  msg.todo.ID,
 		RepoBranch:            msg.result.BranchName,
 	}
-	prompt := m.engineerPromptWithRuntimeContext(msg.project, msg.input.Prompt, msg.todo)
+	prompt := m.engineerPromptWithRuntimeContext(msg.project, msg.input.Prompt, msg.todo, msg.provider)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(worktreeProject, msg.provider, embeddedLaunchOptions{
 		modelSelection: msg.input.EngineerModelSelection,
 		forceNew:       true,
@@ -3127,6 +3128,9 @@ func taskSessionIDForProvider(task model.AgentTask, provider codexapp.Provider) 
 type agentTaskPromptOptions struct {
 	ResumePausedGoal   bool
 	OmitReportContract bool
+	// Provider is the engineer the prompt is for. Providers that carry the
+	// report contract in session instructions do not get it inline.
+	Provider codexapp.Provider
 }
 
 func agentTaskLaunchPrompt(task model.AgentTask, prompt string, options agentTaskPromptOptions) string {
@@ -3167,7 +3171,7 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string, options agentTas
 	if task.Workflow.Enabled {
 		lines = append(lines, "Structured result contract: use work.agent_task_get to read this task's current workflow.run_id. Before ending your turn, submit agent_task.submit_result for that run with a short summary, criterion outcomes, checks (command, cwd, outcome, exit code and bounded evidence), changes, risks and questions. End your turn after submission; the host waits for you to stop before caller review. Do not ask the operator to commit or relay your result. A stopped turn without submission is unclassified, not accepted work.")
 	} else if !options.OmitReportContract {
-		lines = append(lines, engineerReportContractPromptLines()...)
+		lines = append(lines, engineerReportContractPromptLines(options.Provider)...)
 	}
 	lines = append(lines, "", "User request:", strings.TrimSpace(prompt))
 	return strings.Join(lines, "\n")
@@ -3181,22 +3185,22 @@ func (m Model) agentTaskLaunchPromptWithRuntimeContext(task model.AgentTask, pro
 	return m.promptWithRuntimeContext(agentTaskLaunchPrompt(task, prompt, opts), m.agentTaskRuntimeContextLines(task))
 }
 
-func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string, todo model.TodoItem) string {
-	return m.promptWithRuntimeContext(engineerLaunchPromptWithTodo(prompt, todo), m.projectRuntimeContextLines(project))
+func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string, todo model.TodoItem, provider codexapp.Provider) string {
+	return m.promptWithRuntimeContext(engineerLaunchPromptWithTodo(prompt, todo, provider), m.projectRuntimeContextLines(project))
 }
 
-func engineerLaunchPrompt(prompt string) string {
-	return engineerLaunchPromptWithTodo(prompt, model.TodoItem{})
+func engineerLaunchPrompt(prompt string, provider codexapp.Provider) string {
+	return engineerLaunchPromptWithTodo(prompt, model.TodoItem{}, provider)
 }
 
-func engineerLaunchPromptWithTodo(prompt string, todo model.TodoItem) string {
+func engineerLaunchPromptWithTodo(prompt string, todo model.TodoItem, provider codexapp.Provider) string {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return ""
 	}
 	lines := []string{"Little Control Room engineer task:"}
 	lines = append(lines, trackedTodoPromptLines(todo)...)
-	lines = append(lines, engineerReportContractPromptLines()...)
+	lines = append(lines, engineerReportContractPromptLines(provider)...)
 	lines = append(lines, "", "User request:", prompt)
 	return strings.Join(lines, "\n")
 }
@@ -3225,17 +3229,15 @@ func trackedTodoPromptLines(todo model.TodoItem) []string {
 	return lines
 }
 
-func engineerReportContractPromptLines() []string {
-	return []string{
-		"",
-		"Report contract:",
-		"- Answer the user's exact request directly and include enough concrete detail to verify the outcome.",
-		"- Preserve source, metric, timeframe, scope, negations, and explicit exclusions from the user request; if evidence answers a different question, report that mismatch instead of substituting it.",
-		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
-		"- For retry, sync, export, file, or document work, say whether content changed and summarize the meaningful changes; if nothing changed, name the file or document and say there were no content changes.",
-		"- Do not final-report only success/failure plus artifact links; include the substantive outcome, or say exactly which requested outcome evidence is still missing.",
-		"- Avoid vague wrap-ups like only saying the entries differ, the state is clean, canonical copies were kept, or the retry succeeded.",
+// engineerReportContractPromptLines returns the inline report contract for
+// providers that cannot hold it in session instructions. Codex and Claude Code
+// launches carry it there (see enrichEmbeddedLaunchRequestBase), so repeating it
+// in every prompt would only spend context.
+func engineerReportContractPromptLines(provider codexapp.Provider) []string {
+	if codexapp.ProviderCarriesReportContract(provider) {
+		return nil
 	}
+	return append([]string{"", "Report contract:"}, codexapp.ReportContractLines()...)
 }
 
 func (m Model) promptWithRuntimeContext(prompt string, contextLines []string) string {

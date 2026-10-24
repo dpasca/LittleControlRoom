@@ -1444,6 +1444,12 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 	if req.RuntimeManager == nil {
 		req.RuntimeManager = m.runtimeManager
 	}
+	// Codex and Claude Code keep the engineer report contract in session
+	// instructions, so it survives compaction and prompts need not repeat it.
+	// engineerReportContractPromptLines relies on every such launch setting this.
+	if codexapp.ProviderCarriesReportContract(provider) {
+		req.ReportContract = true
+	}
 	if provider == codexapp.ProviderClaudeCode && strings.TrimSpace(string(req.ClaudePermissionMode)) == "" {
 		req.ClaudePermissionMode = m.currentClaudePermissionMode()
 	}
