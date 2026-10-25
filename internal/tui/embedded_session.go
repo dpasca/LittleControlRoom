@@ -341,8 +341,6 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 			task.ObservedModel = model.AgentTaskModelSelection{}
 			m.upsertOpenAgentTask(task)
 			asyncCmd = m.persistAgentTaskModelChoiceCmd(task)
-		} else {
-			m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning, msg.modelProvider)
 		}
 		m.recordRecentModel(msg.provider, msg.model, msg.modelProvider)
 		m.returnToTodoFromModelPicker()

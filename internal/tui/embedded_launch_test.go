@@ -1792,3 +1792,17 @@ func TestLaunchCodexForSelectionForceNewWarnsWhenActiveSessionIsReopenedReadOnly
 		t.Fatalf("status = %q, want %q", got.status, wantStatus)
 	}
 }
+
+func TestEmbeddedModelPreferenceSkipsResumedSessions(t *testing.T) {
+	m := Model{}
+	m.rememberEmbeddedModelPreference(codexapp.ProviderCodex, "gpt-5.4", "high")
+
+	fresh := m.applyEmbeddedModelPreference(codexapp.LaunchRequest{Provider: codexapp.ProviderCodex})
+	if fresh.PendingModel != "gpt-5.4" || fresh.PendingReasoning != "high" {
+		t.Fatalf("fresh launch = %#v, want default preference", fresh)
+	}
+	resumed := m.applyEmbeddedModelPreference(codexapp.LaunchRequest{Provider: codexapp.ProviderCodex, ResumeID: "thread-1"})
+	if resumed.PendingModel != "" || resumed.PendingReasoning != "" {
+		t.Fatalf("resumed launch = %#v, want no default preference", resumed)
+	}
+}

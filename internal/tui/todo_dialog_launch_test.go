@@ -51,14 +51,7 @@ func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testi
 		height:        24,
 	}
 
-	updated, _ := m.Update(codexActionMsg{
-		projectPath: "/tmp/demo",
-		status:      "Embedded model set to gpt-5.4 with high reasoning for the next prompt",
-		provider:    codexapp.ProviderCodex,
-		model:       "gpt-5.4",
-		reasoning:   "high",
-	})
-	m = updated.(Model)
+	m.rememberEmbeddedModelPreference(codexapp.ProviderCodex, "gpt-5.4", "high")
 
 	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderCodex, true, "")
 	m = updated.(Model)
@@ -70,14 +63,7 @@ func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testi
 		t.Fatalf("codex open msg = %#v, want successful codexSessionOpenedMsg", msg)
 	}
 
-	updated, _ = m.Update(codexActionMsg{
-		projectPath: "/tmp/demo",
-		status:      "Embedded model set to openai/gpt-5.4 with medium reasoning for the next prompt",
-		provider:    codexapp.ProviderOpenCode,
-		model:       "openai/gpt-5.4",
-		reasoning:   "medium",
-	})
-	m = updated.(Model)
+	m.rememberEmbeddedModelPreference(codexapp.ProviderOpenCode, "openai/gpt-5.4", "medium")
 
 	updated, cmd = m.launchEmbeddedForSelection(codexapp.ProviderOpenCode, true, "")
 	m = updated.(Model)
@@ -89,14 +75,7 @@ func TestEmbeddedModelPreferencePersistsAcrossFutureSessionsPerProvider(t *testi
 		t.Fatalf("opencode open msg = %#v, want successful codexSessionOpenedMsg", msg)
 	}
 
-	updated, _ = m.Update(codexActionMsg{
-		projectPath: "/tmp/demo",
-		status:      "Embedded model set to sonnet with max reasoning for the next prompt",
-		provider:    codexapp.ProviderClaudeCode,
-		model:       "sonnet",
-		reasoning:   "max",
-	})
-	m = updated.(Model)
+	m.rememberEmbeddedModelPreference(codexapp.ProviderClaudeCode, "sonnet", "max")
 
 	updated, cmd = m.launchEmbeddedForSelection(codexapp.ProviderClaudeCode, true, "")
 	m = updated.(Model)

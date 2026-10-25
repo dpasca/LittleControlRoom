@@ -133,6 +133,10 @@ func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp
 	if req.PendingModel != "" || req.PendingReasoning != "" {
 		return req
 	}
+	// The default is for fresh sessions only; a resumed session keeps its own model.
+	if strings.TrimSpace(req.ResumeID) != "" {
+		return req
+	}
 	if pref, ok := m.embeddedModelPreference(req.Provider); ok {
 		req.PendingModel = pref.Model
 		req.PendingReasoning = pref.Reasoning

@@ -1900,11 +1900,14 @@ func TestCodexActionMsgPersistsEmbeddedModelPreferencesToConfig(t *testing.T) {
 		t.Fatalf("read saved config: %v", err)
 	}
 	text := string(raw)
-	if !strings.Contains(text, "embedded_codex_model = \"gpt-5.4\"") || !strings.Contains(text, "embedded_codex_reasoning_effort = \"high\"") {
-		t.Fatalf("saved config missing codex model preference: %q", text)
+	if strings.Contains(text, "embedded_codex_model") || strings.Contains(text, "embedded_codex_reasoning_effort") {
+		t.Fatalf("live model change must not persist a default for other sessions: %q", text)
 	}
-	if got.currentSettingsBaseline().EmbeddedCodexModel != "gpt-5.4" || got.currentSettingsBaseline().EmbeddedCodexReasoning != "high" {
-		t.Fatalf("settings baseline = %#v, want saved codex model preference", got.currentSettingsBaseline())
+	if !strings.Contains(text, "recent_codex_models") {
+		t.Fatalf("saved config missing recent codex model: %q", text)
+	}
+	if _, ok := got.embeddedModelPreference(codexapp.ProviderCodex); ok {
+		t.Fatal("live model change set the default model preference")
 	}
 }
 
