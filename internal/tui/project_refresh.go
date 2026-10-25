@@ -29,6 +29,7 @@ const tuiOpenAgentTaskLimit = 50
 const embeddedSessionActivityRecordTimeout = 30 * time.Second
 
 type projectsMsg struct {
+	removalRevision           uint64
 	projects                  []model.ProjectSummary
 	archivedProjects          []model.ProjectSummary
 	categories                []model.ProjectCategory
@@ -51,10 +52,11 @@ type detailMsg struct {
 const selectedDetailReloadDebounce = 50 * time.Millisecond
 
 type projectSummaryMsg struct {
-	path    string
-	summary model.ProjectSummary
-	found   bool
-	err     error
+	removalRevision uint64
+	path            string
+	summary         model.ProjectSummary
+	found           bool
+	err             error
 }
 
 type projectSessionSeenMsg struct {
@@ -688,7 +690,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 			}
-			return projectsMsg{err: err}
+			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
 		}
 		projects, archivedProjects := splitProjectArchiveSummaries(allProjects)
 		categories, err := m.svc.ListProjectCategories(ctx)
@@ -696,14 +698,14 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 			}
-			return projectsMsg{err: err}
+			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
 		}
 		orphanedDirectories, err := m.svc.ListOrphanedWorktreeDirectories(ctx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 			}
-			return projectsMsg{err: err}
+			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
 		}
 		orphanedWorktrees := make(map[string]model.ProjectSummary, len(orphanedDirectories))
 		orphanedCleanupKindByPath := make(map[string]service.ResidualWorktreeCleanupKind, len(orphanedDirectories))
@@ -728,6 +730,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			wrapOptionalProjectLoadError("repository integrity unavailable", integrityErr),
 		)
 		return projectsMsg{
+			removalRevision:           m.projectRemovalRevision,
 			projects:                  projects,
 			archivedProjects:          archivedProjects,
 			categories:                categories,
@@ -821,13 +824,13 @@ func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {
 		summary, err := m.svc.Store().GetProjectSummary(ctx, path, true)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return projectSummaryMsg{path: path}
+				return projectSummaryMsg{path: path, removalRevision: m.projectRemovalRevision}
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("timed out after %s", tuiProjectSummaryLoadTimeout.Round(time.Millisecond))
 			}
-			return projectSummaryMsg{path: path, err: err}
+			return projectSummaryMsg{path: path, err: err, removalRevision: m.projectRemovalRevision}
 		}
-		return projectSummaryMsg{path: path, summary: summary, found: true}
+		return projectSummaryMsg{path: path, summary: summary, found: true, removalRevision: m.projectRemovalRevision}
 	}
 }

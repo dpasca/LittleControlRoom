@@ -98,6 +98,7 @@ type Model struct {
 	restartWarmup           *restartWarmupState
 	projectsReloadInFlight  bool
 	projectsReloadQueued    bool
+	projectRemovalRevision  uint64
 	scanInFlight            bool
 	scanQueued              bool
 	scanQueuedForceRetry    bool
@@ -2071,6 +2072,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case projectsMsg:
 		m.flushExpiredPendingGitSummaries()
 		reloadCmd := m.finishProjectsReloadCmd()
+		// Ignore snapshots captured before a confirmed removal.
+		if msg.removalRevision != m.projectRemovalRevision {
+			if reloadCmd == nil {
+				reloadCmd = m.requestProjectsReloadCmd()
+			}
+			return m, reloadCmd
+		}
 		if msg.err != nil {
 			m.loading = false
 			m.err = msg.err
@@ -2272,6 +2280,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.requestSelectedDetailReloadCmd(msg.path, msg.seq)
 	case projectSummaryMsg:
 		reloadCmd := m.finishProjectSummaryReloadCmd(msg.path)
+		if msg.removalRevision != m.projectRemovalRevision {
+			return m, reloadCmd
+		}
 		m.clearExpiredPendingGitSummaryForPath(msg.path)
 		if msg.err != nil {
 			m.err = msg.err
@@ -2813,6 +2824,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.projectRemoveConfirm = nil
 		m.err = nil
+		m.projectRemovalRevision++
+		selectPath := ""
+		if m.currentSelectedProjectPath() == normalizeProjectPath(msg.projectPath) {
+			selectPath = m.nextProjectSelectionPathAfter(msg.projectPath)
+		}
+		m.applyRemovedProjectLocally(msg.projectPath, selectPath)
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status
 		}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/commands"
@@ -567,8 +568,8 @@ func TestDispatchRemoveCommandStoresIgnoredPathAndHidesOnlySelectedProject(t *te
 	if cmd == nil {
 		t.Fatalf("project removal confirmation should return a removal command")
 	}
-	if got.projectRemoveConfirm != nil {
-		t.Fatalf("project removal confirmation should close while the background action runs")
+	if got.projectRemoveConfirm == nil || !got.projectRemoveConfirm.Submitting {
+		t.Fatalf("project removal confirmation should stay busy while the background action runs")
 	}
 
 	rawMsg := cmd()
@@ -576,6 +577,9 @@ func TestDispatchRemoveCommandStoresIgnoredPathAndHidesOnlySelectedProject(t *te
 	reloaded := afterAction.(Model)
 	if reloadCmd == nil {
 		t.Fatalf("remove action should trigger a project reload")
+	}
+	if len(reloaded.projects) != 2 || reloaded.projects[0].Path != "/tmp/worktrees/a1/projects_control_center" {
+		t.Fatalf("removed path should disappear before the reload: %#v", reloaded.projects)
 	}
 	projectsMsg := reloadCmd()
 	finalModel, _ := reloaded.Update(projectsMsg)
@@ -623,6 +627,12 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 			PresentOnDisk:  false,
 			InScope:        true,
 			UpdatedAt:      now,
+			Sessions: []model.SessionEvidence{{
+				Source:      model.SessionSourceClaudeCode,
+				SessionID:   "missing-agent-session",
+				ProjectPath: missingPath,
+				LastEventAt: now,
+			}},
 		},
 		{
 			Path:           visiblePath,
@@ -655,6 +665,7 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 	if len(m.projects) != 2 || m.projects[0].Name != "missing-demo" {
 		t.Fatalf("initial projects = %#v, want missing project first", m.projects)
 	}
+	staleProjects := append([]model.ProjectSummary(nil), projects...)
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindRemove, Canonical: "/remove"})
 	got := updated.(Model)
@@ -683,8 +694,12 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("project removal confirmation should return a removal command")
 	}
-	if got.projectRemoveConfirm != nil {
-		t.Fatalf("missing-project removal confirmation should close while the background action runs")
+	if got.projectRemoveConfirm == nil || !got.projectRemoveConfirm.Submitting {
+		t.Fatalf("missing-project removal confirmation should stay busy while the background action runs")
+	}
+	busy, repeatCmd := got.updateProjectRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if repeatCmd != nil || !busy.(Model).projectRemoveConfirm.Submitting {
+		t.Fatalf("repeat activation should not submit another removal")
 	}
 
 	rawMsg := cmd()
@@ -695,6 +710,22 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 	}
 	if reloaded.status != "Removed from list" {
 		t.Fatalf("status = %q, want missing-project removal confirmation", reloaded.status)
+	}
+	if reloaded.projectRemoveConfirm != nil || len(reloaded.projects) != 1 || reloaded.projects[0].Path != visiblePath {
+		t.Fatalf("missing project should disappear immediately after removal: %#v", reloaded.projects)
+	}
+	// A project-list read or targeted summary read may already have been in
+	// flight when removal completed. Neither may restore the removed row.
+	staleReload, _ := reloaded.Update(projectsMsg{projects: staleProjects})
+	staleSummary, _ := staleReload.(Model).Update(projectSummaryMsg{path: missingPath, summary: staleProjects[0], found: true})
+	reloaded = staleSummary.(Model)
+	if len(reloaded.projects) != 1 || reloaded.projects[0].Path != visiblePath {
+		t.Fatalf("old reloads restored removed project: %#v", reloaded.projects)
+	}
+	failedReload, _ := reloaded.Update(projectsMsg{removalRevision: reloaded.projectRemovalRevision, err: context.DeadlineExceeded})
+	reloaded = failedReload.(Model)
+	if len(reloaded.projects) != 1 || reloaded.projects[0].Path != visiblePath {
+		t.Fatalf("failed dashboard reload restored removed project: %#v", reloaded.projects)
 	}
 
 	visibleProjects, err := st.ListProjects(ctx, false)
@@ -719,6 +750,49 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 	}
 	if !detail.Summary.Forgotten {
 		t.Fatalf("missing project summary = %#v, want forgotten=true", detail.Summary)
+	}
+	if len(detail.Sessions) != 1 || detail.Sessions[0].RawSessionID != "missing-agent-session" {
+		t.Fatalf("removing a missing row should preserve its session history: %#v", detail.Sessions)
+	}
+}
+
+func TestProjectRemoveFailureKeepsRowAndAllowsRetry(t *testing.T) {
+	project := model.ProjectSummary{Path: "/tmp/missing-agent", Name: "missing-agent", InScope: true}
+	m := Model{
+		allProjects: []model.ProjectSummary{project},
+		visibility:  visibilityAllFolders,
+		projectRemoveConfirm: &projectRemoveConfirmState{
+			ProjectPath: project.Path,
+			Submitting:  true,
+		},
+	}
+	m.rebuildProjectList(project.Path)
+	updated, cmd := m.Update(projectRemoveActionMsg{projectPath: project.Path, err: errors.New("database unavailable")})
+	got := updated.(Model)
+	if cmd != nil || len(got.projects) != 1 || got.projects[0].Path != project.Path {
+		t.Fatalf("failed removal should keep the row: %#v", got.projects)
+	}
+	if got.projectRemoveConfirm == nil || got.projectRemoveConfirm.Submitting {
+		t.Fatalf("failed removal should allow retry in the confirmation")
+	}
+	if got.projectRemovalRevision != 0 || len(got.errorLogEntries) != 1 {
+		t.Fatalf("failed removal should record its error without invalidating reads")
+	}
+}
+
+func TestProjectRemoveCompletionPreservesChangedSelection(t *testing.T) {
+	removed := model.ProjectSummary{Path: "/tmp/missing-agent", Name: "missing-agent", InScope: true}
+	selected := model.ProjectSummary{Path: "/tmp/selected", Name: "selected", InScope: true, PresentOnDisk: true}
+	other := model.ProjectSummary{Path: "/tmp/other", Name: "other", InScope: true, PresentOnDisk: true}
+	m := Model{
+		allProjects: []model.ProjectSummary{removed, other, selected},
+		visibility:  visibilityAllFolders,
+	}
+	m.rebuildProjectList(selected.Path)
+	updated, _ := m.Update(projectRemoveActionMsg{projectPath: removed.Path})
+	got := updated.(Model)
+	if got.currentSelectedProjectPath() != selected.Path {
+		t.Fatalf("selection = %q, want %q", got.currentSelectedProjectPath(), selected.Path)
 	}
 }
 

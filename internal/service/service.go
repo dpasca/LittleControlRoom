@@ -4495,19 +4495,19 @@ func (s *Service) SetRunCommand(ctx context.Context, projectPath, command string
 }
 
 func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
 	if err != nil {
 		return err
 	}
 	defer unlockProjectState()
 
-	m, err := s.store.GetProjectSummaryMap(ctx)
+	project, err := s.store.GetTrackedProjectSummary(ctx, projectPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("project not found: %s", projectPath)
+	}
 	if err != nil {
 		return err
-	}
-	project := m[projectPath]
-	if project.Path == "" {
-		return fmt.Errorf("project not found: %s", projectPath)
 	}
 	if project.PresentOnDisk {
 		return fmt.Errorf("project still exists on disk: %s", projectPath)
@@ -4515,6 +4515,7 @@ func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {
 		return err
 	}
+	s.forgetProjectState(projectPath)
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "forget_project"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "forget_project"})

@@ -87,7 +87,7 @@ func (m Model) updateProjectRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			Name:          confirm.ProjectName,
 			PresentOnDisk: confirm.PresentOnDisk,
 		}
-		m.projectRemoveConfirm = nil
+		confirm.Submitting = true
 		if confirm.PresentOnDisk {
 			m.status = "Removing project from list..."
 			return m, m.removeProjectFromListCmd(project)
