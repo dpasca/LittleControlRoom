@@ -210,6 +210,9 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		}
 	default:
 		lines := m.renderCodexMessageDelivery(snapshot, width)
+		if message := m.codexSubmitErrors[m.codexVisibleProject]; message != "" {
+			lines = append(lines, embeddedSidebarWrappedRows("Message not sent: "+message, detailWarningStyle, width)...)
+		}
 		lines = append(lines, m.renderCodexSubagentProgress(snapshot, width)...)
 		if snapshot.BusyExternal {
 			lines = append(lines, m.renderCodexBusyElsewhereNotice(snapshot, width))

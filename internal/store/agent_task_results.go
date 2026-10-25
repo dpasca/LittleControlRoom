@@ -52,10 +52,18 @@ func (s *Store) BeginStructuredTaskRun(ctx context.Context, task model.AgentTask
 		return errors.New("structured task requires a host control identity")
 	}
 	if active {
-		if task.Workflow.WorkerKey != key || task.Workflow.Phase != "working" {
+		if task.Workflow.WorkerKey != key {
 			return errors.New("finish the current task turn before beginning another result run")
 		}
-		return nil
+		if task.Workflow.Phase == "working" {
+			return nil
+		}
+		// A submitted result ends the worker's result run, even when the
+		// provider still owns background work. A follow-up in that same
+		// session starts a new revision; the previous claims stay immutable.
+		if task.Workflow.Phase != "submitted" {
+			return errors.New("finish the current task turn before beginning another result run")
+		}
 	}
 	// A new run resets result metadata but never the operator's correction grant.
 	next := model.AgentTaskWorkflow{Enabled: true, RunID: task.Workflow.RunID + 1, WorkerKey: key, Phase: "working",

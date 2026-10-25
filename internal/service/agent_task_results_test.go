@@ -74,3 +74,53 @@ func TestStructuredRepositoryHandoffAndStoppedCaller(t *testing.T) {
 		t.Fatal("legacy close bypassed review")
 	}
 }
+
+func TestStructuredTaskFollowUpAfterResultWithBackgroundCommand(t *testing.T) {
+	svc, _, _ := repositoryTestFixture(t)
+	ctx := t.Context()
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Background command worker", WorkspacePath: t.TempDir(),
+		Provider: model.SessionSourceClaudeCode, Workflow: model.AgentTaskWorkflow{Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startRepositoryTurn(t, svc, task, "worker")
+	svc.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot {
+		return []codexapp.Snapshot{{
+			ProjectPath: task.WorkspacePath, Provider: codexapp.ProviderClaudeCode,
+			Busy: true, ParentAwaitingBackgroundTasks: true, BackgroundInputSupported: true,
+			BackgroundTasks: []codexapp.BackgroundTaskSnapshot{{ID: "ios-exit", Tool: "Bash", Status: "running"}},
+		}}
+	}, func() []projectrun.Snapshot { return nil })
+	// Queueing during an unfinished run retains that run's identity.
+	startRepositoryTurn(t, svc, task, "worker")
+	claims := control.AgentTaskSubmitResultInput{TaskID: task.ID, RunID: 1,
+		AgentTaskResultPayload: model.AgentTaskResultPayload{Outcome: "ready_for_review", Summary: "Game ready to test"}}
+	task, err = svc.store.SubmitAgentTaskResult(ctx, model.AgentTaskActor{
+		ProjectPath: task.WorkspacePath, Provider: task.Provider, SessionKey: "worker",
+	}, claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.settleStructuredTask(ctx, task); err == nil {
+		t.Fatal("background work must retain ownership before a follow-up")
+	}
+	if unlock, err := svc.BeginRepositoryTurn(task.WorkspacePath, "other-worker"); err == nil {
+		unlock()
+		t.Fatal("unrelated session superseded the active worker")
+	}
+	// The submitted result must not block the original session's follow-up.
+	startRepositoryTurn(t, svc, task, "worker")
+	current, err := svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Workflow.RunID != 2 || current.Workflow.Phase != "working" || current.Workflow.Result != nil || current.Workflow.Handoff {
+		t.Fatalf("follow-up did not start a fresh result run: %+v", current.Workflow)
+	}
+	history, err := svc.GetAgentTaskResult(ctx, task.ID, 1)
+	if err != nil || history["worker_claims"].(model.AgentTaskResult).Summary != claims.Summary {
+		t.Fatalf("previous claims were lost: %+v %v", history, err)
+	}
+}

@@ -530,6 +530,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = label + " is already running. Wait for it to finish before sending another prompt."
 			return m, batchCmds(focusCmd, refreshCmd)
 		}
+		delete(m.codexSubmitErrors, m.codexVisibleProject)
 		m.clearCodexDraft(m.codexVisibleProject)
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
 			m.status = "Pausing embedded " + label + " goal..."

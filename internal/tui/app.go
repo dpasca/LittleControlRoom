@@ -286,6 +286,7 @@ type Model struct {
 	codexOpenRevealByRequest      map[uint64]bool
 	codexInput                    textarea.Model
 	codexDrafts                   map[string]codexDraft
+	codexSubmitErrors             map[string]string
 	codexClipboardPasteInFlight   bool
 	codexSuggestedDraftsApplied   map[string]string
 	codexTranscriptRenderInFlight map[codexTranscriptRenderKey]struct{}

@@ -300,6 +300,10 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 		m.reportError("Embedded session action failed", msg.err, msg.projectPath)
 		if msg.projectPath != "" && !msg.restoreDraft.Empty() {
 			m.restoreCodexDraft(msg.projectPath, msg.restoreDraft)
+			if m.codexSubmitErrors == nil {
+				m.codexSubmitErrors = make(map[string]string)
+			}
+			m.codexSubmitErrors[msg.projectPath] = msg.err.Error()
 		}
 		return m, nil
 	}
