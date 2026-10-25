@@ -1465,7 +1465,7 @@ func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPa
 		return CleanupResidualWorktreeDirectoriesResult{}, fmt.Errorf("worktree root is required")
 	}
 
-	orphaned, err := s.store.GetOrphanedWorktreeSummaryMap(ctx)
+	orphaned, err := s.orphanedWorktreeSummaries(ctx)
 	if err != nil {
 		return CleanupResidualWorktreeDirectoriesResult{}, fmt.Errorf("list orphaned worktrees: %w", err)
 	}
@@ -1499,11 +1499,71 @@ func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPa
 	return result, nil
 }
 
+// orphanedWorktreeSummaries narrows the stored "forgotten linked checkout still
+// on disk" rows to leftovers that need attention. That predicate also matches
+// two healthy shapes, which are dropped here where Git's worktree list is
+// available: a live checkout inside the workspace of a task that is not in
+// Trash (the task row already represents it), and a plain subfolder of a live
+// checkout that Git does not register on its own. Unreadable Git state keeps a
+// row listed rather than hiding possible residue.
+func (s *Service) orphanedWorktreeSummaries(ctx context.Context) (map[string]model.ProjectSummary, error) {
+	candidates, err := s.store.GetOrphanedWorktreeSummaryMap(ctx)
+	if err != nil || len(candidates) == 0 {
+		return candidates, err
+	}
+	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list task workspaces: %w", err)
+	}
+	worktreesByRoot := make(map[string][]scanner.GitWorktree)
+	orphaned := make(map[string]model.ProjectSummary, len(candidates))
+	for path, summary := range candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rootPath := filepath.Clean(strings.TrimSpace(summary.WorktreeRootPath))
+		var worktrees []scanner.GitWorktree
+		if rootPath != "" && rootPath != "." && s.gitWorktreeListReader != nil {
+			var cached bool
+			if worktrees, cached = worktreesByRoot[rootPath]; !cached {
+				// A failed read leaves the list empty, which classifies as unknown.
+				worktrees, _ = s.gitWorktreeListReader(ctx, rootPath)
+				worktreesByRoot[rootPath] = worktrees
+			}
+		}
+		if orphanedWorktreeIsHealthy(path, worktrees, tasks) {
+			continue
+		}
+		orphaned[path] = summary
+	}
+	return orphaned, nil
+}
+
+func orphanedWorktreeIsHealthy(path string, rootWorktrees []scanner.GitWorktree, openTasks []model.AgentTask) bool {
+	switch linkedWorktreeRegistrationInList(rootWorktrees, path) {
+	case linkedWorktreeRegistrationLive:
+		canonical := canonicalRepositoryPath(path)
+		for _, task := range openTasks {
+			workspace := canonicalRepositoryPath(strings.TrimSpace(task.WorkspacePath))
+			if workspace != "" && (canonical == workspace || removalPathWithin(canonical, workspace)) {
+				return true
+			}
+		}
+	case linkedWorktreeRegistrationAbsent:
+		for _, worktree := range rootWorktrees {
+			if worktree.PrunableReason == "" && removalPathWithin(canonicalRepositoryPath(path), canonicalRepositoryPath(worktree.Path)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Service) ListOrphanedWorktreeDirectories(ctx context.Context) (map[string]OrphanedWorktreeDirectory, error) {
 	if s == nil || s.store == nil {
 		return nil, fmt.Errorf("service unavailable")
 	}
-	orphaned, err := s.store.GetOrphanedWorktreeSummaryMap(ctx)
+	orphaned, err := s.orphanedWorktreeSummaries(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list orphaned worktrees: %w", err)
 	}

@@ -360,3 +360,67 @@ func writeTestFile(t *testing.T, path, content string, mode os.FileMode) {
 		t.Fatalf("chmod %s: %v", path, err)
 	}
 }
+
+func TestListOrphanedWorktreeDirectoriesSkipsHealthyForgottenCheckouts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	f := newRemovalFixture(t, nil)
+	subfolder := filepath.Join(f.other, "Apps", "TheRun2", "Assets")
+	residue := filepath.Join(filepath.Dir(f.root), "repo--emptied")
+	writeTestFile(t, filepath.Join(subfolder, "data.txt"), "tracked-looking content\n", 0o644)
+	writeTestFile(t, filepath.Join(residue, ".DS_Store"), "finder metadata", 0o644)
+	for _, path := range []string{f.path, subfolder, residue} {
+		if err := f.st.UpsertProjectState(ctx, model.ProjectState{
+			Path:             path,
+			Name:             filepath.Base(path),
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			Forgotten:        true,
+			WorktreeRootPath: f.root,
+			WorktreeKind:     model.WorktreeKindLinked,
+			UpdatedAt:        time.Now(),
+		}); err != nil {
+			t.Fatalf("seed forgotten record %s: %v", path, err)
+		}
+	}
+	listed := func() map[string]OrphanedWorktreeDirectory {
+		t.Helper()
+		directories, err := f.svc.ListOrphanedWorktreeDirectories(ctx)
+		if err != nil {
+			t.Fatalf("ListOrphanedWorktreeDirectories() error = %v", err)
+		}
+		return directories
+	}
+
+	directories := listed()
+	if _, ok := directories[subfolder]; ok {
+		t.Fatalf("subfolder of a live checkout was listed as orphaned: %#v", directories[subfolder])
+	}
+	if directory, ok := directories[residue]; !ok || !directory.DSStoreOnly {
+		t.Fatalf("emptied checkout = %#v, listed = %v; want .DS_Store-only orphan", directory, ok)
+	}
+	if _, ok := directories[f.path]; !ok {
+		t.Fatalf("live forgotten checkout without a task owner should stay listed: %#v", directories)
+	}
+
+	task, err := f.st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title:         "owning task",
+		WorkspacePath: filepath.Dir(f.path),
+		Status:        model.AgentTaskStatusCompleted,
+	})
+	if err != nil {
+		t.Fatalf("create owning task: %v", err)
+	}
+	if _, ok := listed()[f.path]; ok {
+		t.Fatalf("live checkout inside a completed task workspace was listed as orphaned")
+	}
+
+	archived := model.AgentTaskStatusArchived
+	if _, err := f.st.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, Status: &archived}); err != nil {
+		t.Fatalf("archive owning task: %v", err)
+	}
+	if _, ok := listed()[f.path]; !ok {
+		t.Fatalf("checkout of a task in Trash should be listed for deletion")
+	}
+}

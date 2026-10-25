@@ -495,3 +495,76 @@ func TestRemovalClassifiesGitFilesByPointerContent(t *testing.T) {
 		})
 	}
 }
+
+// A checkout deleted by hand takes its nested submodule checkouts with it but
+// leaves their registrations in each submodule's shared store. Those records
+// point at nothing, so they must not stop the reviewed cleanup of what remains.
+func TestResidueInspectionIgnoresStaleChildRegistrationsOfVanishedCheckout(t *testing.T) {
+	f := newAssetResidueFixture(t)
+	ctx := context.Background()
+	entries, err := os.ReadDir(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "README.md" || entry.Name() == "_artifacts" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(f.path, entry.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary := model.ProjectSummary{Path: f.path, WorktreeRootPath: f.root, WorktreeKind: model.WorktreeKindLinked, RepoBranch: "task", WorktreeInitialBranch: "task"}
+	inspection, err := f.svc.inspectResidualWorktreeDirectory(ctx, f.root, f.path, summary, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Safe || inspection.Kind != ResidualWorktreeCleanupOwned {
+		t.Fatalf("stale child registrations blocked cleanup: %#v", inspection)
+	}
+
+	if err := f.svc.CleanupRetainedWorktree(ctx, f.path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(f.path); !os.IsNotExist(err) {
+		t.Fatalf("residue remains: %v", err)
+	}
+	for _, rel := range f.assets {
+		registrations, err := scanner.ListGitWorktrees(ctx, filepath.Join(f.root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := false
+		for _, registration := range registrations {
+			live = live || samePath(registration.Path, filepath.Join(f.other, rel))
+		}
+		if !live {
+			t.Fatalf("live checkout lost its child registration for %s: %#v", rel, registrations)
+		}
+	}
+}
+
+func TestStaleChildRegistrationRequiresPrunableMissingUnlockedPinnedCheckout(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "gone")
+	present := t.TempDir()
+	const pinned = "b21117e02c6f747e8f2042040b08aa19ccbcb648"
+	gitlink := residualGitTreeEntry{Mode: "160000", Type: "commit", Object: pinned}
+	stale := scanner.GitWorktree{Path: missing, Head: pinned, PrunableReason: "gitdir file points to non-existent location"}
+	if !staleChildRegistration(stale, gitlink) {
+		t.Fatal("prunable, missing, pinned registration should be stale")
+	}
+	for name, mutate := range map[string]func(*scanner.GitWorktree){
+		"not prunable":      func(w *scanner.GitWorktree) { w.PrunableReason = "" },
+		"locked":            func(w *scanner.GitWorktree) { w.LockedReason = "in use" },
+		"diverged commit":   func(w *scanner.GitWorktree) { w.Head = "0123456789abcdef0123456789abcdef01234567" },
+		"path still exists": func(w *scanner.GitWorktree) { w.Path = present },
+	} {
+		candidate := stale
+		mutate(&candidate)
+		if staleChildRegistration(candidate, gitlink) {
+			t.Fatalf("%s: registration must keep blocking cleanup", name)
+		}
+	}
+}

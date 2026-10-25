@@ -48,6 +48,35 @@ and later process output remain separate possibilities.
   and dangling targets are supported. Symlinks at the worktree root or in
   `.git` metadata still block removal.
 
+## What counts as orphaned
+
+The store keeps one coarse predicate: a forgotten linked-worktree record whose
+path still exists. Some healthy paths match it, so the service drops them before
+the list is built (`orphanedWorktreeSummaries`), using one `git worktree list`
+per repository:
+
+- A live, registered checkout inside the workspace of a task that is not in
+  Trash. LCR force-forgets everything under its internal workspace root, and
+  agents may create linked worktrees inside their own task workspace; the task
+  row already represents that checkout. Once the task is in Trash the checkout
+  is listed so it can be deleted.
+- A plain subfolder of a live checkout that Git does not register separately,
+  such as a session `cwd` that was recorded as a derived project.
+
+Unreadable Git state keeps a row listed. Real orphans come from checkouts
+removed outside LCR's delete flow (Finder, `rm`, an interrupted delete): Git
+still lists the outer path as `prunable`, and what is left on disk is some mix
+of `.DS_Store`, ignored output and tracked files. A `.DS_Store` can also be
+re-created by Finder after the checkout is gone.
+
+A hand-deleted checkout also strands the registrations of its nested submodule
+worktrees in each submodule's shared store. During residue inspection such a
+registration is ignored when Git reports it prunable, nothing exists at its
+path, it is unlocked, and it still points at the commit the parent pinned
+(`staleChildRegistration`). Any other nested registration still blocks cleanup.
+Ignored registrations stay in the submodule store as inert metadata for Git to
+prune.
+
 ## Reviewed cleanup
 
 Select an orphaned row and use **x inspect** or `/remove`. Nonempty residue is

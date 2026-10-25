@@ -2560,19 +2560,26 @@ func linkedWorktreeRegistrationWithReader(
 	if err != nil {
 		return linkedWorktreeRegistrationUnknown, err
 	}
+	return linkedWorktreeRegistrationInList(worktrees, projectPath), nil
+}
+
+// linkedWorktreeRegistrationInList classifies projectPath against one already
+// loaded `git worktree list`, so callers checking many paths of the same
+// repository read Git once.
+func linkedWorktreeRegistrationInList(worktrees []scanner.GitWorktree, projectPath string) linkedWorktreeRegistration {
 	if len(worktrees) == 0 {
-		return linkedWorktreeRegistrationUnknown, nil
+		return linkedWorktreeRegistrationUnknown
 	}
 	for _, worktree := range worktrees {
 		if !samePath(worktree.Path, projectPath) {
 			continue
 		}
 		if strings.TrimSpace(worktree.PrunableReason) != "" {
-			return linkedWorktreeRegistrationPrunable, nil
+			return linkedWorktreeRegistrationPrunable
 		}
-		return linkedWorktreeRegistrationLive, nil
+		return linkedWorktreeRegistrationLive
 	}
-	return linkedWorktreeRegistrationAbsent, nil
+	return linkedWorktreeRegistrationAbsent
 }
 
 func (s *Service) staleLinkedWorktreeOnDiskWithReader(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string, worktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error)) bool {

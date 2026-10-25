@@ -402,12 +402,31 @@ func verifyRemovalChildRegistrations(ctx context.Context, plan worktreeRemovalPl
 			for _, child := range plan.Children {
 				owned = owned || samePath(child.Path, registration.Path)
 			}
+			if !owned && staleChildRegistration(registration, entry) {
+				continue
+			}
 			if removed || !owned {
 				return fmt.Errorf("nested registration still requires cleanup: %s (%s)", registration.Path, registration.Head)
 			}
 		}
 	}
 	return nil
+}
+
+// staleChildRegistration recognizes metadata left by a nested checkout that was
+// deleted by hand along with its parent: Git itself reports it prunable,
+// nothing exists at its path, it is not locked, and it still sits at the commit
+// the parent pinned, so no checkout files or unique commits are stranded. It
+// stays in the submodule's shared store as inert metadata for Git to prune.
+func staleChildRegistration(registration scanner.GitWorktree, gitlink residualGitTreeEntry) bool {
+	if strings.TrimSpace(registration.PrunableReason) == "" || strings.TrimSpace(registration.LockedReason) != "" {
+		return false
+	}
+	if registration.Head == "" || registration.Head != gitlink.Object {
+		return false
+	}
+	_, err := os.Lstat(registration.Path)
+	return os.IsNotExist(err)
 }
 
 // Git prune acts on all expired administrative directories, not just the
