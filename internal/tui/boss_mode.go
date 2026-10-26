@@ -510,7 +510,13 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 		}
 		completeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		updated, err := svc.MarkAgentTaskReadyForReview(completeCtx, taskID, summary)
+		var updated model.AgentTask
+		var err error
+		if task.Workflow.Enabled {
+			updated, err = svc.SettleAgentTaskEngineerTurn(completeCtx, task, snapshot)
+		} else {
+			updated, err = svc.MarkAgentTaskReadyForReview(completeCtx, taskID, summary)
+		}
 		var callbackErr error
 		if err == nil {
 			updated, callbackErr = svc.QueueAgentTaskResultCallback(completeCtx, taskID)

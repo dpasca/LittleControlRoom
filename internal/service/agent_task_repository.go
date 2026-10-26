@@ -279,7 +279,7 @@ func (s *Service) repositoryWritersIdle(ctx context.Context, root string) error 
 		if ok {
 			path = taskRepositoryPath(task)
 		}
-		if repositoryPathsOverlap(path, root) && (snapshot.Busy || snapshot.BusyExternal || snapshot.ActiveTurnID != "" || snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || (snapshot.Goal != nil && snapshot.Goal.Status == codexapp.ThreadGoalStatusActive)) {
+		if repositoryPathsOverlap(path, root) && agentTaskEngineerActive(snapshot) {
 			return fmt.Errorf("repository has an active engineer at %s; let it finish or stop it before transferring write ownership", snapshot.ProjectPath)
 		}
 	}

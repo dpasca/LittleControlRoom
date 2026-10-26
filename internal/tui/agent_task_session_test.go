@@ -7,10 +7,88 @@ import (
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/control"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func TestStructuredTaskCompletionSurvivesWorkerCloseAndLateIdentity(t *testing.T) {
+	for _, condition := range []string{"closed worker", "late identity", "closed worker with late identity"} {
+		t.Run(condition, func(t *testing.T) {
+			ctx := t.Context()
+			svc := newControlTestService(t)
+			task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+				Title: "Completed Claude worker", Provider: model.SessionSourceClaudeCode,
+				Workflow:          model.AgentTaskWorkflow{Enabled: true},
+				OriginProjectPath: "/tmp/caller", OriginProvider: model.SessionSourceClaudeCode,
+				OriginSessionID: "caller-thread",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := svc.BeginRepositoryTurn(task.WorkspacePath, "worker-key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlock()
+			sessionID := "worker-thread"
+			if condition != "closed worker" {
+				sessionID = ""
+			}
+			task, err = svc.AttachAgentTaskEngineerSession(ctx, task.ID, task.Provider, sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := codexapp.Snapshot{
+				Provider: codexapp.ProviderClaudeCode, ProjectPath: task.WorkspacePath,
+				ThreadID: "worker-thread", ControlSessionKey: "worker-key", Started: true,
+				LatestTurnStateKnown: true, LatestTurnCompleted: true,
+			}
+			session := &fakeCodexSession{projectPath: task.WorkspacePath, snapshot: snapshot}
+			manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) {
+				return session, nil
+			})
+			if _, _, err := manager.Open(codexapp.LaunchRequest{
+				ProjectPath: task.WorkspacePath, Provider: codexapp.ProviderClaudeCode,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			svc.ConfigureAgentTaskRepositoryHost(manager.Snapshots, func() []projectrun.Snapshot { return nil })
+			task, err = svc.Store().SubmitAgentTaskResult(ctx, model.AgentTaskActor{
+				ProjectPath: task.WorkspacePath, Provider: task.Provider, SessionKey: "worker-key",
+			}, control.AgentTaskSubmitResultInput{
+				TaskID: task.ID, RunID: 1,
+				AgentTaskResultPayload: model.AgentTaskResultPayload{Outcome: "ready_for_review", Summary: "Ready"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := Model{ctx: ctx, svc: svc, codexManager: manager, openAgentTasks: []model.AgentTask{task}}
+			cmd := m.markAgentTaskReadyForReviewCmd(task.WorkspacePath, task, snapshot, session)
+			// Closing the pane can remove the session before the background
+			// completion command runs. Its terminal evidence must survive that.
+			if condition != "late identity" {
+				if err := manager.CloseProject(task.WorkspacePath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			returned := cmd().(agentTaskEngineerReturnedMsg)
+			if returned.err != nil || returned.callbackErr != nil {
+				t.Fatalf("handoff failed: %v; callback: %v", returned.err, returned.callbackErr)
+			}
+			if returned.task.SessionID != snapshot.ThreadID || returned.task.Workflow.Phase != "awaiting_review" ||
+				!returned.task.Workflow.Handoff || returned.task.ResultMessageID == "" {
+				t.Fatalf("completion was lost: %+v", returned.task)
+			}
+			callback, err := svc.Store().GetEngineerMessage(ctx, returned.task.ResultMessageID)
+			if err != nil || callback.TargetSessionID != "caller-thread" || callback.AgentTaskRevision != 1 {
+				t.Fatalf("wrong callback: %+v, %v", callback, err)
+			}
+		})
+	}
+}
 
 func TestAgentTaskLCAgentCloseAndEnterResumesSameThread(t *testing.T) {
 	ctx := context.Background()

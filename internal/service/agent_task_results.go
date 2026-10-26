@@ -5,12 +5,33 @@ import (
 	"errors"
 	"path/filepath"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 )
 
 func (s *Service) settleStructuredTask(ctx context.Context, task model.AgentTask) (model.AgentTask, error) {
+	return s.settleStructuredTaskWithCompletion(ctx, task, nil)
+}
+
+// SettleAgentTaskEngineerTurn carries the host's terminal observation across an
+// asynchronous handoff. Closing an already-finished pane must not discard that
+// evidence. This is a host-only path, not worker-supplied completion evidence.
+func (s *Service) SettleAgentTaskEngineerTurn(ctx context.Context, task model.AgentTask, completion codexapp.Snapshot) (model.AgentTask, error) {
+	return s.settleStructuredTaskWithCompletion(ctx, task, &completion)
+}
+
+func (s *Service) settleStructuredTaskWithCompletion(ctx context.Context, expected model.AgentTask, completion *codexapp.Snapshot) (model.AgentTask, error) {
 	s.repositoryMu.Lock()
 	defer s.repositoryMu.Unlock()
+	// Identity persistence, result submission and another admitted turn may all
+	// have advanced since the UI or task list captured expected.
+	task, err := s.store.GetAgentTask(ctx, expected.ID)
+	if err != nil {
+		return task, err
+	}
+	if task.Workflow.RunID != expected.Workflow.RunID || task.Workflow.WorkerKey != expected.Workflow.WorkerKey {
+		return task, errors.New("task run changed; reload the task before retrying the handoff")
+	}
 	if !task.Workflow.Enabled {
 		return task, nil
 	}
@@ -21,20 +42,41 @@ func (s *Service) settleStructuredTask(ctx context.Context, task model.AgentTask
 		if s.repositoryEngineers == nil {
 			return task, errors.New("worker state unavailable; structured result remains pending")
 		}
-		live := false
+		otherWorker := false
+		var worker *codexapp.Snapshot
 		for _, snapshot := range s.repositoryEngineers() {
-			if snapshot.ProjectPath != task.WorkspacePath {
+			if filepath.Clean(snapshot.ProjectPath) != filepath.Clean(task.WorkspacePath) {
 				continue
 			}
-			if snapshot.Busy || snapshot.BusyExternal || snapshot.ActiveTurnID != "" || snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil {
+			if agentTaskEngineerActive(snapshot) {
 				return task, errors.New("worker is still active; structured result remains pending")
 			}
-			if snapshot.ThreadID == task.SessionID && task.SessionID != "" {
-				live = true
+			if agentTaskWorkerMatches(task, snapshot) {
+				worker = &snapshot
+			} else {
+				otherWorker = true
 			}
 		}
-		if !live {
+		// A saved result alone does not prove completion. Only the exact run's
+		// host-observed terminal state can replace a missing registry entry.
+		if completion != nil {
+			if !agentTaskWorkerMatches(task, *completion) {
+				return task, errors.New("completion belongs to another worker; reload the task before retrying the handoff")
+			}
+			if worker == nil && !otherWorker && completion.Started && completion.LatestTurnStateKnown &&
+				completion.LatestTurnCompleted && !agentTaskEngineerActive(*completion) {
+				worker = completion
+			}
+		}
+		if worker == nil {
 			return task, errors.New("worker is unavailable; reopen its transcript to verify the handoff")
+		}
+		if task.SessionID == "" {
+			// The host control key binds a late provider identity without ever
+			// choosing the newest or an unrelated session in the workspace.
+			if err := s.store.RecordAgentTaskEngineerSession(ctx, task.ID, task.Provider, worker.ThreadID); err != nil {
+				return task, err
+			}
 		}
 	}
 	if err := s.releaseTaskRepositoryLocked(ctx, task.ID); err != nil {
@@ -45,6 +87,26 @@ func (s *Service) settleStructuredTask(ctx context.Context, task model.AgentTask
 		return task, err
 	}
 	return s.store.FinalizeStructuredTask(ctx, current)
+}
+
+func agentTaskWorkerMatches(task model.AgentTask, snapshot codexapp.Snapshot) bool {
+	if filepath.Clean(snapshot.ProjectPath) != filepath.Clean(task.WorkspacePath) ||
+		model.SessionSource(snapshot.Provider.Normalized()) != task.Provider || snapshot.ThreadID == "" {
+		return false
+	}
+	if task.SessionID != "" {
+		return snapshot.ThreadID == task.SessionID
+	}
+	return task.Workflow.WorkerKey != "" && snapshot.ControlSessionKey == task.Workflow.WorkerKey
+}
+
+func agentTaskEngineerActive(snapshot codexapp.Snapshot) bool {
+	if snapshot.Busy || snapshot.BusyExternal || snapshot.Compacting || snapshot.ActiveTurnID != "" ||
+		snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil ||
+		len(snapshot.BackgroundTasks) > 0 || (snapshot.Goal != nil && snapshot.Goal.Status == codexapp.ThreadGoalStatusActive) {
+		return true
+	}
+	return snapshot.Phase != "" && snapshot.Phase != codexapp.SessionPhaseIdle && snapshot.Phase != codexapp.SessionPhaseClosed
 }
 
 func (s *Service) GetAgentTaskResult(ctx context.Context, taskID string, revision int64) (map[string]any, error) {
