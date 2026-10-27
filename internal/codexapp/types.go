@@ -856,6 +856,8 @@ type LaunchRequest struct {
 	LCAgentUtilityReasoning    string
 	LCAgentVisionProvider      string
 	LCAgentVisionModel         string
+	LCAgentMainVisionProvider  string
+	LCAgentMainVisionModel     string
 	LCAgentVisionReasoning     string
 	LCAgentWebSearchBackend    string
 	LCAgentWebSearchAPIKey     string

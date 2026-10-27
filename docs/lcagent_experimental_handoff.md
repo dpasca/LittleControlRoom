@@ -43,7 +43,23 @@ Implemented pieces:
   guarded whole-file `replace_file`, `apply_patch`, literal `replace_text`,
   line-range `replace_lines`, `update_plan`, and `final_response`.
 - Provider adapters for OpenRouter, OpenAI, DeepSeek, and Moonshot/Kimi routes.
-- Coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
+- **One Model for Everything** setup (`lcagent_route_preset = "single-model"`)
+  keeps the operator's provider/model choice editable and uses it for coding,
+  utility work, and supported native image input. Changing `/model` follows
+  that selection for every role, including reasoning and the main transport.
+  The CLI equivalent is `lcagent exec --route-preset single-model --provider
+  deepseek --model deepseek-flash "..."`; the setup is model-independent.
+  **Custom Routing** exposes optional utility and vision fallbacks; saved custom
+  routes are retained while single-model mode is active.
+- Vision prefers the main model's documented image capability (currently
+  `deepseek-flash`) or an exact provider/model pair verified by the settings
+  image check (`v`). Unknown models require that check or an explicit
+  **Same as Main** selection. A secondary vision model is used only when the
+  main model has no enabled native image input; explicit **Off** disables vision
+  in Custom Routing. Resuming a conversation keeps the current saved vision
+  configuration; historical image observations and usage remain in the replay
+  without overwriting the next run's route.
+- Legacy coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
   with traceable `route_preset` events, explicit flag overrides, and optional
   embedded-launch wiring through `lcagent_route_preset`.
 - `lcagent scout` defaults to the `cheap-scout` route, low max turns, autonomy

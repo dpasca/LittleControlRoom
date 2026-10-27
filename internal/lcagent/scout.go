@@ -241,7 +241,7 @@ func RunScoutWithRoute(ctx context.Context, req ScoutRequest, route ScoutRoute) 
 // preset without carrying its coding autonomy into repository Scout.
 func ScoutRouteFromPreset(name string) (ScoutRoute, bool) {
 	preset, ok := lcagentRoutePresetByName(name)
-	if !ok {
+	if !ok || preset.Provider == "" || preset.Model == "" {
 		return ScoutRoute{}, false
 	}
 	return ScoutRoute{

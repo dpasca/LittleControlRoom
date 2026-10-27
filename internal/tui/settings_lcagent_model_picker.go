@@ -869,7 +869,7 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 	}
 	switch fieldIndex {
 	case settingsFieldLCAgentModel:
-		if len(m.settingsFields) > settingsFieldLCAgentRoutePreset {
+		if len(m.settingsFields) > settingsFieldLCAgentRoutePreset && !config.LCAgentUsesSingleModel(m.settingsFieldValue(settingsFieldLCAgentRoutePreset)) {
 			m.settingsFields[settingsFieldLCAgentRoutePreset].input.SetValue("")
 		}
 		if len(m.settingsFields) > settingsFieldLCAgentProvider && provider != "" {
@@ -1694,7 +1694,7 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 	}
 	provider := settingsLCAgentMainProvider(settings)
 	model := settingsLCAgentMainModel(settings)
-	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" && strings.TrimSpace(settings.EmbeddedLCAgentModel) == "" {
+	if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) && strings.TrimSpace(settings.EmbeddedLCAgentModel) == "" {
 		model = "Default: " + model
 	}
 	return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabel(provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))

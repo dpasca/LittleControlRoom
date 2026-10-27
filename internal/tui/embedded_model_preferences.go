@@ -33,7 +33,7 @@ func embeddedModelPreferencesFromSettings(settings config.EditableSettings) map[
 			Reasoning: strings.TrimSpace(settings.EmbeddedOpenCodeReasoning),
 		}
 	}
-	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+	if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 		model := strings.TrimSpace(settings.EmbeddedLCAgentModel)
 		reasoning := strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 		if model != "" || reasoning != "" {
@@ -78,7 +78,9 @@ func applyEmbeddedModelPreferencesToSettings(settings *config.EditableSettings, 
 		settings.EmbeddedLCAgentModel = strings.TrimSpace(pref.Model)
 		settings.EmbeddedLCAgentReasoning = strings.TrimSpace(pref.Reasoning)
 		if provider := strings.TrimSpace(pref.ModelProvider); provider != "" {
-			settings.LCAgentRoutePreset = ""
+			if !config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+				settings.LCAgentRoutePreset = ""
+			}
 			settings.LCAgentProvider = provider
 		}
 	}
@@ -141,7 +143,9 @@ func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp
 		req.PendingModel = pref.Model
 		req.PendingReasoning = pref.Reasoning
 		if req.Provider.Normalized() == codexapp.ProviderLCAgent && strings.TrimSpace(pref.ModelProvider) != "" {
-			req.LCAgentRoutePreset = ""
+			if !config.LCAgentUsesSingleModel(req.LCAgentRoutePreset) {
+				req.LCAgentRoutePreset = ""
+			}
 			req.LCAgentProvider = strings.TrimSpace(pref.ModelProvider)
 		}
 	}

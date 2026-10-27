@@ -177,6 +177,43 @@ func TestNativeImageConversationAcrossProviders(t *testing.T) {
 	}
 }
 
+func TestDeepSeekNativePixelsTakePrecedenceOverGLMFallback(t *testing.T) {
+	runner, trace := imageHarnessRunner(t)
+	requests := 0
+	server := newModelCatalogTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		if string(body["model"]) != `"deepseek-flash"` {
+			t.Errorf("request used stale fallback: %s", body["model"])
+		}
+		requests++
+		if requests == 1 {
+			replyHarnessTest(w, "deepseek", 1, "", harnessTestCall("view_image", map[string]any{"path": "page.png"}))
+			return
+		}
+		if got := requestImageCount(t, body, "deepseek"); got != 1 {
+			t.Errorf("main model received %d images, want 1", got)
+		}
+		replyHarnessTest(w, "deepseek", requests, "", harnessTestCall("final_response", map[string]any{
+			"summary": "Inspected the pixels directly.", "outcome": "completed", "files_changed": []string{}, "verification": []string{},
+		}))
+	}))
+	defer server.Close()
+	err := runChatLoop(context.Background(), runner.Session, runner, nil, "", nil,
+		modeladapter.OpenRouterConfig{APIKey: "main-key", BaseURL: server.URL, Model: "deepseek-flash", MaxTurns: 4},
+		modeladapter.OpenRouterConfig{}, modeladapter.OpenRouterConfig{Model: "glm-5.3-flash"}, "deepseek", "off", "zai", script.DefaultSearchRefineMinBytes,
+		tools.FileProfileBalanced, runner.Files.Limits, openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "deepseek", "deepseek-flash"), true, false, false)
+	if err != nil {
+		t.Fatalf("loop: %v\n%s", err, trace)
+	}
+	if requests != 2 || !strings.Contains(trace.String(), `"native_input":true`) || strings.Contains(trace.String(), `"type":"image_analysis_started"`) {
+		t.Fatalf("inspection did not stay in the main conversation:\n%s", trace)
+	}
+}
+
 func TestViewImageFallsBackForSeparateVisionModel(t *testing.T) {
 	for _, provider := range []string{"openai", "openrouter"} {
 		t.Run(provider, func(t *testing.T) {

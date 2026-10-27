@@ -67,7 +67,7 @@ func repositoryScoutRoutes(cfg config.AppConfig) []lcagent.ScoutRoute {
 }
 
 func configuredLCAgentScoutFallback(cfg config.AppConfig) (lcagent.ScoutRoute, bool) {
-	if presetName := strings.TrimSpace(cfg.LCAgentRoutePreset); presetName != "" {
+	if presetName := strings.TrimSpace(cfg.LCAgentRoutePreset); config.LCAgentHasBundledRoute(presetName) {
 		route, ok := lcagent.ScoutRouteFromPreset(presetName)
 		if !ok {
 			return lcagent.ScoutRoute{}, false
@@ -76,7 +76,7 @@ func configuredLCAgentScoutFallback(cfg config.AppConfig) (lcagent.ScoutRoute, b
 		return hydrateScoutRoute(cfg, route, true), true
 	}
 	provider := strings.ToLower(strings.TrimSpace(cfg.LCAgentProvider))
-	explicit := strings.TrimSpace(cfg.EmbeddedLCAgentModel) != "" ||
+	explicit := config.LCAgentUsesSingleModel(cfg.LCAgentRoutePreset) || strings.TrimSpace(cfg.EmbeddedLCAgentModel) != "" ||
 		strings.TrimSpace(cfg.LCAgentEnvFile) != "" ||
 		(provider != "" && provider != "openrouter")
 	if !explicit {

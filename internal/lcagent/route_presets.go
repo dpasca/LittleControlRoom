@@ -28,6 +28,11 @@ type lcagentRoutePreset struct {
 func lcagentRoutePresets() []lcagentRoutePreset {
 	return []lcagentRoutePreset{
 		{
+			Name:        "single-model",
+			DisplayName: "One Model for Everything",
+			Description: "Use your selected provider and model for coding, utility work, and native image input. No fixed model bundle.",
+		},
+		{
 			Name:            "balanced",
 			DisplayName:     "Balanced Coding",
 			Description:     "Default coding lane: direct DeepSeek V4 Pro with high reasoning and conservative tool/context budgets.",

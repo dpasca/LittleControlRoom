@@ -33,7 +33,7 @@ const (
 	lcagentDefaultContextProfile  = "balanced"
 	lcagentDefaultRequestTimeout  = 10 * time.Minute
 	lcagentDefaultUtilityProvider = "main"
-	lcagentDefaultVisionProvider  = "off"
+	lcagentDefaultVisionProvider  = "auto"
 	lcagentDefaultWebSearch       = "off"
 
 	lcagentManagedProcessExitPollInterval = 250 * time.Millisecond
@@ -81,6 +81,8 @@ type lcagentSession struct {
 	visionProvider      string
 	visionModel         string
 	visionReasoning     string
+	mainVisionProvider  string
+	mainVisionModel     string
 	modelWarning        string
 	webSearchBackend    string
 	webSearchAPIKey     string
@@ -188,13 +190,13 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if model == "" && strings.EqualFold(provider, "ollama") {
 		model = strings.TrimSpace(req.LCAgentOllamaModel)
 	}
-	if model == "" && routePreset == "" {
+	if model == "" && !config.LCAgentHasBundledRoute(routePreset) {
 		model = lcagentDefaultModel(provider)
 	}
 	if model != "" && routePreset != "" && !lcagentRoutePresetMatchesModel(routePreset, model) {
 		routePreset = ""
 	}
-	if model != "" && routePreset == "" {
+	if model != "" && !config.LCAgentHasBundledRoute(routePreset) {
 		provider = lcagentProviderForExplicitModel(provider, model)
 	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
@@ -202,7 +204,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	launchModel := lcagentResolvedModelForSelection(modelProvider, routePreset, model)
 	launchReasoning := firstNonEmpty(strings.TrimSpace(req.PendingReasoning), lcagentRoutePresetReasoningEffort(routePreset))
 	launchReasoning = lcagentReasoningEffortForProvider(modelProvider, model, launchReasoning)
-	hasLaunchOverride := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" || strings.TrimSpace(routePreset) != ""
+	hasLaunchOverride := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" || config.LCAgentHasBundledRoute(routePreset)
 	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
@@ -213,24 +215,11 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	}
 	utilityReasoning := lcagentReasoningEffortForProvider(utilityProvider, utilityModel, req.LCAgentUtilityReasoning)
+	// Keep operator routing separate from historical model events. Resolve the
+	// effective route for each run so /model changes can enable native vision.
 	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
-	if visionProvider == "auto" {
-		if inferred := lcagentDirectProviderForKnownModel(req.LCAgentVisionModel); inferred != "" {
-			visionProvider = inferred
-		}
-	}
-	visionModel := ""
-	resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
-	if resolvedVisionProvider != "" {
-		visionModel = modeladapter.NormalizeModelForProvider(resolvedVisionProvider, req.LCAgentVisionModel)
-		if visionModel == "" && strings.EqualFold(resolvedVisionProvider, "ollama") {
-			visionModel = strings.TrimSpace(req.LCAgentOllamaModel)
-			if visionModel == "" && strings.EqualFold(modelProvider, "ollama") {
-				visionModel = model
-			}
-		}
-	}
-	visionReasoning := lcagentReasoningEffortForProvider(resolvedVisionProvider, visionModel, req.LCAgentVisionReasoning)
+	visionModel := strings.TrimSpace(req.LCAgentVisionModel)
+	visionReasoning := strings.TrimSpace(req.LCAgentVisionReasoning)
 	session := &lcagentSession{
 		turnAdmission:            turnAdmissionForLaunch(req),
 		projectPath:              strings.TrimSpace(req.ProjectPath),
@@ -264,6 +253,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		visionProvider:           visionProvider,
 		visionModel:              visionModel,
 		visionReasoning:          visionReasoning,
+		mainVisionProvider:       req.LCAgentMainVisionProvider,
+		mainVisionModel:          req.LCAgentMainVisionModel,
 		modelWarning:             modelWarning,
 		webSearchBackend:         lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:          strings.TrimSpace(req.LCAgentWebSearchAPIKey),
@@ -1732,7 +1723,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	if model == "" && strings.EqualFold(provider, "ollama") {
 		model = strings.TrimSpace(s.ollamaModel)
 	}
-	if model == "" && routePreset == "" {
+	if model == "" && !config.LCAgentHasBundledRoute(routePreset) {
 		model = lcagentDefaultModel(provider)
 	}
 	if model != "" && routePreset != "" && !lcagentRoutePresetMatchesModel(routePreset, model) {
@@ -1804,27 +1795,24 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	}
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
 	utilityReasoning := lcagentReasoningEffortForProvider(utilityProvider, utilityModel, s.utilityReasoning)
-	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
-	if lcagentVisionProviderValue(visionProvider) == "auto" {
-		if inferred := lcagentDirectProviderForKnownModel(s.visionModel); inferred != "" {
-			visionProvider = inferred
-		}
+	if config.LCAgentUsesSingleModel(routePreset) {
+		utilityProvider, utilityModel = "main", model
+		utilityReasoning = reasoningEffort
+		utilityAPIKeyName, utilityAPIKey = s.providerCredentialLocked(modelProvider)
 	}
-	visionModel := strings.TrimSpace(s.visionModel)
+	visionProvider, visionModel := s.visionRouteLocked(modelProvider, model)
 	visionCredentialProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
 	if visionCredentialProvider != "" {
 		visionModel = modeladapter.NormalizeModelForProvider(visionCredentialProvider, visionModel)
 		if visionModel == "" && strings.EqualFold(visionCredentialProvider, "ollama") {
 			visionModel = strings.TrimSpace(s.ollamaModel)
-			if visionModel == "" && strings.EqualFold(modelProvider, "ollama") {
-				visionModel = model
-			}
 		}
-	} else {
-		visionModel = ""
 	}
 	visionAPIKeyName, visionAPIKey := s.providerCredentialLocked(visionCredentialProvider)
 	visionReasoning := lcagentReasoningEffortForProvider(visionCredentialProvider, visionModel, s.visionReasoning)
+	if visionProvider == "main" {
+		visionReasoning = reasoningEffort
+	}
 	browserControl := "off"
 	browserSessionKey := strings.TrimSpace(s.managedBrowserSessionKey)
 	browserProfileKey := strings.TrimSpace(s.browserProfileKey)
@@ -1968,7 +1956,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	if prepared.adminWrite {
 		args = append(args, "--admin-write")
 	}
-	if prepared.routePreset != "" && prepared.autoOverride == "" {
+	if config.LCAgentHasBundledRoute(prepared.routePreset) && prepared.autoOverride == "" {
 		args = append(args,
 			"--route-preset", prepared.routePreset,
 			"--request-timeout", prepared.requestTimeout.String(),
@@ -1977,6 +1965,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 			args = append(args, "--auto", prepared.autoLevel)
 		}
 	} else {
+		if config.LCAgentUsesSingleModel(prepared.routePreset) {
+			args = append(args, "--route-preset", config.LCAgentSingleModel)
+		}
 		args = append(args,
 			"--auto", prepared.autoLevel,
 			"--provider", prepared.provider,
@@ -3083,12 +3074,6 @@ func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.
 	s.imageAnalysisActive = false
 	s.imageAnalyses++
 	s.imageAnalysisLastSummary = firstNonEmpty(summary, output)
-	if model := strings.TrimSpace(modelName); model != "" {
-		s.visionModel = model
-	}
-	if provider := strings.TrimSpace(rawJSONString(event["provider"])); provider != "" {
-		s.visionProvider = provider
-	}
 	if usageOK {
 		s.addTokenUsageLocked(usage)
 	}
@@ -3347,12 +3332,8 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 		s.provider = provider
 	}
 	s.reasoningEffort = strings.TrimSpace(replay.reasoningEffort)
-	if provider := strings.TrimSpace(replay.visionModelProvider); provider != "" {
-		s.visionProvider = provider
-	}
-	if model := strings.TrimSpace(replay.visionModel); model != "" {
-		s.visionModel = model
-	}
+	// Vision in the replay describes past requests. Current launch settings
+	// remain authoritative for the next run and its sidebar route.
 	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
 	s.imageAnalysisActive = replay.imageAnalysisActive
 	s.imageAnalyses = replay.imageAnalyses
@@ -3494,10 +3475,10 @@ func lcagentRoutePresetValue(configured string) (string, error) {
 		return "mimo-2.5-pro-low", nil
 	case "glm", "glm-5", "glm51", "zai", "zai-glm":
 		return "glm-5.1", nil
-	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "glm-5.1", "cheap-scout":
+	case "single-model", "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "glm-5.1", "cheap-scout":
 		return value, nil
 	default:
-		return "", fmt.Errorf("LCAgent route preset must be blank or one of: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, cheap-scout")
+		return "", fmt.Errorf("LCAgent route preset must be blank or one of: single-model, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, cheap-scout")
 	}
 }
 
@@ -3730,6 +3711,9 @@ func lcagentResolvedModelForSelection(provider, routePreset, model string) strin
 }
 
 func lcagentRoutePresetMatchesModel(preset string, model string) bool {
+	if config.LCAgentUsesSingleModel(preset) {
+		return true
+	}
 	provider := lcagentRoutePresetProvider(preset)
 	routeModel := lcagentRoutePresetModel(preset)
 	if provider == "" || routeModel == "" || strings.TrimSpace(model) == "" {
@@ -3908,24 +3892,32 @@ func (s *lcagentSession) pendingModelSnapshotLocked(currentProvider, currentMode
 	return pendingModel, pendingProvider, pendingReasoning
 }
 
+func (s *lcagentSession) visionRouteLocked(mainProvider, mainModel string) (string, string) {
+	provider := lcagentVisionProviderValue(s.visionProvider)
+	model := s.visionModel
+	if config.LCAgentUsesSingleModel(s.routePreset) {
+		provider, model = "auto", ""
+	}
+	verified := strings.EqualFold(s.mainVisionProvider, mainProvider) && strings.EqualFold(s.mainVisionModel, mainModel) && mainModel != ""
+	return modelcatalog.ResolveVisionRoute(mainProvider, mainModel, provider, model, verified)
+}
+
 func (s *lcagentSession) resolvedVisionModelLocked(mainProvider, mainModel string) (string, string) {
-	visionProvider := lcagentVisionProviderValue(s.visionProvider)
+	visionProvider, model := s.visionRouteLocked(mainProvider, mainModel)
 	if visionProvider == "off" {
 		return "", ""
 	}
-	resolvedProvider := lcagentResolvedVisionProvider(s.routePreset, firstNonEmpty(s.provider, mainProvider), visionProvider)
+	resolvedProvider := lcagentResolvedVisionProvider(s.routePreset, mainProvider, visionProvider)
 	if resolvedProvider == "" {
 		return "", ""
 	}
-	model := strings.TrimSpace(s.visionModel)
 	if model == "" && visionProvider == "main" {
-		model = strings.TrimSpace(mainModel)
+		model = mainModel
 	}
 	if model == "" {
 		model = lcagentDefaultModel(resolvedProvider)
 	}
-	model = modeladapter.NormalizeModelForProvider(resolvedProvider, model)
-	return model, resolvedProvider
+	return modeladapter.NormalizeModelForProvider(resolvedProvider, model), resolvedProvider
 }
 
 type lcagentCommand struct {

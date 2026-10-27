@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/agentquery"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/buildinfo"
+	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/demorecord"
 	"lcroom/internal/integrations"
@@ -31,6 +32,7 @@ import (
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
+	"lcroom/internal/modelcatalog"
 	"lcroom/internal/store"
 	"lcroom/internal/todocapture"
 )
@@ -434,7 +436,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
-	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout; explicit flags override preset values")
+	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "model setup: single-model, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout; legacy presets supply defaults; single-model follows main for all roles")
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama, or mlx")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
@@ -450,7 +452,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&utilityReasoning, "utility-reasoning-effort", "", "optional reasoning effort for the utility model")
-	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "image input and QA provider: off, main (direct inspection), openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
+	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "image input and QA provider: auto (native first), off, main (direct inspection), openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&visionReasoning, "vision-reasoning-effort", "", "optional reasoning effort for the vision model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
@@ -941,6 +943,21 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			providerCfg.BaseURL = injected.BaseURL
 			providerCfg.HTTPClient = injected.HTTPClient
 		}
+		if config.LCAgentUsesSingleModel(routePresetRaw) {
+			if model == "" {
+				resolved, err := newChatProviderClient(provider, providerCfg)
+				if err != nil {
+					return err
+				}
+				model = resolved.Model()
+			}
+			utilityProvider, utilityModel, utilityReasoning = "main", model, reasoningEffort
+			visionModel, visionReasoning = "", reasoningEffort
+			if visionProvider != "main" {
+				visionProvider = "auto"
+			}
+			providerCfg.FinalModel = ""
+		}
 		runErr = runChatLoop(runCtx, writer, runner, threadStore, instructions.PromptSection(), resumeContext, providerCfg, modeladapter.OpenRouterConfig{
 			Model:           utilityModel,
 			EnvFile:         envFile,
@@ -1017,31 +1034,40 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		_ = writer.Write(event)
 	}
+	if utilityProvider == "main" {
+		// Helpers on the main route inherit custom endpoints and injected keys.
+		if utilityCfg.APIKey == "" {
+			utilityCfg.APIKey = cfg.APIKey
+		}
+		if utilityCfg.BaseURL == "" {
+			utilityCfg.BaseURL = cfg.BaseURL
+		}
+		if utilityCfg.HTTPClient == nil {
+			utilityCfg.HTTPClient = cfg.HTTPClient
+		}
+		if len(utilityCfg.ProviderOnly) == 0 {
+			utilityCfg.ProviderOnly = append([]string(nil), cfg.ProviderOnly...)
+		}
+	}
 	searchRefine := newSearchRefineProfile(utilityProvider, utilityCfg, searchRefineMinBytes, providerLabel, client.Model())
 	if searchRefine.Enabled {
 		runner.SearchRefiner = searchRefine.Refiner
 		runner.CodeScout = searchRefine.Scout
 		runner.SearchRefineMinBytes = searchRefine.MinBytes
 	}
+	visionProvider, visionCfg.Model = modelcatalog.ResolveVisionRoute(providerLabel, client.Model(), visionProvider, visionCfg.Model, false)
 	if visionProvider == "main" {
-		// The main route may have explicit credentials or a custom endpoint.
-		// Its independent QA requests must use that same configured transport.
-		if visionCfg.APIKey == "" {
-			visionCfg.APIKey = cfg.APIKey
-		}
-		if visionCfg.BaseURL == "" {
-			visionCfg.BaseURL = cfg.BaseURL
-		}
-		if visionCfg.HTTPClient == nil {
-			visionCfg.HTTPClient = cfg.HTTPClient
-		}
-		if len(visionCfg.ProviderOnly) == 0 {
-			visionCfg.ProviderOnly = append([]string(nil), cfg.ProviderOnly...)
-		}
+		// Native input and independent QA use the main transport, including
+		// explicit credentials/endpoints, rather than a secondary route's key.
+		visionCfg.APIKey = cfg.APIKey
+		visionCfg.BaseURL = cfg.BaseURL
+		visionCfg.HTTPClient = cfg.HTTPClient
+		visionCfg.EnvFile = cfg.EnvFile
+		visionCfg.ProviderOnly = append([]string(nil), cfg.ProviderOnly...)
 	}
 	vision := newVisionProfile(visionProvider, visionCfg, providerLabel, client.Model())
 	// Selecting the main model for vision is the existing explicit capability
-	// declaration (Auto resolves here only after the saved image-input check).
+	// declaration. Auto also accepts documented or host-verified image input.
 	// Equality also covers explicitly selecting the same provider/model pair.
 	nativeVision := vision.Enabled && vision.Provider == normalizeMainProvider(providerLabel) && vision.Model == client.Model()
 	if nativeVision {

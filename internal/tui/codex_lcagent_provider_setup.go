@@ -247,7 +247,9 @@ func (m Model) settingsFromCodexLCAgentProviderSetup(state *codexLCAgentProvider
 			settings.OllamaModel = value
 		}
 	}
-	settings.LCAgentRoutePreset = ""
+	if !config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+		settings.LCAgentRoutePreset = ""
+	}
 	settings.LCAgentProvider = strings.ToLower(strings.TrimSpace(state.Provider))
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(state.Model.Model)
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(state.Reasoning)

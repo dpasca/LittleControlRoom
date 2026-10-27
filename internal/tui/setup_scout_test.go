@@ -27,7 +27,7 @@ func TestSetupRepositoryScoutSummaryKeepsConfiguredWorkerBehindChat(t *testing.T
 		LCAgentRoutePreset: "quality",
 	}
 	summary := setupReviewRepositoryScoutSummary(settings)
-	for _, want := range []string{"inherited Chat utility", "configured LCAgent Quality Coding worker fallback", "Chat inference remains the first choice", "Duplicate provider/model routes are skipped", "failures list every attempted route"} {
+	for _, want := range []string{"inherited Chat utility", "configured LCAgent OpenAI Coding (legacy) worker fallback", "Chat inference remains the first choice", "Duplicate provider/model routes are skipped", "failures list every attempted route"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary missing %q: %s", want, summary)
 		}

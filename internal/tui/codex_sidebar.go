@@ -1447,6 +1447,10 @@ func embeddedSidebarVisionModelLabel(snapshot codexapp.Snapshot) string {
 		return ""
 	}
 	provider := strings.TrimSpace(snapshot.VisionModelProvider)
+	if strings.EqualFold(provider, strings.TrimSpace(snapshot.ModelProvider)) &&
+		strings.EqualFold(model, strings.TrimSpace(snapshot.Model)) {
+		return model + " (native)"
+	}
 	if provider == "" || strings.EqualFold(provider, strings.TrimSpace(snapshot.ModelProvider)) {
 		return model
 	}

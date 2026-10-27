@@ -171,9 +171,12 @@ func (c AppConfig) ModelMismatches() []ModelMismatch {
 	// is inactive until that preset is cleared. Utility and vision overrides do
 	// remain active and are checked against their resolved providers, including
 	// the "main" sentinel.
-	if strings.TrimSpace(c.LCAgentRoutePreset) == "" {
+	if !LCAgentHasBundledRoute(c.LCAgentRoutePreset) {
 		provider := lcagentEffectiveMainProvider(c.LCAgentRoutePreset, c.LCAgentProvider)
 		add(CheckModel("embedded_lcagent_model", "lcagent_provider", provider, c.EmbeddedLCAgentModel, ""))
+	}
+	if LCAgentUsesSingleModel(c.LCAgentRoutePreset) {
+		return out
 	}
 	utilityProvider := lcagentEffectiveUtilityProvider(c.LCAgentRoutePreset, c.LCAgentProvider, c.LCAgentUtilityProvider)
 	add(CheckModel("lcagent_utility_model", "lcagent_utility_provider", utilityProvider, c.LCAgentUtilityModel, ""))

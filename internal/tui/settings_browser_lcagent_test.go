@@ -255,7 +255,7 @@ func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 		t.Fatalf("top-level Getting Started Enter should open the setup panel before the picker")
 	}
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
-	for _, want := range []string{"LCAgent Setup", "Coding Route", "Main Model", "Utility Model", "Provider Credentials", "OpenRouter API key", "Web Search"} {
+	for _, want := range []string{"LCAgent Setup", "Model Setup", "Main Model", "Utility Model", "Provider Credentials", "OpenRouter API key", "Web Search"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("LCAgent setup panel missing %q: %q", want, rendered)
 		}
@@ -282,7 +282,7 @@ func TestSettingsLCAgentPresetHidesOverriddenMainModelFields(t *testing.T) {
 	got := updated.(Model)
 
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
-	for _, want := range []string{"LCAgent route preset", "Xiaomi base URL", "Xiaomi API key"} {
+	for _, want := range []string{"LCAgent model setup", "Xiaomi base URL", "Xiaomi API key"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("LCAgent preset setup panel missing %q: %q", want, rendered)
 		}
@@ -441,7 +441,7 @@ func TestSettingsLCAgentChoicePickerChoosesRoutePreset(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldLCAgentRoutePreset)
 
 	rendered := ansi.Strip(m.renderSettingsContent(84, 24))
-	for _, want := range []string{"Individual Fields", "▼"} {
+	for _, want := range []string{"Custom Routing", "▼"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("route preset row missing %q: %q", want, rendered)
 		}
@@ -460,7 +460,7 @@ func TestSettingsLCAgentChoicePickerChoosesRoutePreset(t *testing.T) {
 		t.Fatalf("route preset enter should open the generic choice picker")
 	}
 	rendered = ansi.Strip(got.renderSettingsChoicePickerContent(56, 18))
-	for _, want := range []string{"LCAgent Route Preset", "> Individual Fields  (current)", "Quality Coding", "Selected: Individual Fields"} {
+	for _, want := range []string{"LCAgent Model Setup", "> Custom Routing  (current)", "OpenAI Coding (legacy)", "Selected: Custom Routing"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("route preset picker missing %q: %q", want, rendered)
 		}

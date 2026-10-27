@@ -91,22 +91,28 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 	case settingsFieldLCAgentRoutePreset:
 		return []settingsChoiceOption{
 			{
+				Value:       config.LCAgentSingleModel,
+				Label:       "One Model for Everything",
+				Summary:     "Choose one model; coding and helper work follow it.",
+				Description: "Pick any provider and model below. Utility work uses that same model; images go directly to it when image input is known or verified. Changing the model updates every role. Separate routes are available under Custom Routing.",
+			},
+			{
 				Value:       "",
-				Label:       "Individual Fields",
-				Summary:     "Use the provider, model, autonomy, and profile fields below.",
-				Description: "Choose this when you want to tune LCAgent by field instead of applying a bundled coding lane.",
+				Label:       "Custom Routing",
+				Summary:     "Choose a main model and optional secondary models.",
+				Description: "Configure utility work and a fallback vision model separately. Native vision on the main model takes precedence. Permissions and context budgets remain independent.",
 			},
 			{
 				Value:       "balanced",
-				Label:       "Balanced Coding",
-				Summary:     "Default coding lane with conservative tool and context budgets.",
-				Description: "Good everyday direct DeepSeek choice for normal LCAgent coding work.",
+				Label:       "DeepSeek Pro Coding (legacy)",
+				Summary:     "Fixed model: DeepSeek / " + lcagentModelForRoutePreset("balanced"),
+				Description: "Existing Balanced Coding preset with high reasoning and conservative context budgets. Choose One Model for Everything to select your own model.",
 			},
 			{
 				Value:       "quality",
-				Label:       "Quality Coding",
-				Summary:     "Higher-quality route with larger retained context.",
-				Description: "Use this for important edits, reviews, or work where model quality matters more than cost.",
+				Label:       "OpenAI Coding (legacy)",
+				Summary:     "Fixed model: OpenAI / " + lcagentModelForRoutePreset("quality"),
+				Description: "Existing Quality Coding preset with low reasoning and larger retained context. Choose One Model for Everything to select your own model.",
 			},
 			{
 				Value:       "mimo-2.5-pro-low",
@@ -419,6 +425,7 @@ func (m Model) renderSettingsChoicePickerContent(width, bodyH int) string {
 	lines = append(lines, detailField("Selected", detailValueStyle.Render(selected.Label)))
 	if len(lines) > bodyH {
 		lines = lines[:bodyH]
+		lines[len(lines)-1] = detailField("Selected", detailValueStyle.Render(selected.Label))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -533,7 +540,7 @@ func settingsChoiceOptionLabelFromOptions(options []settingsChoiceOption, fieldI
 func settingsChoiceTitle(fieldIndex int) string {
 	switch fieldIndex {
 	case settingsFieldLCAgentRoutePreset:
-		return "LCAgent Route Preset"
+		return "LCAgent Model Setup"
 	case settingsFieldLCAgentReasoning:
 		return "LCAgent Reasoning"
 	case settingsFieldProjectReasoning:

@@ -17,10 +17,11 @@ import (
 
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/script"
+	"lcroom/internal/modelcatalog"
 )
 
 const (
-	defaultVisionProvider = "off"
+	defaultVisionProvider = "auto"
 	defaultVisionModel    = ""
 	maxVisionImageBytes   = 25 * 1024 * 1024
 )
@@ -55,6 +56,7 @@ func newVisionProfile(provider string, cfg modeladapter.OpenRouterConfig, mainPr
 			DisabledErr: err,
 		}
 	}
+	provider, cfg.Model = modelcatalog.ResolveVisionRoute(mainProvider, mainModel, provider, cfg.Model, false)
 	sameAsMain := provider == "main"
 	if sameAsMain {
 		provider = normalizeMainProvider(mainProvider)
@@ -100,6 +102,8 @@ func normalizeVisionProvider(raw string) (string, error) {
 		return defaultVisionProvider, nil
 	}
 	switch value {
+	case "auto":
+		return "auto", nil
 	case "main", "same", "same-as-main":
 		return "main", nil
 	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
@@ -107,7 +111,7 @@ func normalizeVisionProvider(raw string) (string, error) {
 	case "zai", "z-ai", "z.ai":
 		return "zai", nil
 	default:
-		return "", fmt.Errorf("vision provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama")
+		return "", fmt.Errorf("vision provider must be one of: auto, main, off, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama")
 	}
 }
 

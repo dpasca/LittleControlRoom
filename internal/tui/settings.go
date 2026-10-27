@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/lcagent/modeladapter"
+	"lcroom/internal/modelcatalog"
 	"lcroom/internal/todocapture"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -1242,7 +1243,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settings.BossChatBackend == config.AIBackendOllama
 	case settingsFieldLCAgentModel,
 		settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile:
-		return strings.TrimSpace(settings.LCAgentRoutePreset) == ""
+		return !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset)
 	case settingsFieldLCAgentProvider,
 		settingsFieldLCAgentReasoning,
 		settingsFieldLCAgentUtilityProvider,
@@ -1252,8 +1253,8 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendMLX)
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
-	case settingsFieldLCAgentUtilityModel, settingsFieldLCAgentVisionModel:
-		return true
+	case settingsFieldLCAgentUtilityModel, settingsFieldLCAgentVisionModel, settingsFieldLCAgentUtilityReasoning, settingsFieldLCAgentVisionReasoning:
+		return !config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset)
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -1368,6 +1369,9 @@ func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, pr
 	if strings.EqualFold(strings.TrimSpace(selected), strings.TrimSpace(provider)) {
 		return true
 	}
+	if config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+		return false
+	}
 	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
 	if !strings.EqualFold(utilityProvider, "off") &&
 		!strings.EqualFold(utilityProvider, "main") &&
@@ -1460,17 +1464,19 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		return fields
 	case settingsDrilldownLCAgent:
 		fields := []int{settingsFieldLCAgentRoutePreset}
-		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+		if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 			fields = append(fields,
 				settingsFieldLCAgentModel,
 			)
 		}
-		fields = append(fields,
-			settingsFieldLCAgentUtilityProvider,
-			settingsFieldLCAgentUtilityModel,
-			settingsFieldLCAgentVisionProvider,
-			settingsFieldLCAgentVisionModel,
-		)
+		if !config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+			fields = append(fields,
+				settingsFieldLCAgentUtilityProvider,
+				settingsFieldLCAgentUtilityModel,
+				settingsFieldLCAgentVisionProvider,
+				settingsFieldLCAgentVisionModel,
+			)
+		}
 		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
@@ -1563,6 +1569,9 @@ func settingsLCAgentCredentialField(settings config.EditableSettings) int {
 
 func settingsLCAgentConnectionFields(settings config.EditableSettings) []int {
 	fields := appendSettingsLCAgentConnectionFields(nil, settingsLCAgentMainProvider(settings))
+	if config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+		return fields
+	}
 	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
 	if !strings.EqualFold(utilityProvider, "off") && !strings.EqualFold(utilityProvider, "main") {
 		fields = appendSettingsLCAgentConnectionFields(fields, utilityProvider)
@@ -2476,10 +2485,13 @@ func (i settingsBossModelProviderIssue) saveStatus() string {
 }
 
 func settingsLCAgentKnownModelProviderIssue(settings config.EditableSettings) (settingsLCAgentModelProviderIssue, bool) {
-	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+	if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Main model", "Main model provider", settingsLCAgentMainProvider(settings), settings.EmbeddedLCAgentModel); ok {
 			return issue, true
 		}
+	}
+	if config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+		return settingsLCAgentModelProviderIssue{}, false
 	}
 	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
 	if utilityProvider != "main" && utilityProvider != "off" {
@@ -2489,7 +2501,7 @@ func settingsLCAgentKnownModelProviderIssue(settings config.EditableSettings) (s
 	}
 	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 	if visionProvider != "main" && visionProvider != "off" && visionProvider != "auto" {
-		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Vision model", "Vision Model provider", visionProvider, settings.LCAgentVisionModel); ok {
+		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Vision fallback model", "Vision Model provider", visionProvider, settings.LCAgentVisionModel); ok {
 			return issue, true
 		}
 	}
@@ -2631,7 +2643,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 	case settingsDrilldownLCAgent:
 		switch fieldIndex {
 		case settingsFieldLCAgentRoutePreset:
-			return "Coding Route"
+			return "Model Setup"
 		case settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
 			return "Main Model"
 		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldZaiBaseURL, settingsFieldZaiAPIKey:
@@ -2639,7 +2651,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
 			return "Utility Model"
 		case settingsFieldLCAgentVisionProvider, settingsFieldLCAgentVisionModel:
-			return "Vision Model"
+			return "Vision Fallback"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
 		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
@@ -2981,7 +2993,7 @@ func (m Model) settingsLCAgentStepState(settings config.EditableSettings) (strin
 }
 
 func settingsLCAgentStepStateWithCredentialCheck(settings config.EditableSettings, credentialCheck func(config.EditableSettings) (string, lipgloss.Style, string)) (string, string, lipgloss.Style, string) {
-	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
+	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); config.LCAgentHasBundledRoute(preset) {
 		state, style, detail := credentialCheck(settings)
 		return settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset), state, style, detail
 	}
@@ -2990,6 +3002,9 @@ func settingsLCAgentStepStateWithCredentialCheck(settings config.EditableSetting
 	model := settingsLCAgentMainModel(settings)
 	state, style, detail := credentialCheck(settings)
 	value := providerLabel + " / " + model
+	if config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+		value = "One Model · " + value
+	}
 	if state == "optional" {
 		value = providerLabel
 	}
@@ -3192,7 +3207,7 @@ func settingsLCAgentMainProvider(settings config.EditableSettings) string {
 }
 
 func settingsLCAgentMainModel(settings config.EditableSettings) string {
-	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+	if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 		if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" {
 			return model
 		}
@@ -3279,26 +3294,23 @@ func settingsLCAgentMainVisionVerified(settings config.EditableSettings) bool {
 		strings.EqualFold(strings.TrimSpace(settings.LCAgentMainVisionModel), model)
 }
 
-func settingsLCAgentVisionProviderForLaunch(settings config.EditableSettings) string {
+func settingsLCAgentVisionRoute(settings config.EditableSettings) (string, string) {
 	provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
-	if provider == "auto" {
-		if inferred := settingsLCAgentProviderForExplicitVisionModel(settings.LCAgentVisionModel); inferred != "" {
-			return inferred
-		}
-		if settingsLCAgentMainVisionVerified(settings) {
-			return "main"
-		}
-		return "off"
+	model := strings.TrimSpace(settings.LCAgentVisionModel)
+	if config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+		provider, model = "auto", ""
 	}
+	return modelcatalog.ResolveVisionRoute(settingsLCAgentMainProvider(settings), settingsLCAgentMainModel(settings), provider, model, settingsLCAgentMainVisionVerified(settings))
+}
+
+func settingsLCAgentVisionProviderForLaunch(settings config.EditableSettings) string {
+	provider, _ := settingsLCAgentVisionRoute(settings)
 	return provider
 }
 
 func settingsLCAgentVisionModelForLaunch(settings config.EditableSettings) string {
-	provider := settingsLCAgentVisionProviderForLaunch(settings)
-	if provider == "off" || provider == "main" {
-		return ""
-	}
-	return strings.TrimSpace(settings.LCAgentVisionModel)
+	_, model := settingsLCAgentVisionRoute(settings)
+	return model
 }
 
 func settingsLCAgentProviderForExplicitVisionModel(model string) string {
@@ -3316,15 +3328,14 @@ func settingsLCAgentProviderForExplicitVisionModel(model string) string {
 }
 
 func settingsLCAgentVisionAutoLabel(settings config.EditableSettings) string {
-	if inferred := settingsLCAgentProviderForExplicitVisionModel(settings.LCAgentVisionModel); inferred != "" {
-		return "auto: " + settingsLCAgentModelPickerProviderLabel(inferred) + " / " + strings.TrimSpace(settings.LCAgentVisionModel)
+	provider, model := settingsLCAgentVisionRoute(settings)
+	if provider == "main" {
+		return "native: " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + settingsLCAgentMainModel(settings)
 	}
-	mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
-	mainModel := settingsLCAgentMainModel(settings)
-	if settingsLCAgentMainVisionVerified(settings) {
-		return "auto: verified Main Model (" + mainProvider + " / " + mainModel + ")"
+	if provider != "off" {
+		return "fallback: " + settingsLCAgentModelPickerProviderLabel(provider) + " / " + model
 	}
-	return "auto: off until Main Model passes image check"
+	return "off: press v to verify Main Model image input"
 }
 
 func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
@@ -3723,7 +3734,7 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 	case settingsFieldAIBackend, settingsFieldBossChatBackend:
 		action = "Next: press Enter to open the focused setup panel."
 	case settingsFieldLCAgentRoutePreset:
-		action = "Next: press Enter to configure LCAgent Main Model, Utility Model, credentials, and web search."
+		action = "Next: press Enter to choose one model for everything or configure custom routing."
 	case settingsFieldOpenAIAPIKey:
 		if editHint, edited := m.settingsSensitiveAPIKeyEditHint(m.settingsSelected); edited {
 			action = editHint
@@ -4026,8 +4037,8 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
-			"LCAgent route preset",
-			"Press Enter to choose a coding route bundle, or use Individual Fields to tune model, autonomy, and profiles separately.",
+			"LCAgent model setup",
+			"Choose One Model for Everything, Custom Routing, or an existing fixed model preset. The main model stays your choice.",
 			settings.LCAgentRoutePreset,
 			32,
 			settingsSectionLCAgent,
@@ -4105,15 +4116,15 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
-			"Vision model provider",
-			"Press Enter to choose the provider for analyze_image, use the Main Model, or turn image analysis off.",
+			"Vision fallback provider",
+			"Secondary route used when the main model lacks known or verified image input. Native vision takes precedence; Off disables all image input.",
 			settings.LCAgentVisionProvider,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsFieldWithPlaceholder(
-			"Vision model",
-			"Press Enter to choose the provider and model for analyze_image. Choose Auto model to use the selected provider default.",
+			"Vision fallback model",
+			"Choose an optional fallback for a main model without image input. Native vision on the main model takes precedence.",
 			settings.LCAgentVisionModel,
 			256,
 			"Default: "+settingsLCAgentVisionDefaultLabel(settings),
@@ -4656,12 +4667,14 @@ func (m Model) settingsFieldHint(index int) string {
 		return field.hint
 	case settingsFieldLCAgentRoutePreset:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "single-model":
+			return "Pick one main model for coding and helper work. Native vision is enabled when documented or verified; press v on Main model to check a new model. Custom Routing exposes optional secondary models."
 		case "":
-			return "LCAgent launches use the individual fields below. A configured worker route is also available to /chat Scout after its compatible Chat routes."
+			return "Choose a main model and optional utility/vision fallbacks. Native vision takes precedence. One Model for Everything follows your main selection for every role."
 		case "balanced":
 			return "Balanced uses direct DeepSeek V4 Pro with conservative coding budgets."
 		case "quality":
-			return "Quality uses GPT-5.5 through the direct OpenAI route with low reasoning and larger retained context."
+			return "Legacy preset: OpenAI / " + lcagentModelForRoutePreset("quality") + " with low reasoning and larger retained context."
 		case "mimo-2.5-pro", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
 			return "MiMo 2.5 Pro low uses direct Xiaomi MiMo-V2.5-Pro with larger retained context."
 		case "mimo-2.5-pro-low":

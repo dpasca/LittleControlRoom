@@ -643,22 +643,24 @@ func (m Model) setupConfigFieldIndexes() []int {
 	if m.setupFocusedRole == setupRoleLCAgent {
 		settings := m.setupDraftSettingsForProviderChoices()
 		fields := []int{settingsFieldLCAgentRoutePreset}
-		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+		if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 			fields = append(fields,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
 			)
 		}
-		fields = append(fields,
-			settingsFieldLCAgentUtilityProvider,
-			settingsFieldLCAgentUtilityModel,
-			settingsFieldLCAgentVisionProvider,
-			settingsFieldLCAgentVisionModel,
-		)
+		if !config.LCAgentUsesSingleModel(settings.LCAgentRoutePreset) {
+			fields = append(fields,
+				settingsFieldLCAgentUtilityProvider,
+				settingsFieldLCAgentUtilityModel,
+				settingsFieldLCAgentVisionProvider,
+				settingsFieldLCAgentVisionModel,
+			)
+		}
 		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
-		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+		if !config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 			fields = append(fields,
 				settingsFieldLCAgentAuto,
 				settingsFieldLCAgentToolProfile,
@@ -1124,7 +1126,7 @@ func setupRepositoryScoutAutomaticRouteOrder(settings config.EditableSettings) s
 	}
 	if setupRepositoryScoutHasWorkerFallback(settings) {
 		label := "configured LCAgent worker fallback"
-		if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
+		if preset := strings.TrimSpace(settings.LCAgentRoutePreset); config.LCAgentHasBundledRoute(preset) {
 			label = "configured LCAgent " + settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset) + " worker fallback"
 		}
 		routes = append(routes, label)
@@ -1155,7 +1157,7 @@ func setupScoutBackendSupported(backend config.AIBackend) bool {
 }
 
 func (m Model) setupReviewLCAgentSummary(settings config.EditableSettings) string {
-	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
+	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); config.LCAgentHasBundledRoute(preset) {
 		state, _, detail := lcagentCredentialSmokeCheck(settings)
 		parts := []string{settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset), "(" + state + ")"}
 		if detail != "" && state != "ready" {

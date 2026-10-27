@@ -1858,7 +1858,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 		t.Fatalf("opening a settings section should leave the top-level menu")
 	}
 	if got.settingsSelected != settingsFieldLCAgentRoutePreset {
-		t.Fatalf("settingsSelected = %d, want LCAgent route preset field", got.settingsSelected)
+		t.Fatalf("settingsSelected = %d, want LCAgent model setup field", got.settingsSelected)
 	}
 	rendered = ansi.Strip(got.renderSettingsContent(72, 18))
 	if !strings.Contains(rendered, "LCAgent section.") {
@@ -1867,7 +1867,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "Chat inference first") || !strings.Contains(rendered, "every Scout answer reports the target") || !strings.Contains(rendered, "route, evidence, and trace") {
 		t.Fatalf("LCAgent section should disclose automatic Scout routing and receipts: %q", rendered)
 	}
-	if !strings.Contains(rendered, "LCAgent route preset") || !strings.Contains(rendered, "Main model") {
+	if !strings.Contains(rendered, "LCAgent model setup") || !strings.Contains(rendered, "Main model") {
 		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
 	}
 	if strings.Contains(rendered, "Main model provider") {

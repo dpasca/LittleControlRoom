@@ -50,6 +50,18 @@ func TestRepositoryScoutRoutesKeepConfiguredLCAgentWorkerBehindChat(t *testing.T
 	}
 }
 
+func TestRepositoryScoutSingleModelFallbackUsesSelectedModel(t *testing.T) {
+	cfg := config.Default()
+	cfg.LCAgentRoutePreset = config.LCAgentSingleModel
+	cfg.LCAgentProvider, cfg.EmbeddedLCAgentModel = "deepseek", "deepseek-flash"
+	cfg.EmbeddedLCAgentReasoning = "max"
+	cfg.DeepSeekAPIKey = "selected-provider-key"
+	route, ok := configuredLCAgentScoutFallback(cfg)
+	if !ok || route.Provider != "deepseek" || route.Model != "deepseek-flash" || route.ReasoningEffort != "max" || route.APIKey != "selected-provider-key" {
+		t.Fatalf("Scout fallback lost single-model selection: %+v", route)
+	}
+}
+
 func TestRepositoryScoutRoutesPreferLunaOverConfiguredKimiWorker(t *testing.T) {
 	cfg := config.Default()
 	cfg.BossChatBackend = config.AIBackendOpenAIAPI

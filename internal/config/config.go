@@ -375,7 +375,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	claudeCodeHome := fs.String("claude-code-home", cfg.ClaudeCodeHome, "Path to Claude Code home directory")
 	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
-	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout")
+	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent model setup: single-model, blank (custom), balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout")
 	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, moonshot, xiaomi, zai, or ollama")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent permission level: off, low, or medium")
 	lcagentAdminWrite := fs.Bool("lcagent-admin-write", cfg.LCAgentAdminWrite, "Allow LCAgent write tools to edit absolute paths outside the workspace")
@@ -1028,10 +1028,10 @@ func parseLCAgentRoutePreset(raw string) (string, error) {
 		return "mimo-2.5-pro-low", nil
 	case "glm", "glm-5", "glm51", "zai", "zai-glm":
 		return "glm-5.1", nil
-	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "glm-5.1", "cheap-scout":
+	case "single-model", "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "glm-5.1", "cheap-scout":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-route-preset must be blank or one of: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, cheap-scout")
+		return "", fmt.Errorf("lcagent-route-preset must be blank or one of: single-model, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, cheap-scout")
 	}
 }
 

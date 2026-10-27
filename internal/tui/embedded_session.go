@@ -1244,7 +1244,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	req.PendingModel = options.modelSelection.Model
 	req.PendingReasoning = options.modelSelection.ReasoningEffort
 	if provider == codexapp.ProviderLCAgent && options.modelSelection.Model != "" {
-		req.LCAgentRoutePreset = ""
+		if !config.LCAgentUsesSingleModel(req.LCAgentRoutePreset) {
+			req.LCAgentRoutePreset = ""
+		}
 		if options.modelSelection.ModelProvider != "" {
 			req.LCAgentProvider = options.modelSelection.ModelProvider
 		}
@@ -1346,6 +1348,8 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		strings.TrimSpace(previous.LCAgentVisionProvider) != strings.TrimSpace(saved.LCAgentVisionProvider) ||
 		strings.TrimSpace(previous.LCAgentVisionModel) != strings.TrimSpace(saved.LCAgentVisionModel) ||
 		strings.TrimSpace(previous.LCAgentVisionReasoning) != strings.TrimSpace(saved.LCAgentVisionReasoning) ||
+		previous.LCAgentMainVisionProvider != saved.LCAgentMainVisionProvider ||
+		previous.LCAgentMainVisionModel != saved.LCAgentMainVisionModel ||
 		strings.TrimSpace(previous.LCAgentWebSearchBackend) != strings.TrimSpace(saved.LCAgentWebSearchBackend) ||
 		strings.TrimSpace(previous.LCAgentWebSearchAPIKey) != strings.TrimSpace(saved.LCAgentWebSearchAPIKey) ||
 		strings.TrimSpace(previous.LCAgentWebSearchEngineID) != strings.TrimSpace(saved.LCAgentWebSearchEngineID) ||
@@ -1355,7 +1359,7 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings config.EditableSettings) codexapp.LaunchRequest {
 	pendingModel := strings.TrimSpace(settings.EmbeddedLCAgentModel)
 	pendingReasoning := strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
-	if strings.TrimSpace(settings.LCAgentRoutePreset) != "" {
+	if config.LCAgentHasBundledRoute(settings.LCAgentRoutePreset) {
 		pendingModel = ""
 		pendingReasoning = ""
 	}
@@ -1391,8 +1395,10 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentUtilityProvider:     strings.TrimSpace(settings.LCAgentUtilityProvider),
 		LCAgentUtilityModel:        strings.TrimSpace(settings.LCAgentUtilityModel),
 		LCAgentUtilityReasoning:    strings.TrimSpace(settings.LCAgentUtilityReasoning),
-		LCAgentVisionProvider:      settingsLCAgentVisionProviderForLaunch(settings),
-		LCAgentVisionModel:         settingsLCAgentVisionModelForLaunch(settings),
+		LCAgentVisionProvider:      strings.TrimSpace(settings.LCAgentVisionProvider),
+		LCAgentVisionModel:         strings.TrimSpace(settings.LCAgentVisionModel),
+		LCAgentMainVisionProvider:  settings.LCAgentMainVisionProvider,
+		LCAgentMainVisionModel:     settings.LCAgentMainVisionModel,
 		LCAgentVisionReasoning:     strings.TrimSpace(settings.LCAgentVisionReasoning),
 		LCAgentWebSearchBackend:    strings.TrimSpace(settings.LCAgentWebSearchBackend),
 		LCAgentWebSearchAPIKey:     strings.TrimSpace(settings.LCAgentWebSearchAPIKey),
@@ -1591,11 +1597,11 @@ func (m Model) lcagentUtilityReasoning() string {
 }
 
 func (m Model) lcagentVisionProvider() string {
-	return settingsLCAgentVisionProviderForLaunch(m.currentSettingsBaseline())
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentVisionProvider)
 }
 
 func (m Model) lcagentVisionModel() string {
-	return settingsLCAgentVisionModelForLaunch(m.currentSettingsBaseline())
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentVisionModel)
 }
 
 func (m Model) lcagentVisionReasoning() string {

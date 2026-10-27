@@ -406,42 +406,27 @@ func TestSettingsLCAgentModelPickerWarnsWhenProviderDiscoveryFallsBack(t *testin
 
 func TestSettingsLCAgentVisionAutoUsesVerifiedMainForLaunch(t *testing.T) {
 	settings := config.EditableSettings{
-		LCAgentProvider:       "openai",
-		EmbeddedLCAgentModel:  "gpt-5.4",
-		LCAgentVisionProvider: "auto",
-		LCAgentVisionModel:    "gpt-5.4-mini",
+		LCAgentProvider: "openai", EmbeddedLCAgentModel: "future-model",
+		LCAgentVisionProvider: "auto", LCAgentVisionModel: "glm-5.3-flash",
 	}
-
-	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "openai" {
-		t.Fatalf("configured auto launch provider = %q, want openai", got)
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "zai" {
+		t.Fatalf("unverified main should use fallback, got %q", got)
 	}
-	if got := settingsLCAgentVisionModelForLaunch(settings); got != "gpt-5.4-mini" {
-		t.Fatalf("configured auto launch model = %q, want gpt-5.4-mini", got)
-	}
-
-	settings.LCAgentVisionModel = "gpt-5.3-mini"
-	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "off" {
-		t.Fatalf("unknown explicit auto launch provider = %q, want off", got)
+	settings.LCAgentMainVisionProvider = "openai"
+	settings.LCAgentMainVisionModel = "future-model"
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "main" {
+		t.Fatalf("verified main must precede fallback, got %q", got)
 	}
 	if got := settingsLCAgentVisionModelForLaunch(settings); got != "" {
-		t.Fatalf("unknown explicit auto launch model = %q, want blank", got)
+		t.Fatalf("native launch model = %q, want blank", got)
 	}
-
+	settings.EmbeddedLCAgentModel = "another-model"
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "zai" {
+		t.Fatalf("verification leaked across models, got %q", got)
+	}
 	settings.LCAgentVisionModel = ""
 	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "off" {
-		t.Fatalf("unverified auto launch provider = %q, want off", got)
-	}
-	if got := settingsLCAgentVisionModelForLaunch(settings); got != "" {
-		t.Fatalf("unverified auto launch model = %q, want blank", got)
-	}
-
-	settings.LCAgentMainVisionProvider = "openai"
-	settings.LCAgentMainVisionModel = "gpt-5.4"
-	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "main" {
-		t.Fatalf("verified auto launch provider = %q, want main", got)
-	}
-	if got := settingsLCAgentVisionModelForLaunch(settings); got != "" {
-		t.Fatalf("verified auto launch model = %q, want blank", got)
+		t.Fatalf("unknown main without fallback should disable vision, got %q", got)
 	}
 }
 

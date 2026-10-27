@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/claudeartifact"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/config"
 	"lcroom/internal/imagereview"
 	"lcroom/internal/model"
 	"strings"
@@ -1529,8 +1530,11 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 		if strings.TrimSpace(req.LCAgentOllamaModel) == "" {
 			req.LCAgentOllamaModel = m.ollamaModel()
 		}
-		if strings.TrimSpace(req.LCAgentRoutePreset) == "" && strings.TrimSpace(req.PendingModel) == "" && strings.TrimSpace(req.PendingReasoning) == "" {
-			req.LCAgentRoutePreset = m.lcagentRoutePreset()
+		if strings.TrimSpace(req.LCAgentRoutePreset) == "" {
+			setup := m.lcagentRoutePreset()
+			if config.LCAgentUsesSingleModel(setup) || (strings.TrimSpace(req.PendingModel) == "" && strings.TrimSpace(req.PendingReasoning) == "") {
+				req.LCAgentRoutePreset = setup
+			}
 		}
 		if strings.TrimSpace(req.LCAgentProvider) == "" {
 			req.LCAgentProvider = m.lcagentProvider()
@@ -1558,6 +1562,11 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 		}
 		if strings.TrimSpace(req.LCAgentUtilityReasoning) == "" {
 			req.LCAgentUtilityReasoning = m.lcagentUtilityReasoning()
+		}
+		settings := m.currentSettingsBaseline()
+		if req.LCAgentMainVisionProvider == "" {
+			req.LCAgentMainVisionProvider = settings.LCAgentMainVisionProvider
+			req.LCAgentMainVisionModel = settings.LCAgentMainVisionModel
 		}
 		if strings.TrimSpace(req.LCAgentVisionProvider) == "" {
 			req.LCAgentVisionProvider = m.lcagentVisionProvider()

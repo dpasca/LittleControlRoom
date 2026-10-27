@@ -119,8 +119,8 @@ func settingsLCAgentVisionProviderOptions() []settingsLCAgentProviderOption {
 		{
 			Value:       "auto",
 			Label:       "Auto",
-			Summary:     "Use the Main Model only after it passes the live image-input check.",
-			Description: "Default for normal use. Press v on the Main Model or Vision Provider field to verify image input; until verified, image analysis stays off.",
+			Summary:     "Prefer native vision; otherwise use the optional fallback.",
+			Description: "Use the Main Model when image input is documented or verified. A separate model is a fallback for a main model without image input. Press v to verify a new model.",
 		},
 		{
 			Value:       "off",
