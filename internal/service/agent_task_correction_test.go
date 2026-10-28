@@ -149,6 +149,50 @@ func TestUnfinishedWorkerRequiresHandoffEvidence(t *testing.T) {
 	}
 }
 
+func TestHeldTaskReopensOnlyItsExactWorkerIdentity(t *testing.T) {
+	f := newCorrectionFixture(t)
+	ctx := t.Context()
+	startRepositoryTurn(t, f.svc, f.task, "original-control-key")
+	task, err := f.svc.AttachAgentTaskEngineerSession(ctx, f.task.ID, model.SessionSourceCodex, "worker-thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(task.Repository.Root, "worker.txt")
+	if err := os.WriteFile(file, []byte("unfinished"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path     string
+		provider model.SessionSource
+		thread   string
+		want     string
+	}{
+		{task.WorkspacePath, model.SessionSourceCodex, "worker-thread", "original-control-key"},
+		{task.WorkspacePath, model.SessionSourceCodex, "other-thread", ""},
+		{task.WorkspacePath, model.SessionSourceClaudeCode, "worker-thread", ""},
+		{f.root, model.SessionSourceCodex, "worker-thread", ""},
+	} {
+		key, err := f.svc.TaskResumeControlKey(ctx, tc.path, tc.provider, tc.thread)
+		if err != nil || key != tc.want {
+			t.Fatalf("resume key for %q/%q/%q = %q, %v; want %q", tc.path, tc.provider, tc.thread, key, err, tc.want)
+		}
+	}
+	f.snapshot.Busy = true
+	if unlock, err := f.svc.BeginRepositoryTurn(task.WorkspacePath, "worker-thread"); err == nil {
+		unlock()
+		t.Fatal("unbound new key adopted the active worker's held lease")
+	}
+	f.snapshot.Busy = false
+	startRepositoryTurn(t, f.svc, task, "original-control-key")
+	current := f.reload(t)
+	if current.Repository.SessionKey != "original-control-key" || current.Repository.Error != "" || current.Workflow.RunID != 2 || current.Workflow.WorkerKey != "original-control-key" {
+		t.Fatalf("reopened worker lost its lease or run identity: %+v", current)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "unfinished" {
+		t.Fatalf("reopening changed the edits: %q %v", data, err)
+	}
+}
+
 // The loop the product needs: a rejected result is corrected in place, on the
 // exact edits the caller reviewed, and the next revision is accepted.
 func TestCorrectionRunContinuesOnReviewedDirtyCheckout(t *testing.T) {

@@ -172,6 +172,45 @@ func TestAgentTaskLCAgentCloseAndEnterResumesSameThread(t *testing.T) {
 	}
 }
 
+func TestReopenedTaskUsesHeldWorkerIdentity(t *testing.T) {
+	ctx := t.Context()
+	svc := newControlTestService(t)
+	workspace := t.TempDir()
+	task, err := svc.Store().CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Interrupted worker", Provider: model.SessionSourceCodex, WorkspacePath: workspace,
+		Workflow: model.AgentTaskWorkflow{Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Store().BeginStructuredTaskRun(ctx, task, "original-control-key", false); err != nil {
+		t.Fatal(err)
+	}
+	repo := model.AgentTaskRepository{Isolated: true, Write: true, Root: workspace, State: "held", SessionKey: "original-control-key"}
+	if _, err := svc.Store().UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, Repository: &repo}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AttachAgentTaskEngineerSession(ctx, task.ID, model.SessionSourceCodex, "worker-thread"); err != nil {
+		t.Fatal(err)
+	}
+	var received codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		received = req
+		return &fakeCodexSession{projectPath: req.ProjectPath, snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex, ProjectPath: req.ProjectPath, ThreadID: "worker-thread", Started: true,
+		}}, nil
+	})
+	m := Model{ctx: ctx, svc: svc, codexManager: manager}
+	cmd := m.openCodexSessionCmdWithVisibility(codexapp.LaunchRequest{ProjectPath: workspace, Provider: codexapp.ProviderCodex, ResumeID: "worker-thread"}, true)
+	msg, ok := cmd().(codexSessionOpenedMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("open = %#v", msg)
+	}
+	if received.TodoCaptureSessionKey != "original-control-key" || !received.RequireResumeID {
+		t.Fatalf("resume did not preserve exact held owner: %#v", received)
+	}
+}
+
 func TestAgentTaskLateIdentityPreservesAcceptedResult(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)

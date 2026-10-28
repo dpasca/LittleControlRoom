@@ -76,6 +76,24 @@ func taskRepositoryPath(task model.AgentTask) string {
 	return firstNonEmpty(task.OriginWorktreePath, task.OriginProjectPath)
 }
 
+// TaskResumeControlKey preserves the identity of an isolated structured task's
+// existing lease only when the host is reopening its exact provider session.
+// A fresh or different conversation must go through ordinary ownership checks.
+func (s *Service) TaskResumeControlKey(ctx context.Context, projectPath string, provider model.SessionSource, sessionID string) (string, error) {
+	task, ok, err := s.store.AgentTaskForWorkspace(ctx, projectPath)
+	if err != nil || !ok {
+		return "", err
+	}
+	if (task.Status != model.AgentTaskStatusActive && task.Status != model.AgentTaskStatusWaiting) ||
+		!task.Repository.Isolated || !task.Repository.Write || task.Repository.State != "held" ||
+		!task.Workflow.Enabled || task.Workflow.WorkerKey == "" ||
+		task.Workflow.WorkerKey != task.Repository.SessionKey || task.SessionID == "" ||
+		task.SessionID != sessionID || task.Provider != provider {
+		return "", nil
+	}
+	return task.Repository.SessionKey, nil
+}
+
 // BeginRepositoryTurn serializes admission with lease acquisition. The caller
 // must hold the returned unlock until the provider has marked the turn active.
 // All engine turns are conservatively write-capable; opening a transcript is not.
@@ -136,6 +154,12 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 	if task.Repository.State == "held" {
 		if task.Repository.SessionKey != sessionKey || sessionKey == "" {
 			return fmt.Errorf("task repository lease belongs to another session; inspect and close the stopped task before continuing")
+		}
+		if task.Repository.Error != "" {
+			repository := task.Repository
+			repository.Error = ""
+			_, err := s.store.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, Repository: &repository})
+			return err
 		}
 		return nil
 	}

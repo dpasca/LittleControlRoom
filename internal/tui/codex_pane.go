@@ -1625,6 +1625,7 @@ func (m *Model) openCodexSessionCmdPreparedWithModelPreference(
 		}).Key()
 	}
 	manager := m.codexManager
+	svc := m.svc
 	provider := req.Provider.Normalized()
 	if provider == "" {
 		provider = codexapp.ProviderCodex
@@ -1679,6 +1680,19 @@ func (m *Model) openCodexSessionCmdPreparedWithModelPreference(
 				perfDuration:  time.Since(startedAt),
 				restartWarmup: restartWarmup,
 				err:           fmt.Errorf("%s manager unavailable", label),
+			}
+		}
+		if svc != nil && !req.ForceNew && strings.TrimSpace(req.ResumeID) != "" && strings.TrimSpace(req.TodoCaptureSessionKey) == "" {
+			ctx, cancel := context.WithTimeout(context.Background(), tuiQuickActionTimeout)
+			key, err := svc.TaskResumeControlKey(ctx, req.ProjectPath, embeddedSessionSource(provider), req.ResumeID)
+			cancel()
+			if err != nil {
+				return codexSessionOpenedMsg{projectPath: req.ProjectPath, provider: provider, openRequestID: openRequestID,
+					perfOpID: perfOpID, perfDuration: time.Since(startedAt), restartWarmup: restartWarmup, err: err}
+			}
+			if key != "" {
+				req.TodoCaptureSessionKey = key
+				req.RequireResumeID = true
 			}
 		}
 		if provider == codexapp.ProviderLCAgent && strings.TrimSpace(req.Prompt) != "" {

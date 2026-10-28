@@ -119,6 +119,12 @@ owner. There is no silent timeout or takeover after restart. After stopping work
 explicit `agent_task.close` with `status: waiting` releases ownership without
 accepting the result; active processes still block release.
 
+When reopening an isolated structured task whose lease is still held, the host
+retains the original control key only for that task's exact saved provider
+session. The provider must resume that session successfully; a new or different
+session cannot inherit the lease. This allows the existing owner to continue
+after a restart without transferring ownership to another worker.
+
 The lease is opt-in for compatibility. Legacy tasks keep their existing behavior
 but cannot start a conflicting turn against a leased checkout. A first acquisition
 requires a clean baseline. A correction or unfinished run may reacquire a dirty
