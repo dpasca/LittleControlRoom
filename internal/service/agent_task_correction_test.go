@@ -79,6 +79,76 @@ func ready(summary string) model.AgentTaskResultPayload {
 	return model.AgentTaskResultPayload{Outcome: "ready_for_review", Summary: summary}
 }
 
+func TestUnfinishedWorkerResumesItsRecordedCheckout(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unclassified", true: "canceled"}[stopped], func(t *testing.T) {
+			f := newCorrectionFixture(t)
+			ctx := t.Context()
+			startRepositoryTurn(t, f.svc, f.task, "worker")
+			task, err := f.svc.AttachAgentTaskEngineerSession(ctx, f.task.ID, model.SessionSourceCodex, "worker-thread")
+			if err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(task.Repository.Root, "worker.txt")
+			if err := os.WriteFile(file, []byte("unfinished work"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if stopped {
+				if err := f.svc.store.StopStructuredTask(ctx, task, false); err != nil {
+					t.Fatal(err)
+				}
+				task, err = f.svc.GetAgentTask(ctx, task.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			task, err = f.svc.settleStructuredTask(ctx, task)
+			if err != nil || !task.Workflow.Handoff || task.Repository.HandoffFingerprint == "" {
+				t.Fatalf("unfinished handoff: %+v %v", task, err)
+			}
+			// A different worker must not adopt this task's unfinished edits.
+			if unlock, err := f.svc.BeginRepositoryTurn(task.WorkspacePath, "other-worker"); err == nil {
+				unlock()
+				t.Fatal("another worker adopted unfinished edits")
+			}
+			// A changed file must not be silently incorporated into the handoff.
+			if err := os.WriteFile(file, []byte("intervening edit"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if unlock, err := f.svc.BeginRepositoryTurn(task.WorkspacePath, "worker"); err == nil {
+				unlock()
+				t.Fatal("accepted an altered handoff")
+			}
+			if err := os.WriteFile(file, []byte("unfinished work"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			startRepositoryTurn(t, f.svc, task, "worker")
+			current := f.reload(t)
+			if current.Repository.State != "held" || current.Workflow.RunID != 2 || current.Workflow.Phase != "working" {
+				t.Fatalf("unfinished task did not resume: %+v", current)
+			}
+			if stopped && !current.Workflow.SupervisionRevoked {
+				t.Fatal("resume restored revoked automatic supervision")
+			}
+			if data, err := os.ReadFile(file); err != nil || string(data) != "unfinished work" {
+				t.Fatalf("worker edits changed: %q %v", data, err)
+			}
+		})
+	}
+}
+
+func TestUnfinishedWorkerRequiresHandoffEvidence(t *testing.T) {
+	task := model.AgentTask{Workflow: model.AgentTaskWorkflow{Enabled: true, Handoff: true, Phase: "canceled", WorkerKey: "worker"}}
+	if err := dirtyTaskBoundary(task, "worker", "observed"); err == nil {
+		t.Fatal("accepted an unfinished run without a handoff fingerprint")
+	}
+	task.Repository.HandoffFingerprint = "observed"
+	task.Workflow.Handoff = false
+	if err := dirtyTaskBoundary(task, "worker", "observed"); err == nil {
+		t.Fatal("accepted an unfinished run without a completed handoff")
+	}
+}
+
 // The loop the product needs: a rejected result is corrected in place, on the
 // exact edits the caller reviewed, and the next revision is accepted.
 func TestCorrectionRunContinuesOnReviewedDirtyCheckout(t *testing.T) {

@@ -78,6 +78,12 @@ recorded. Restart never silently steals a lease. Explicit close with `waiting`
 can release a stopped worker without accepting its result. No automatic stash,
 reset, commit or disposal of edits occurs.
 
+After a structured worker stops without a result, that same worker may resume
+on the recorded handoff if the evidence fingerprint still matches. Changes it
+detects remain blocked for inspection. The parent fingerprint does not fully
+capture dirty or untracked contents inside submodules. Explicitly stopped
+supervision stays revoked when the worker resumes.
+
 This coordinates managed participants; it cannot sandbox external editors or
 attribute every edit to a particular actor. Fingerprints are evidence, not proof
 that the worker authored all changes.

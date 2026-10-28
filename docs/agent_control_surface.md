@@ -121,8 +121,8 @@ accepting the result; active processes still block release.
 
 The lease is opt-in for compatibility. Legacy tasks keep their existing behavior
 but cannot start a conflicting turn against a leased checkout. A first acquisition
-requires a clean baseline. A correction run may reacquire a dirty checkout only at
-an authorized boundary, described below. Workers are instructed to return edits
+requires a clean baseline. A correction or unfinished run may reacquire a dirty
+checkout only at an authorized boundary, described below. Workers are instructed to return edits
 without committing and to leave no write-capable processes running.
 
 ### Correction baselines
@@ -138,6 +138,15 @@ exact reviewed run, so it cannot be replayed once that run has advanced. An
 accepted result authorizes no further correction, and a clean acquisition clears
 any captured boundary. Capture is a read: it refuses to run while a worker holds
 ownership or another managed writer is active in that checkout.
+
+For a structured run that stopped without a result, the same worker can start a
+new run after a completed handoff if the current evidence fingerprint matches
+the recorded handoff. This also applies after an explicit stop, but does not
+restore revoked automatic supervision. A different worker, missing handoff
+evidence, or changes detected by the fingerprint cannot use this recovery path.
+The parent fingerprint records submodule status and gitlink differences, but is
+not a full fingerprint of modified or untracked files inside submodules. Managed
+writer and Git-state checks still apply, and no edits are changed by admission.
 
 ## Agent workflow
 

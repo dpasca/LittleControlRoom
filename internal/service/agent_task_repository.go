@@ -175,30 +175,41 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 	if err != nil {
 		return err
 	}
-	correction := false
+	dirtyBoundary := false
 	if baseline.changes != "" {
-		if err := correctionBoundary(task, baseline.fingerprint); err != nil {
+		if err := dirtyTaskBoundary(task, sessionKey, baseline.fingerprint); err != nil {
 			return err
 		}
-		correction = true
+		dirtyBoundary = true
 	}
 	repository := task.Repository
 	repository.State, repository.SessionKey = "held", sessionKey
 	repository.BaseHEAD, repository.BaseBranch = baseline.head, baseline.branch
 	repository.HandoffFingerprint, repository.Changes, repository.Error = "", "", ""
-	if !correction {
+	if !dirtyBoundary {
 		// A clean start supersedes any captured dirty boundary.
 		repository.CorrectionBaseline, repository.CorrectionRevision = "", 0
 	}
 	return s.store.AcquireAgentTaskRepository(ctx, task.ID, repository)
 }
 
-// correctionBoundary admits a dirty reacquisition only against an authorized
-// starting state for the exact reviewed run: either the state the caller
-// actually reviewed, or a boundary it captured explicitly after its own fixes.
-// A mismatch fails visibly; nothing is stashed, reset or silently adopted.
-func correctionBoundary(task model.AgentTask, observed string) error {
+// dirtyTaskBoundary admits a reviewed correction or the same worker resuming
+// an unfinished run at the exact recorded handoff. A mismatch fails visibly;
+// nothing is stashed, reset or silently adopted.
+func dirtyTaskBoundary(task model.AgentTask, sessionKey, observed string) error {
 	dirty := fmt.Errorf("repository write preflight requires a clean checkout; preserve and resolve existing edits before continuing")
+	workflow := task.Workflow
+	if workflow.Enabled && workflow.Handoff && workflow.Result == nil && workflow.Review == nil &&
+		(workflow.Phase == "unclassified" || workflow.Phase == "canceled") &&
+		workflow.WorkerKey != "" && workflow.WorkerKey == sessionKey {
+		if task.Repository.HandoffFingerprint == "" || observed == "" {
+			return fmt.Errorf("unfinished task has no recorded repository handoff; inspect and preserve its edits before continuing")
+		}
+		if observed != task.Repository.HandoffFingerprint {
+			return fmt.Errorf("checkout changed since the unfinished task stopped (recorded %s, found %s); inspect the intervening changes before continuing", shortFingerprint(task.Repository.HandoffFingerprint), shortFingerprint(observed))
+		}
+		return nil
+	}
 	review := task.Workflow.Review
 	if !task.Workflow.Enabled || review == nil || review.Decision != "changes_requested" || review.Revision != task.Workflow.RunID {
 		return dirty
