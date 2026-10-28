@@ -88,9 +88,6 @@ func codexSnapshotBrowserWaitingForUser(snapshot codexapp.Snapshot) bool {
 }
 
 func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
-	if delivery, delayed := snapshot.MessageDeliverySummary(now); delayed {
-		return delivery
-	}
 	switch {
 	case snapshot.PendingApproval != nil:
 		return "Waiting for approval"

@@ -26,6 +26,12 @@ func TestClaudeMessageDeliveryRemainsVisibleWithActiveWorker(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", want, text)
 		}
 	}
+	if count := strings.Count(text, "message waiting"); count != 1 {
+		t.Fatalf("message delivery summary appears %d times:\n%s", count, text)
+	}
+	if footer := codexFooterStatus(s, now); footer != "Working" {
+		t.Fatalf("footer should show session activity: %q", footer)
+	}
 	for _, width := range []int{35, 60} {
 		for _, row := range m.renderCodexMessageDelivery(s, width) {
 			if ansi.StringWidth(row) > width {
