@@ -12,10 +12,7 @@ func buildCodexCleanupStorage(d *codexCleanupDialogState, width, bodyH int) code
 	v := codexCleanupView{}
 	storage := d.Audit.Storage
 	groups := d.Audit.Retained
-	var retained int64
-	for _, g := range groups {
-		retained += g.Bytes
-	}
+	retained := storage.TotalBytes - d.Audit.RecoverableBytes
 	v.add(commandPaletteTitleStyle.Render("Storage breakdown"), "",
 		cleanupStrong(formatCodexCleanupBytes(storage.TotalBytes)+" used in "+d.Provider.Label()+" storage"),
 		detailMutedStyle.Render(fmt.Sprintf("%s sessions · %s other files · logical sizes", formatCodexCleanupBytes(storage.SessionBytes), formatCodexCleanupBytes(storage.TotalBytes-storage.SessionBytes))), "")

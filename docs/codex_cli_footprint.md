@@ -408,6 +408,9 @@ filesystem inventory reports logical bytes for the whole Codex home, sessions
 remain visible even when no worktrees qualify. This inventory does not follow
 symlinks and labels incomplete reads as partial; logical sizes can differ from
 allocated disk usage. Inventorying other files does not make them deletion candidates.
+The main form separates total, eligible, retained, and non-session bytes, so a
+large home total is not presented as the amount offered for deletion. The
+retained total includes privacy-hidden groups; individual hidden rows stay hidden.
 
 The **Clean up** dropdown chooses **Orphaned worktrees** or **Stale sessions**.
 Stale cleanup adds an **Inactive for** dropdown: 7 (default), 14, 30, or 90 days.
@@ -546,6 +549,16 @@ records, open TODOs, and uncertain repository roots are excluded. LCR project
 pins, transcript pin markers, LCR-loaded roots or children, and live Claude CLI
 markers under `sessions/` protect sessions. Unreadable or malformed live markers
 fail the audit explicitly rather than assuming the process is idle.
+
+The exclusion summary counts the newest roots kept per folder. Claude's retained
+project groups also report why trees were kept, including transcripts whose
+records span multiple working directories. Such trees remain protected.
+The inventory indexes associated files once and parses and hashes each transcript
+through the same open file in a single streaming pass, with file identity, size
+and mtime checks before and after reading. File-based deletion still revalidates
+the complete fingerprint before removal. Non-session symlinks, such as
+`debug/latest`, are skipped without marking the inventory partial; symlinks in
+project session storage still make ownership uncertain and protect that project.
 
 The preview binds the provider and storage-root identity, root and descendant
 IDs, total session count, policy, paths, file identities, sizes, mtimes and content

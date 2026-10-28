@@ -24,11 +24,12 @@ import (
 // history, plans, file-history, settings, indexes and caches.
 type claudeCleanupTree struct {
 	CodexCleanupThread
-	cwd       string
-	project   string
-	uncertain bool
-	pinned    bool
-	cwds      map[string]bool
+	cwd             string
+	project         string
+	uncertain       bool
+	pinned          bool
+	cwds            map[string]bool
+	retentionReason string
 }
 
 type claudeCleanupInventory struct {
@@ -38,6 +39,12 @@ type claudeCleanupInventory struct {
 }
 
 func claudeCleanupFile(ctx context.Context, root *os.Root, path string) (CodexCleanupRolloutFile, error) {
+	return readClaudeCleanupFile(ctx, root, path, nil)
+}
+
+// Parse and fingerprint the same open file in one pass. Deletion still verifies
+// the fingerprint again before removing any file.
+func readClaudeCleanupFile(ctx context.Context, root *os.Root, path string, inspect func(io.Reader)) (CodexCleanupRolloutFile, error) {
 	info, err := root.Lstat(path)
 	if err != nil {
 		return CodexCleanupRolloutFile{}, err
@@ -55,34 +62,26 @@ func claudeCleanupFile(ctx context.Context, root *os.Root, path string) (CodexCl
 		return CodexCleanupRolloutFile{}, fmt.Errorf("file changed: %s", path)
 	}
 	hash := sha256.New()
-	buffer := make([]byte, 64*1024)
-	for {
-		if err := ctx.Err(); err != nil {
-			return CodexCleanupRolloutFile{}, err
-		}
-		n, readErr := f.Read(buffer)
-		hash.Write(buffer[:n])
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return CodexCleanupRolloutFile{}, readErr
-		}
+	reader := io.TeeReader(contextReader{Context: ctx, Reader: f}, hash)
+	if inspect != nil {
+		inspect(reader)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		return CodexCleanupRolloutFile{}, err
 	}
 	after, err := f.Stat()
 	if err != nil || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
 		return CodexCleanupRolloutFile{}, fmt.Errorf("file changed: %s", path)
 	}
+	current, err := root.Lstat(path)
+	if err != nil || !os.SameFile(info, current) {
+		return CodexCleanupRolloutFile{}, fmt.Errorf("file replaced: %s", path)
+	}
 	return CodexCleanupRolloutFile{Identity: claudeCleanupFileIdentity(info), Path: path, Size: info.Size(), ModTime: info.ModTime(), Digest: fmt.Sprintf("%x", hash.Sum(nil))}, nil
 }
 
-func readClaudeCleanupTranscript(ctx context.Context, root *os.Root, path, parentID, agentID string, tree *claudeCleanupTree) error {
-	f, err := root.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+func readClaudeCleanupTranscript(ctx context.Context, reader io.Reader, parentID, agentID string, tree *claudeCleanupTree) error {
+	sc := bufio.NewScanner(reader)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	identity := false
 	for sc.Scan() {
@@ -135,6 +134,7 @@ func readClaudeCleanupTranscript(ctx context.Context, root *os.Root, path, paren
 		tree.cwds[cwd] = true
 		if agentID == "" {
 			if tree.cwd != "" && tree.cwd != cwd {
+				tree.retentionReason = "Session records span multiple working directories"
 				return fmt.Errorf("session moved between folders")
 			}
 			tree.cwd = cwd
@@ -166,8 +166,8 @@ func inspectClaudeCleanup(ctx context.Context, root *os.Root) (claudeCleanupInve
 		}
 		parts := strings.Split(filepath.ToSlash(path), "/")
 		if entry.Type()&os.ModeSymlink != 0 || (!entry.IsDir() && !entry.Type().IsRegular()) {
-			inv.storage.Partial = true
 			if len(parts) >= 2 && parts[0] == "projects" {
+				inv.storage.Partial = true
 				inv.unknownProjects[parts[1]] = true
 			}
 			if path == "projects" {
@@ -207,10 +207,14 @@ func inspectClaudeCleanup(ctx context.Context, root *os.Root) (claudeCleanupInve
 		return inv, err
 	}
 	roots := []string{}
+	associated := map[string][]string{}
 	for path := range files {
 		parts := strings.Split(filepath.ToSlash(path), "/")
 		if len(parts) == 3 && strings.HasSuffix(parts[2], ".jsonl") {
 			roots = append(roots, path)
+		} else if len(parts) > 3 {
+			parent := filepath.Join(parts[0], parts[1], parts[2]) + ".jsonl"
+			associated[parent] = append(associated[parent], path)
 		}
 	}
 	sort.Strings(roots)
@@ -227,21 +231,11 @@ func inspectClaudeCleanup(ctx context.Context, root *os.Root) (claudeCleanupInve
 		if claudeartifact.SubagentSessionID(id, "identity-check") == "" {
 			tree.uncertain = true
 		}
-		paths := []string{path}
+		paths := append([]string{path}, associated[path]...)
 		prefix := strings.TrimSuffix(path, ".jsonl") + "/"
-		for child := range files {
-			if strings.HasPrefix(child, prefix) {
-				paths = append(paths, child)
-			}
-		}
 		sort.Strings(paths)
 		for _, filePath := range paths {
-			file, err := claudeCleanupFile(ctx, root, filePath)
-			if err != nil {
-				tree.uncertain = true
-				continue
-			}
-			file.ThreadID = id
+			threadID := id
 			isTranscript := filePath == path
 			agentID := ""
 			if !isTranscript {
@@ -250,11 +244,11 @@ func inspectClaudeCleanup(ctx context.Context, root *os.Root) (claudeCleanupInve
 				switch {
 				case len(parts) == 2 && parts[0] == "subagents" && strings.HasPrefix(parts[1], "agent-") && strings.HasSuffix(parts[1], ".jsonl"):
 					agentID = strings.TrimSuffix(strings.TrimPrefix(parts[1], "agent-"), ".jsonl")
-					file.ThreadID = claudeartifact.SubagentSessionID(id, agentID)
-					if file.ThreadID == "" {
+					threadID = claudeartifact.SubagentSessionID(id, agentID)
+					if threadID == "" {
 						tree.uncertain = true
 					}
-					tree.MemberIDs = append(tree.MemberIDs, file.ThreadID)
+					tree.MemberIDs = append(tree.MemberIDs, threadID)
 					tree.DescendantCount++
 					isTranscript = true
 				case len(parts) == 2 && parts[0] == "subagents" && strings.HasPrefix(parts[1], "agent-") && strings.HasSuffix(parts[1], ".meta.json"):
@@ -267,16 +261,28 @@ func inspectClaudeCleanup(ctx context.Context, root *os.Root) (claudeCleanupInve
 					tree.uncertain = true
 				}
 			}
+			var inspect func(io.Reader)
+			if isTranscript {
+				inspect = func(reader io.Reader) {
+					if readClaudeCleanupTranscript(ctx, reader, id, agentID, tree) != nil {
+						tree.uncertain = true
+						if tree.retentionReason == "" {
+							tree.retentionReason = "Transcript identity or format could not be verified"
+						}
+					}
+				}
+			}
+			file, err := readClaudeCleanupFile(ctx, root, filePath, inspect)
+			if err := ctx.Err(); err != nil {
+				return inv, err
+			}
+			if err != nil {
+				tree.uncertain = true
+				continue
+			}
+			file.ThreadID = threadID
 			if file.ModTime.After(tree.LastActivity) {
 				tree.LastActivity = file.ModTime
-			}
-			if isTranscript && readClaudeCleanupTranscript(ctx, root, filePath, id, agentID, tree) != nil {
-				tree.uncertain = true
-			}
-			// Parsing and hashing must describe the same immutable file snapshot.
-			after, err := claudeCleanupFile(ctx, root, filePath)
-			if err != nil || after != claudeCleanupFileWithoutThreadID(file) {
-				tree.uncertain = true
 			}
 			tree.RolloutFiles = append(tree.RolloutFiles, file)
 			tree.RecoverableBytes += file.Size

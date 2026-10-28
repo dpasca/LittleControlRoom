@@ -125,14 +125,22 @@ func (s *Service) AuditClaudeSessionStorage(ctx context.Context, options CodexCl
 			audit.MissingCWDThreads += 1 + tree.DescendantCount
 		}
 		if options.Category == CodexCleanupStale {
-			if missing || newest[tree.cwd] == tree {
+			if missing {
+				tree.retentionReason = "Project folder is missing; outside stale-session cleanup"
+				continue
+			}
+			if newest[tree.cwd] == tree {
+				tree.retentionReason = "Newest session in its folder"
+				audit.Excluded.Newest++
 				continue
 			}
 		} else {
 			if !missing {
+				tree.retentionReason = "Project folder exists; outside orphaned-worktree cleanup"
 				continue
 			}
 			if !recorded {
+				tree.retentionReason = "No LCR deleted-worktree record"
 				audit.Excluded.NoLCRRecord++
 				continue
 			}
@@ -141,6 +149,7 @@ func (s *Service) AuditClaudeSessionStorage(ctx context.Context, options CodexCl
 		if options.Category == CodexCleanupOrphaned {
 			uncertain = uncertain || record.Archived || record.HasOpenTodo || record.MissingSince.IsZero() || !cleanupRootProjectCertain(record.RootPath, tree.cwd)
 			if record.MissingSince.After(audit.WorktreeGraceCutoff) {
+				tree.retentionReason = "Worktree disappeared within the grace period"
 				audit.Excluded.Recent++
 				continue
 			}
@@ -166,18 +175,27 @@ func (s *Service) AuditClaudeSessionStorage(ctx context.Context, options CodexCl
 		}
 		switch {
 		case uncertain:
+			if inv.unknownProjects[tree.project] {
+				tree.retentionReason = "Project contains files with uncertain session ownership"
+			} else if tree.retentionReason == "" {
+				tree.retentionReason = "Uncertain transcript ownership or associated files"
+			}
 			audit.Excluded.Uncertain++
 			continue
 		case pinned:
+			tree.retentionReason = "Pinned project or session"
 			audit.Excluded.Pinned++
 			continue
 		case loaded:
+			tree.retentionReason = "Session is loaded or has a live Claude process"
 			audit.Excluded.Loaded++
 			continue
 		case pathOnExternalVolume(tree.cwd, home) || (options.Category == CodexCleanupOrphaned && pathOnExternalVolume(record.RootPath, home)):
+			tree.retentionReason = "Session belongs to an external volume"
 			audit.Excluded.ExternalVolume++
 			continue
 		case tree.LastActivity.IsZero() || tree.LastActivity.After(audit.RecentCutoff):
+			tree.retentionReason = "Session or associated files have recent activity"
 			audit.Excluded.Recent++
 			continue
 		}
@@ -232,6 +250,16 @@ func (s *Service) AuditClaudeSessionStorage(ctx context.Context, options CodexCl
 		}
 		projectCWD[tree.project] = tree.cwd
 	}
+	reasons := map[string]map[string]int{}
+	for _, tree := range inv.trees {
+		if tree.retentionReason == "" {
+			continue
+		}
+		if reasons[tree.cwd] == nil {
+			reasons[tree.cwd] = map[string]int{}
+		}
+		reasons[tree.cwd][tree.retentionReason]++
+	}
 	retained := map[string]*CodexCleanupRetainedGroup{}
 	for path, size := range inv.storage.files {
 		if eligibleFiles[path] {
@@ -249,7 +277,15 @@ func (s *Service) AuditClaudeSessionStorage(ctx context.Context, options CodexCl
 				g.Name = filepath.Base(cwd)
 				g.ProjectPath = cwd
 				g.Path = cwd
-				g.Reason = "Protected or ineligible sessions and associated files"
+				parts := []string{}
+				for reason, count := range reasons[cwd] {
+					parts = append(parts, fmt.Sprintf("%d: %s", count, reason))
+				}
+				sort.Strings(parts)
+				g.Reason = strings.Join(parts, "; ")
+				if g.Reason == "" {
+					g.Reason = "Protected or ineligible sessions and associated files"
+				}
 			}
 			retained[cwd] = g
 		}

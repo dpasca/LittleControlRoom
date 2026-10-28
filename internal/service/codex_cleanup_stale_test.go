@@ -22,6 +22,9 @@ func TestCodexCleanupStaleInactivityThresholds(t *testing.T) {
 		if err != nil || len(audit.Groups) != 1 {
 			t.Fatalf("%d days: %#v, %v", tc.days, audit.Groups, err)
 		}
+		if audit.Excluded.Newest != 1 {
+			t.Fatalf("newest root missing from exclusions: %+v", audit.Excluded)
+		}
 		g := audit.Groups[0]
 		days := max(7, tc.days)
 		if g.RootThreadCount != tc.count || g.InactiveDays != days || !audit.RecentCutoff.Equal(now.Add(-time.Duration(days)*24*time.Hour)) {

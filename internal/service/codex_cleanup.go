@@ -49,6 +49,7 @@ type CodexCleanupAuditOptions struct {
 }
 
 type CodexCleanupExclusions struct {
+	Newest         int
 	Pinned         int
 	Loaded         int
 	Recent         int
@@ -58,7 +59,7 @@ type CodexCleanupExclusions struct {
 }
 
 func (e CodexCleanupExclusions) Total() int {
-	return e.Pinned + e.Loaded + e.Recent + e.ExternalVolume + e.NoLCRRecord + e.Uncertain
+	return e.Newest + e.Pinned + e.Loaded + e.Recent + e.ExternalVolume + e.NoLCRRecord + e.Uncertain
 }
 
 type CodexCleanupAudit struct {
@@ -462,7 +463,11 @@ func (s *Service) AuditCodexSessionStorage(ctx context.Context, options CodexCle
 		if !stale && !missingByID[threadID] {
 			continue
 		}
-		if stale && (missingByID[threadID] || newestRoots[normalizeCleanupPath(thread.CWD)].ID == threadID) {
+		if stale && missingByID[threadID] {
+			continue
+		}
+		if stale && newestRoots[normalizeCleanupPath(thread.CWD)].ID == threadID {
+			audit.Excluded.Newest++
 			continue
 		}
 		node := nodes[threadID]

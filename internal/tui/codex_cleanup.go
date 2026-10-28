@@ -682,6 +682,7 @@ func cleanupExclusionSummary(excluded service.CodexCleanupExclusions) string {
 		label string
 		count int
 	}{
+		{"newest", excluded.Newest},
 		{"pinned", excluded.Pinned},
 		{"loaded", excluded.Loaded},
 		{"recent", excluded.Recent},

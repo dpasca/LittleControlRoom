@@ -122,3 +122,28 @@ func TestClaudeCleanupModalFooterUsesProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionCleanupExplainsTotalAndEligibleStorage(t *testing.T) {
+	for _, provider := range []codexapp.Provider{codexapp.ProviderCodex, codexapp.ProviderClaudeCode} {
+		d := &codexCleanupDialogState{
+			Provider: provider,
+			Audit: service.CodexCleanupAudit{
+				Storage:          service.CodexCleanupStorage{TotalBytes: 41 << 30, SessionBytes: 34 << 30},
+				RecoverableBytes: 1 << 30,
+				Excluded:         service.CodexCleanupExclusions{Newest: 5, Pinned: 4, Uncertain: 2},
+			},
+		}
+		text := ansi.Strip(buildCodexCleanupView(d, 104, 35, 0, time.Now()).text())
+		for _, want := range []string{"41.0 GiB total", "1.0 GiB eligible", "40.0 GiB retained", "7.0 GiB non-session", "5 newest", "4 pinned", "2 uncertain"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s: missing %q:\n%s", provider, want, text)
+			}
+		}
+		// Whole-home totals remain accurate when privacy hides retained rows.
+		d.Audit.Retained = []service.CodexCleanupRetainedGroup{{Name: "visible", Bytes: 2 << 30}}
+		text = ansi.Strip(buildCodexCleanupStorage(d, 104, 35).text())
+		if !strings.Contains(text, "1.0 GiB eligible for this cleanup · 40.0 GiB outside it") {
+			t.Fatalf("%s: retained total depends on visible rows:\n%s", provider, text)
+		}
+	}
+}

@@ -73,7 +73,7 @@ func buildCodexCleanupView(d *codexCleanupDialogState, width, bodyH, spinnerFram
 	}
 	v.add(commandPaletteTitleStyle.Render("Clean up " + d.Provider.Label() + " storage"))
 	gap()
-	used := formatCodexCleanupBytes(d.Audit.Storage.TotalBytes) + " used"
+	used := formatCodexCleanupBytes(d.Audit.Storage.TotalBytes) + " total"
 	if d.Audit.Storage.Partial {
 		used += " · partial inventory"
 	}
@@ -85,6 +85,12 @@ func buildCodexCleanupView(d *codexCleanupDialogState, width, bodyH, spinnerFram
 	space := max(1, width-lipgloss.Width(v.lines[len(v.lines)-1])-len(storageLabel)-6)
 	v.appendText(strings.Repeat(" ", space))
 	v.control(storageLabel, cleanupFocusStorage, d, d.ErrorMessage == "")
+	if !d.Loading && d.ErrorMessage == "" && !(compact && d.Dropdown) {
+		v.add(detailMutedStyle.Render(fmt.Sprintf("%s eligible · %s retained (%s non-session)",
+			formatCodexCleanupBytes(d.Audit.RecoverableBytes),
+			formatCodexCleanupBytes(d.Audit.Storage.TotalBytes-d.Audit.RecoverableBytes),
+			formatCodexCleanupBytes(d.Audit.Storage.TotalBytes-d.Audit.Storage.SessionBytes))))
+	}
 	gap()
 	v.add("Provider: ")
 	v.control(d.Provider.Label()+" ▾", cleanupFocusProvider, d, true)
