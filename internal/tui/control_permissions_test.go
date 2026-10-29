@@ -128,3 +128,86 @@ func TestPermissionReviewScrollDoesNotApprove(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerSessionApprovalRequiresReviewAndCoversLaterLaunch(t *testing.T) {
+	ctx := t.Context()
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	path := t.TempDir()
+	create := func(id, args string) control.Operation {
+		t.Helper()
+		op, err := st.CreateControlOperation(ctx, control.Operation{ID: id, Source: "mcp", Provider: "claude_code", SessionKey: "organizer", ProjectPath: path,
+			Invocation: control.Invocation{Capability: control.CapabilityAgentTaskCreate, Args: json.RawMessage(args)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return op
+	}
+	op := create("lcrop_first_worker", `{"title":"First worker","provider":"codex","model":"first-model"}`)
+	claimed, _, err := st.ClaimNextControlOperation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(ctx, service.New(config.Default(), st, events.NewBus(), nil))
+	updated, _ := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{operation: claimed})
+	m = normalizeUpdateModel(updated)
+	press := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")}
+	updated, _ = m.Update(press)
+	m = normalizeUpdateModel(updated)
+	if permissions, _ := st.ListControlPermissions(ctx, path); len(permissions) != 0 {
+		t.Fatal("worker delegation approved before review")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = normalizeUpdateModel(updated)
+	updated, save := m.Update(press)
+	m = normalizeUpdateModel(updated)
+	if save == nil || !m.externalControlConfirmation.submitting {
+		t.Fatal("worker approval did not enter submitting state")
+	}
+	if _, again := m.Update(press); again != nil {
+		t.Fatal("repeat worker approval")
+	}
+	updated, execute := m.Update(save())
+	m = normalizeUpdateModel(updated)
+	if m.externalControlConfirmation != nil || execute == nil {
+		t.Fatal("worker approval did not execute")
+	}
+	confirmed := execute().(bossui.ControlInvocationConfirmedMsg)
+	if !confirmed.OperationRecorded || confirmed.Invocation.RequestID != op.ID {
+		t.Fatal(confirmed)
+	}
+	permissions, err := st.ListControlPermissions(ctx, path)
+	if err != nil || len(permissions) != 1 || permissions[0].Scope != control.PermissionScopeSessionWorkers {
+		t.Fatal(permissions, err)
+	}
+	next := create("lcrop_next_worker", `{"title":"Different worker","provider":"claude_code","model":"different-model","repository_write":true}`)
+	if _, _, err := st.ClaimNextControlOperation(ctx); err != nil {
+		t.Fatal(err)
+	}
+	loaded := m.loadExternalControlProposalCmd(next.ID)().(externalControlProposalLoadedMsg)
+	if loaded.err != nil || !loaded.automatic {
+		t.Fatal("later worker still asks", loaded)
+	}
+	updated, execute = m.applyExternalControlProposalLoaded(loaded)
+	m = normalizeUpdateModel(updated)
+	if m.externalControlConfirmation != nil || execute == nil {
+		t.Fatal("covered launch opened another review")
+	}
+	m.projectCollaborationDialog = &projectCollaborationDialog{project: path, permissions: permissions}
+	view := m.renderProjectCollaborations("", 120, 30)
+	for _, want := range []string{"Worker delegation", "unlimited"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("permission manager missing %q: %s", want, view)
+		}
+	}
+	_, revoke := m.updateProjectCollaborations(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if revoke == nil {
+		t.Fatal("no revoke command")
+	}
+	if result := revoke().(projectCollaborationsLoadedMsg); result.err != nil || len(result.permissions) != 0 {
+		t.Fatal(result)
+	}
+}

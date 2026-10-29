@@ -87,3 +87,30 @@ func TestPermissionChoicesExplainTheHighlightedScope(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerDelegationChoiceExplainsScopeOnShortScreens(t *testing.T) {
+	args := json.RawMessage(`{"title":"Implement a worker task","prompt":"Implement","provider":"codex","model":"worker-model"}`)
+	op := control.Operation{ProjectPath: "/projects/organizer", Provider: "claude_code", SessionKey: "key", Invocation: control.Invocation{Capability: control.CapabilityAgentTaskCreate, Args: args}}
+	choices := PermissionChoices(op, "")
+	if len(choices) != 4 || choices[3] != PermissionAllowSessionWorkers {
+		t.Fatalf("worker choices = %v", choices)
+	}
+	if choices := PermissionChoices(op, "unavailable"); len(choices) != 1 {
+		t.Fatalf("unavailable worker permission offered: %v", choices)
+	}
+	for _, height := range []int{18, 24, 40} {
+		view, _, err := RenderPermissionConfirmationDialog(op, PermissionConfirmationOptions{Selected: 3}, 80, height)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain := strings.Join(strings.Fields(ansi.Strip(view)), " ")
+		for _, want := range []string{"1 Just this once", "4 Manage workers for this Claude Code session", "unlimited workers", "choose their models", "No worker inherits", "/collab.", "Enter confirm", "Esc deny"} {
+			if !strings.Contains(plain, want) {
+				t.Fatalf("height %d missing %q: %s", height, want, plain)
+			}
+		}
+		if lipgloss.Height(view) > height {
+			t.Fatalf("dialog exceeds %d rows: %d", height, lipgloss.Height(view))
+		}
+	}
+}

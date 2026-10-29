@@ -7,10 +7,15 @@ import (
 
 const ConfirmationScopedPermission = "scoped_permission"
 
+// PermissionScopeSessionWorkers covers the calling session's delegated task
+// lifecycle, rather than one action with fixed arguments.
+const PermissionScopeSessionWorkers = "session_workers"
+
 // ControlPermission is operator-owned. Matching uses validated typed arguments,
 // never prompt text, risk labels, or agent-supplied assertions of permission.
 type ControlPermission struct {
 	ID          int64          `json:"id"`
+	Scope       string         `json:"scope,omitempty"`
 	Origin      string         `json:"origin"`
 	Provider    string         `json:"provider"`
 	SessionKey  string         `json:"session_key,omitempty"`
@@ -19,6 +24,46 @@ type ControlPermission struct {
 	Constraints string         `json:"constraints"`
 	Limit       int            `json:"limit"`
 	Used        int            `json:"used"`
+}
+
+// WorkerDelegationForOperation describes an unlimited, exact-caller permission.
+// Model choices may vary deliberately. Ownership of existing tasks is checked
+// against host-persisted provenance by the store before using this permission.
+func WorkerDelegationForOperation(op Operation) (ControlPermission, bool) {
+	if !filepath.IsAbs(op.ProjectPath) || op.SessionKey == "" || op.Provider == "" {
+		return ControlPermission{}, false
+	}
+	inv, err := ValidateInvocation(op.Invocation)
+	if err != nil {
+		return ControlPermission{}, false
+	}
+	switch inv.Capability {
+	case CapabilityAgentTaskCreate:
+		var input AgentTaskCreateInput
+		_ = json.Unmarshal(inv.Args, &input)
+		if input.SelectModel {
+			return ControlPermission{}, false
+		}
+	case CapabilityAgentTaskContinue:
+		var input AgentTaskContinueInput
+		_ = json.Unmarshal(inv.Args, &input)
+		if input.SessionMode != SessionModeResumeOrNew || input.SelectModel {
+			return ControlPermission{}, false
+		}
+	case CapabilityAgentTaskClose:
+		var input AgentTaskCloseInput
+		_ = json.Unmarshal(inv.Args, &input)
+		if input.Status == AgentTaskCloseArchived || input.CloseSession {
+			return ControlPermission{}, false
+		}
+	default:
+		return ControlPermission{}, false
+	}
+	return ControlPermission{
+		Scope: PermissionScopeSessionWorkers, Origin: op.ProjectPath,
+		Provider: op.Provider, SessionKey: op.SessionKey,
+		Target: op.ProjectPath, Constraints: "{}",
+	}, true
 }
 
 // PermissionForOperation describes the smallest reusable permission for a

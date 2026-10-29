@@ -151,7 +151,7 @@ func (m Model) renderProjectCollaborations(body string, width, height int) strin
 	} else if d.errorText != "" {
 		lines = append(lines, d.errorText)
 	} else if len(d.pairs)+len(d.permissions) == 0 {
-		lines = append(lines, "No saved permissions. Choose s or p at an eligible action review.")
+		lines = append(lines, "No saved permissions. Choose a session or saved scope at a ctrl+g review.")
 	}
 	// Window the list so selection remains visible on short terminals.
 	visible := max(1, height-15)
@@ -166,11 +166,20 @@ func (m Model) renderProjectCollaborations(body string, width, height int) strin
 			if p.Limit > 0 {
 				scope += fmt.Sprintf(" · %d/%d used", p.Used, p.Limit)
 			}
+			action := string(p.Capability)
+			if p.Scope == control.PermissionScopeSessionWorkers {
+				action = "Worker delegation"
+				scope += fmt.Sprintf(" · unlimited · %d used", p.Used)
+			}
 			prefix := "  "
 			if i == d.selected {
 				prefix = "> "
 			}
-			lines = append(lines, prefix+string(p.Capability)+" → "+p.Target+" ("+scope+")")
+			if p.Scope == control.PermissionScopeSessionWorkers {
+				lines = append(lines, prefix+action+" ("+scope+")")
+			} else {
+				lines = append(lines, prefix+action+" → "+p.Target+" ("+scope+")")
+			}
 			continue
 		}
 		other := d.pairs[i].ProjectA
@@ -191,7 +200,7 @@ func (m Model) renderProjectCollaborations(body string, width, height int) strin
 	return overlayBlock(body, panel, width, height, max(0, (width-lipgloss.Width(panel))/2), max(0, (height-lipgloss.Height(panel))/3))
 }
 
-func (m Model) approveControlPermissionCmd(id string, sessionOnly bool) tea.Cmd {
+func (m Model) approveControlPermissionCmd(id string, sessionOnly, workers bool) tea.Cmd {
 	svc, ctx := m.svc, m.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -200,7 +209,13 @@ func (m Model) approveControlPermissionCmd(id string, sessionOnly bool) tea.Cmd 
 		if svc == nil || svc.Store() == nil {
 			return projectCollaborationApprovedMsg{id: id, scoped: true, err: fmt.Errorf("store unavailable")}
 		}
-		op, err := svc.Store().ApproveControlPermission(ctx, id, sessionOnly)
+		var op control.Operation
+		var err error
+		if workers {
+			op, err = svc.Store().ApproveWorkerDelegation(ctx, id)
+		} else {
+			op, err = svc.Store().ApproveControlPermission(ctx, id, sessionOnly)
+		}
 		return projectCollaborationApprovedMsg{id: id, scoped: true, operation: op, err: err}
 	}
 }

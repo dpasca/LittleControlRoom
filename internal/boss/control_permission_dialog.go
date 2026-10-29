@@ -34,9 +34,10 @@ const (
 	PermissionAllowSession
 	PermissionAllowAlways
 	PermissionAllowPair
+	PermissionAllowSessionWorkers
 )
 
-// PermissionChoices lists approval scopes from narrowest to broadest. When a
+// PermissionChoices lists approval scopes, starting with a single use. When a
 // two-way message grant is available it replaces the one-way standing
 // permission, so the dialog never offers two different kinds of "always".
 func PermissionChoices(op control.Operation, standingUnavailable string) []PermissionChoice {
@@ -50,6 +51,11 @@ func PermissionChoices(op control.Operation, standingUnavailable string) []Permi
 		choices = append(choices, PermissionAllowPair)
 	} else if standing {
 		choices = append(choices, PermissionAllowAlways)
+	}
+	if op.Invocation.Capability == control.CapabilityAgentTaskCreate && standingUnavailable == "" {
+		if _, ok := control.WorkerDelegationForOperation(op); ok {
+			choices = append(choices, PermissionAllowSessionWorkers)
+		}
 	}
 	return choices
 }
@@ -77,6 +83,8 @@ func permissionChoiceLabel(op control.Operation, choice PermissionChoice) string
 			target = filepath.Base(input.ProjectPath)
 		}
 		return "Always, messages both ways: " + filepath.Base(op.ProjectPath) + " ↔ " + target
+	case PermissionAllowSessionWorkers:
+		return "Manage workers for this " + provider + " session"
 	default:
 		return "Just this once"
 	}
@@ -95,14 +103,16 @@ func permissionChoiceHint(op control.Operation, choice PermissionChoice, limit i
 		return "Matching requests from this and future " + permissionProviderLabel(op) + " sessions in this project run without asking." + same
 	case PermissionAllowPair:
 		return "Messages between these two projects, in either direction and from any session, are delivered without asking. Revoke with /collab."
+	case PermissionAllowSessionWorkers:
+		return "Launch unlimited workers, choose their models, send follow-ups, and finish your own tasks. This session only. No worker inherits this permission. Trash and fresh sessions need separate approval. Revoke with /collab."
 	default:
 		return "Runs this request only; the agent asks again next time."
 	}
 }
 
 // RenderPermissionConfirmationDialog keeps choices visible while details scroll.
-// The second return value bounds the scroll offset. Permissions apply only to
-// this capability and exact target, with reviewed settings held fixed.
+// The second return value bounds the scroll offset. The highlighted choice
+// explains which actions, targets and settings the approval covers.
 func RenderPermissionConfirmationDialog(op control.Operation, options PermissionConfirmationOptions, bodyW, bodyH int) (string, int, error) {
 	inv, err := control.ValidateInvocation(op.Invocation)
 	if err != nil {

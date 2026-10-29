@@ -17,6 +17,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS control_permissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            permission_scope TEXT NOT NULL DEFAULT '',
             origin TEXT NOT NULL, provider TEXT NOT NULL, session_key TEXT NOT NULL DEFAULT '',
             capability TEXT NOT NULL, target TEXT NOT NULL, constraints_json TEXT NOT NULL,
             use_limit INTEGER NOT NULL DEFAULT 0, used INTEGER NOT NULL DEFAULT 0,
@@ -518,6 +519,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+	}
+	if err := s.ensureControlPermissionScopeColumn(ctx); err != nil {
+		return err
 	}
 	if err := s.ensureEngineerModelSelectionColumn(ctx); err != nil {
 		return err

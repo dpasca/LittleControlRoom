@@ -281,11 +281,11 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 func (m Model) confirmExternalControlChoice(choice bossui.PermissionChoice) (tea.Model, tea.Cmd) {
 	state := *m.externalControlConfirmation
 	switch choice {
-	case bossui.PermissionAllowSession, bossui.PermissionAllowAlways:
+	case bossui.PermissionAllowSession, bossui.PermissionAllowAlways, bossui.PermissionAllowSessionWorkers:
 		state.submitting = true
 		state.errorText = ""
 		m.externalControlConfirmation = &state
-		return m, m.approveControlPermissionCmd(state.operation.ID, choice == bossui.PermissionAllowSession)
+		return m, m.approveControlPermissionCmd(state.operation.ID, choice != bossui.PermissionAllowAlways, choice == bossui.PermissionAllowSessionWorkers)
 	case bossui.PermissionAllowPair:
 		state.submitting = true
 		state.errorText = ""

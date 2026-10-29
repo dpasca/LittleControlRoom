@@ -424,8 +424,8 @@ provider sessions to refresh their MCP descriptions and generated runtime skill.
 
 ## Scoped action permissions
 
-An eligible action's **Ctrl+G** review lists numbered choices from narrowest to
-broadest: **1** just this once, **2** for this calling session, and **3** always,
+An eligible action's **Ctrl+G** review lists numbered approval scopes:
+**1** just this once, **2** for this calling session, and **3** always,
 from any session of the same provider in the calling project. Arrows move the
 highlight (initially **1**), **Enter** confirms it, and a number key chooses and
 confirms directly; a short line explains the highlighted scope. On eligible
@@ -433,7 +433,22 @@ engineer handoffs, **3** is instead the bidirectional message-pair grant, so the
 dialog never offers two kinds of "always". **Esc** denies the request. No
 permission is created by merely proposing an action. Agents cannot create, edit, or revoke permissions through MCP.
 
-Permissions match the exact host-bound caller project/provider, capability,
+Worker creation also offers **Manage workers for this session**, normally choice
+**4** (or **2** when a fixed-model action permission is unavailable). Approve this
+once to let an organizer create unlimited workers, choose different providers,
+models and reasoning settings, continue its own tasks in their existing
+sessions, and mark those tasks completed or waiting. Titles, prompts,
+repository-write and structured-result settings may vary. This permission is
+bound to the exact host caller project, provider and session key; existing-task
+ownership is checked against persisted caller provenance on each use. Workers,
+other organizer sessions, and sibling worktrees do not inherit it. Task stops
+and revoked corrections prevent automatic reopening. Trashing tasks, closing
+their sessions, forcing fresh sessions, and other control categories retain
+their separate approval rules. **/collab** shows this as **Worker delegation**,
+with an unlimited allowance and usage count; **r** revokes it, including for
+requests already waiting in the queue. Existing permissions are not widened.
+
+Single-action permissions match the exact host-bound caller project/provider, capability,
 target and validated settings. Session permissions additionally match the
 host control key. They do not inherit to sibling worktrees or other providers.
 Only explicitly designated content fields (such as the prompt or TODO text)
@@ -449,7 +464,8 @@ or TODO redirects, `todo.add`, `todo.complete`, `project.set_category`,
 `agent_task.close` without closing the session. Launch permissions require an
 explicit provider and model and cover **three launches including the action
 being approved**. The limit persists across restart and must be renewed by the
-operator; retries do not consume extra uses. Repository ownership and other
+operator; retries do not consume extra uses. The separate worker-session scope
+above deliberately has no launch limit or fixed model. Repository ownership and other
 launch checks still apply. Corrections use the existing task-specific
 `max_corrections` grant and its explicit-stop/review checks. `git.submodule_align` is eligible only
 for a clean fast-forward to the pinned gitlink that needs no fetch, rechecked

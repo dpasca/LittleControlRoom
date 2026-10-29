@@ -182,3 +182,44 @@ func TestReplacedSessionCannotProposeControls(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerSessionPermissionReportDoesNotAskAgain(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "lcr.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, origin := t.Context(), t.TempDir()
+	executor, err := NewExecutor(Options{Store: st, OriginProjectPath: origin, Scope: control.AuthorityScopePortfolio,
+		Source: "claude_code", Provider: "claude_code", SessionKey: "organizer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := json.RawMessage(`{"title":"Worker","prompt":"Implement the task"}`)
+	first, err := executor.Propose(ctx, string(control.CapabilityAgentTaskCreate), args, "first")
+	if err != nil || first["requires_new_user_turn"] != true {
+		t.Fatal(first, err)
+	}
+	if _, _, err := st.ClaimNextControlOperation(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApproveWorkerDelegation(ctx, first["operation"].(control.Operation).ID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := executor.Propose(ctx, string(control.CapabilityAgentTaskCreate), json.RawMessage(`{"title":"Another worker","prompt":"Implement another task","repository_write":true}`), "next")
+	if err != nil || next["automatic_delivery"] != true || next["requires_new_user_turn"] != false || next["operator_confirmation"] != false {
+		t.Fatal(next, err)
+	}
+	op := next["operation"].(control.Operation)
+	if op.Confirmed || op.Status != control.OperationProposed {
+		t.Fatal("proposal falsely claimed execution", op)
+	}
+	permissions, _ := st.ListControlPermissions(ctx, origin)
+	if err := st.RevokeControlPermission(ctx, origin, permissions[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	report, err := executor.Get(ctx, op.ID)
+	if err != nil || report["requires_new_user_turn"] != true || report["automatic_delivery"] == true {
+		t.Fatal("revoked worker proposal does not ask", report, err)
+	}
+}
