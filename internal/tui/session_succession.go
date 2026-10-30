@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
@@ -111,10 +112,30 @@ func (h *handoffSuccession) finish(opened codexSessionOpenedMsg) string {
 	return "Reports, tasks and messages addressed to the previous session will move here once this session starts."
 }
 
-// handoffBlockedReason refuses /handoff where a replacement conversation
-// would detach durable state that is bound to the exact worker session.
+func operatorTaskHandoffAdmission(svc *service.Service, source codexapp.Snapshot, provider codexapp.Provider) codexapp.TurnAdmission {
+	var started atomic.Bool
+	return func(path, key string) (func(), error) {
+		if !started.CompareAndSwap(false, true) {
+			return svc.BeginRepositoryTurn(path, key)
+		}
+		unlock, err := svc.BeginOperatorTaskHandoff(path, source, embeddedSessionSource(provider), key)
+		if err != nil {
+			started.Store(false)
+		}
+		return unlock, err
+	}
+}
+
+// Isolated task handoffs explicitly transfer their worker binding. Shared
+// checkouts retain the restriction because their ownership is not isolated.
 func (m Model) handoffBlockedReason(projectPath string) string {
-	if _, ok := m.agentTaskForProjectPath(projectPath); ok {
+	if task, ok := m.agentTaskForProjectPath(projectPath); ok {
+		if task.Repository.Isolated {
+			if snapshot, ok := m.codexCachedSnapshot(projectPath); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
+				return "Finish or stop the current task turn before /handoff."
+			}
+			return ""
+		}
 		return "This is a delegated task's worker session; /handoff would detach the task from it. Let the task finish or stop it instead."
 	}
 	return ""

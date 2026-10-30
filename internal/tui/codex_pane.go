@@ -1414,7 +1414,7 @@ func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.
 }
 
 func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codexapp.LaunchRequest {
-	if m.svc != nil {
+	if m.svc != nil && req.TurnAdmission == nil {
 		req.TurnAdmission = m.svc.BeginRepositoryTurn
 	}
 	if task, ok := m.agentTaskForProjectPath(req.ProjectPath); ok {
@@ -2241,6 +2241,10 @@ func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
 	}
 	succession := newHandoffSuccession(m.svc, projectPath, source, targetProvider)
 	succession.apply(&req)
+	task, taskHandoff := m.agentTaskForProjectPath(projectPath)
+	if taskHandoff && m.svc != nil {
+		req.TurnAdmission = operatorTaskHandoffAdmission(m.svc, source, targetProvider)
+	}
 
 	handoffSaved := false
 	cmd := m.openCodexSessionCmdPreparedWithModelPreference(req, true, false, func() error {
@@ -2255,6 +2259,14 @@ func (m *Model) handoffVisibleCodexSessionToSelectionCmd(
 		opened, ok := msg.(codexSessionOpenedMsg)
 		if !ok {
 			return msg
+		}
+		if taskHandoff && m.svc != nil && opened.err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), tuiQuickActionTimeout)
+			_, err := m.svc.AttachAgentTaskEngineerSession(ctx, task.ID, embeddedSessionSource(targetProvider), opened.snapshot.ThreadID)
+			cancel()
+			if err != nil {
+				opened.err = fmt.Errorf("replacement opened but task attachment failed: %w", err)
+			}
 		}
 		routing := succession.finish(opened)
 		if opened.err != nil {

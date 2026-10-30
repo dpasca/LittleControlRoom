@@ -112,6 +112,59 @@ func (s *Service) beginRepositoryTurn(projectPath, sessionKey string, operator b
 	s.repositoryMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	if err := s.beginRepositoryTurnLocked(ctx, projectPath, sessionKey, operator); err != nil {
+		s.repositoryMu.Unlock()
+		return nil, err
+	}
+	return s.repositoryMu.Unlock, nil
+}
+
+// BeginOperatorTaskHandoff transfers an idle isolated task to the operator's
+// replacement conversation without discarding its checkout or result history.
+func (s *Service) BeginOperatorTaskHandoff(projectPath string, source codexapp.Snapshot, provider model.SessionSource, sessionKey string) (func(), error) {
+	s.repositoryMu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	fail := func(err error) (func(), error) {
+		s.repositoryMu.Unlock()
+		return nil, err
+	}
+	task, ok, err := s.store.AgentTaskForWorkspace(ctx, projectPath)
+	if err != nil {
+		return fail(err)
+	}
+	if !ok || !task.Repository.Isolated || task.Status == model.AgentTaskStatusArchived {
+		return fail(fmt.Errorf("handoff requires an existing isolated task checkout"))
+	}
+	if task.SessionID == "" || task.SessionID != source.ThreadID || task.Provider != model.SessionSource(source.Provider.Normalized()) {
+		return fail(fmt.Errorf("task worker changed before handoff; reopen its current session"))
+	}
+	if sessionKey == "" {
+		return fail(fmt.Errorf("handoff requires a stable replacement session identity"))
+	}
+	if err := s.repositoryWritersIdle(ctx, taskRepositoryPath(task)); err != nil {
+		return fail(err)
+	}
+	if task.Repository.State == "held" {
+		if task.Repository.SessionKey != source.ControlSessionKey || source.ControlSessionKey == "" {
+			return fail(fmt.Errorf("task repository belongs to another worker"))
+		}
+		if err := s.releaseTaskRepositoryLocked(ctx, task.ID); err != nil {
+			return fail(err)
+		}
+	}
+	if err := s.beginRepositoryTurnLocked(ctx, projectPath, sessionKey, true); err != nil {
+		return fail(err)
+	}
+	// The replacement announces its provider thread after launch. Clear the old
+	// thread now so late identity recording binds only the new worker.
+	if _, err := s.AttachAgentTaskEngineerSession(ctx, task.ID, provider, ""); err != nil {
+		return fail(err)
+	}
+	return s.repositoryMu.Unlock, nil
+}
+
+func (s *Service) beginRepositoryTurnLocked(ctx context.Context, projectPath, sessionKey string, operator bool) error {
 	task, isTask, err := s.store.AgentTaskForWorkspace(ctx, projectPath)
 	if err == nil {
 		target := projectPath
@@ -138,10 +191,9 @@ func (s *Service) beginRepositoryTurn(projectPath, sessionKey string, operator b
 		if isTask && task.Repository.Write {
 			s.recordRepositoryProblem(ctx, task, err)
 		}
-		s.repositoryMu.Unlock()
-		return nil, err
+		return err
 	}
-	return s.repositoryMu.Unlock, nil
+	return nil
 }
 
 func (s *Service) checkRepositoryOwner(ctx context.Context, target, taskID, sessionKey string) error {

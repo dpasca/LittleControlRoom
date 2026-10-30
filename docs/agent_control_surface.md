@@ -103,11 +103,13 @@ clean tracked/untracked state, writable checkout, no unfinished Git operation,
 and idle managed engineers/processes are required. Failure leaves a visible task
 with a repository blocker; it never stashes, commits, or removes existing edits.
 
-A direct operator message from the embedded pane can continue on existing edits
+A direct operator message or `/handoff` from the embedded pane can continue on existing edits
 in an isolated task checkout, including while its previous result awaits review.
 It starts a new result revision without accepting the previous result or changing
 the checkout. Ownership, idle-writer and unfinished-Git-operation checks still
 apply. Automated messages and shared-checkout tasks retain their baseline checks.
+An isolated task handoff transfers the worker binding and repository ownership
+to the chosen replacement session; the task, checkout and prior results remain.
 
 The durable exclusive lease coordinates managed engineer turns and process
 starts. Other managed turns in that checkout are blocked, including caller turns;

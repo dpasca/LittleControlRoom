@@ -307,6 +307,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindHandoff:
 				if reason := m.handoffBlockedReason(m.codexVisibleProject); reason != "" {
 					m.status = reason
+					m.openActionNoticeDialog("Handoff blocked", m.codexVisibleProject, reason, "Dismiss to return to the current session.", "")
 					return m, nil
 				}
 				m.openCodexHandoffDialog(snapshot, inv.HandoffNote)
@@ -314,6 +315,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindLCAgentHandoff:
 				if reason := m.handoffBlockedReason(m.codexVisibleProject); reason != "" {
 					m.status = reason
+					m.openActionNoticeDialog("Handoff blocked", m.codexVisibleProject, reason, "Dismiss to return to the current session.", "")
 					return m, nil
 				}
 				m.status = "Saving a continuation brief and starting a fresh embedded LCAgent session..."

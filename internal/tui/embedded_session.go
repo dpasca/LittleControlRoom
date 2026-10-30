@@ -186,6 +186,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			provider = m.codexPendingOpenProvider()
 		}
 		revealFailure := m.revealEmbeddedOpenOnSessionOpened(msg)
+		if revealFailure {
+			m.openActionNoticeDialog("Session could not open", msg.projectPath, msg.err.Error(), "Dismiss to return to the session.", "")
+		}
 		m.finishCodexPendingOpenRequest(msg.projectPath, msg.openRequestID, codexapp.Snapshot{}, false, false)
 		m.completeCodexOpenRequest(msg.openRequestID)
 		m.clearTodoLaunchDraft(msg.projectPath)

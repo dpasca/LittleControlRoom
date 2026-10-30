@@ -125,6 +125,68 @@ func TestOperatorFollowUpContinuesIsolatedTaskAwaitingReview(t *testing.T) {
 	}
 }
 
+func TestOperatorTaskHandoffPreservesEditsAndTransfersWorker(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		t.Run(map[bool]string{false: "awaiting-review", true: "held"}[held], func(t *testing.T) {
+			f := newCorrectionFixture(t)
+			edit := func() {
+				if err := os.WriteFile(filepath.Join(f.task.Repository.Root, "worker.txt"), []byte("keep this work"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if held {
+				startRepositoryTurn(t, f.svc, f.task, "worker")
+				if _, err := f.svc.AttachAgentTaskEngineerSession(t.Context(), f.task.ID, model.SessionSourceCodex, "worker-thread"); err != nil {
+					t.Fatal(err)
+				}
+				edit()
+			} else {
+				f.runWorker(t, 1, edit, ready("Ready for testing"))
+			}
+			before, err := inspectTaskRepository(t.Context(), f.task.Repository.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := codexapp.Snapshot{Provider: codexapp.ProviderCodex, ThreadID: "worker-thread", ControlSessionKey: "worker"}
+			stale := source
+			stale.ThreadID = "another-thread"
+			if unlock, err := f.svc.BeginOperatorTaskHandoff(f.task.WorkspacePath, stale, model.SessionSourceClaudeCode, "replacement"); err == nil {
+				unlock()
+				t.Fatal("handoff accepted a stale source")
+			}
+			f.snapshot.Busy = true
+			if unlock, err := f.svc.BeginOperatorTaskHandoff(f.task.WorkspacePath, source, model.SessionSourceClaudeCode, "replacement"); err == nil {
+				unlock()
+				t.Fatal("handoff replaced an active writer")
+			}
+			f.snapshot.Busy = false
+			unlock, err := f.svc.BeginOperatorTaskHandoff(f.task.WorkspacePath, source, model.SessionSourceClaudeCode, "replacement")
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlock()
+			current := f.reload(t)
+			if current.Provider != model.SessionSourceClaudeCode || current.SessionID != "" || current.Repository.SessionKey != "replacement" ||
+				current.Repository.State != "held" || current.Workflow.WorkerKey != "replacement" || current.Workflow.RunID != 2 {
+				t.Fatalf("worker binding did not transfer: %+v", current)
+			}
+			current, err = f.svc.AttachAgentTaskEngineerSession(t.Context(), current.ID, model.SessionSourceClaudeCode, "replacement-thread")
+			if err != nil || current.SessionID != "replacement-thread" {
+				t.Fatalf("replacement did not attach: %+v, %v", current, err)
+			}
+			after, err := inspectTaskRepository(t.Context(), current.Repository.Root)
+			if err != nil || after.fingerprint != before.fingerprint {
+				t.Fatalf("handoff changed checkout: %+v, %v", after, err)
+			}
+			if !held {
+				if _, err := f.svc.GetAgentTaskResult(t.Context(), current.ID, 1); err != nil {
+					t.Fatalf("previous result was lost: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestUnfinishedWorkerResumesItsRecordedCheckout(t *testing.T) {
 	for _, stopped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unclassified", true: "canceled"}[stopped], func(t *testing.T) {

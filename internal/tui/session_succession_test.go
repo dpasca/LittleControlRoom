@@ -124,12 +124,26 @@ func TestHandoffCompletesWhenSuccessorAnnouncesIdentityLater(t *testing.T) {
 	}
 }
 
-func TestHandoffRefusedForDelegatedTaskWorker(t *testing.T) {
+func TestHandoffRefusedForSharedTaskWorker(t *testing.T) {
 	m := Model{openAgentTasks: []model.AgentTask{{ID: "agt_perf", WorkspacePath: "/tmp/task-worker"}}}
 	if reason := m.handoffBlockedReason("/tmp/task-worker"); !strings.Contains(reason, "delegated task's worker session") {
 		t.Fatalf("task worker handoff reason = %q", reason)
 	}
 	if reason := m.handoffBlockedReason("/tmp/organizer"); reason != "" {
 		t.Fatalf("organizer handoff blocked: %q", reason)
+	}
+}
+
+func TestHandoffAllowsIdleIsolatedTaskWorker(t *testing.T) {
+	const path = "/tmp/task-worker"
+	m := Model{openAgentTasks: []model.AgentTask{{ID: "agt_isolated", WorkspacePath: path, Repository: model.AgentTaskRepository{Isolated: true}}},
+		codexSnapshots: map[string]codexapp.Snapshot{path: {Started: true, Provider: codexapp.ProviderCodex}},
+	}
+	if reason := m.handoffBlockedReason(path); reason != "" {
+		t.Fatalf("idle isolated task blocked: %s", reason)
+	}
+	m.codexSnapshots[path] = codexapp.Snapshot{Started: true, Busy: true, Provider: codexapp.ProviderCodex}
+	if reason := m.handoffBlockedReason(path); reason == "" {
+		t.Fatal("busy isolated task handoff allowed")
 	}
 }
