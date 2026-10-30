@@ -79,6 +79,52 @@ func ready(summary string) model.AgentTaskResultPayload {
 	return model.AgentTaskResultPayload{Outcome: "ready_for_review", Summary: summary}
 }
 
+func TestOperatorFollowUpContinuesIsolatedTaskAwaitingReview(t *testing.T) {
+	f := newCorrectionFixture(t)
+	file := filepath.Join(f.task.Repository.Root, "worker.txt")
+	f.runWorker(t, 1, func() {
+		if err := os.WriteFile(file, []byte("ready to test"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}, ready("Ready for operator testing"))
+	if f.task.Workflow.Phase != "awaiting_review" {
+		t.Fatalf("expected pending review: %+v", f.task.Workflow)
+	}
+	// The operator can continue with staged edits and later manual fixes too.
+	repositoryTestGit(t, f.task.Repository.Root, "add", "worker.txt")
+	if err := os.WriteFile(file, []byte("manual adjustment"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := inspectTaskRepository(t.Context(), f.task.Repository.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ordinary agent messages must still respect the review boundary.
+	if unlock, err := f.svc.BeginRepositoryTurn(f.task.WorkspacePath, "worker"); err == nil {
+		unlock()
+		t.Fatal("automated message bypassed review")
+	}
+	// A direct operator message may also come from a reopened conversation.
+	unlock, err := f.svc.BeginOperatorRepositoryTurn(f.task.WorkspacePath, "reopened-worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	current := f.reload(t)
+	if current.Repository.State != "held" || current.Repository.Error != "" ||
+		current.Workflow.RunID != 2 || current.Workflow.Phase != "working" ||
+		current.Workflow.WorkerKey != "reopened-worker" || current.Workflow.Result != nil || current.Workflow.Review != nil {
+		t.Fatalf("follow-up did not start a fresh run: %+v", current)
+	}
+	if _, err := f.svc.GetAgentTaskResult(t.Context(), current.ID, 1); err != nil {
+		t.Fatalf("lost previous result revision: %v", err)
+	}
+	after, err := inspectTaskRepository(t.Context(), f.task.Repository.Root)
+	if err != nil || after.fingerprint != before.fingerprint {
+		t.Fatalf("follow-up modified the checkout: before %+v, after %+v, err %v", before, after, err)
+	}
+}
+
 func TestUnfinishedWorkerResumesItsRecordedCheckout(t *testing.T) {
 	for _, stopped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unclassified", true: "canceled"}[stopped], func(t *testing.T) {

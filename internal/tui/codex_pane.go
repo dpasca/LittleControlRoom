@@ -1958,6 +1958,11 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 	return m.codexSessionCmd(projectPath, func() tea.Msg {
 		return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: errors.New("embedded session unavailable")}
 	}, func(session codexapp.Session) tea.Msg {
+		if m.svc != nil {
+			submission.TurnAdmission = func() (func(), error) {
+				return m.svc.BeginOperatorRepositoryTurn(projectPath, session.Snapshot().ControlSessionKey)
+			}
+		}
 		if err := session.SubmitInput(submission); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: err}
 		}

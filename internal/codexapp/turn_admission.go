@@ -70,6 +70,9 @@ func admitManagedLaunch(req LaunchRequest) (LaunchRequest, func(), func(), error
 }
 
 func beginManagedSubmission(admission func() (func(), error), input Submission) (func(), error) {
+	if input.TurnAdmission != nil {
+		admission = input.TurnAdmission
+	}
 	unlock, err := beginManagedTurn(admission)
 	if err != nil {
 		return nil, err

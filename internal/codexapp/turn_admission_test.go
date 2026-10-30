@@ -35,6 +35,42 @@ func TestRepositoryAdmissionRejectsAllProviderTurnsBeforeIO(t *testing.T) {
 	}
 }
 
+func TestOperatorSubmissionUsesHostAdmissionForEveryProvider(t *testing.T) {
+	for _, provider := range []Provider{ProviderCodex, ProviderClaudeCode, ProviderOpenCode, ProviderLCAgent} {
+		t.Run(string(provider), func(t *testing.T) {
+			ordinary := func() (func(), error) {
+				t.Fatal("operator message used delegation preflight")
+				return nil, errors.New("clean checkout required")
+			}
+			var session Session
+			switch provider {
+			case ProviderCodex:
+				session = &appServerSession{turnAdmission: ordinary}
+			case ProviderClaudeCode:
+				session = &claudeCodeSession{turnAdmission: ordinary}
+			case ProviderOpenCode:
+				session = &openCodeSession{turnAdmission: ordinary}
+			case ProviderLCAgent:
+				session = &lcagentSession{turnAdmission: ordinary}
+			}
+			held, released := false, false
+			stop := errors.New("stop before provider IO")
+			err := session.SubmitInput(Submission{Text: "continue testing", TurnAdmission: func() (func(), error) {
+				held = true
+				return func() { held, released = false, true }, nil
+			}, BeforeStart: func() error {
+				if !held {
+					t.Fatal("operator admission was not held")
+				}
+				return stop
+			}})
+			if !errors.Is(err, stop) || held || !released {
+				t.Fatalf("operator admission/cancellation failed: %v, held %t, released %t", err, held, released)
+			}
+		})
+	}
+}
+
 func TestRepositoryAdmissionGuardsCodexAutonomousGoalsAndReview(t *testing.T) {
 	blocked := errors.New("repository owned")
 	session := &appServerSession{turnAdmission: func() (func(), error) { return nil, blocked }}

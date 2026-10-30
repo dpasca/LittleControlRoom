@@ -143,6 +143,63 @@ func TestAgentTaskRepositoryBlocksDirtyBusyAndRunningProcess(t *testing.T) {
 	}
 }
 
+func TestOperatorRepositoryTurnRetainsOwnershipAndGitChecks(t *testing.T) {
+	for _, condition := range []string{"shared-dirty", "busy", "process", "git-lock", "other-owner"} {
+		t.Run(condition, func(t *testing.T) {
+			svc, task, root := repositoryTestFixture(t)
+			if condition != "shared-dirty" {
+				var err error
+				task, err = svc.CreateAgentTask(t.Context(), model.CreateAgentTaskInput{
+					Title: "Isolated writer", OriginProjectPath: root, OriginSessionKey: "caller",
+					Repository: model.AgentTaskRepository{Write: true},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(task.Repository.Root, "existing.txt"), []byte("preserve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			switch condition {
+			case "busy":
+				svc.repositoryEngineers = func() []codexapp.Snapshot {
+					return []codexapp.Snapshot{{ProjectPath: task.WorkspacePath, Busy: true}}
+				}
+			case "process":
+				svc.repositoryProcesses = func() []projectrun.Snapshot {
+					return []projectrun.Snapshot{{CWD: task.Repository.Root, Running: true, PID: 123, ID: "writer"}}
+				}
+			case "git-lock":
+				raw, err := repositoryGit(t.Context(), task.Repository.Root, "rev-parse", "--git-path", "index.lock")
+				if err != nil {
+					t.Fatal(err)
+				}
+				lock := strings.TrimSpace(string(raw))
+				if !filepath.IsAbs(lock) {
+					lock = filepath.Join(task.Repository.Root, lock)
+				}
+				if err := os.WriteFile(lock, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "other-owner":
+				unlock, err := svc.BeginOperatorRepositoryTurn(task.WorkspacePath, "owner")
+				if err != nil {
+					t.Fatal(err)
+				}
+				unlock()
+			}
+			if unlock, err := svc.BeginOperatorRepositoryTurn(task.WorkspacePath, "other"); err == nil {
+				unlock()
+				t.Fatalf("operator message bypassed %s", condition)
+			}
+			data, err := os.ReadFile(filepath.Join(task.Repository.Root, "existing.txt"))
+			if err != nil || string(data) != "preserve" {
+				t.Fatalf("changed existing edits: %q %v", data, err)
+			}
+		})
+	}
+}
+
 func TestAgentTaskRepositoryDoesNotReleaseBeforeWorkerAndProcessesStop(t *testing.T) {
 	svc, task, root := repositoryTestFixture(t)
 	startRepositoryTurn(t, svc, task, "worker")

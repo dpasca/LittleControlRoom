@@ -98,6 +98,17 @@ func (s *Service) TaskResumeControlKey(ctx context.Context, projectPath string, 
 // must hold the returned unlock until the provider has marked the turn active.
 // All engine turns are conservatively write-capable; opening a transcript is not.
 func (s *Service) BeginRepositoryTurn(projectPath, sessionKey string) (func(), error) {
+	return s.beginRepositoryTurn(projectPath, sessionKey, false)
+}
+
+// BeginOperatorRepositoryTurn admits a direct operator follow-up on the existing
+// edits in an isolated task checkout. Delegated turns still require a clean or
+// explicitly reviewed baseline; both paths retain ownership and writer checks.
+func (s *Service) BeginOperatorRepositoryTurn(projectPath, sessionKey string) (func(), error) {
+	return s.beginRepositoryTurn(projectPath, sessionKey, true)
+}
+
+func (s *Service) beginRepositoryTurn(projectPath, sessionKey string, operator bool) (func(), error) {
 	s.repositoryMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -109,7 +120,7 @@ func (s *Service) BeginRepositoryTurn(projectPath, sessionKey string) (func(), e
 		}
 		err = s.checkRepositoryOwner(ctx, target, task.ID, sessionKey)
 		if err == nil && isTask && task.Repository.Write {
-			err = s.acquireTaskRepository(ctx, task, sessionKey)
+			err = s.acquireTaskRepository(ctx, task, sessionKey, operator && task.Repository.Isolated)
 		}
 		if err == nil && isTask && task.Workflow.Enabled {
 			active := false
@@ -150,7 +161,7 @@ func (s *Service) checkRepositoryOwner(ctx context.Context, target, taskID, sess
 	return nil
 }
 
-func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTask, sessionKey string) error {
+func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTask, sessionKey string, allowExistingEdits bool) error {
 	if task.Repository.State == "held" {
 		if task.Repository.SessionKey != sessionKey || sessionKey == "" {
 			return fmt.Errorf("task repository lease belongs to another session; inspect and close the stopped task before continuing")
@@ -201,8 +212,10 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 	}
 	dirtyBoundary := false
 	if baseline.changes != "" {
-		if err := dirtyTaskBoundary(task, sessionKey, baseline.fingerprint); err != nil {
-			return err
+		if !allowExistingEdits {
+			if err := dirtyTaskBoundary(task, sessionKey, baseline.fingerprint); err != nil {
+				return err
+			}
 		}
 		dirtyBoundary = true
 	}

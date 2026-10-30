@@ -183,9 +183,12 @@ func attachmentDisplayLabel(path string) string {
 }
 
 type Submission struct {
-	ExpectedControlInput *ControlInputState `json:"-"`
-	RequireIdle          bool               `json:"-"`
-	BeforeStart          func() error       `json:"-"`
+	// TurnAdmission is a host-only override for a direct operator message.
+	// Automated submissions use the session's ordinary repository admission.
+	TurnAdmission        func() (func(), error) `json:"-"`
+	ExpectedControlInput *ControlInputState     `json:"-"`
+	RequireIdle          bool                   `json:"-"`
+	BeforeStart          func() error           `json:"-"`
 	Text                 string
 	DisplayText          string // optional; if set, used for transcript display instead of Text
 	Attachments          []Attachment
