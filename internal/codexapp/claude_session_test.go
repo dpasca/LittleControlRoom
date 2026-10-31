@@ -2805,3 +2805,26 @@ func TestClaudeRefreshActiveKeepsIdleExternalSessionReadOnlyWithoutBusyTimer(t *
 		t.Fatalf("Submit() error = %v, want read-only ownership error", err)
 	}
 }
+
+func TestParseCCLineEntriesRestoresPromptQueuedMidTurn(t *testing.T) {
+	var tracker claudeartifact.ConversationTracker
+	parse := func(line string) []TranscriptEntry {
+		entries, _, _, _ := parseCCLineEntries(line, map[string]claudeToolCall{}, map[string]struct{}{}, &tracker)
+		return entries
+	}
+
+	entries := parse(`{"type":"attachment","uuid":"att_1","attachment":{"type":"queued_command","commandMode":"prompt","prompt":[{"type":"text","text":"fourth thing, the billowing smoke"}]}}`)
+	if len(entries) != 1 || entries[0].Kind != TranscriptUser || entries[0].Text != "fourth thing, the billowing smoke" {
+		t.Fatalf("queued prompt entries = %#v, want one user entry with the typed text", entries)
+	}
+
+	for name, line := range map[string]string{
+		"task notification": `{"type":"attachment","uuid":"att_2","attachment":{"type":"queued_command","commandMode":"task-notification","origin":{"kind":"task-notification"},"prompt":"<task-notification>done</task-notification>"}}`,
+		"peer message":      `{"type":"attachment","uuid":"att_3","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"peer"},"prompt":"<agent-message>report</agent-message>"}}`,
+		"other attachment":  `{"type":"attachment","uuid":"att_4","attachment":{"type":"output_style"}}`,
+	} {
+		if entries := parse(line); len(entries) != 0 {
+			t.Fatalf("%s produced entries %#v, want none", name, entries)
+		}
+	}
+}

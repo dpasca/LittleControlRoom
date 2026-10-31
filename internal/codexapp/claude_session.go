@@ -3516,6 +3516,14 @@ func parseCCLineEntriesWithInterruptedTools(
 		Origin            struct {
 			Kind string `json:"kind"`
 		} `json:"origin"`
+		Attachment struct {
+			Type        string          `json:"type"`
+			Prompt      json.RawMessage `json:"prompt"`
+			CommandMode string          `json:"commandMode"`
+			Origin      struct {
+				Kind string `json:"kind"`
+			} `json:"origin"`
+		} `json:"attachment"`
 		Message struct {
 			ID         string           `json:"id"`
 			Role       string           `json:"role"`
@@ -3579,6 +3587,9 @@ func parseCCLineEntriesWithInterruptedTools(
 			entries = classifyClaudeAPIErrorEntries(entries, raw.Error)
 		}
 		return entries, raw.Type, reasoningEffort, state
+
+	case "attachment":
+		return extractCCQueuedPromptEntries(raw.UUID, raw.Attachment.Type, raw.Attachment.CommandMode, raw.Attachment.Origin.Kind, raw.Attachment.Prompt), raw.Type, reasoningEffort, state
 
 	case "progress":
 		return nil, raw.Type, reasoningEffort, state
@@ -3718,6 +3729,25 @@ func extractCCAssistantEntries(content json.RawMessage, itemID string, toolCalls
 		}
 	}
 	return entries
+}
+
+// extractCCQueuedPromptEntries restores prompts the operator submitted while a
+// turn was running. Claude Code absorbs those into the live turn and records
+// them only as a queued_command attachment, never as a user event. Task
+// notifications and peer messages use the same attachment with another
+// commandMode or origin and are not operator input.
+func extractCCQueuedPromptEntries(itemID, attachmentType, commandMode, originKind string, prompt json.RawMessage) []TranscriptEntry {
+	if attachmentType != "queued_command" || commandMode != "prompt" {
+		return nil
+	}
+	if originKind = strings.TrimSpace(originKind); originKind != "" && !strings.EqualFold(originKind, "human") {
+		return nil
+	}
+	text := extractCCTextContent(prompt)
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return []TranscriptEntry{{ItemID: itemID, Kind: TranscriptUser, Text: text}}
 }
 
 func extractCCUserEntries(
