@@ -178,14 +178,19 @@ func TestEngineerMessageTerminalReplayIsNotReportedAsPending(t *testing.T) {
 	}
 }
 
-func TestStructuredReviewWaitsForLiveIdleCaller(t *testing.T) {
+func TestStructuredReviewResumesDormantCallerAndWaitsForBusyOne(t *testing.T) {
 	path := t.TempDir()
 	live := &fakeCodexSession{projectPath: path, snapshot: codexapp.Snapshot{Provider: codexapp.ProviderCodex, ThreadID: "caller", Started: true, Busy: true, ActiveTurnID: "turn"}}
 	manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) { return live, nil })
 	m := Model{codexManager: manager, allProjects: []model.ProjectSummary{{Path: path, PresentOnDisk: true}}}
 	message := control.EngineerMessage{ProjectPath: path, Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew, TargetSessionID: "caller", AgentTaskRevision: 1}
-	if d := m.engineerMessageDisposition(message); !d.wait || d.deliver {
-		t.Fatalf("revived missing caller: %+v", d)
+	if d := m.engineerMessageDisposition(message); !d.deliver || d.wait || d.bindSessionID != "caller" {
+		t.Fatalf("dormant caller not resumed: %+v", d)
+	}
+	noTarget := message
+	noTarget.TargetSessionID = ""
+	if d := m.engineerMessageDisposition(noTarget); !d.wait || d.deliver {
+		t.Fatalf("untargeted review delivered: %+v", d)
 	}
 	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: path, Provider: codexapp.ProviderCodex}); err != nil {
 		t.Fatal(err)

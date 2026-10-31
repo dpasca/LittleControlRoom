@@ -249,13 +249,16 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 	}
 	forceNew := message.SessionMode == control.SessionModeNew
 	snapshot, live := m.liveEmbeddedSnapshotForProject(project.Path, provider)
-	if !forceNew && !live && (message.AgentTaskRevision > 0 || message.FollowCurrentSession) {
-		d := engineerMessageDisposition{project: project, wait: true}
-		if message.FollowCurrentSession {
-			d.waitReason = "no-current-session"
-			d.waitStatus = "Message is waiting: no current engineer session is open. Open or start a session to receive it before its delivery deadline."
+	if !forceNew && !live && message.FollowCurrentSession {
+		return engineerMessageDisposition{
+			project:    project,
+			wait:       true,
+			waitReason: "no-current-session",
+			waitStatus: "Message is waiting: no current engineer session is open. Open or start a session to receive it before its delivery deadline.",
 		}
-		return d
+	}
+	if !forceNew && !live && message.AgentTaskRevision > 0 && strings.TrimSpace(message.TargetSessionID) == "" {
+		return engineerMessageDisposition{project: project, wait: true}
 	}
 	if block, blocked := m.embeddedLaunchBlock(project, provider, forceNew); blocked {
 		return engineerMessageDisposition{project: project, wait: true, failure: errors.New(block.Message)}

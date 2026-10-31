@@ -1219,8 +1219,8 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 		!sessionMatchesResumeID(existing, existingState, req.ResumeID)) {
 		return nil, false, ErrCurrentSessionUnavailable
 	}
-	if req.RequireLiveIdle && (!ok || existingState.ActiveTurnID != "" || existingState.Busy || existingState.BusyExternal || existingState.Closed || existingState.PendingApproval != nil || existingState.PendingToolInput != nil) {
-		return nil, false, fmt.Errorf("review delivery requires the exact live idle caller; it will not reopen or steer a session")
+	if req.RequireLiveIdle && ok && (existingState.ActiveTurnID != "" || existingState.Busy || existingState.BusyExternal || existingState.Closed || existingState.PendingApproval != nil || existingState.PendingToolInput != nil) {
+		return nil, false, fmt.Errorf("review delivery will not steer a busy session")
 	}
 	if expected := strings.TrimSpace(req.ReplaceEmptySessionID); expected != "" &&
 		(!ok || existingState.ThreadID != expected || !existingState.CanReplaceEmptyConversation()) {
