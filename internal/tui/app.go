@@ -2125,6 +2125,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if strings.TrimSpace(msg.projectPath) != "" && msg.snapshot.Started {
 			m.storeCodexSnapshot(msg.projectPath, msg.snapshot)
 		}
+		if msg.superseded {
+			if msg.task.ID != "" {
+				m.upsertOpenAgentTask(msg.task)
+			}
+			label := strings.TrimSpace(msg.label)
+			if label == "" {
+				label = strings.TrimSpace(msg.taskID)
+			}
+			m.status = "Agent task " + label + ": earlier result superseded by a follow-up"
+			return m, nil
+		}
 		if msg.err != nil {
 			m.status = fmt.Sprintf("Agent task %s handoff failed: %v", msg.taskID, msg.err)
 			notice := bossEngineerCompletionNotice(msg.label, msg.summary) + "\n\nI couldn't save that review handoff: " + msg.err.Error()

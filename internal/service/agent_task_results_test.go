@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,8 +142,12 @@ func TestStructuredTaskCompletionRejectsUnverifiedOrSupersededWorker(t *testing.
 			case "new run":
 				startRepositoryTurn(t, svc, task, "worker-key")
 			}
-			if _, err := svc.SettleAgentTaskEngineerTurn(t.Context(), task, completion); err == nil {
+			_, err := svc.SettleAgentTaskEngineerTurn(t.Context(), task, completion)
+			if err == nil {
 				t.Fatal("unverified completion released the checkout")
+			}
+			if (condition == "new run") != errors.Is(err, ErrAgentTaskRunSuperseded) {
+				t.Fatalf("superseded classification wrong for %q: %v", condition, err)
 			}
 			current, err := svc.GetAgentTask(t.Context(), task.ID)
 			if err != nil {

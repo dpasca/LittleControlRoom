@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,56 @@ func TestStructuredTaskCompletionSurvivesWorkerCloseAndLateIdentity(t *testing.T
 				t.Fatalf("wrong callback: %+v, %v", callback, err)
 			}
 		})
+	}
+}
+
+func TestStructuredTaskHandoffSupersededByFollowUpIsNotAFailure(t *testing.T) {
+	ctx := t.Context()
+	svc := newControlTestService(t)
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Interrupted worker", Provider: model.SessionSourceClaudeCode,
+		Workflow:          model.AgentTaskWorkflow{Enabled: true},
+		OriginProjectPath: "/tmp/caller", OriginProvider: model.SessionSourceClaudeCode,
+		OriginSessionID: "caller-thread",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := svc.BeginRepositoryTurn(task.WorkspacePath, "worker-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	task, err = svc.AttachAgentTaskEngineerSession(ctx, task.ID, task.Provider, "worker-thread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode, ProjectPath: task.WorkspacePath,
+		ThreadID: "worker-thread", ControlSessionKey: "worker-key", Started: true,
+		LatestTurnStateKnown: true, LatestTurnCompleted: true,
+	}
+	// The operator replies after the completion handoff captured the task.
+	cmd := Model{ctx: ctx, svc: svc, openAgentTasks: []model.AgentTask{task}}.
+		markAgentTaskReadyForReviewCmd(task.WorkspacePath, task, snapshot, nil)
+	unlock, err = svc.BeginRepositoryTurn(task.WorkspacePath, "worker-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+
+	returned := cmd().(agentTaskEngineerReturnedMsg)
+	if !returned.superseded || returned.err != nil || returned.callbackErr != nil {
+		t.Fatalf("stale handoff should be dropped quietly: %+v", returned)
+	}
+	if returned.task.Workflow.RunID != 2 {
+		t.Fatalf("message should carry the current run: %+v", returned.task.Workflow)
+	}
+	m := Model{ctx: ctx, svc: svc, openAgentTasks: []model.AgentTask{task}}
+	updated, _ := m.Update(returned)
+	got := updated.(Model)
+	if strings.Contains(got.status, "failed") || !strings.Contains(got.status, "superseded") {
+		t.Fatalf("status = %q", got.status)
 	}
 }
 

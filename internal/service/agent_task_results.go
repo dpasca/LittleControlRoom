@@ -9,6 +9,12 @@ import (
 	"lcroom/internal/model"
 )
 
+// ErrAgentTaskRunSuperseded reports that a newer turn (usually an operator
+// follow-up) started on the task after the completion being settled was
+// captured. The newer run settles itself, so callers should drop the stale
+// handoff instead of treating it as a failure.
+var ErrAgentTaskRunSuperseded = errors.New("task run changed; reload the task before retrying the handoff")
+
 func (s *Service) settleStructuredTask(ctx context.Context, task model.AgentTask) (model.AgentTask, error) {
 	return s.settleStructuredTaskWithCompletion(ctx, task, nil)
 }
@@ -30,7 +36,7 @@ func (s *Service) settleStructuredTaskWithCompletion(ctx context.Context, expect
 		return task, err
 	}
 	if task.Workflow.RunID != expected.Workflow.RunID || task.Workflow.WorkerKey != expected.Workflow.WorkerKey {
-		return task, errors.New("task run changed; reload the task before retrying the handoff")
+		return task, ErrAgentTaskRunSuperseded
 	}
 	if !task.Workflow.Enabled {
 		return task, nil

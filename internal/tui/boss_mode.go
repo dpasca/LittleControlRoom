@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -146,6 +148,7 @@ type agentTaskEngineerReturnedMsg struct {
 	task        model.AgentTask
 	err         error
 	callbackErr error
+	superseded  bool
 }
 
 type bossEngineerReturnedMsg struct {
@@ -516,6 +519,13 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 			updated, err = svc.SettleAgentTaskEngineerTurn(completeCtx, task, snapshot)
 		} else {
 			updated, err = svc.MarkAgentTaskReadyForReview(completeCtx, taskID, summary)
+		}
+		if errors.Is(err, service.ErrAgentTaskRunSuperseded) {
+			// A follow-up started a newer run; it will hand off on its own.
+			return agentTaskEngineerReturnedMsg{
+				projectPath: strings.TrimSpace(projectPath), taskID: taskID, label: label,
+				snapshot: snapshot, task: updated, superseded: true,
+			}
 		}
 		var callbackErr error
 		if err == nil {
