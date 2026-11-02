@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lcroom/internal/codexapp"
@@ -310,5 +311,43 @@ func TestStructuredTaskFollowUpAfterResultWithBackgroundCommand(t *testing.T) {
 	history, err := svc.GetAgentTaskResult(ctx, task.ID, 1)
 	if err != nil || history["worker_claims"].(model.AgentTaskResult).Summary != claims.Summary {
 		t.Fatalf("previous claims were lost: %+v %v", history, err)
+	}
+}
+
+func TestUnclassifiedWorkerQueuesCallerNoticeWithStopReason(t *testing.T) {
+	svc, _, root := repositoryTestFixture(t)
+	ctx := t.Context()
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Capacity", Provider: model.SessionSourceCodex,
+		OriginProjectPath: root, OriginProvider: model.SessionSourceCodex, OriginSessionID: "caller-thread",
+		Workflow: model.AgentTaskWorkflow{Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startRepositoryTurn(t, svc, task, "worker-key")
+	task, err = svc.store.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = svc.store.FinalizeStructuredTaskWithReason(ctx, task, "Selected model is at capacity.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := svc.QueueAgentTaskResultCallback(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.ResultMessageID == "" {
+		t.Fatal("caller was not told the worker ended without a result")
+	}
+	message, err := svc.store.GetEngineerMessage(ctx, queued.ResultMessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"without submitting a structured result", "at capacity", "agent_task.continue"} {
+		if !strings.Contains(message.Prompt, want) {
+			t.Fatalf("notice missing %q: %s", want, message.Prompt)
+		}
 	}
 }

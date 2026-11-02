@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Worker evidence is a claim. Host checkout evidence stays in Repository.
 type AgentTaskCheck struct {
@@ -72,4 +75,56 @@ type AgentTaskActor struct {
 	Provider    SessionSource
 	SessionKey  string
 	Operator    bool
+}
+
+// AgentTaskDeliveryWaitingPrefix marks a result_delivery_error that explains why
+// a still-pending callback has not reached its caller yet (recipient busy,
+// unavailable, waiting for idle), as opposed to a terminal delivery failure.
+const AgentTaskDeliveryWaitingPrefix = "waiting: "
+
+// ResultDeliveryState names where the caller callback stands without making
+// readers infer it from several nullable lifecycle fields.
+func (t AgentTask) ResultDeliveryState() string {
+	deliveryError := strings.TrimSpace(t.ResultDeliveryError)
+	switch {
+	case !t.ResultConsumedAt.IsZero():
+		return "consumed"
+	case strings.HasPrefix(deliveryError, AgentTaskDeliveryWaitingPrefix):
+		return "waiting"
+	case deliveryError != "":
+		return "failed"
+	case !t.ResultDeliveredAt.IsZero():
+		return "delivered"
+	case strings.TrimSpace(t.ResultMessageID) != "":
+		return "queued"
+	case !t.ResultReadyAt.IsZero() || t.Workflow.Phase == "unclassified":
+		return "no_callback"
+	default:
+		return "pending"
+	}
+}
+
+// ReviewState reports whether the task is waiting on its caller: "awaiting_review"
+// for a submitted result nobody has reviewed, "unclassified" for a worker that
+// ended without any structured result, "" otherwise.
+func (t AgentTask) ReviewState() string {
+	w := t.Workflow
+	if !w.Enabled {
+		if !t.ResultReadyAt.IsZero() && t.ResultConsumedAt.IsZero() && t.Status != AgentTaskStatusArchived {
+			return "awaiting_review"
+		}
+		return ""
+	}
+	if !w.Handoff || w.Review != nil || w.CallerStopped {
+		return ""
+	}
+	switch w.Phase {
+	case "awaiting_review", "blocked", "failed":
+		if w.Result != nil {
+			return "awaiting_review"
+		}
+	case "unclassified":
+		return "unclassified"
+	}
+	return ""
 }

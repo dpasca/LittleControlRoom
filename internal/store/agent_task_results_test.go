@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lcroom/internal/control"
@@ -154,5 +155,34 @@ func TestStructuredStoppedAndUnclassifiedResults(t *testing.T) {
 				t.Fatalf("review: %+v %v", task.Workflow, err)
 			}
 		}
+	}
+}
+
+func TestUnclassifiedWorkerRecordsStopReasonAndAcceptsCallerNotice(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "unclassified.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := t.Context()
+	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: "agt_capacity", Title: "capacity", Provider: model.SessionSourceCodex, WorkspacePath: "/worker", Workflow: model.AgentTaskWorkflow{Enabled: true, RunID: 2, WorkerKey: "worker", Phase: "working"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err = st.FinalizeStructuredTaskWithReason(ctx, task, "Selected model is at capacity.\nPlease try a different model.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.ReviewState() != "unclassified" || !strings.Contains(task.Summary, "Selected model is at capacity. Please try a different model.") {
+		t.Fatalf("stop reason not recorded: %q state=%q", task.Summary, task.ReviewState())
+	}
+	message := control.EngineerMessage{AgentTaskID: task.ID, AgentTaskRevision: 2, ProjectPath: "/caller", Provider: control.ProviderCodex,
+		OperationID: "agent-task-review:agt_capacity:2", SessionMode: control.SessionModeResumeOrNew, TargetSessionID: "caller", Prompt: "resume?", State: control.EngineerMessageQueued}
+	created, err := st.CreateEngineerMessage(ctx, message)
+	if err != nil {
+		t.Fatalf("unclassified notice not linkable: %v", err)
+	}
+	if err := st.ValidateTaskReviewDelivery(ctx, created); err != nil {
+		t.Fatalf("unclassified notice rejected: %v", err)
 	}
 }

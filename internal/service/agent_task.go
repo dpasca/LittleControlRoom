@@ -267,12 +267,15 @@ func (s *Service) QueueAgentTaskResultCallback(ctx context.Context, taskID strin
 	if err != nil {
 		return model.AgentTask{}, err
 	}
-	if task.Workflow.Enabled && (!task.Workflow.Handoff || task.Workflow.CallerStopped || task.Workflow.Phase == "canceled" || task.Workflow.Result == nil || task.Workflow.Review != nil) {
+	// A worker that ended without any structured result still owes its caller a
+	// notice: nothing else would ever tell them the run needs a resume.
+	unclassified := task.Workflow.Enabled && task.ReviewState() == "unclassified"
+	if task.Workflow.Enabled && (!task.Workflow.Handoff || task.Workflow.CallerStopped || task.Workflow.Phase == "canceled" || (task.Workflow.Result == nil && !unclassified) || task.Workflow.Review != nil) {
 		return task, nil
 	}
 	provider := agentTaskResultCallbackProvider(task.OriginProvider)
 	projectPath := firstNonEmpty(task.OriginWorktreePath, task.OriginProjectPath)
-	if task.ResultReadyAt.IsZero() || !task.ResultConsumedAt.IsZero() || strings.TrimSpace(task.ResultMessageID) != "" ||
+	if (task.ResultReadyAt.IsZero() && !unclassified) || !task.ResultConsumedAt.IsZero() || strings.TrimSpace(task.ResultMessageID) != "" ||
 		provider == "" || strings.TrimSpace(projectPath) == "" {
 		return task, nil
 	}
@@ -346,6 +349,9 @@ func agentTaskResultCallbackProvider(source model.SessionSource) control.Provide
 }
 
 func agentTaskResultCallbackPrompt(task model.AgentTask) string {
+	if task.Workflow.Enabled && task.Workflow.Result == nil {
+		return fmt.Sprintf("Delegated task %s (%s) run %d ended without submitting a structured result, so there is nothing for agent_task.review_result yet. %s\nInspect work.agent_task_get (task_id) and the worker transcript. If the stop looks transient (for example the model was at capacity), offer the user to resume the same worker with agent_task.continue; it continues on the worker's existing edits, so do not clean or revert the checkout first. This notice does not authorize commits, pushes or deletion.", task.ID, task.Title, task.Workflow.RunID, strings.TrimSpace(task.Summary))
+	}
 	if task.Workflow.Enabled {
 		return fmt.Sprintf("Delegated task %s (%s) returned revision %d with outcome %s. Inspect work.agent_task_get (task_id and result_revision), review the actual diff and independently check its evidence. Worker claims are not host verification. Record agent_task.review_result for this exact revision: accept or changes_requested, with a short summary and your checks. Acceptance keeps the task visible. After changes_requested, an explicitly authorized agent_task.continue reopens the worker on the exact edits you reviewed; leave them in place rather than reverting or cleaning the checkout, or the correction is refused until the host captures a new baseline. This notice does not authorize commits, pushes or deletion.", task.ID, task.Title, task.Workflow.RunID, task.Workflow.Result.Outcome)
 	}

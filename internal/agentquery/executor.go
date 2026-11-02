@@ -565,11 +565,18 @@ type pageArgs struct {
 	Cursor string `json:"cursor"`
 }
 
+type agentTaskListArgs struct {
+	workListArgs
+	AwaitingReview  bool   `json:"awaiting_review"`
+	OriginSessionID string `json:"origin_session_id"`
+}
+
 func (e *Executor) agentTaskList(ctx context.Context, raw json.RawMessage) (map[string]any, error) {
-	var args workListArgs
+	var args agentTaskListArgs
 	if err := decodeStrict(raw, &args); err != nil {
 		return nil, err
 	}
+	originSessionID := strings.TrimSpace(args.OriginSessionID)
 	filter := model.AgentTaskFilter{Query: strings.TrimSpace(args.Query), IncludeArchived: args.IncludeHistorical, Limit: maximumPageLimit}
 	if !args.IncludeHistorical {
 		filter.Statuses = []model.AgentTaskStatus{model.AgentTaskStatusActive, model.AgentTaskStatusWaiting}
@@ -581,6 +588,12 @@ func (e *Executor) agentTaskList(ctx context.Context, raw json.RawMessage) (map[
 	records := make([]map[string]any, 0, len(tasks))
 	for _, task := range tasks {
 		if !e.taskVisible(task) {
+			continue
+		}
+		if args.AwaitingReview && task.ReviewState() == "" {
+			continue
+		}
+		if originSessionID != "" && task.OriginSessionID != originSessionID && task.OriginSessionKey != originSessionID {
 			continue
 		}
 		records = append(records, agentTaskRecord(task))

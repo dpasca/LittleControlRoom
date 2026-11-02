@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lcroom/internal/codexapp"
@@ -488,5 +489,18 @@ func TestCaptureCorrectionBaselineRefusesHeldOwnershipAndBusyWriters(t *testing.
 	}
 	if current := f.reload(t); current.Repository.State != "held" {
 		t.Fatalf("capture disturbed ownership: %+v", current.Repository)
+	}
+}
+
+func TestSubmittedTaskExplainsItIsAwaitingReviewInsteadOfDirtyCheckout(t *testing.T) {
+	task := model.AgentTask{ID: "agt_review", Workflow: model.AgentTaskWorkflow{Enabled: true, Handoff: true, RunID: 3, Phase: "awaiting_review", WorkerKey: "worker",
+		Result: &model.AgentTaskResult{AgentTaskResultPayload: model.AgentTaskResultPayload{Outcome: "ready_for_review"}}}}
+	err := dirtyTaskBoundary(task, "worker", "observed")
+	if err == nil || !strings.Contains(err.Error(), "awaiting review") || !strings.Contains(err.Error(), "agent_task.review_result") || !strings.Contains(err.Error(), "agent_task.continue") {
+		t.Fatalf("unhelpful preflight error: %v", err)
+	}
+	task.Workflow.Review = &model.AgentTaskReview{Revision: 3, Decision: "accept"}
+	if err := dirtyTaskBoundary(task, "worker", "observed"); err == nil || !strings.Contains(err.Error(), "accepted") {
+		t.Fatalf("accepted task not explained: %v", err)
 	}
 }

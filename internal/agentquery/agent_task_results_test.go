@@ -41,3 +41,29 @@ func TestStructuredResultQueryChecksVisibilityBeforeHistory(t *testing.T) {
 		t.Fatal("list omitted compact run identity")
 	}
 }
+
+func TestAgentTaskListAwaitingReviewFilter(t *testing.T) {
+	reader := newFakeReader(nil)
+	result := &model.AgentTaskResult{}
+	reader.tasks["a"] = model.AgentTask{ID: "a", OriginSessionID: "caller", Workflow: model.AgentTaskWorkflow{Enabled: true, Handoff: true, RunID: 1, Phase: "awaiting_review", Result: result}}
+	reader.tasks["b"] = model.AgentTask{ID: "b", OriginSessionID: "caller", Workflow: model.AgentTaskWorkflow{Enabled: true, Handoff: true, RunID: 1, Phase: "unclassified"}}
+	reader.tasks["c"] = model.AgentTask{ID: "c", OriginSessionID: "caller", Workflow: model.AgentTaskWorkflow{Enabled: true, Handoff: true, RunID: 1, Phase: "awaiting_review", Result: result, Review: &model.AgentTaskReview{Revision: 1, Decision: "accept"}}}
+	reader.tasks["d"] = model.AgentTask{ID: "d", OriginSessionID: "other", Workflow: model.AgentTaskWorkflow{Enabled: true, Handoff: true, RunID: 1, Phase: "awaiting_review", Result: result}}
+	reader.tasks["e"] = model.AgentTask{ID: "e", OriginSessionID: "caller", Workflow: model.AgentTaskWorkflow{Enabled: true, RunID: 1, Phase: "working"}}
+	e, err := NewExecutor(Options{Reader: reader, Scope: ScopePortfolio, Disclosure: DisclosureHost})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Execute(t.Context(), QueryAgentTaskList, json.RawMessage(`{"awaiting_review":true,"origin_session_id":"caller"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := out["agent_tasks"].([]map[string]any)
+	got := map[string]string{}
+	for _, record := range records {
+		got[record["id"].(string)] = record["review_state"].(string)
+	}
+	if len(got) != 2 || got["a"] != "awaiting_review" || got["b"] != "unclassified" {
+		t.Fatalf("unexpected awaiting-review set: %v", got)
+	}
+}

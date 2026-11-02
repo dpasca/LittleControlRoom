@@ -202,7 +202,7 @@ func (s *Store) linkEngineerMessageToAgentTask(ctx context.Context, message cont
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE agent_tasks
 		SET result_message_id = ?, updated_at = ?
-		WHERE id = ? AND (?=0 OR (json_extract(workflow_json,'$.run_id')=? AND json_extract(workflow_json,'$.phase') IN ('awaiting_review','blocked','failed')))
+		WHERE id = ? AND (?=0 OR (json_extract(workflow_json,'$.run_id')=? AND json_extract(workflow_json,'$.phase') IN ('awaiting_review','blocked','failed','unclassified')))
 	`, message.ID, time.Now().Unix(), message.AgentTaskID, message.AgentTaskRevision, message.AgentTaskRevision)
 	if err != nil {
 		return fmt.Errorf("link engineer message to agent task: %w", err)
@@ -343,6 +343,52 @@ func (s *Store) RequeueDeliveringEngineerMessages(ctx context.Context) error {
 		return fmt.Errorf("backfill engineer message deadlines: %w", err)
 	}
 	return nil
+}
+
+// RequeueStaleDeliveringTaskCallbacks releases result callbacks whose delivery
+// attempt produced no outcome (for example a launch that never reported back).
+// The attempt may have reached the recipient, so the retry keeps its bound
+// target and is marked uncertain. It returns the released message ids so the
+// host can forget any in-flight bookkeeping for them.
+func (s *Store) RequeueStaleDeliveringTaskCallbacks(ctx context.Context, olderThan time.Time) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store unavailable")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM engineer_messages WHERE state = ? AND agent_task_id <> '' AND updated_at < ?`,
+		string(control.EngineerMessageDelivering), olderThan.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list stale delivering callbacks: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	now := time.Now().Unix()
+	reason := "Delivery attempt produced no outcome; retrying."
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE engineer_messages SET state = ?, last_error = ?, updated_at = ?, submission_uncertain = 1
+			WHERE id = ? AND state = ?`, string(control.EngineerMessageQueued), reason, now, id, string(control.EngineerMessageDelivering)); err != nil {
+			return nil, fmt.Errorf("requeue stale callback: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_tasks SET result_delivery_error = ?, updated_at = ?
+			WHERE result_message_id = ? AND result_delivered_at IS NULL`, model.AgentTaskDeliveryWaitingPrefix+reason, now, id); err != nil {
+			return nil, fmt.Errorf("record stale callback state: %w", err)
+		}
+	}
+	return ids, tx.Commit()
 }
 
 func (s *Store) ClaimEngineerMessage(ctx context.Context, id, targetSessionID string) (control.EngineerMessage, bool, error) {
@@ -515,8 +561,14 @@ func (s *Store) recordEngineerMessageState(ctx context.Context, id string, state
 	}
 	if strings.TrimSpace(current.AgentTaskID) != "" {
 		deliveryError := ""
-		if state == control.EngineerMessageFailed {
+		switch state {
+		case control.EngineerMessageFailed:
 			deliveryError = firstNonEmptyString(errText, statusText, "result callback delivery failed")
+		case control.EngineerMessageQueued:
+			// A requeued callback is pending, not lost; say why it has not landed.
+			if reason := firstNonEmptyString(statusText, errText); reason != "" {
+				deliveryError = model.AgentTaskDeliveryWaitingPrefix + reason
+			}
 		}
 		var deliveredAt any
 		if state == control.EngineerMessageDelivered {

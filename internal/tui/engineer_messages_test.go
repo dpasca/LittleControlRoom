@@ -32,9 +32,11 @@ func TestEngineerMessageCanReachManagedClaudeWithRunningWorker(t *testing.T) {
 		t.Fatalf("responsive parent rejected: %#v", got)
 	}
 	message.AgentTaskRevision = 1
-	if got := m.engineerMessageDisposition(message); !got.wait {
-		t.Fatal("task review must still wait for idle")
+	message.AgentTaskID = "agt_review"
+	if got := m.engineerMessageDisposition(message); !got.wait || got.waitReason != "recipient-busy" || !strings.Contains(got.waitStatus, "idle") {
+		t.Fatalf("task review must wait for idle and say why: %#v", got)
 	}
+	message.AgentTaskID = ""
 	message.AgentTaskRevision = 0
 	live.snapshot.BackgroundInputSupported = false
 	if got := m.engineerMessageDisposition(message); !got.wait {

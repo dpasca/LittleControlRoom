@@ -326,3 +326,55 @@ func createEngineerControlOperation(t *testing.T, st *Store, id, projectPath str
 	}
 	return operation
 }
+
+func TestTaskCallbackRecordsWhyItIsWaitingAndRetriesStalledDelivery(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "callback-waiting.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{ID: "agt_waiting", Title: "Waiting callback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := st.CreateEngineerMessage(ctx, control.EngineerMessage{
+		OperationID: "agent-task-result:" + task.ID, AgentTaskID: task.ID, ProjectPath: t.TempDir(),
+		Provider: control.ProviderCodex, SessionMode: control.SessionModeResumeOrNew,
+		TargetSessionID: "caller", Prompt: "Review.", State: control.EngineerMessageQueued,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RecordEngineerMessageWaiting(ctx, message.ID, "recipient-busy", "Recipient busy: waiting for idle."); err != nil {
+		t.Fatal(err)
+	}
+	waiting, _ := st.GetAgentTask(ctx, task.ID)
+	if waiting.ResultDeliveryState() != "waiting" || !strings.Contains(waiting.ResultDeliveryError, "Recipient busy") {
+		t.Fatalf("waiting reason not recorded: state=%s err=%q", waiting.ResultDeliveryState(), waiting.ResultDeliveryError)
+	}
+
+	if _, claimed, err := st.ClaimEngineerMessage(ctx, message.ID, "caller"); err != nil || !claimed {
+		t.Fatalf("claim: %t %v", claimed, err)
+	}
+	if ids, err := st.RequeueStaleDeliveringTaskCallbacks(ctx, time.Now().Add(-time.Hour)); err != nil || len(ids) != 0 {
+		t.Fatalf("recent attempt released early: %v %v", ids, err)
+	}
+	ids, err := st.RequeueStaleDeliveringTaskCallbacks(ctx, time.Now().Add(time.Hour))
+	if err != nil || len(ids) != 1 || ids[0] != message.ID {
+		t.Fatalf("stale attempt not released: %v %v", ids, err)
+	}
+	requeued, _ := st.GetEngineerMessage(ctx, message.ID)
+	stalled, _ := st.GetAgentTask(ctx, task.ID)
+	if requeued.State != control.EngineerMessageQueued || !requeued.SubmissionUncertain || stalled.ResultDeliveryState() != "waiting" {
+		t.Fatalf("requeue state: %+v task=%q", requeued, stalled.ResultDeliveryError)
+	}
+
+	if _, err := st.RecordEngineerMessageState(ctx, message.ID, control.EngineerMessageDelivered, "caller", "delivered", nil); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := st.GetAgentTask(ctx, task.ID)
+	if done.ResultDeliveryState() != "delivered" || done.ResultDeliveryError != "" {
+		t.Fatalf("delivery did not clear the waiting reason: %q", done.ResultDeliveryError)
+	}
+}

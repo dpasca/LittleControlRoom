@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"lcroom/internal/control"
@@ -127,6 +128,12 @@ func (s *Store) SubmitAgentTaskResult(ctx context.Context, actor model.AgentTask
 }
 
 func (s *Store) FinalizeStructuredTask(ctx context.Context, task model.AgentTask) (model.AgentTask, error) {
+	return s.FinalizeStructuredTaskWithReason(ctx, task, "")
+}
+
+// FinalizeStructuredTaskWithReason additionally records the host-observed cause
+// (for example a provider error) when the worker stopped without a result.
+func (s *Store) FinalizeStructuredTaskWithReason(ctx context.Context, task model.AgentTask, stopReason string) (model.AgentTask, error) {
 	workflow := task.Workflow
 	if !workflow.Enabled {
 		return task, errors.New("structured workflow required")
@@ -140,6 +147,12 @@ func (s *Store) FinalizeStructuredTask(ctx context.Context, task model.AgentTask
 	if workflow.Phase != "canceled" {
 		if workflow.Result == nil {
 			workflow.Phase = "unclassified"
+			if stopReason = strings.Join(strings.Fields(stopReason), " "); stopReason != "" {
+				if len(stopReason) > 300 {
+					stopReason = stopReason[:300] + "..."
+				}
+				summary += " Last worker error: " + stopReason
+			}
 		} else {
 			workflow.Phase = workflow.Result.Outcome
 			if workflow.Phase == "ready_for_review" {
@@ -318,10 +331,11 @@ func (s *Store) ValidateTaskReviewDelivery(ctx context.Context, message control.
 		return err
 	}
 	workflow := task.Workflow
-	if !workflow.Enabled || workflow.RunID != message.AgentTaskRevision || workflow.Result == nil || !workflow.Handoff || workflow.Review != nil || workflow.CallerStopped || workflow.Phase == "canceled" {
+	unclassified := workflow.Phase == "unclassified" && workflow.Result == nil
+	if !workflow.Enabled || workflow.RunID != message.AgentTaskRevision || (workflow.Result == nil && !unclassified) || !workflow.Handoff || workflow.Review != nil || workflow.CallerStopped || workflow.Phase == "canceled" {
 		return errors.New("task result delivery was canceled or superseded")
 	}
-	if workflow.Phase != "awaiting_review" && workflow.Phase != "blocked" && workflow.Phase != "failed" {
+	if !unclassified && workflow.Phase != "awaiting_review" && workflow.Phase != "blocked" && workflow.Phase != "failed" {
 		return errors.New("task result is no longer ready for caller review")
 	}
 	current, err := s.GetEngineerMessage(ctx, message.ID)

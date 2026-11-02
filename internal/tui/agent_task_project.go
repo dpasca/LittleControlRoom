@@ -557,6 +557,8 @@ func agentTaskResultLifecycleSummary(task model.AgentTask) string {
 			consumer = "operator"
 		}
 		return "consumed by " + consumer + " at " + task.ResultConsumedAt.Format(time.RFC3339)
+	case task.ResultDeliveryState() == "waiting":
+		return "callback waiting: " + strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(task.ResultDeliveryError), model.AgentTaskDeliveryWaitingPrefix))
 	case strings.TrimSpace(task.ResultDeliveryError) != "":
 		return "callback failed: " + strings.TrimSpace(task.ResultDeliveryError)
 	case !task.ResultDeliveredAt.IsZero():

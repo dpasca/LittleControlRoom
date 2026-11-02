@@ -23,6 +23,9 @@ const (
 	engineerMessagePollLimit     = 32
 	engineerMessageRetryBase     = time.Second
 	engineerMessageRetryMax      = 30 * time.Second
+	// A task-result callback whose delivery attempt reports no outcome for this
+	// long is released for another attempt instead of stalling silently.
+	engineerMessageStaleDeliveryAfter = 5 * time.Minute
 )
 
 type engineerMessageQueuedMsg struct {
@@ -36,6 +39,7 @@ type engineerMessagesLoadedMsg struct {
 	afterCreatedAt time.Time
 	afterID        string
 	expired        []control.EngineerMessage
+	requeued       []string
 	noticeErr      error
 	err            error
 }
@@ -158,6 +162,8 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 			}
 		}
 		expired, expireErr := svc.Store().ExpireOverdueEngineerMessages(ctx, time.Now())
+		requeued, requeueErr := svc.Store().RequeueStaleDeliveringTaskCallbacks(ctx, time.Now().Add(-engineerMessageStaleDeliveryAfter))
+		expireErr = errors.Join(expireErr, requeueErr)
 		noticeErr := svc.QueuePendingEngineerDispatchReplies(ctx, engineerMessagePollLimit)
 		messages, err := svc.Store().ListQueuedEngineerMessagesAfter(ctx, afterCreatedAt, afterID, engineerMessagePollLimit)
 		return engineerMessagesLoadedMsg{
@@ -166,6 +172,7 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 			afterCreatedAt: afterCreatedAt,
 			afterID:        afterID,
 			expired:        expired,
+			requeued:       requeued,
 			noticeErr:      noticeErr,
 			err:            errors.Join(err, expireErr),
 		}
@@ -257,15 +264,26 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 			waitStatus: "Message is waiting: no current engineer session is open. Open or start a session to receive it before its delivery deadline.",
 		}
 	}
+	// Task-result callbacks record why they are still pending so the caller's
+	// task record never shows a silent gap between "queued" and "delivered".
+	taskWait := func(reason, status string) engineerMessageDisposition {
+		d := engineerMessageDisposition{project: project, wait: true}
+		if strings.TrimSpace(message.AgentTaskID) != "" {
+			d.waitReason, d.waitStatus = reason, status
+		}
+		return d
+	}
 	if !forceNew && !live && message.AgentTaskRevision > 0 && strings.TrimSpace(message.TargetSessionID) == "" {
-		return engineerMessageDisposition{project: project, wait: true}
+		return taskWait("recipient-unavailable", "Recipient unavailable: the originating session is not open; the result will be delivered when it is.")
 	}
 	if block, blocked := m.embeddedLaunchBlock(project, provider, forceNew); blocked {
-		return engineerMessageDisposition{project: project, wait: true, failure: errors.New(block.Message)}
+		d := taskWait("recipient-unavailable", "Recipient unavailable: "+block.Message)
+		d.failure = errors.New(block.Message)
+		return d
 	}
 	if forceNew {
 		if _, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, "this message"); blocked {
-			return engineerMessageDisposition{project: project, wait: true}
+			return taskWait("recipient-busy", "Recipient busy: an engineer turn is active in the destination; delivery retries automatically.")
 		}
 		return engineerMessageDisposition{project: project, deliver: true}
 	}
@@ -291,7 +309,9 @@ func (m Model) engineerMessageDisposition(message control.EngineerMessage) engin
 		if message.AgentTaskRevision == 0 && message.Model == "" && canAccept {
 			return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 		}
-		return engineerMessageDisposition{project: project, wait: true, bindSessionID: targetSessionID}
+		d := taskWait("recipient-busy", "Recipient busy: waiting for the originating session to become idle; delivery retries automatically.")
+		d.bindSessionID = targetSessionID
+		return d
 	}
 	return engineerMessageDisposition{project: project, deliver: true, bindSessionID: targetSessionID}
 }
@@ -315,6 +335,9 @@ func (m Model) applyEngineerMessagesLoaded(msg engineerMessagesLoadedMsg) (tea.M
 	}
 	if m.engineerMessageDeliveries == nil {
 		m.engineerMessageDeliveries = make(map[string]struct{})
+	}
+	for _, id := range msg.requeued {
+		delete(m.engineerMessageDeliveries, id)
 	}
 	for _, missed := range msg.expired {
 		m.appendBackgroundErrorLogEntry("Engineer message delivery deadline exceeded", errors.New(strings.TrimSpace(missed.LastError)), missed.ProjectPath)

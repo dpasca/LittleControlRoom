@@ -299,7 +299,13 @@ func dirtyTaskBoundary(task model.AgentTask, sessionKey, observed string) error 
 		}
 		return nil
 	}
+	if workflow.Enabled && workflow.Handoff && workflow.Result != nil && workflow.Review == nil {
+		return fmt.Errorf("task %s submitted revision %d and is awaiting review; its checkout holds the submitted edits, so a new prompt cannot start there. Review it with agent_task.review_result (inspect work.agent_task_get with result_revision %d), then reopen the worker with agent_task.continue", task.ID, workflow.RunID, workflow.RunID)
+	}
 	review := task.Workflow.Review
+	if workflow.Enabled && review != nil && review.Decision == "accept" && review.Revision == workflow.RunID {
+		return fmt.Errorf("task %s revision %d was accepted and its checkout holds the accepted edits; use agent_task.continue to start further work on it", task.ID, workflow.RunID)
+	}
 	if !task.Workflow.Enabled || review == nil || review.Decision != "changes_requested" || review.Revision != task.Workflow.RunID {
 		return dirty
 	}

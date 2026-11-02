@@ -124,7 +124,8 @@ func (s *Store) AgentTaskIDsAwaitingCaller(ctx context.Context, projectPath stri
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM agent_tasks
   WHERE origin_provider = ? AND origin_session_key = ?
    AND CASE WHEN origin_worktree_path != '' THEN origin_worktree_path ELSE origin_project_path END = ?
-   AND result_ready_at IS NOT NULL AND result_consumed_at IS NULL AND result_message_id = '' AND status != 'archived'`,
+   AND (result_ready_at IS NOT NULL OR json_extract(workflow_json,'$.phase') = 'unclassified')
+   AND result_consumed_at IS NULL AND result_message_id = '' AND status != 'archived'`,
 		string(model.NormalizeSessionSource(provider)), strings.TrimSpace(key), filepath.Clean(strings.TrimSpace(projectPath)))
 	if err != nil {
 		return nil, err
@@ -146,7 +147,7 @@ func (s *Store) AgentTaskIDsAwaitingCaller(ctx context.Context, projectPath stri
 func (s *Store) RecordAgentTaskCallerPending(ctx context.Context, task model.AgentTask, problem string) (model.AgentTask, error) {
 	_, err := s.db.ExecContext(ctx, `UPDATE agent_tasks SET result_delivery_error = ?
   WHERE id = ? AND origin_session_id = '' AND origin_session_key = ?
-   AND result_message_id = '' AND result_consumed_at IS NULL AND result_ready_at = ?
+   AND result_message_id = '' AND result_consumed_at IS NULL AND (result_ready_at IS NULL OR result_ready_at = ?)
    AND result_delivery_error != ?`, problem, task.ID, task.OriginSessionKey, task.ResultReadyAt.Unix(), problem)
 	if err != nil {
 		return task, err

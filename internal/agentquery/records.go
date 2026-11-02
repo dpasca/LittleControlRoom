@@ -182,7 +182,9 @@ func agentTaskRecord(task model.AgentTask) map[string]any {
 			"session_id":          task.OriginSessionID,
 			"control_session_key": task.OriginSessionKey,
 		},
+		"review_state": task.ReviewState(),
 		"result_lifecycle": map[string]any{
+			"delivery_state": task.ResultDeliveryState(),
 			"message_id":     task.ResultMessageID,
 			"ready_at":       formatTime(task.ResultReadyAt),
 			"delivered_at":   formatTime(task.ResultDeliveredAt),

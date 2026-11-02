@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
@@ -44,6 +45,10 @@ func (s *Service) settleStructuredTaskWithCompletion(ctx context.Context, expect
 	if task.Workflow.Phase != "working" && task.Workflow.Phase != "submitted" && task.Workflow.Phase != "canceled" {
 		return task, nil
 	}
+	stopReason := ""
+	if completion != nil {
+		stopReason = completion.LastError
+	}
 	if !task.Workflow.Handoff {
 		if s.repositoryEngineers == nil {
 			return task, errors.New("worker state unavailable; structured result remains pending")
@@ -77,6 +82,9 @@ func (s *Service) settleStructuredTaskWithCompletion(ctx context.Context, expect
 		if worker == nil {
 			return task, errors.New("worker is unavailable; reopen its transcript to verify the handoff")
 		}
+		if strings.TrimSpace(worker.LastError) != "" {
+			stopReason = worker.LastError
+		}
 		if task.SessionID == "" {
 			// The host control key binds a late provider identity without ever
 			// choosing the newest or an unrelated session in the workspace.
@@ -92,7 +100,7 @@ func (s *Service) settleStructuredTaskWithCompletion(ctx context.Context, expect
 	if err != nil {
 		return task, err
 	}
-	return s.store.FinalizeStructuredTask(ctx, current)
+	return s.store.FinalizeStructuredTaskWithReason(ctx, current, stopReason)
 }
 
 func agentTaskWorkerMatches(task model.AgentTask, snapshot codexapp.Snapshot) bool {

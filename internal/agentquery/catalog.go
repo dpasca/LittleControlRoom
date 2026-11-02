@@ -245,11 +245,13 @@ func Capabilities() []Capability {
 			QueryAgentTaskList,
 			DomainWork,
 			ScopePortfolio,
-			"List or search delegated agent tasks with exact IDs and session/resource references, independently of the TUI selection. Include historical records to find completed tasks.",
+			"List or search delegated agent tasks with exact IDs and session/resource references, independently of the TUI selection. Include historical records to find completed tasks. Each record reports review_state and result_lifecycle.delivery_state (waiting means the callback is pending and delivery_error says why).",
 			SensitivityContent,
 			pagedSchema(map[string]any{
 				"query":              stringProperty("Optional case-insensitive literal substring of task ID, title, summary, workspace path, or session ID. Applied before the result limit.", 1),
 				"include_historical": booleanProperty("Include completed and archived tasks. Defaults to false."),
+				"awaiting_review":    booleanProperty("Only tasks waiting on their caller: a submitted result nobody has reviewed (review_state awaiting_review) or a worker that ended without a structured result (review_state unclassified). Use this instead of relying on the push notice."),
+				"origin_session_id":  stringProperty("Only tasks created by this exact caller session id or control session key.", 1),
 			}, nil),
 		),
 		collectionCapability(
