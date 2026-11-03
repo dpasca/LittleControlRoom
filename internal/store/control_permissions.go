@@ -25,6 +25,9 @@ func (s *Store) ensureControlPermissionScopeColumn(ctx context.Context) error {
 }
 
 func scopedPermissionID(ctx context.Context, q collaborationQuerier, op control.Operation) (int64, error) {
+	if id, err := workerWorktreeCleanupPermissionID(ctx, q, op); err != nil || id != 0 {
+		return id, err
+	}
 	if id, err := workerDelegationPermissionID(ctx, q, op); err != nil || id != 0 {
 		return id, err
 	}
@@ -120,15 +123,20 @@ func (s *Store) PermissionAllowsOperation(ctx context.Context, op control.Operat
 // ApproveControlPermission is host-only; grant creation and the first use are
 // atomic. A session grant is bound to the actual control channel, not model input.
 func (s *Store) ApproveControlPermission(ctx context.Context, operationID string, sessionOnly bool) (control.Operation, error) {
-	return s.approveControlPermission(ctx, operationID, sessionOnly, false)
+	return s.approveControlPermission(ctx, operationID, sessionOnly, "")
 }
 
 // ApproveWorkerDelegation is host-only and always binds to the exact caller.
 func (s *Store) ApproveWorkerDelegation(ctx context.Context, operationID string) (control.Operation, error) {
-	return s.approveControlPermission(ctx, operationID, true, true)
+	return s.approveControlPermission(ctx, operationID, true, control.PermissionScopeSessionWorkers)
 }
 
-func (s *Store) approveControlPermission(ctx context.Context, operationID string, sessionOnly, workers bool) (control.Operation, error) {
+// ApproveWorkerWorktreeCleanup is host-only and never grants cross-session deletion.
+func (s *Store) ApproveWorkerWorktreeCleanup(ctx context.Context, operationID string) (control.Operation, error) {
+	return s.approveControlPermission(ctx, operationID, true, control.PermissionScopeSessionWorkerCleanup)
+}
+
+func (s *Store) approveControlPermission(ctx context.Context, operationID string, sessionOnly bool, scope string) (control.Operation, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return control.Operation{}, err
@@ -139,10 +147,19 @@ func (s *Store) approveControlPermission(ctx context.Context, operationID string
 		return control.Operation{}, err
 	}
 	p, ok := control.PermissionForOperation(op)
-	if workers {
+	if scope == control.PermissionScopeSessionWorkers {
 		p, ok = control.WorkerDelegationForOperation(op)
 		if ok {
 			ok, err = workerDelegationOwnsTask(ctx, tx, op)
+			if err != nil {
+				return control.Operation{}, err
+			}
+		}
+	}
+	if scope == control.PermissionScopeSessionWorkerCleanup {
+		p, ok = control.WorkerWorktreeCleanupForOperation(op)
+		if ok {
+			ok, err = workerWorktreeCleanupOwnsTarget(ctx, tx, op)
 			if err != nil {
 				return control.Operation{}, err
 			}

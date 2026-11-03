@@ -219,8 +219,9 @@ same four control tools. Discover `domain: "worktree"`, describe
 `worktree.remove`, then propose `{"worktree_path":"/absolute/path/to/worktree"}`
 with a stable request ID. Resolve the exact path with project queries first;
 the operation never infers a target from a branch name or the TUI selection.
-Each proposal targets one worktree and requires operator confirmation, including
-when project collaboration is enabled. A proposal alone deletes nothing.
+Each proposal targets one worktree and requires operator confirmation or the
+separate session worker-cleanup permission described below. Project collaboration
+and worker-delegation grants do not authorize deletion. A proposal alone deletes nothing.
 
 After confirmation, the host runs the existing removal service asynchronously.
 This permanently deletes the directory and all its contents, including dirty,
@@ -456,6 +457,22 @@ their separate approval rules. **/collab** shows this as **Worker delegation**,
 with an unlimited allowance and usage count; **r** revokes it, including for
 requests already waiting in the queue. Existing permissions are not widened.
 
+Deleting a worktree owned by a worker launched by the calling session offers
+**2 Delete worker worktrees for this session**. Approve it once to allow subsequent
+`worktree.remove` requests for that session's workers without more confirmations.
+This separate, unlimited grant matches the exact caller project, provider and
+host session key. The host verifies the target is a tracked linked worktree with
+one recorded owning task whose launch provenance matches that caller, both when
+offering/saving the grant and on every automatic use. Legacy `workspace/repo`
+checkouts are supported. Ordinary worktrees, shared repository leases, other
+sessions' workers, and the caller's own checkout are excluded. Workers do not
+inherit this authority, and nested workers launched by a worker session need that
+session's own approval. There is no cross-session "always" option. The approval
+includes permanent deletion of uncommitted, untracked and ignored contents without
+a recovery archive, just like a single-use deletion. **/collab** lists it as
+**Worker worktree deletion** with usage count; **r** revokes it for requests not
+yet authorized. Existing worker-delegation grants keep their original scope.
+
 Single-action permissions match the exact host-bound caller project/provider, capability,
 target and validated settings. Session permissions additionally match the
 host control key. They do not inherit to sibling worktrees or other providers.
@@ -477,8 +494,9 @@ above deliberately has no launch limit or fixed model. Repository ownership and 
 launch checks still apply. Corrections use the existing task-specific
 `max_corrections` grant and its explicit-stop/review checks. `git.submodule_align` is eligible only
 for a clean fast-forward to the pinned gitlink that needs no fetch, rechecked
-against live repository state on each use. New repository creation, worktree
-deletion, other Git actions, settings and integration changes are not covered. Saved permissions authorize the operation category and target;
+against live repository state on each use. Worktree deletion is eligible only
+under the separate session worker-cleanup scope above. New repository creation,
+other Git actions, settings and integration changes are not covered. Saved permissions authorize the operation category and target;
 they never expand the user's task scope or override an explicit stop.
 
 Matching requests report `automatic_delivery: true`, pass unrelated waiting

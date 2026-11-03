@@ -70,10 +70,10 @@ func TestPermissionDetailsCanBeReadOnShortScreens(t *testing.T) {
 func TestPermissionChoicesExplainTheHighlightedScope(t *testing.T) {
 	args, _ := json.Marshal(control.TodoAddInput{ProjectPath: "/projects/webshop", Text: "Track progress"})
 	op := control.Operation{Capability: control.CapabilityTodoAdd, ProjectPath: "/projects/webshop", Provider: "codex", SessionKey: "key", Invocation: control.Invocation{Capability: control.CapabilityTodoAdd, Args: args}}
-	if got := PermissionChoices(op, ""); len(got) != 3 || got[2] != PermissionAllowAlways {
+	if got := PermissionChoices(op, "", false); len(got) != 3 || got[2] != PermissionAllowAlways {
 		t.Fatalf("choices = %v", got)
 	}
-	if got := PermissionChoices(op, "needs a fetch"); len(got) != 1 {
+	if got := PermissionChoices(op, "needs a fetch", false); len(got) != 1 {
 		t.Fatalf("unavailable standing permission still offered: %v", got)
 	}
 	for selected, want := range []string{"asks again next time", "from this Codex session run without asking", "future Codex sessions in this project"} {
@@ -91,11 +91,11 @@ func TestPermissionChoicesExplainTheHighlightedScope(t *testing.T) {
 func TestWorkerDelegationChoiceExplainsScopeOnShortScreens(t *testing.T) {
 	args := json.RawMessage(`{"title":"Implement a worker task","prompt":"Implement","provider":"codex","model":"worker-model"}`)
 	op := control.Operation{ProjectPath: "/projects/organizer", Provider: "claude_code", SessionKey: "key", Invocation: control.Invocation{Capability: control.CapabilityAgentTaskCreate, Args: args}}
-	choices := PermissionChoices(op, "")
+	choices := PermissionChoices(op, "", false)
 	if len(choices) != 4 || choices[3] != PermissionAllowSessionWorkers {
 		t.Fatalf("worker choices = %v", choices)
 	}
-	if choices := PermissionChoices(op, "unavailable"); len(choices) != 1 {
+	if choices := PermissionChoices(op, "unavailable", false); len(choices) != 1 {
 		t.Fatalf("unavailable worker permission offered: %v", choices)
 	}
 	for _, height := range []int{18, 24, 40} {
@@ -111,6 +111,35 @@ func TestWorkerDelegationChoiceExplainsScopeOnShortScreens(t *testing.T) {
 		}
 		if lipgloss.Height(view) > height {
 			t.Fatalf("dialog exceeds %d rows: %d", height, lipgloss.Height(view))
+		}
+	}
+}
+
+func TestWorkerCleanupChoiceNeedsHostOwnershipAndExplainsDeletion(t *testing.T) {
+	op := control.Operation{ProjectPath: "/projects/organizer", Provider: "claude_code", SessionKey: "key",
+		Invocation: control.Invocation{Capability: control.CapabilityWorktreeRemove, Args: json.RawMessage(`{"worktree_path":"/workers/one"}`)}}
+	if choices := PermissionChoices(op, "", false); len(choices) != 1 {
+		t.Fatal("unverified ownership offers cleanup permission", choices)
+	}
+	if choices := PermissionChoices(op, "", true); len(choices) != 2 || choices[1] != PermissionAllowSessionWorkerCleanup {
+		t.Fatal(choices)
+	}
+	for _, height := range []int{18, 24, 40} {
+		view, _, err := RenderPermissionConfirmationDialog(op, PermissionConfirmationOptions{Selected: 1, WorkerCleanupEligible: true}, 80, height)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain := strings.Join(strings.Fields(ansi.Strip(view)), " ")
+		for _, want := range []string{"1 Just this once", "2 Delete worker worktrees for this Claude Code session", "this exact session", "uncommitted and untracked files", "No recovery archive", "Other worktrees still need approval", "/collab", "Enter confirm", "Esc deny"} {
+			if !strings.Contains(plain, want) {
+				t.Fatalf("height %d missing %q: %s", height, want, plain)
+			}
+		}
+		if lipgloss.Height(view) > height {
+			t.Fatalf("dialog exceeds %d rows: %d", height, lipgloss.Height(view))
+		}
+		if strings.Contains(plain, "Always,") {
+			t.Fatal("cross-session deletion offered")
 		}
 	}
 }

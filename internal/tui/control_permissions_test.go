@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/events"
+	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
 )
@@ -206,6 +207,92 @@ func TestWorkerSessionApprovalRequiresReviewAndCoversLaterLaunch(t *testing.T) {
 	_, revoke := m.updateProjectCollaborations(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	if revoke == nil {
 		t.Fatal("no revoke command")
+	}
+	if result := revoke().(projectCollaborationsLoadedMsg); result.err != nil || len(result.permissions) != 0 {
+		t.Fatal(result)
+	}
+}
+
+func TestWorkerCleanupApprovalRequiresReviewAndCoversNextWorker(t *testing.T) {
+	m, root, path := newWorktreeControlFixture(t)
+	m.width, m.height = 100, 30
+	st, ctx := m.svc.Store(), t.Context()
+	create := func(id, workspace string) control.Operation {
+		t.Helper()
+		if err := st.UpsertProjectState(ctx, model.ProjectState{Path: workspace, Name: "worker", WorktreeKind: model.WorktreeKindLinked, WorktreeRootPath: root}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+			Title: "Worker", WorkspacePath: workspace, OriginProjectPath: root,
+			OriginProvider: model.SessionSourceClaudeCode, OriginSessionKey: "organizer",
+			Repository: model.AgentTaskRepository{Isolated: true, Root: workspace},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		args, _ := json.Marshal(control.WorktreeRemoveInput{WorktreePath: workspace})
+		op, err := st.CreateControlOperation(ctx, control.Operation{ID: id, Source: "mcp", Provider: "claude_code", SessionKey: "organizer", ProjectPath: root,
+			Invocation: control.Invocation{Capability: control.CapabilityWorktreeRemove, Args: args}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, found, err := st.ClaimNextControlOperation(ctx); err != nil || !found {
+			t.Fatal(found, err)
+		}
+		return op
+	}
+	first := create("lcrop_cleanup_first", path)
+	loaded := m.loadExternalControlProposalCmd(first.ID)().(externalControlProposalLoadedMsg)
+	if loaded.err != nil || loaded.automatic || !loaded.workerCleanupEligible {
+		t.Fatal(loaded)
+	}
+	updated, _ := m.applyExternalControlProposalLoaded(loaded)
+	m = normalizeUpdateModel(updated)
+	press := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")}
+	updated, _ = m.Update(press)
+	m = normalizeUpdateModel(updated)
+	if permissions, _ := st.ListControlPermissions(ctx, root); len(permissions) != 0 {
+		t.Fatal("cleanup permission granted before review")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = normalizeUpdateModel(updated)
+	updated, save := m.Update(press)
+	m = normalizeUpdateModel(updated)
+	if save == nil || !m.externalControlConfirmation.submitting {
+		t.Fatal("cleanup approval did not enter submitting state")
+	}
+	if _, again := m.Update(press); again != nil {
+		t.Fatal("duplicate cleanup approval")
+	}
+	updated, execute := m.Update(save())
+	m = normalizeUpdateModel(updated)
+	if m.externalControlConfirmation != nil || execute == nil {
+		t.Fatal("approved cleanup did not execute")
+	}
+	if confirmed := execute().(bossui.ControlInvocationConfirmedMsg); !confirmed.OperationRecorded || confirmed.Invocation.RequestID != first.ID {
+		t.Fatal(confirmed)
+	}
+	next := create("lcrop_cleanup_next", t.TempDir())
+	loaded = m.loadExternalControlProposalCmd(next.ID)().(externalControlProposalLoadedMsg)
+	if loaded.err != nil || !loaded.automatic {
+		t.Fatal("second worker asks again", loaded)
+	}
+	updated, execute = m.applyExternalControlProposalLoaded(loaded)
+	m = normalizeUpdateModel(updated)
+	if m.externalControlConfirmation != nil || execute == nil {
+		t.Fatal("covered deletion opened another review")
+	}
+	permissions, err := st.ListControlPermissions(ctx, root)
+	if err != nil || len(permissions) != 1 || permissions[0].Scope != control.PermissionScopeSessionWorkerCleanup || permissions[0].Used != 2 {
+		t.Fatal(permissions, err)
+	}
+	m.projectCollaborationDialog = &projectCollaborationDialog{project: root, permissions: permissions}
+	view := m.renderProjectCollaborations("", 120, 30)
+	if !strings.Contains(view, "Worker worktree deletion") || !strings.Contains(view, "unlimited") {
+		t.Fatal(view)
+	}
+	_, revoke := m.updateProjectCollaborations(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if revoke == nil {
+		t.Fatal("cleanup permission has no revoke command")
 	}
 	if result := revoke().(projectCollaborationsLoadedMsg); result.err != nil || len(result.permissions) != 0 {
 		t.Fatal(result)

@@ -24,6 +24,8 @@ type PermissionConfirmationOptions struct {
 	// StandingUnavailable explains why saving a standing permission is not
 	// offered for this request even though its arguments are otherwise eligible.
 	StandingUnavailable string
+	// WorkerCleanupEligible is host-verified persisted task ownership.
+	WorkerCleanupEligible bool
 }
 
 // PermissionChoice is one approval scope offered by the permission dialog.
@@ -35,12 +37,13 @@ const (
 	PermissionAllowAlways
 	PermissionAllowPair
 	PermissionAllowSessionWorkers
+	PermissionAllowSessionWorkerCleanup
 )
 
 // PermissionChoices lists approval scopes, starting with a single use. When a
 // two-way message grant is available it replaces the one-way standing
 // permission, so the dialog never offers two different kinds of "always".
-func PermissionChoices(op control.Operation, standingUnavailable string) []PermissionChoice {
+func PermissionChoices(op control.Operation, standingUnavailable string, workerCleanupEligible bool) []PermissionChoice {
 	choices := []PermissionChoice{PermissionAllowOnce}
 	_, standing := control.PermissionForOperation(op)
 	standing = standing && standingUnavailable == ""
@@ -55,6 +58,11 @@ func PermissionChoices(op control.Operation, standingUnavailable string) []Permi
 	if op.Invocation.Capability == control.CapabilityAgentTaskCreate && standingUnavailable == "" {
 		if _, ok := control.WorkerDelegationForOperation(op); ok {
 			choices = append(choices, PermissionAllowSessionWorkers)
+		}
+	}
+	if workerCleanupEligible && standingUnavailable == "" {
+		if _, ok := control.WorkerWorktreeCleanupForOperation(op); ok {
+			choices = append(choices, PermissionAllowSessionWorkerCleanup)
 		}
 	}
 	return choices
@@ -85,6 +93,8 @@ func permissionChoiceLabel(op control.Operation, choice PermissionChoice) string
 		return "Always, messages both ways: " + filepath.Base(op.ProjectPath) + " ↔ " + target
 	case PermissionAllowSessionWorkers:
 		return "Manage workers for this " + provider + " session"
+	case PermissionAllowSessionWorkerCleanup:
+		return "Delete worker worktrees for this " + provider + " session"
 	default:
 		return "Just this once"
 	}
@@ -105,6 +115,8 @@ func permissionChoiceHint(op control.Operation, choice PermissionChoice, limit i
 		return "Messages between these two projects, in either direction and from any session, are delivered without asking. Revoke with /collab."
 	case PermissionAllowSessionWorkers:
 		return "Launch unlimited workers, choose their models, send follow-ups, and finish your own tasks. This session only. No worker inherits this permission. Trash and fresh sessions need separate approval. Revoke with /collab."
+	case PermissionAllowSessionWorkerCleanup:
+		return "Permanently delete worktrees of workers launched by this exact session, including all uncommitted and untracked files. No recovery archive. Other worktrees still need approval. Revoke with /collab."
 	default:
 		return "Runs this request only; the agent asks again next time."
 	}
@@ -119,7 +131,7 @@ func RenderPermissionConfirmationDialog(op control.Operation, options Permission
 		return "", 0, err
 	}
 	p, eligible := control.PermissionForOperation(op)
-	choices := PermissionChoices(op, options.StandingUnavailable)
+	choices := PermissionChoices(op, options.StandingUnavailable, options.WorkerCleanupEligible)
 	selected := maxInt(0, minInt(options.Selected, len(choices)-1))
 	panelW := minInt(bodyW-4, 96)
 	width := bossPanelInnerWidth(panelW)

@@ -171,11 +171,15 @@ func (m Model) renderProjectCollaborations(body string, width, height int) strin
 				action = "Worker delegation"
 				scope += fmt.Sprintf(" · unlimited · %d used", p.Used)
 			}
+			if p.Scope == control.PermissionScopeSessionWorkerCleanup {
+				action = "Worker worktree deletion"
+				scope += fmt.Sprintf(" · unlimited · %d used", p.Used)
+			}
 			prefix := "  "
 			if i == d.selected {
 				prefix = "> "
 			}
-			if p.Scope == control.PermissionScopeSessionWorkers {
+			if p.Scope == control.PermissionScopeSessionWorkers || p.Scope == control.PermissionScopeSessionWorkerCleanup {
 				lines = append(lines, prefix+action+" ("+scope+")")
 			} else {
 				lines = append(lines, prefix+action+" → "+p.Target+" ("+scope+")")
@@ -200,7 +204,7 @@ func (m Model) renderProjectCollaborations(body string, width, height int) strin
 	return overlayBlock(body, panel, width, height, max(0, (width-lipgloss.Width(panel))/2), max(0, (height-lipgloss.Height(panel))/3))
 }
 
-func (m Model) approveControlPermissionCmd(id string, sessionOnly, workers bool) tea.Cmd {
+func (m Model) approveControlPermissionCmd(id string, choice bossui.PermissionChoice) tea.Cmd {
 	svc, ctx := m.svc, m.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -211,10 +215,13 @@ func (m Model) approveControlPermissionCmd(id string, sessionOnly, workers bool)
 		}
 		var op control.Operation
 		var err error
-		if workers {
+		switch choice {
+		case bossui.PermissionAllowSessionWorkers:
 			op, err = svc.Store().ApproveWorkerDelegation(ctx, id)
-		} else {
-			op, err = svc.Store().ApproveControlPermission(ctx, id, sessionOnly)
+		case bossui.PermissionAllowSessionWorkerCleanup:
+			op, err = svc.Store().ApproveWorkerWorktreeCleanup(ctx, id)
+		default:
+			op, err = svc.Store().ApproveControlPermission(ctx, id, choice != bossui.PermissionAllowAlways)
 		}
 		return projectCollaborationApprovedMsg{id: id, scoped: true, operation: op, err: err}
 	}

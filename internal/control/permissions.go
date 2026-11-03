@@ -11,6 +11,10 @@ const ConfirmationScopedPermission = "scoped_permission"
 // lifecycle, rather than one action with fixed arguments.
 const PermissionScopeSessionWorkers = "session_workers"
 
+// PermissionScopeSessionWorkerCleanup is separate from worker delegation:
+// permanent deletion always needs its own operator approval.
+const PermissionScopeSessionWorkerCleanup = "session_worker_cleanup"
+
 // ControlPermission is operator-owned. Matching uses validated typed arguments,
 // never prompt text, risk labels, or agent-supplied assertions of permission.
 type ControlPermission struct {
@@ -24,6 +28,24 @@ type ControlPermission struct {
 	Constraints string         `json:"constraints"`
 	Limit       int            `json:"limit"`
 	Used        int            `json:"used"`
+}
+
+// WorkerWorktreeCleanupForOperation describes a session-only cleanup grant.
+// The store must verify that the exact target belongs to a worker launched by
+// this caller before offering, saving, or consuming the permission.
+func WorkerWorktreeCleanupForOperation(op Operation) (ControlPermission, bool) {
+	if !filepath.IsAbs(op.ProjectPath) || op.SessionKey == "" || op.Provider == "" {
+		return ControlPermission{}, false
+	}
+	inv, err := ValidateInvocation(op.Invocation)
+	if err != nil || inv.Capability != CapabilityWorktreeRemove {
+		return ControlPermission{}, false
+	}
+	return ControlPermission{
+		Scope: PermissionScopeSessionWorkerCleanup, Origin: op.ProjectPath,
+		Provider: op.Provider, SessionKey: op.SessionKey,
+		Capability: CapabilityWorktreeRemove, Target: op.ProjectPath, Constraints: "{}",
+	}, true
 }
 
 // WorkerDelegationForOperation describes an unlimited, exact-caller permission.
