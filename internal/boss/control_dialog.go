@@ -266,6 +266,11 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				renderBossControlDetail("Provider", input.Provider.Label(), width),
 				renderBossControlDetail("Model / effort", engineerModelSelectionLabel(input.EngineerModelSelection), width),
 				renderBossControlDetail("Caps", capabilities, width),
+			}
+			if input.AfterTaskStopped != "" {
+				lines = append(lines, renderBossControlDetail("After worker stops", input.AfterTaskStopped, width))
+			}
+			lines = append(lines,
 				"",
 				bossControlSectionStyle.Render(fitLine("Prompt", width)),
 				renderBossControlPromptBox(input.Prompt, width),
@@ -274,7 +279,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 					renderBossControlAction("Enter", "run", uistyle.DialogActionPrimary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
-			}
+			)
 			return strings.Join(lines, "\n")
 		}
 	case control.CapabilityAgentTaskContinue:
@@ -301,12 +306,16 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 	case control.CapabilityAgentTaskClose:
 		var input control.AgentTaskCloseInput
 		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			sessionAction := fmt.Sprintf("close: %t", input.CloseSession)
+			if input.StopSession {
+				sessionAction = "Interrupt worker, close session and stop managed runtimes; preserve files"
+			}
 			lines := []string{
 				bossControlNoticeStyle.Render(fitLine("External action: close an agent task", width)),
 				"",
 				renderBossControlDetail("Task", input.TaskID, width),
 				renderBossControlDetail("Status", string(input.Status), width),
-				renderBossControlDetail("Session", fmt.Sprintf("close: %t", input.CloseSession), width),
+				renderBossControlDetail("Session", sessionAction, width),
 				"",
 				bossControlSectionStyle.Render(fitLine("Summary", width)),
 				renderBossControlPromptBox(input.Summary, width),

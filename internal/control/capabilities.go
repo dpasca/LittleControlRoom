@@ -185,9 +185,10 @@ type EngineerSendPromptResult struct {
 }
 
 type AgentTaskCreateInput struct {
-	StructuredResults bool `json:"structured_results,omitempty"`
-	RepositoryWrite   bool `json:"repository_write,omitempty"`
-	MaxCorrections    int  `json:"max_corrections,omitempty"`
+	AfterTaskStopped  string `json:"after_task_stopped,omitempty"`
+	StructuredResults bool   `json:"structured_results,omitempty"`
+	RepositoryWrite   bool   `json:"repository_write,omitempty"`
+	MaxCorrections    int    `json:"max_corrections,omitempty"`
 	EngineerModelSelection
 	RequestID    string        `json:"request_id,omitempty"`
 	Title        string        `json:"title"`
@@ -211,6 +212,7 @@ type AgentTaskContinueInput struct {
 }
 
 type AgentTaskCloseInput struct {
+	StopSession  bool                 `json:"stop_session,omitempty"`
 	RequestID    string               `json:"request_id,omitempty"`
 	TaskID       string               `json:"task_id"`
 	Status       AgentTaskCloseStatus `json:"status"`
@@ -509,7 +511,7 @@ func EngineerSendPromptCapability() Capability {
 func AgentTaskCreateCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskCreate,
-		Description:  "Create a delegated agent task, preserve optional project/TODO affiliation and caller provenance, and optionally start an embedded engineer session in its workspace.",
+		Description:  "Create a delegated agent task. When replacing a worker, set after_task_stopped to its task ID: creation is refused until its stop has completed. Confirm the stop receipt before requesting replacement work.",
 		InputSchema:  agentTaskCreateInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskExternal,
@@ -523,7 +525,7 @@ func AgentTaskCreateCapability() Capability {
 func AgentTaskContinueCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskContinue,
-		Description:  "Continue a visible delegated task. Omitted model fields retain its saved choice; explicit model fields replace that choice for this task.",
+		Description:  "Continue a visible delegated task, including new work after an accepted result when its checkout still matches the accepted handoff. Earlier result/review revisions remain immutable. Omitted model fields retain its saved choice.",
 		InputSchema:  agentTaskContinueInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskExternal,
@@ -537,7 +539,7 @@ func AgentTaskContinueCapability() Capability {
 func AgentTaskCloseCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskClose,
-		Description:  "Mark a delegated agent task completed or waiting, or move it to Trash for automatic deletion after seven days. The Trash state is persisted as archived for protocol compatibility.",
+		Description:  "Mark a task completed or waiting, or move it to Trash. To stop a running worker, use status waiting with stop_session true: this interrupts/closes its session and stops its managed runtimes before releasing ownership. Wait for the completed receipt before launching a replacement. close_session alone only closes idle sessions.",
 		InputSchema:  agentTaskCloseInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskWrite,
@@ -809,6 +811,7 @@ func NormalizeAgentTaskCreateInput(input AgentTaskCreateInput) (AgentTaskCreateI
 		return AgentTaskCreateInput{}, fmt.Errorf("unsupported agent task kind: %s", input.Kind)
 	}
 	input.ParentTaskID = strings.TrimSpace(input.ParentTaskID)
+	input.AfterTaskStopped = strings.TrimSpace(input.AfterTaskStopped)
 	if input.Kind == AgentTaskKindSubagent && input.ParentTaskID == "" {
 		return AgentTaskCreateInput{}, fmt.Errorf("parent_task_id is required for subagent tasks")
 	}
@@ -866,6 +869,12 @@ func NormalizeAgentTaskCloseInput(input AgentTaskCloseInput) (AgentTaskCloseInpu
 		return AgentTaskCloseInput{}, fmt.Errorf("unsupported agent task close status: %s", input.Status)
 	}
 	input.Summary = strings.TrimSpace(input.Summary)
+	if input.StopSession {
+		if input.Status != AgentTaskCloseWaiting {
+			return AgentTaskCloseInput{}, fmt.Errorf("stop_session requires status waiting")
+		}
+		input.CloseSession = true
+	}
 	return input, nil
 }
 
@@ -1741,6 +1750,7 @@ func agentTaskCreateInputSchema() map[string]any {
 			"title":              map[string]any{"type": "string"},
 			"kind":               map[string]any{"type": "string", "enum": AgentTaskKindStrings(false)},
 			"parent_task_id":     map[string]any{"type": "string"},
+			"after_task_stopped": map[string]any{"type": "string", "description": "For a worker replacement, the exact predecessor task whose stop must be complete before creation."},
 			"prompt":             map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
@@ -1790,6 +1800,7 @@ func agentTaskCloseInputSchema() map[string]any {
 			"status":        map[string]any{"type": "string", "enum": AgentTaskCloseStatusStrings(false)},
 			"summary":       map[string]any{"type": "string"},
 			"close_session": map[string]any{"type": "boolean"},
+			"stop_session":  map[string]any{"type": "boolean", "description": "With status waiting, explicitly interrupt and close the current worker and stop its managed runtimes. Preserves all checkout files."},
 		},
 		"required": []string{"task_id", "status", "summary", "close_session"},
 	}

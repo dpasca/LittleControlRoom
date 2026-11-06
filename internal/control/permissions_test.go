@@ -15,6 +15,7 @@ func TestPermissionDoesNotCoverDestructiveOrUnboundedActions(t *testing.T) {
 		{CapabilityEngineerSendPrompt, `{"project_path":"/target","prompt":"work","provider":"codex","session_mode":"new"}`},
 		{CapabilityEngineerSendPrompt, `{"project_path":"/target","prompt":"work","provider":"codex","session_mode":"resume_or_new","target_session_id":"target","model":"changed"}`},
 		{CapabilityAgentTaskClose, `{"task_id":"task","status":"archived"}`},
+		{CapabilityAgentTaskClose, `{"task_id":"task","status":"waiting","stop_session":true}`},
 	} {
 		t.Run(string(test.cap)+test.args, func(t *testing.T) {
 			op := Operation{ProjectPath: "/caller", Provider: "codex", SessionKey: "key", Invocation: Invocation{RequestID: "op", Capability: test.cap, Args: json.RawMessage(test.args)}}
@@ -41,6 +42,7 @@ func TestWorkerDelegationScopeAndExclusions(t *testing.T) {
 		{"waiting", CapabilityAgentTaskClose, `{"task_id":"worker","status":"waiting"}`, true},
 		{"trash", CapabilityAgentTaskClose, `{"task_id":"worker","status":"archived"}`, false},
 		{"close session", CapabilityAgentTaskClose, `{"task_id":"worker","status":"completed","close_session":true}`, false},
+		{"stop session", CapabilityAgentTaskClose, `{"task_id":"worker","status":"waiting","stop_session":true}`, false},
 		{"message to project", CapabilityEngineerSendPrompt, `{"project_path":"/other","prompt":"Work"}`, false},
 		{"worktree launch", CapabilityTodoCreateWorktreeAndStartEngineer, `{"project_path":"/other","todo_text":"Work"}`, false},
 		{"delete worktree", CapabilityWorktreeRemove, `{"worktree_path":"/other"}`, false},

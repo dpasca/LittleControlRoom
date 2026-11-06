@@ -862,3 +862,15 @@ func stringSliceContains(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestExplicitTaskStopRequiresWaitingAndClosesSession(t *testing.T) {
+	input, err := NormalizeAgentTaskCloseInput(AgentTaskCloseInput{TaskID: "worker", Status: AgentTaskCloseWaiting, StopSession: true})
+	if err != nil || !input.CloseSession {
+		t.Fatalf("stop did not include session closure: %+v %v", input, err)
+	}
+	for _, status := range []AgentTaskCloseStatus{AgentTaskCloseCompleted, AgentTaskCloseArchived} {
+		if _, err := NormalizeAgentTaskCloseInput(AgentTaskCloseInput{TaskID: "worker", Status: status, StopSession: true}); err == nil {
+			t.Fatalf("stop mislabeled as %s", status)
+		}
+	}
+}

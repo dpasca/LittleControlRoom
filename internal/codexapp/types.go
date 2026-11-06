@@ -774,9 +774,10 @@ type LaunchRequest struct {
 	RequireLiveIdle bool
 	// RequireLiveSession prevents a project-directed message from launching or
 	// replacing a conversation if its selected recipient disappears.
-	RequireLiveSession bool
-	SubmissionCheck    func() error  `json:"-"`
-	TurnAdmission      TurnAdmission `json:"-"`
+	RequireLiveSession  bool
+	SubmissionCheck     func() error  `json:"-"`
+	TurnAdmission       TurnAdmission `json:"-"`
+	SubmissionAdmission TurnAdmission `json:"-"`
 	// ImageReviewEnabled is operator-selected for this session only, never a global default.
 	ImageReviewEnabled bool
 	// ImageReviewAPIKey is passed only to the recovery MCP helper environment.
@@ -977,6 +978,11 @@ type savedInterruptedTurnContinuer interface {
 }
 
 func submitLaunchRequestInput(session Session, req LaunchRequest, input Submission) error {
+	if req.SubmissionAdmission != nil {
+		input.TurnAdmission = func() (func(), error) {
+			return req.SubmissionAdmission(req.ProjectPath, sessionStateSnapshot(session).ControlSessionKey)
+		}
+	}
 	if req.ContinueInterruptedTurn {
 		if continuer, ok := session.(savedInterruptedTurnContinuer); ok {
 			return continuer.continueSavedInterruptedTurn(req, input)

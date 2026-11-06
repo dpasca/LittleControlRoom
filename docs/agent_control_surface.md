@@ -125,7 +125,21 @@ review, not proof of which actor authored them. A missing checkout or oversized
 evidence is retained as an explicit handoff issue and does not strand a stopped
 owner. There is no silent timeout or takeover after restart. After stopping work,
 explicit `agent_task.close` with `status: waiting` releases ownership without
-accepting the result; active processes still block release.
+accepting the result; active processes still block release. To stop an active
+worker, include `stop_session: true`. The host serializes this with launch,
+verifies the current worker identity, interrupts/closes the session, waits for
+process exit, cancels the latest task run and stops its managed runtimes before
+releasing ownership. A timeout or identity mismatch fails without claiming a
+successful release. All checkout files remain in place. `close_session` alone
+retains its idle-only meaning, and ordinary delegation grants do not cover an
+active stop.
+
+When replacing a worker, wait for that stop operation's completed receipt, then
+set `after_task_stopped` to its task ID on `agent_task.create`. This explicit
+predecessor condition checks durable task state, repository ownership and live
+writers before creating the replacement workspace. Independent tasks may still
+run concurrently. Queued task launches are bound to the workflow inspected by
+the host, so a stop or intervening result invalidates an older launch request.
 
 When reopening an isolated structured task whose lease is still held, the host
 retains the original control key only for that task's exact saved provider
@@ -745,7 +759,12 @@ inspectable without reviving automatic review. Free-text-only endings become
 
 Review rejection does not itself launch work. `agent_task.continue` creates a new
 run that resumes the same worker on the exact reviewed edits rather than a clean
-checkout. `agent_task.close` cannot bypass structured acceptance.
+checkout. After acceptance, an explicitly authorized `agent_task.continue` can
+also start a new run on the unchanged accepted handoff. This preserves the
+previous result and review revisions and revokes the old run's correction grant.
+Generic prompts retain their boundary checks. If the accepted checkout changed,
+the host reports that mismatch for inspection rather than adopting those edits.
+`agent_task.close` cannot bypass structured acceptance.
 
 ### Correction grants
 

@@ -50,6 +50,9 @@ func (m *Manager) enrichTurnAdmission(req LaunchRequest) LaunchRequest {
 // Hold admission until the new session is registered. Otherwise an initial
 // provider submission could start writing before the host can see its snapshot.
 func admitManagedLaunch(req LaunchRequest) (LaunchRequest, func(), func(), error) {
+	// SubmissionAdmission is only for reusing an existing conversation. Fresh
+	// factories must use the already-held initial admission below.
+	req.SubmissionAdmission = nil
 	if req.TurnAdmission == nil || launchRequestInitialInput(req).Empty() {
 		return req, func() {}, func() {}, nil
 	}

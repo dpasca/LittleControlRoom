@@ -4,17 +4,20 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/store"
 )
 
 // ConfigureAgentTaskRepositoryHost connects the UI-independent ownership service
@@ -121,11 +124,117 @@ func (s *Service) beginRepositoryTurn(projectPath, sessionKey string, operator b
 	s.repositoryMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := s.beginRepositoryTurnLocked(ctx, projectPath, sessionKey, operator); err != nil {
+	if err := s.beginRepositoryTurnLocked(ctx, projectPath, sessionKey, operator, 0); err != nil {
 		s.repositoryMu.Unlock()
 		return nil, err
 	}
 	return s.repositoryMu.Unlock, nil
+}
+
+// BeginConfirmedTaskTurn binds one confirmed launch to the workflow the host
+// inspected. A stop or intervening result invalidates queued launches. Explicit
+// continuation may start new work over an accepted, unchanged handoff; ordinary
+// messages retain the review boundary.
+func (s *Service) BeginConfirmedTaskTurn(expected model.AgentTask, sessionKey string, followUp bool) (func(), error) {
+	s.repositoryMu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	task, err := s.store.GetAgentTask(ctx, expected.ID)
+	if err == nil && (task.Status == model.AgentTaskStatusArchived || task.Status != expected.Status || task.WorkspacePath != expected.WorkspacePath || !reflect.DeepEqual(task.Workflow, expected.Workflow)) {
+		err = fmt.Errorf("task changed or was stopped before launch; inspect its current state before continuing")
+	}
+	var revision int64
+	if err == nil && followUp && task.Workflow.Review != nil && task.Workflow.Review.Decision == "accept" && task.Workflow.Review.Revision == task.Workflow.RunID {
+		revision = task.Workflow.RunID
+	}
+	if err == nil {
+		err = s.beginRepositoryTurnLocked(ctx, task.WorkspacePath, sessionKey, false, revision)
+	}
+	if err != nil {
+		s.repositoryMu.Unlock()
+		return nil, err
+	}
+	return s.repositoryMu.Unlock, nil
+}
+
+// CancelAgentTaskRun reads the current run under the same lock as launch
+// admission, so a task-level stop cannot lose a race to the initial run starting.
+func (s *Service) CancelAgentTaskRun(ctx context.Context, taskID string) (model.AgentTask, error) {
+	s.repositoryMu.Lock()
+	defer s.repositoryMu.Unlock()
+	for range 3 {
+		task, err := s.store.GetAgentTask(ctx, taskID)
+		if err != nil {
+			return task, err
+		}
+		if err := s.store.StopStructuredTask(ctx, task, false); err != nil {
+			if errors.Is(err, store.ErrAgentTaskRunChanged) {
+				continue
+			}
+			return task, err
+		}
+		status := model.AgentTaskStatusWaiting
+		return s.store.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: taskID, Status: &status})
+	}
+	return model.AgentTask{}, store.ErrAgentTaskRunChanged
+}
+
+// FinishAgentTaskStop records the idle handoff after the host has stopped the
+// exact worker and its runtimes. This lets that worker later resume preserved
+// edits at the captured boundary, without reviving automatic review.
+func (s *Service) FinishAgentTaskStop(ctx context.Context, id string) error {
+	s.repositoryMu.Lock()
+	defer s.repositoryMu.Unlock()
+	task, err := s.store.GetAgentTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	if task.Status != model.AgentTaskStatusWaiting || (task.Workflow.Enabled && task.Workflow.Phase != "canceled" && task.Workflow.Review == nil) {
+		return fmt.Errorf("task changed before its stop handoff; inspect its current state")
+	}
+	if err := s.repositoryWritersIdle(ctx, taskRepositoryPath(task)); err != nil {
+		return err
+	}
+	if err := s.releaseTaskRepositoryLocked(ctx, id); err != nil {
+		return err
+	}
+	task, err = s.store.GetAgentTask(ctx, id)
+	if err == nil && task.Workflow.Enabled && task.Workflow.Phase == "canceled" {
+		_, err = s.store.FinalizeStructuredTask(ctx, task)
+	}
+	return err
+}
+
+func (s *Service) VerifyAgentTaskWorker(ctx context.Context, id string, snapshot codexapp.Snapshot) error {
+	task, err := s.store.GetAgentTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	if task.WorkspacePath != snapshot.ProjectPath || task.Provider != model.SessionSource(snapshot.Provider.Normalized()) ||
+		!((task.SessionID != "" && task.SessionID == snapshot.ThreadID) ||
+			(task.Repository.SessionKey != "" && task.Repository.SessionKey == snapshot.ControlSessionKey) ||
+			(task.Workflow.WorkerKey != "" && task.Workflow.WorkerKey == snapshot.ControlSessionKey)) {
+		return fmt.Errorf("task worker identity changed; inspect its current session before stopping")
+	}
+	return nil
+}
+
+// CheckAgentTaskStopped is a structured predecessor condition for replacement
+// work. It does not infer relationships between prompts or stop other tasks.
+func (s *Service) CheckAgentTaskStopped(ctx context.Context, id string) error {
+	s.repositoryMu.Lock()
+	defer s.repositoryMu.Unlock()
+	task, err := s.store.GetAgentTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	canceled := task.Status == model.AgentTaskStatusWaiting && task.Workflow.Enabled && task.Workflow.Phase == "canceled" && task.Workflow.SupervisionRevoked
+	accepted := task.Workflow.Handoff && task.Workflow.Phase == "completed" && task.Workflow.Review != nil && task.Workflow.Review.Decision == "accept" && task.Workflow.Review.Revision == task.Workflow.RunID
+	legacyStopped := !task.Workflow.Enabled && task.Status == model.AgentTaskStatusWaiting
+	if !(canceled || accepted || legacyStopped) || task.Repository.State == "held" {
+		return fmt.Errorf("task %s has not been stopped; confirm agent_task.close with status waiting and stop_session true before creating its replacement", id)
+	}
+	return s.repositoryWritersIdle(ctx, taskRepositoryPath(task))
 }
 
 // BeginOperatorTaskHandoff transfers an idle isolated task to the operator's
@@ -162,7 +271,7 @@ func (s *Service) BeginOperatorTaskHandoff(projectPath string, source codexapp.S
 			return fail(err)
 		}
 	}
-	if err := s.beginRepositoryTurnLocked(ctx, projectPath, sessionKey, true); err != nil {
+	if err := s.beginRepositoryTurnLocked(ctx, projectPath, sessionKey, true, 0); err != nil {
 		return fail(err)
 	}
 	// The replacement announces its provider thread after launch. Clear the old
@@ -173,7 +282,7 @@ func (s *Service) BeginOperatorTaskHandoff(projectPath string, source codexapp.S
 	return s.repositoryMu.Unlock, nil
 }
 
-func (s *Service) beginRepositoryTurnLocked(ctx context.Context, projectPath, sessionKey string, operator bool) error {
+func (s *Service) beginRepositoryTurnLocked(ctx context.Context, projectPath, sessionKey string, operator bool, acceptedRevision int64) error {
 	task, isTask, err := s.store.AgentTaskForWorkspace(ctx, projectPath)
 	if err == nil {
 		target := projectPath
@@ -182,7 +291,7 @@ func (s *Service) beginRepositoryTurnLocked(ctx context.Context, projectPath, se
 		}
 		err = s.checkRepositoryOwner(ctx, target, task.ID, sessionKey)
 		if err == nil && isTask && task.Repository.Write {
-			err = s.acquireTaskRepository(ctx, task, sessionKey, operator && task.Repository.Isolated)
+			err = s.acquireTaskRepository(ctx, task, sessionKey, operator && task.Repository.Isolated, acceptedRevision)
 		}
 		if err == nil && isTask && task.Workflow.Enabled {
 			active := false
@@ -222,7 +331,7 @@ func (s *Service) checkRepositoryOwner(ctx context.Context, target, taskID, sess
 	return nil
 }
 
-func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTask, sessionKey string, allowExistingEdits bool) error {
+func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTask, sessionKey string, allowExistingEdits bool, acceptedRevision int64) error {
 	if task.Repository.State == "held" {
 		if task.Repository.SessionKey != sessionKey || sessionKey == "" {
 			return fmt.Errorf("task repository lease belongs to another session; inspect and close the stopped task before continuing")
@@ -274,7 +383,15 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 	dirtyBoundary := false
 	if baseline.changes != "" {
 		if !allowExistingEdits {
-			if err := dirtyTaskBoundary(task, sessionKey, baseline.fingerprint); err != nil {
+			boundaryErr := dirtyTaskBoundary(task, sessionKey, baseline.fingerprint)
+			if acceptedRevision > 0 && acceptedRevision == task.Workflow.RunID && task.Repository.Isolated && task.Workflow.Handoff && task.Workflow.Review != nil && task.Workflow.Review.Decision == "accept" && task.Workflow.Review.Revision == acceptedRevision {
+				if task.Repository.HandoffFingerprint != "" && baseline.fingerprint == task.Repository.HandoffFingerprint {
+					boundaryErr = nil
+				} else {
+					boundaryErr = fmt.Errorf("checkout changed since accepted revision %d; inspect the intervening edits before starting new work", acceptedRevision)
+				}
+			}
+			if err := boundaryErr; err != nil {
 				return err
 			}
 		}

@@ -1702,6 +1702,28 @@ func (s *lcagentSession) CloseDueToInactivity() error {
 	return err
 }
 
+// WaitClosed waits for the run's stream readers and process waiter to finish.
+// Marking the pane closed alone does not prove the worker has stopped writing.
+func (s *lcagentSession) WaitClosed(timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.mu.Lock()
+		running := s.cmd != nil || s.busy
+		s.mu.Unlock()
+		if !running {
+			return true
+		}
+		select {
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
 func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	return s.startRunWithOptions(prompt, displayPrompt, lcagentRunOptions{})
 }

@@ -450,6 +450,9 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			fmt.Sprintf("Resources: %s", controlResourceSummary(input.Resources)),
 			"Enter runs; Esc cancels.",
 		}
+		if input.AfterTaskStopped != "" {
+			lines = append([]string{"Requires stopped predecessor: " + input.AfterTaskStopped}, lines...)
+		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityAgentTaskContinue:
 		var input control.AgentTaskContinueInput
@@ -479,6 +482,10 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		if input.Status == control.AgentTaskCloseArchived {
 			title = fmt.Sprintf("Move agent task %s to Trash?", input.TaskID)
 			detail = "Its task record and workspace will be deleted automatically after 7 days."
+		}
+		if input.StopSession {
+			title = fmt.Sprintf("Stop agent task %s?", input.TaskID)
+			detail = "Interrupt and close its worker, stop its managed runtimes, and release repository ownership. Checkout files are preserved."
 		}
 		lines := []string{title}
 		if detail != "" {

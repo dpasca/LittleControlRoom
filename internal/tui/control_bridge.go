@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	bossui "lcroom/internal/boss"
@@ -1138,6 +1139,12 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 		}
 		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
 		defer cancel()
+		if input.AfterTaskStopped != "" {
+			if err := svc.CheckAgentTaskStopped(ctx, input.AfterTaskStopped); err != nil {
+				msg.err = err
+				return msg
+			}
+		}
 		creationContext, err := resolveAgentTaskCreationContext(ctx, svc, inv, input)
 		if err != nil {
 			msg.err = err
@@ -1255,6 +1262,7 @@ func (m Model) applyBossAgentTaskCreated(msg bossAgentTaskCreatedMsg) (tea.Model
 	}
 	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, msg.input.Prompt, agentTaskPromptOptions{Provider: msg.provider})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, msg.provider, embeddedLaunchOptions{
+		taskAdmission:  confirmedTaskTurnAdmission(m.svc, task, false),
 		modelSelection: msg.input.EngineerModelSelection,
 		forceNew:       true,
 		prompt:         prompt,
@@ -1378,6 +1386,7 @@ func (m Model) applyBossAgentTaskContinueLoaded(msg bossAgentTaskContinueLoadedM
 		Provider:         provider,
 	})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+		taskAdmission:  confirmedTaskTurnAdmission(m.svc, task, true),
 		modelSelection: input.EngineerModelSelection,
 		forceNew:       input.SessionMode == control.SessionModeNew,
 		prompt:         prompt,
@@ -1395,6 +1404,16 @@ func (m Model) applyBossAgentTaskContinueLoaded(msg bossAgentTaskContinueLoadedM
 	}
 	m.status = "Continuing agent task: " + task.Title
 	return m, bossControlExecutionCmd(msg.inv, m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task)))
+}
+
+func confirmedTaskTurnAdmission(svc *service.Service, task model.AgentTask, followUp bool) codexapp.TurnAdmission {
+	var first atomic.Bool
+	return func(path, key string) (func(), error) {
+		if first.CompareAndSwap(false, true) {
+			return svc.BeginConfirmedTaskTurn(task, key, followUp)
+		}
+		return svc.BeginRepositoryTurn(path, key)
+	}
 }
 
 func (m Model) executeAgentTaskCloseControlWithOutcome(inv control.Invocation, input control.AgentTaskCloseInput) controlInvocationOutcome {
@@ -1439,7 +1458,7 @@ func (m Model) applyBossAgentTaskCloseLoaded(msg bossAgentTaskCloseLoadedMsg) (t
 	}
 	task := msg.task
 	input := msg.input
-	if input.CloseSession && strings.TrimSpace(task.WorkspacePath) != "" {
+	if input.CloseSession && !input.StopSession && strings.TrimSpace(task.WorkspacePath) != "" {
 		if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
 			err := fmt.Errorf("agent task %s still has an active embedded %s session; wait for it to finish before closing the session", task.ID, embeddedProvider(snapshot).Label())
 			m.status = "Control request failed: " + err.Error()
@@ -1453,6 +1472,7 @@ func (m Model) applyBossAgentTaskCloseLoaded(msg bossAgentTaskCloseLoadedMsg) (t
 func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.AgentTaskCloseInput, task model.AgentTask) tea.Cmd {
 	svc := m.svc
 	manager := m.codexManager
+	runtimeManager := m.runtimeManager
 	parent := m.ctx
 	if parent == nil {
 		parent = context.Background()
@@ -1464,23 +1484,58 @@ func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.Agent
 			msg.status = "Control request failed: " + msg.err.Error()
 			return msg
 		}
+		// Reload after the asynchronous load boundary; a newly launched run
+		// must not be overwritten by a stale workflow snapshot.
+		var err error
+		task, err = svc.GetAgentTask(parent, input.TaskID)
+		if err != nil {
+			msg.err = err
+			msg.status = "Control request failed: " + err.Error()
+			return msg
+		}
 		if task.Workflow.Enabled && input.Status == control.AgentTaskCloseCompleted && task.Workflow.Phase != "completed" {
 			msg.err = errors.New("review the current result with agent_task.review_result before completing this task")
 			msg.status = "Control request failed: " + msg.err.Error()
 			return msg
 		}
-		if task.Workflow.Enabled && input.Status != control.AgentTaskCloseCompleted {
-			if err := svc.Store().StopStructuredTask(parent, task, false); err != nil {
-				msg.err = err
-				return msg
-			}
-		}
-		if input.CloseSession && manager != nil && strings.TrimSpace(task.WorkspacePath) != "" {
-			_ = manager.CloseProject(task.WorkspacePath)
-		}
 		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
 		defer cancel()
-		if err := svc.ReleaseTaskRepository(ctx, input.TaskID); err != nil {
+		if input.StopSession {
+			stopErr := stopAgentTaskWorker(ctx, svc, manager, runtimeManager, task)
+			if stopErr != nil {
+				msg.err = stopErr
+				msg.status = "Control request failed: " + stopErr.Error()
+				return msg
+			}
+		} else {
+			if manager != nil {
+				if session, ok := manager.Session(task.WorkspacePath); ok && embeddedSessionBlocksProviderSwitch(session.Snapshot()) {
+					msg.err = fmt.Errorf("task worker is active; use agent_task.close with status waiting and stop_session true, then wait for its completed receipt before replacement")
+					msg.status = "Control request failed: " + msg.err.Error()
+					return msg
+				}
+			}
+			if task.Workflow.Enabled && input.Status != control.AgentTaskCloseCompleted {
+				if _, err := svc.CancelAgentTaskRun(ctx, task.ID); err != nil {
+					msg.err = err
+					msg.status = "Control request failed: " + err.Error()
+					return msg
+				}
+			}
+			if input.CloseSession && manager != nil {
+				if err := manager.CloseProject(task.WorkspacePath); err != nil {
+					msg.err = err
+					msg.status = "Control request failed: " + err.Error()
+					return msg
+				}
+			}
+		}
+		if input.StopSession {
+			err = svc.FinishAgentTaskStop(ctx, input.TaskID)
+		} else {
+			err = svc.ReleaseTaskRepository(ctx, input.TaskID)
+		}
+		if err != nil {
 			msg.err = err
 			msg.task, _ = svc.GetAgentTask(ctx, input.TaskID)
 			msg.status = "Control request failed: " + err.Error()
@@ -1502,11 +1557,15 @@ func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.Agent
 				msg.err = errors.New("service store unavailable")
 				break
 			}
-			status := model.AgentTaskStatusWaiting
+			var status *model.AgentTaskStatus
+			if !input.StopSession {
+				waiting := model.AgentTaskStatusWaiting
+				status = &waiting
+			}
 			summary := strings.TrimSpace(input.Summary)
 			msg.task, msg.err = svc.Store().UpdateAgentTask(ctx, model.UpdateAgentTaskInput{
 				ID:      input.TaskID,
-				Status:  &status,
+				Status:  status,
 				Summary: &summary,
 				Touch:   true,
 			})
@@ -1518,6 +1577,8 @@ func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.Agent
 			msg.status = "Control request failed: " + msg.err.Error()
 		} else if msg.task.Status == model.AgentTaskStatusArchived {
 			msg.status = fmt.Sprintf("Agent task %s moved to Trash", msg.task.ID)
+		} else if input.StopSession {
+			msg.status = fmt.Sprintf("Agent task %s stopped; checkout files preserved", msg.task.ID)
 		} else {
 			msg.status = fmt.Sprintf("Agent task %s is now %s", msg.task.ID, msg.task.Status)
 		}

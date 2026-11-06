@@ -1093,6 +1093,7 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 }
 
 type embeddedLaunchOptions struct {
+	taskAdmission            codexapp.TurnAdmission
 	requireLiveIdle          bool
 	requireLiveSession       bool
 	submissionCheck          func() error
@@ -1114,6 +1115,8 @@ type embeddedLaunchOptions struct {
 func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) codexapp.LaunchRequest {
 	return codexapp.LaunchRequest{
 		Provider:                   provider.Normalized(),
+		TurnAdmission:              options.taskAdmission,
+		SubmissionAdmission:        options.taskAdmission,
 		ProjectPath:                p.Path,
 		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
 		RequireResumeID:            options.requireResumeID,

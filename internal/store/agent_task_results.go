@@ -20,6 +20,8 @@ func encodeTaskWorkflow(value model.AgentTaskWorkflow) string {
 	return string(data)
 }
 
+var ErrAgentTaskRunChanged = errors.New("task run changed; reload the task before retrying")
+
 func (s *Store) workflowTransaction(ctx context.Context, task model.AgentTask, next model.AgentTaskWorkflow, status model.AgentTaskStatus, extra func(*sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -35,7 +37,7 @@ func (s *Store) workflowTransaction(ctx context.Context, task model.AgentTask, n
 		return err
 	}
 	if count != 1 {
-		return errors.New("task run changed; reload the task before retrying")
+		return ErrAgentTaskRunChanged
 	}
 	if extra != nil {
 		if err := extra(tx); err != nil {
@@ -66,9 +68,12 @@ func (s *Store) BeginStructuredTaskRun(ctx context.Context, task model.AgentTask
 			return errors.New("finish the current task turn before beginning another result run")
 		}
 	}
-	// A new run resets result metadata but never the operator's correction grant.
+	// A new run resets result metadata without refilling the correction grant.
 	next := model.AgentTaskWorkflow{Enabled: true, RunID: task.Workflow.RunID + 1, WorkerKey: key, Phase: "working",
 		MaxCorrections: task.Workflow.MaxCorrections, CorrectionsUsed: task.Workflow.CorrectionsUsed, SupervisionRevoked: task.Workflow.SupervisionRevoked}
+	if task.Workflow.Review != nil && task.Workflow.Review.Decision == "accept" {
+		next.SupervisionRevoked = true // New work does not inherit the accepted run's correction grant.
+	}
 	return s.workflowTransaction(ctx, task, next, model.AgentTaskStatusActive, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE engineer_messages SET state='failed',last_error='Superseded by a new task run' WHERE agent_task_id=? AND state IN ('queued','delivering')`, task.ID); err != nil {
 			return err

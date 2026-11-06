@@ -92,6 +92,9 @@ func TestRepositoryAdmissionCoversLaunchUntilSessionRegistration(t *testing.T) {
 			var later TurnAdmission
 			var manager *Manager
 			manager = NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+				if req.SubmissionAdmission != nil {
+					t.Fatal("fresh launch retained a second, reentrant submission admission")
+				}
 				later = req.TurnAdmission
 				unlock, err := req.TurnAdmission(req.ProjectPath, req.TodoCaptureSessionKey)
 				if err != nil {
@@ -119,7 +122,10 @@ func TestRepositoryAdmissionCoversLaunchUntilSessionRegistration(t *testing.T) {
 					}
 				}, nil
 			})
-			req := LaunchRequest{ProjectPath: path, Prompt: "work"}
+			req := LaunchRequest{ProjectPath: path, Prompt: "work", SubmissionAdmission: func(string, string) (func(), error) {
+				t.Fatal("fresh launch used existing-session admission")
+				return nil, nil
+			}}
 			var err error
 			if parallel {
 				_, _, err = manager.OpenParallel(req)
