@@ -596,7 +596,9 @@ func (e *Executor) agentTaskList(ctx context.Context, raw json.RawMessage) (map[
 		if originSessionID != "" && task.OriginSessionID != originSessionID && task.OriginSessionKey != originSessionID {
 			continue
 		}
-		records = append(records, agentTaskRecord(task))
+		record := agentTaskRecord(task)
+		e.addTaskActivity(ctx, task, record)
+		records = append(records, record)
 	}
 	return pageResult("agent_tasks", records, args.Cursor, args.Limit)
 }
@@ -623,6 +625,7 @@ func (e *Executor) agentTaskGet(ctx context.Context, raw json.RawMessage) (map[s
 		return nil, errors.New("agent task is hidden by the private-category disclosure policy")
 	}
 	record := agentTaskRecord(task)
+	e.addTaskActivity(ctx, task, record)
 	record["workflow"] = task.Workflow
 	response := map[string]any{"agent_task": record}
 	if args.ResultRevision < 0 {
@@ -939,4 +942,17 @@ func queryTimeInRange(at, since, until time.Time) bool {
 		return true
 	}
 	return !at.IsZero() && (since.IsZero() || !at.Before(since)) && (until.IsZero() || !at.After(until))
+}
+
+func (e *Executor) addTaskActivity(ctx context.Context, task model.AgentTask, record map[string]any) {
+	if reader, ok := e.reader.(interface {
+		AgentTaskActivity(context.Context, model.AgentTask, time.Time) (map[string]any, error)
+	}); ok {
+		activity, err := reader.AgentTaskActivity(ctx, task, e.nowFn())
+		if err != nil {
+			record["activity"] = map[string]any{"state": "unknown", "error": err.Error()}
+			return
+		}
+		record["activity"] = activity
+	}
 }

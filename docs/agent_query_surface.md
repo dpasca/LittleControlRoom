@@ -42,8 +42,8 @@ the query the agent intends to run.
 | `project.todo_list` | `project` | Bounded TODO state for one visible project, optionally filtered by `updated_at` with `since`/`until`. |
 | `project.session_list` | `project` | Persisted session metadata without transcript text or artifact paths. |
 | `assessment.list` | `project` | Bounded persisted session assessments. Portfolio scope can span visible projects. |
-| `work.agent_task_list` | `portfolio` | Delegated task summaries and resource references. |
-| `work.agent_task_get` | `portfolio` | One delegated task by exact id. |
+| `work.agent_task_list` | `portfolio` | Delegated task summaries, activity hints, result lifecycle and resource references. |
+| `work.agent_task_get` | `portfolio` | One delegated task by exact id, including worker activity. |
 | `work.goal_run_list` | `portfolio` | Durable goal-run summaries. |
 | `work.goal_run_get` | `portfolio` | One durable goal run with a bounded newest-first trace. |
 | `demo_recording.latest` | `project` | The active demo recording, or latest finalized package, with conditional package-path disclosure. |
@@ -198,3 +198,28 @@ Structured tasks expose compact `workflow` identity and phase in list results.
 `worker_claims`, `caller_review`, and `host_repository_evidence`. Missing host
 handoff evidence is null. Worker and caller checks are reported claims, not
 host-executed test attestations. Privacy is checked before reading history.
+
+## Delegated worker activity and busy callers
+
+Both task queries return `activity.last_activity_at`, `source`, `age_seconds`,
+`state`, `hint` and `host_observed_at`. Sources are `worker_session`,
+`session_event`, `provider_log_write` and `unknown`. The host persists exact-worker
+snapshots in background task refreshes for all four providers; queries also
+compare persisted session events with the current recorded log's modification
+time. `last_touched_at` retains its workflow meaning. `active` means evidence
+less than two minutes old, `quiet` includes elapsed minutes, `exited` means a
+host-observed turn exit, and `unknown` means no activity evidence. Quiet is not
+proof of a stalled worker. The timestamp and source expose the evidence behind
+the hint; `host_observed_at` lets callers assess snapshot freshness.
+
+Any successful `lcr_runtime` MCP tool response can append a text content block
+containing `pending_results`, even while the caller is busy. Each entry contains
+`message_id`, `task_id`, `title`, `outcome`, `ready_at`, `result_revision` and
+`review_instruction`. The notice is scoped to the exact project/provider/caller
+binding, bounded to ten entries per response and claimed once per durable
+callback across MCP reconnects. Each new result callback can produce a new notice.
+The existing full idle callback remains queued; compact notification does not
+mark it delivered, review the work, or consume the result. No tool calls means
+no compact notice until the next call. Native LCAgent tools do not use this MCP
+response adapter. Deploying requires a host restart for schema migration and
+activity collection, plus reconnecting existing MCP processes.

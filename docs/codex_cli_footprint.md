@@ -585,3 +585,33 @@ that native config, independently of session history and home overlays.
 Native config writes do not hot-reload loaded threads' service tiers; LCR explicitly
 synchronizes them and passes the policy on new turns. This does not change artifact
 session discovery. See [Codex fast mode](codex_fast_mode.md).
+
+## Delegated worker activity
+
+`work.agent_task_get` and `work.agent_task_list` expose an `activity` object separately
+from workflow bookkeeping (`last_touched_at`). `last_activity_at` is the newest
+host-observed worker event, persisted exact-session event, or current modification
+time of that session's recorded provider log. This uses the scanner's recorded
+`session_file`; it does not assume project-local `.codex` artifacts or discover
+sessions by choosing the newest file. The same contract covers Codex, Claude Code,
+OpenCode and LCAgent. `source` identifies `worker_session`, `session_event`,
+`provider_log_write`, or `unknown`; `host_observed_at` timestamps the background
+host snapshot. Host observations refresh with the task-list background refresh.
+
+`age_seconds` measures time since activity (null if unknown). `state` is `active`
+for activity less than two minutes old, `quiet` otherwise, `exited` after a
+host-observed worker turn exit, or `unknown` without evidence. `hint` includes the
+quiet duration in minutes. Quiet does not establish failure, and recent log
+writes do not establish useful progress. Missing logs retain available event
+or host evidence; they do not imply exit.
+
+Busy callers receive compact `pending_results` notices appended to their next
+successful `lcr_runtime` MCP tool response, including task ID, title, outcome,
+ready time, result revision and review instruction. Notices are bounded to ten
+per response and deduplicated durably per callback, scoped to the exact caller
+provider, project and session binding. They do not mark the full callback as
+delivered or consume/review a result. The existing full callback still waits for
+the caller to become idle. A caller making no runtime tool calls receives no
+compact notice until its next call. Restart the LCR host to migrate the two
+support tables and collect activity; reconnect existing MCP processes to load
+the new tool-response behavior and descriptions.

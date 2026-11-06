@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"lcroom/internal/model"
 )
@@ -65,5 +66,40 @@ func TestAgentTaskListAwaitingReviewFilter(t *testing.T) {
 	}
 	if len(got) != 2 || got["a"] != "awaiting_review" || got["b"] != "unclassified" {
 		t.Fatalf("unexpected awaiting-review set: %v", got)
+	}
+}
+
+type activityReader struct {
+	*fakeReader
+	calls int
+}
+
+func (r *activityReader) AgentTaskActivity(_ context.Context, _ model.AgentTask, _ time.Time) (map[string]any, error) {
+	r.calls++
+	return map[string]any{"state": "quiet", "age_seconds": int64(2100)}, nil
+}
+func TestTaskQueriesExposeActivityAfterVisibilityCheck(t *testing.T) {
+	reader := &activityReader{fakeReader: newFakeReader(nil)}
+	reader.tasks["worker"] = model.AgentTask{ID: "worker", Status: model.AgentTaskStatusActive}
+	reader.tasks["private"] = model.AgentTask{ID: "private", Status: model.AgentTaskStatusActive, CategoryPrivate: true}
+	e, err := NewExecutor(Options{Reader: reader, Scope: ScopePortfolio, Disclosure: DisclosureHidePrivate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.Execute(t.Context(), QueryAgentTaskList, json.RawMessage(`{}`))
+	if err != nil || reader.calls != 1 {
+		t.Fatalf("list read hidden activity: %#v %v calls=%d", out, err, reader.calls)
+	}
+	records := out["agent_tasks"].([]map[string]any)
+	if len(records) != 1 || records[0]["activity"].(map[string]any)["state"] != "quiet" {
+		t.Fatalf("list omitted activity: %#v", out)
+	}
+	out, err = e.Execute(t.Context(), QueryAgentTaskGet, json.RawMessage(`{"task_id":"worker"}`))
+	if err != nil || out["agent_task"].(map[string]any)["activity"] == nil {
+		t.Fatalf("get omitted activity: %#v %v", out, err)
+	}
+	before := reader.calls
+	if _, err := e.Execute(t.Context(), QueryAgentTaskGet, json.RawMessage(`{"task_id":"private"}`)); err == nil || reader.calls != before {
+		t.Fatal("private task activity was read")
 	}
 }

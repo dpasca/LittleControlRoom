@@ -245,7 +245,7 @@ func Capabilities() []Capability {
 			QueryAgentTaskList,
 			DomainWork,
 			ScopePortfolio,
-			"List or search delegated agent tasks with exact IDs and session/resource references, independently of the TUI selection. Include historical records to find completed tasks. Each record reports review_state and result_lifecycle.delivery_state (waiting means the callback is pending and delivery_error says why).",
+			"List or search delegated agent tasks with exact IDs and session/resource references, independently of the TUI selection. Include historical records to find completed tasks. Each record includes activity (last_activity_at, source, age_seconds, state active/quiet/exited/unknown, hint, host_observed_at). Active means evidence within 2 minutes, not proof of progress; quiet is not proof of failure, and exited means host-observed turn exit. Activity combines host worker events with exact-session persisted events and current provider log mtime. last_touched_at remains workflow bookkeeping. Each record reports review_state and result_lifecycle.delivery_state (waiting means the callback is pending and delivery_error says why).",
 			SensitivityContent,
 			pagedSchema(map[string]any{
 				"query":              stringProperty("Optional case-insensitive literal substring of task ID, title, summary, workspace path, or session ID. Applied before the result limit.", 1),
@@ -258,7 +258,7 @@ func Capabilities() []Capability {
 			QueryAgentTaskGet,
 			DomainWork,
 			ScopePortfolio,
-			"Load one delegated agent task by exact id.",
+			"Load one delegated agent task by exact id. Includes activity.last_activity_at, source, age_seconds, state (active within 2 minutes, quiet, host-observed exited, or unknown), hint and host_observed_at; recent activity does not prove progress. last_touched_at remains workflow bookkeeping. Busy callers can also receive compact pending_results on any lcr_runtime tool response; full callback delivery still waits for idle.",
 			SensitivityContent,
 			objectSchema(map[string]any{
 				"task_id":         stringProperty("Exact delegated agent task id.", 1),

@@ -103,6 +103,26 @@ func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.Ag
 	if err != nil {
 		return nil, err
 	}
+	s.repositoryMu.Lock()
+	engineers := s.repositoryEngineers
+	s.repositoryMu.Unlock()
+	if engineers != nil {
+		snapshots := engineers()
+		for _, task := range tasks {
+			for _, snapshot := range snapshots {
+				if agentTaskWorkerMatches(task, snapshot) {
+					at := snapshot.LastActivityAt
+					if snapshot.LastBusyActivityAt.After(at) {
+						at = snapshot.LastBusyActivityAt
+					}
+					exited := snapshot.Closed || (snapshot.LatestTurnStateKnown && snapshot.LatestTurnCompleted && !agentTaskEngineerActive(snapshot))
+					if err := s.store.RecordAgentTaskActivity(ctx, task.ID, snapshot.ThreadID, at, exited); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+	}
 	for i, task := range tasks {
 		if task.Workflow.Enabled && task.Workflow.Phase == "submitted" {
 			if updated, err := s.settleStructuredTask(ctx, task); err == nil {

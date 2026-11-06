@@ -15,6 +15,13 @@ import (
 
 func (s *Store) initSchema(ctx context.Context) error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS agent_task_activity (
+            task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE, session_id TEXT NOT NULL, last_activity_at INTEGER NOT NULL,
+            exited INTEGER NOT NULL, observed_at INTEGER NOT NULL
+        );`,
+		`CREATE TABLE IF NOT EXISTS agent_task_result_notices (
+            message_id TEXT PRIMARY KEY REFERENCES engineer_messages(id) ON DELETE CASCADE, noticed_at INTEGER NOT NULL
+        );`,
 		`CREATE TABLE IF NOT EXISTS control_permissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             permission_scope TEXT NOT NULL DEFAULT '',
