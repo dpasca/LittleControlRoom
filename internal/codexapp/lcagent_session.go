@@ -48,6 +48,7 @@ type lcagentRunOptions struct {
 
 type lcagentSession struct {
 	controlInput        ControlInputState
+	controlSessionKey   string
 	turnAdmission       func() (func(), error)
 	projectPath         string
 	dataDir             string
@@ -157,6 +158,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		return nil, err
 	}
 	ensureManagedPlaywrightSessionKey(&req)
+	ensureTodoCaptureSessionKey(&req)
 	playwrightPolicy := req.PlaywrightPolicy.Normalize()
 	managedSessionKey := strings.TrimSpace(req.ManagedBrowserSessionKey)
 	browserLaunchMode := browserctl.ManagedLaunchModeForPolicy(playwrightPolicy)
@@ -223,6 +225,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	visionReasoning := strings.TrimSpace(req.LCAgentVisionReasoning)
 	session := &lcagentSession{
 		turnAdmission:            turnAdmissionForLaunch(req),
+		controlSessionKey:        strings.TrimSpace(req.TodoCaptureSessionKey),
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
 		appDBPath:                strings.TrimSpace(req.AppDBPath),
@@ -3926,7 +3929,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		ThreadID:                    s.threadID,
 		BrowserActivity:             s.browserActivity.Normalize(),
 		ControlInput:                s.controlInput,
-		ControlSessionKey:           strings.TrimSpace(s.threadID), // Native controls use the stable thread, not the per-turn run ID.
+		ControlSessionKey:           s.controlSessionKey, // Match host admission; native controls separately use ThreadID.
 		ManagedBrowserSessionKey:    strings.TrimSpace(s.managedBrowserSessionKey),
 		CurrentBrowserPageURL:       strings.TrimSpace(s.currentBrowserPageURL),
 		CurrentBrowserPageStale:     s.currentBrowserPageStale,

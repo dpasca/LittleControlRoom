@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
+	"lcroom/internal/store"
 )
 
 // The launch-scoped host key recorded when a fresh LCAgent task started. It is
@@ -68,43 +71,67 @@ func requireReleasedLCAgentHandoff(t *testing.T, task model.AgentTask) {
 // A stopped LCAgent task whose checkout is byte-identical to its recorded
 // handoff must resume on its own thread, including after a model override.
 func TestStoppedLCAgentTaskResumesItsRecordedThreadAfterRestart(t *testing.T) {
-	ctx := t.Context()
-	f, task := stoppedLCAgentHandoff(t)
-	requireReleasedLCAgentHandoff(t, task)
-	selection := model.AgentTaskModelSelection{
-		Provider:        model.SessionSourceLCAgent,
-		Model:           "deepseek-flash",
-		ModelProvider:   "deepseek",
-		ReasoningEffort: "max",
-	}
-	updated, err := f.svc.store.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, ModelSelection: &selection})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updated.ModelSelection.Model != "deepseek-flash" {
-		t.Fatalf("model override not recorded: %+v", updated.ModelSelection)
-	}
-	unlock, err := f.svc.BeginRepositoryTurn(updated.WorkspacePath, lcagentThreadID)
-	if err != nil {
-		t.Fatalf("resuming the task's own unchanged handoff failed: %v", err)
-	}
-	unlock()
-	current, err := f.svc.GetAgentTask(ctx, task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.Repository.State != "held" || current.Workflow.WorkerKey != lcagentThreadID {
-		t.Fatalf("resume did not rebind the worker to its thread: repository=%+v workflow=%+v", current.Repository, current.Workflow)
-	}
-	if current.Workflow.RunID != task.Workflow.RunID+1 || current.Workflow.Phase != "working" {
-		t.Fatalf("resume did not start the next run: %+v", current.Workflow)
-	}
-	if current.ModelSelection.Model != "deepseek-flash" || current.ModelSelection.ModelProvider != "deepseek" || current.ModelSelection.ReasoningEffort != "max" {
-		t.Fatalf("resume changed the model override: %+v", current.ModelSelection)
-	}
-	data, err := os.ReadFile(filepath.Join(current.Repository.Root, "store-copy.txt"))
-	if err != nil || string(data) != "approved copy" {
-		t.Fatalf("resume changed the worker edits: %q, %v", data, err)
+	for _, changeModel := range []bool{false, true} {
+		name := "same-model"
+		if changeModel {
+			name = "changed-model"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			f, task := stoppedLCAgentHandoff(t)
+			requireReleasedLCAgentHandoff(t, task)
+			if changeModel {
+				selection := model.AgentTaskModelSelection{
+					Provider: model.SessionSourceLCAgent, Model: "deepseek-flash",
+					ModelProvider: "deepseek", ReasoningEffort: "max",
+				}
+				var err error
+				task, err = f.svc.store.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, ModelSelection: &selection})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Close the database and discard all live registries, as an LCR
+			// restart does. Neither the old lease key nor the task may be
+			// supplied through in-memory recovery state.
+			cfg := f.svc.Config()
+			if err := f.svc.Store().Close(); err != nil {
+				t.Fatal(err)
+			}
+			st, err := store.Open(cfg.DBPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			recovered := New(cfg, st, events.NewBus(), nil)
+			recovered.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot { return nil }, func() []projectrun.Snapshot { return nil })
+			key, err := recovered.TaskResumeControlKey(ctx, task.WorkspacePath, model.SessionSourceLCAgent, lcagentThreadID)
+			if err != nil || key != "" {
+				t.Fatalf("released task reused a live lease: %q, %v", key, err)
+			}
+			unlock, err := recovered.BeginRepositoryTurn(task.WorkspacePath, lcagentThreadID)
+			if err != nil {
+				t.Fatalf("resuming the task's own unchanged handoff failed: %v", err)
+			}
+			unlock()
+			current, err := recovered.GetAgentTask(ctx, task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.Repository.State != "held" || current.Workflow.WorkerKey != lcagentThreadID {
+				t.Fatalf("resume did not rebind the worker to its thread: repository=%+v workflow=%+v", current.Repository, current.Workflow)
+			}
+			if current.Workflow.RunID != task.Workflow.RunID+1 || current.Workflow.Phase != "working" {
+				t.Fatalf("resume did not start the next run: %+v", current.Workflow)
+			}
+			if current.ModelSelection != task.ModelSelection {
+				t.Fatalf("resume changed the model selection: got %+v, want %+v", current.ModelSelection, task.ModelSelection)
+			}
+			data, err := os.ReadFile(filepath.Join(current.Repository.Root, "store-copy.txt"))
+			if err != nil || string(data) != "approved copy" {
+				t.Fatalf("resume changed the worker edits: %q, %v", data, err)
+			}
+		})
 	}
 }
 

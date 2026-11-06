@@ -365,6 +365,11 @@ func (s *Store) UpdateControlOperationStatus(ctx context.Context, id string, sta
 			return control.Operation{}, err
 		}
 	}
+	if status == control.OperationFailed {
+		if err := recordControlFailureNotice(ctx, tx, current, errText, now); err != nil {
+			return control.Operation{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return control.Operation{}, err
 	}

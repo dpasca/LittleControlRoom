@@ -27,10 +27,10 @@ func TestProviderAnnouncementsKeepControlAndResumeIdentitiesDistinct(t *testing.
 		check(t, s.StateSnapshot(), "host-key", "provider-thread")
 	})
 	t.Run("lcagent", func(t *testing.T) {
-		s := &lcagentSession{notify: func() {}}
+		s := &lcagentSession{controlSessionKey: "host-key", notify: func() {}}
 		s.handleEvent([]byte(`{"type":"session_meta","id":"run-one","thread_id":"stable-thread"}`))
-		check(t, s.StateSnapshot(), "stable-thread", "stable-thread")
+		check(t, s.StateSnapshot(), "host-key", "stable-thread")
 		s.handleEvent([]byte(`{"type":"session_meta","id":"run-two","thread_id":"stable-thread"}`))
-		check(t, s.StateSnapshot(), "stable-thread", "stable-thread")
+		check(t, s.StateSnapshot(), "host-key", "stable-thread")
 	})
 }

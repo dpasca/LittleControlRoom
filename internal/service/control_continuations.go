@@ -48,7 +48,7 @@ func ProcessControlContinuations(ctx context.Context, st *store.Store, manager *
 		}
 		snapshot := session.Snapshot() // Background command; never the UI thread.
 		input := snapshot.ControlInput
-		if snapshot.Closed || snapshot.BusyExternal || snapshot.ControlSessionKey != op.SessionKey || string(snapshot.Provider) != op.Provider || snapshot.ThreadID == "" || input.Stopped || input.Revision == 0 || input.SubmittedAt.After(c.RequestedAt) || snapshot.LatestTurnStartedAt.After(c.RequestedAt) {
+		if snapshot.Closed || snapshot.BusyExternal || !snapshot.MatchesControlSessionKey(op.SessionKey) || string(snapshot.Provider) != op.Provider || snapshot.ThreadID == "" || input.Stopped || input.Revision == 0 || input.SubmittedAt.After(c.RequestedAt) || snapshot.LatestTurnStartedAt.After(c.RequestedAt) {
 			if err := suppress("The calling workflow was stopped, superseded, or could not be identified."); err != nil {
 				return err
 			}

@@ -562,6 +562,22 @@ uncertain callback. Results and `continuation_state` remain available through
 `get_control_operation`; manual continuation remains possible. These guards do
 not reinterpret idle sessions or assistant prose as requests to resume.
 
+When an opted-in operation fails, its terminal status and a failure receipt are
+persisted atomically. The existing exact-session mailbox delivers the receipt
+to the caller, including after a host restart or a late session binding. This
+reports the error without resuming the failed workflow: the caller must report
+the failure and wait for new instructions. It does not authorize a retry, create
+a replacement conversation, or notify whichever session happens to be open.
+Engineer-message requests retain their existing delivery-failure receipts.
+
+LCAgent host snapshots use the same launch control key as repository admission.
+Its native controls authenticate with the stable logical thread ID; both keys
+refer to the same recorded conversation, while per-turn run IDs remain audit
+identifiers. A released unfinished task can reacquire its unchanged recorded
+handoff on that thread after a restart, including with a saved model change.
+Held leases still require their original host key, and changed checkouts or
+other threads remain blocked.
+
 Restart on the updated build and reconnect existing provider sessions to load
 the new tool schema, generated runtime skill and live input guards.
 

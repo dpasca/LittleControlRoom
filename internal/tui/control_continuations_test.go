@@ -14,7 +14,7 @@ import (
 )
 
 func TestControlContinuationOnlyWakesTheIntentionallyWaitingCaller(t *testing.T) {
-	for _, scenario := range []string{"success", "no intent", "still running", "new input", "stop", "replacement", "closed", "failed", "canceled", "restart", "uncertain delivery", "caller error"} {
+	for _, scenario := range []string{"success", "lcagent native", "codex thread alias", "lcagent different thread", "no intent", "still running", "new input", "stop", "replacement", "closed", "failed", "canceled", "restart", "uncertain delivery", "caller error"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := t.Context()
 			st, err := store.Open(filepath.Join(t.TempDir(), "state.sqlite"))
@@ -25,13 +25,24 @@ func TestControlContinuationOnlyWakesTheIntentionallyWaitingCaller(t *testing.T)
 			path := t.TempDir()
 			started := time.Now().Add(-time.Second)
 			session := &fakeCodexSession{projectPath: path, snapshot: codexapp.Snapshot{Provider: codexapp.ProviderCodex, ProjectPath: path, ThreadID: "caller-thread", ControlSessionKey: "caller-key", Started: true, Busy: true, ControlInput: codexapp.ControlInputState{Revision: 1, SubmittedAt: time.Now().Add(-time.Millisecond)}}}
+			key := "caller-key"
+			if scenario == "lcagent native" || scenario == "lcagent different thread" {
+				session.snapshot.Provider = codexapp.ProviderLCAgent
+				key = "caller-thread"
+			}
+			if scenario == "codex thread alias" {
+				key = "caller-thread"
+			}
+			if scenario == "lcagent different thread" {
+				key = "other-thread"
+			}
 			manager := codexapp.NewManagerWithFactory(func(codexapp.LaunchRequest, func()) (codexapp.Session, error) { return session, nil })
 			defer manager.CloseAll()
 			if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: path}); err != nil {
 				t.Fatal(err)
 			}
 			args, _ := json.Marshal(control.TodoAddInput{ProjectPath: path, Text: "Record work"})
-			op, err := st.CreateControlOperation(ctx, control.Operation{ID: "lcrop_wait", Source: "mcp", Provider: "codex", SessionKey: "caller-key", ProjectPath: path, ResumeOnSuccess: scenario != "no intent", Invocation: control.Invocation{Capability: control.CapabilityTodoAdd, Args: args}})
+			op, err := st.CreateControlOperation(ctx, control.Operation{ID: "lcrop_wait", Source: "mcp", Provider: string(session.snapshot.Provider), SessionKey: key, ProjectPath: path, ResumeOnSuccess: scenario != "no intent", Invocation: control.Invocation{Capability: control.CapabilityTodoAdd, Args: args}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +89,7 @@ func TestControlContinuationOnlyWakesTheIntentionallyWaitingCaller(t *testing.T)
 				}
 			}
 			want := 0
-			if scenario == "success" {
+			if scenario == "success" || scenario == "lcagent native" {
 				want = 1
 			}
 			if len(session.submitted) != want {
@@ -94,7 +105,7 @@ func TestControlContinuationOnlyWakesTheIntentionallyWaitingCaller(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scenario != "no intent" && scenario != "still running" && scenario != "success" && final.ContinuationState != "suppressed" {
+			if scenario != "no intent" && scenario != "still running" && scenario != "success" && scenario != "lcagent native" && final.ContinuationState != "suppressed" {
 				t.Fatal(final.ContinuationState)
 			}
 		})
