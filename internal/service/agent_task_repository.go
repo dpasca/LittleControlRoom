@@ -290,7 +290,7 @@ func dirtyTaskBoundary(task model.AgentTask, sessionKey, observed string) error 
 	workflow := task.Workflow
 	if workflow.Enabled && workflow.Handoff && workflow.Result == nil && workflow.Review == nil &&
 		(workflow.Phase == "unclassified" || workflow.Phase == "canceled") &&
-		workflow.WorkerKey != "" && workflow.WorkerKey == sessionKey {
+		sameTaskWorkerIdentity(task, sessionKey) {
 		if task.Repository.HandoffFingerprint == "" || observed == "" {
 			return fmt.Errorf("unfinished task has no recorded repository handoff; inspect and preserve its edits before continuing")
 		}
@@ -322,6 +322,24 @@ func dirtyTaskBoundary(task model.AgentTask, sessionKey, observed string) error 
 		return fmt.Errorf("checkout no longer matches the captured correction baseline for revision %d (expected %s, found %s); inspect the intervening changes and capture a new baseline", task.Workflow.RunID, shortFingerprint(task.Repository.CorrectionBaseline), shortFingerprint(observed))
 	}
 	return fmt.Errorf("checkout changed since revision %d was reviewed (reviewed %s, found %s); inspect the intervening changes and capture a correction baseline before continuing", task.Workflow.RunID, shortFingerprint(task.Repository.HandoffFingerprint), shortFingerprint(observed))
+}
+
+// sameTaskWorkerIdentity reports whether sessionKey belongs to the worker that
+// recorded this handoff. A fresh launch records a host-minted key; LCAgent
+// announces its stable logical thread afterwards, and a session reopened after
+// the lease was released presents that thread instead. The task's own recorded
+// LCAgent session is therefore the same worker; another thread, key, or
+// provider still fails closed.
+func sameTaskWorkerIdentity(task model.AgentTask, sessionKey string) bool {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" || task.Workflow.WorkerKey == "" {
+		return false
+	}
+	if task.Workflow.WorkerKey == sessionKey {
+		return true
+	}
+	return model.NormalizeSessionSource(task.Provider) == model.SessionSourceLCAgent &&
+		strings.TrimSpace(task.SessionID) != "" && task.SessionID == sessionKey
 }
 
 func shortFingerprint(value string) string {
