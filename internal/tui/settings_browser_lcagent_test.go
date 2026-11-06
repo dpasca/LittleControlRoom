@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -785,97 +786,110 @@ func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
 	}
 }
 
-func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
-	cfg := config.Default()
-	cfg.DBPath = filepath.Join(t.TempDir(), "little-control-room.sqlite")
-	previous := config.EditableSettingsFromAppConfig(cfg)
-	saved := previous
-	saved.LCAgentWebSearchBackend = "exa"
-	saved.LCAgentWebSearchAPIKey = "exa-key"
-	saved.LCAgentAdminWrite = true
-	saved.EmbeddedLCAgentModel = "custom-lcagent-model"
-	initial := &fakeCodexSession{
-		projectPath: "/tmp/demo",
-		snapshot: codexapp.Snapshot{
-			Provider: codexapp.ProviderLCAgent,
-			Started:  true,
-			ThreadID: "lca_existing",
-			Status:   "LCAgent run complete",
-		},
-	}
-	reopened := &fakeCodexSession{
-		projectPath: "/tmp/demo",
-		snapshot: codexapp.Snapshot{
-			Provider: codexapp.ProviderLCAgent,
-			Started:  true,
-			ThreadID: "lca_existing",
-			Status:   "Loaded LCAgent session lca_existing from disk",
-		},
-	}
-	var openCount int
-	var captured codexapp.LaunchRequest
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		openCount++
-		captured = req
-		if openCount == 1 {
-			return initial, nil
-		}
-		return reopened, nil
-	})
-	if _, _, err := manager.Open(codexapp.LaunchRequest{
-		Provider:    codexapp.ProviderLCAgent,
-		ProjectPath: "/tmp/demo",
-	}); err != nil {
-		t.Fatalf("manager.Open() error = %v", err)
-	}
-	m := Model{
-		svc:                      service.New(cfg, nil, events.NewBus(), nil),
-		codexManager:             manager,
-		settingsBaseline:         &previous,
-		appDBPath:                cfg.DBPath,
-		settingsEmbeddedProject:  "/tmp/demo",
-		settingsEmbeddedProvider: codexapp.ProviderLCAgent,
-	}
-	projectPath, ok := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previous, saved)
-	if !ok {
-		t.Fatalf("shouldReloadEmbeddedLCAgentAfterSettingsSave() = false, want true")
-	}
-	if projectPath != "/tmp/demo" {
-		t.Fatalf("reload project = %q, want /tmp/demo", projectPath)
-	}
+type stageableLCAgentSession struct {
+	*fakeCodexSession
+	staged codexapp.LaunchRequest
+}
 
-	cmd := m.reloadEmbeddedLCAgentAfterSettingsCmd(projectPath, saved)
-	msg := cmd()
-	opened, ok := msg.(codexSessionOpenedMsg)
-	if !ok {
-		t.Fatalf("reload cmd returned %T, want codexSessionOpenedMsg", msg)
-	}
-	if opened.err != nil {
-		t.Fatalf("reload err = %v, want nil", opened.err)
-	}
-	if openCount != 2 {
-		t.Fatalf("open count = %d, want 2", openCount)
-	}
-	if !initial.snapshot.Closed {
-		t.Fatalf("initial session should be closed before reload")
-	}
-	if captured.ResumeID != "lca_existing" {
-		t.Fatalf("resume ID = %q, want lca_existing", captured.ResumeID)
-	}
-	if captured.LCAgentWebSearchBackend != "exa" || captured.LCAgentWebSearchAPIKey != "exa-key" {
-		t.Fatalf("captured web search = (%q, %q), want exa/exa-key", captured.LCAgentWebSearchBackend, captured.LCAgentWebSearchAPIKey)
-	}
-	if !captured.LCAgentAdminWrite {
-		t.Fatalf("captured admin write = false, want true")
-	}
-	if captured.PendingModel != "custom-lcagent-model" {
-		t.Fatalf("pending model = %q, want custom-lcagent-model", captured.PendingModel)
-	}
-	if captured.AppDBPath != cfg.DBPath || captured.TodoCaptureMode != saved.EngineerTodoCaptureMode || captured.TodoCaptureHandler != m.svc {
-		t.Fatalf("reload TODO capture context = db %q mode %q handler %T", captured.AppDBPath, captured.TodoCaptureMode, captured.TodoCaptureHandler)
-	}
-	if !strings.Contains(opened.status, "Restarted LCAgent") {
-		t.Fatalf("opened status = %q, want restart notice", opened.status)
+func (s *stageableLCAgentSession) StageLaunchSettings(req codexapp.LaunchRequest) error {
+	s.staged = req
+	s.snapshot.PendingModel = req.PendingModel
+	s.snapshot.PendingModelProvider = req.LCAgentProvider
+	s.snapshot.PendingReasoning = req.PendingReasoning
+	return nil
+}
+
+func TestApplyEmbeddedLCAgentSettingsKeepsSession(t *testing.T) {
+	for _, busy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("busy=%t", busy), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.DBPath = filepath.Join(t.TempDir(), "little-control-room.sqlite")
+			previous := config.EditableSettingsFromAppConfig(cfg)
+			saved := previous
+			saved.LCAgentWebSearchBackend = "exa"
+			saved.LCAgentWebSearchAPIKey = "exa-key"
+			saved.LCAgentAdminWrite = true
+			saved.EmbeddedLCAgentModel = "custom-lcagent-model"
+			initial := &stageableLCAgentSession{fakeCodexSession: &fakeCodexSession{
+				projectPath: "/tmp/demo",
+				snapshot: codexapp.Snapshot{
+					Provider: codexapp.ProviderLCAgent,
+					Started:  true,
+					ThreadID: "lca_existing",
+					Status:   "LCAgent run complete",
+					Busy:     busy,
+				},
+			}}
+
+			var openCount int
+			var captured codexapp.LaunchRequest
+			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+				openCount++
+				captured = req
+				if openCount == 1 {
+					return initial, nil
+				}
+				t.Fatal("settings update replaced the live session")
+				return nil, nil
+			})
+			if _, _, err := manager.Open(codexapp.LaunchRequest{
+				Provider:    codexapp.ProviderLCAgent,
+				ProjectPath: "/tmp/demo",
+			}); err != nil {
+				t.Fatalf("manager.Open() error = %v", err)
+			}
+			m := Model{
+				svc:                      service.New(cfg, nil, events.NewBus(), nil),
+				codexManager:             manager,
+				settingsBaseline:         &previous,
+				appDBPath:                cfg.DBPath,
+				settingsEmbeddedProject:  "/tmp/demo",
+				settingsEmbeddedProvider: codexapp.ProviderLCAgent,
+			}
+			projectPath, ok := m.shouldStageEmbeddedLCAgentAfterSettingsSave(previous, saved)
+			if !ok {
+				t.Fatalf("shouldStageEmbeddedLCAgentAfterSettingsSave() = false, want true")
+			}
+			if projectPath != "/tmp/demo" {
+				t.Fatalf("reload project = %q, want /tmp/demo", projectPath)
+			}
+
+			cmd := m.stageEmbeddedLCAgentSettingsCmd(projectPath, saved)
+			msg := cmd()
+			opened, ok := msg.(codexActionMsg)
+			if !ok {
+				t.Fatalf("reload cmd returned %T, want codexActionMsg", msg)
+			}
+			if opened.err != nil {
+				t.Fatalf("reload err = %v, want nil", opened.err)
+			}
+			if openCount != 1 {
+				t.Fatalf("open count = %d, want 1", openCount)
+			}
+			if initial.snapshot.Closed || initial.snapshot.Busy != busy {
+				t.Fatal("settings changed the current turn lifecycle")
+			}
+			captured = initial.staged
+			if current, ok := manager.Session("/tmp/demo"); !ok || current != initial {
+				t.Fatal("session identity changed")
+			}
+			if captured.LCAgentWebSearchBackend != "exa" || captured.LCAgentWebSearchAPIKey != "exa-key" {
+				t.Fatalf("captured web search = (%q, %q), want exa/exa-key", captured.LCAgentWebSearchBackend, captured.LCAgentWebSearchAPIKey)
+			}
+			if !captured.LCAgentAdminWrite {
+				t.Fatalf("captured admin write = false, want true")
+			}
+			if captured.PendingModel != "custom-lcagent-model" {
+				t.Fatalf("pending model = %q, want custom-lcagent-model", captured.PendingModel)
+			}
+			if captured.AppDBPath != cfg.DBPath || captured.TodoCaptureMode != saved.EngineerTodoCaptureMode || captured.TodoCaptureHandler != m.svc {
+				t.Fatalf("reload TODO capture context = db %q mode %q handler %T", captured.AppDBPath, captured.TodoCaptureMode, captured.TodoCaptureHandler)
+			}
+			if !strings.Contains(opened.status, "next prompt") {
+				t.Fatalf("opened status = %q, want next-turn notice", opened.status)
+			}
+
+		})
 	}
 }
 

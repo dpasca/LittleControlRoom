@@ -115,6 +115,7 @@ type lcagentSession struct {
 	pendingModel                string
 	pendingModelProvider        string
 	pendingReasoning            string
+	pendingLaunchSettings       *LaunchRequest
 	tokenUsage                  *threadTokenUsage
 	pendingApproval             *ApprovalRequest
 	pendingToolInput            *ToolInputRequest
@@ -1262,6 +1263,103 @@ func lcagentModelOptionExists(models []ModelOption, id string) bool {
 	return false
 }
 
+// StageLaunchSettings saves configuration for the next turn without replacing
+// the session or canceling its current subprocess. Apply it only after idle so
+// tools and provider requests in flight retain the settings they started with.
+func (s *lcagentSession) StageLaunchSettings(req LaunchRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.ProjectPath) != s.projectPath {
+		return ErrSessionChanged
+	}
+	provider, err := lcagentProviderValue(req.LCAgentProvider)
+	if err != nil {
+		return err
+	}
+	route, err := lcagentRoutePresetValue(req.LCAgentRoutePreset)
+	if err != nil {
+		return err
+	}
+	if _, err := lcagentToolProfileValue(req.LCAgentToolProfile); err != nil {
+		return err
+	}
+	if _, err := lcagentContextProfileValue(req.LCAgentContextProfile); err != nil {
+		return err
+	}
+	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(route), provider)
+	model := strings.TrimSpace(req.PendingModel)
+	if model == "" && strings.EqualFold(modelProvider, "ollama") {
+		model = strings.TrimSpace(req.LCAgentOllamaModel)
+	}
+	model = lcagentResolvedModelForSelection(modelProvider, route, model)
+	reasoning := firstNonEmpty(req.PendingReasoning, lcagentRoutePresetReasoningEffort(route))
+	req.LCAgentWritableRoots = append([]string(nil), req.LCAgentWritableRoots...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("LCAgent session is closed")
+	}
+	s.pendingLaunchSettings = &req
+	s.setPendingLaunchSelectionLocked(model, modelProvider, reasoning)
+	// A local provider may resolve Auto only when its next process starts.
+	// Retain that provider change even though no concrete model exists yet.
+	if model == "" {
+		s.pendingModelProvider = modelProvider
+	}
+	return nil
+}
+
+func (s *lcagentSession) applyPendingLaunchSettingsLocked() {
+	req := s.pendingLaunchSettings
+	if req == nil {
+		return
+	}
+	s.pendingLaunchSettings = nil
+	if s.pendingModelProvider != "" && s.pendingModelProvider != s.modelProvider && s.pendingModel == "" {
+		s.model = ""
+	}
+	// Values were validated before staging. Preserve thread state, transcript,
+	// task ownership and session permission overrides across configuration edits.
+	s.provider, _ = lcagentProviderValue(req.LCAgentProvider)
+	s.routePreset, _ = lcagentRoutePresetValue(req.LCAgentRoutePreset)
+	s.toolProfile, _ = lcagentToolProfileValue(req.LCAgentToolProfile)
+	s.contextProfile, _ = lcagentContextProfileValue(req.LCAgentContextProfile)
+	s.requestTimeout = lcagentRequestTimeoutValue(req.LCAgentRequestTimeout)
+	s.execPath = strings.TrimSpace(req.LCAgentPath)
+	s.envFile = strings.TrimSpace(req.LCAgentEnvFile)
+	s.openAIAPIKey = strings.TrimSpace(req.LCAgentOpenAIAPIKey)
+	s.openRouterAPIKey = strings.TrimSpace(req.LCAgentOpenRouterAPIKey)
+	s.deepSeekAPIKey = strings.TrimSpace(req.LCAgentDeepSeekAPIKey)
+	s.moonshotAPIKey = strings.TrimSpace(req.LCAgentMoonshotAPIKey)
+	s.xiaomiAPIKey = strings.TrimSpace(req.LCAgentXiaomiAPIKey)
+	s.xiaomiBaseURL = strings.TrimSpace(req.LCAgentXiaomiBaseURL)
+	s.zaiAPIKey = strings.TrimSpace(req.LCAgentZaiAPIKey)
+	s.zaiBaseURL = strings.TrimSpace(req.LCAgentZaiBaseURL)
+	s.ollamaAPIKey = strings.TrimSpace(req.LCAgentOllamaAPIKey)
+	s.ollamaBaseURL = strings.TrimSpace(req.LCAgentOllamaBaseURL)
+	s.ollamaModel = strings.TrimSpace(req.LCAgentOllamaModel)
+	s.providerAccessCheck = req.LCAgentProviderAccessCheck
+	s.auto = strings.TrimSpace(req.LCAgentAuto)
+	s.adminWrite = req.LCAgentAdminWrite
+	s.writableRoots = req.LCAgentWritableRoots
+	s.utilityProvider = lcagentResolvedUtilityProvider(s.routePreset, s.provider, req.LCAgentUtilityProvider)
+	s.utilityModel = modeladapter.NormalizeModelForProvider(s.utilityProvider, lcagentResolvedUtilityModel(s.routePreset, s.provider, firstNonEmpty(s.pendingModel, s.model), req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
+	s.utilityReasoning = strings.TrimSpace(req.LCAgentUtilityReasoning)
+	s.visionProvider = lcagentVisionProviderValue(req.LCAgentVisionProvider)
+	s.visionModel = strings.TrimSpace(req.LCAgentVisionModel)
+	s.visionReasoning = strings.TrimSpace(req.LCAgentVisionReasoning)
+	s.mainVisionProvider = req.LCAgentMainVisionProvider
+	s.mainVisionModel = req.LCAgentMainVisionModel
+	s.webSearchBackend = lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend)
+	s.webSearchAPIKey = strings.TrimSpace(req.LCAgentWebSearchAPIKey)
+	s.webSearchEngineID = strings.TrimSpace(req.LCAgentWebSearchEngineID)
+	s.webSearchURL = strings.TrimSpace(req.LCAgentWebSearchURL)
+	s.todoCaptureHandler = req.TodoCaptureHandler
+	s.todoCaptureMode = todocapture.NormalizeCaptureMode(req.TodoCaptureMode)
+	s.appDBPath = strings.TrimSpace(req.AppDBPath)
+}
+
 func (s *lcagentSession) StageModelOverride(model, reasoningEffort string) error {
 	return s.StageModelProviderOverride("", model, reasoningEffort)
 }
@@ -1683,6 +1781,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		s.mu.Unlock()
 		return lcagentPreparedRun{}, fmt.Errorf("LCAgent is already running")
 	}
+	s.applyPendingLaunchSettingsLocked()
 	now := time.Now()
 	s.started = true
 	s.busy = true

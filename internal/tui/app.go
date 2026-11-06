@@ -3116,7 +3116,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		attentionSettingsChanged := projectAttentionSettingsChanged(previousSettings, msg.settings)
 		projectScanSettingsChanged := scopeSettingsChanged || attentionSettingsChanged
 		mobileSettingsChanged := mobileServerSettingsChanged(previousSettings, msg.settings)
-		reloadLCAgentProject, shouldReloadLCAgent := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previousSettings, msg.settings)
+		stageLCAgentProject, shouldStageLCAgent := m.shouldStageEmbeddedLCAgentAfterSettingsSave(previousSettings, msg.settings)
 		settingsEmbeddedProject := m.settingsEmbeddedProject
 		settingsEmbeddedProvider := m.settingsEmbeddedProvider
 		lcagentSettingsChanged := strings.TrimSpace(settingsEmbeddedProject) != "" &&
@@ -3142,9 +3142,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if attentionSettingsChanged {
 			m.status = fmt.Sprintf("Settings saved to %s. Project scoring thresholds changed; rescanning projects in the background now.", msg.path)
 		}
-		if shouldReloadLCAgent {
-			m.beginCodexPendingOpen(reloadLCAgentProject, codexapp.ProviderLCAgent)
-			m.status = fmt.Sprintf("Settings saved to %s. Restarting LCAgent so the next run uses the new configuration.", msg.path)
+		if shouldStageLCAgent {
+			m.status = fmt.Sprintf("Settings saved to %s. LCAgent will use the new configuration for its next prompt.", msg.path)
 		} else if lcagentSettingsChanged {
 			m.status = fmt.Sprintf("Settings saved to %s. New LCAgent sessions will use the saved configuration.", msg.path)
 		}
@@ -3157,8 +3156,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildProjectList(selectedPath)
 		cmds := []tea.Cmd{m.applyEditableSettingsCmdWithScan(msg.settings, projectScanSettingsChanged), m.refreshSetupSnapshotCmd(false)}
-		if shouldReloadLCAgent {
-			cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(reloadLCAgentProject, msg.settings))
+		if shouldStageLCAgent {
+			cmds = append(cmds, m.stageEmbeddedLCAgentSettingsCmd(stageLCAgentProject, msg.settings))
 		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)

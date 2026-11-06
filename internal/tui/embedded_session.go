@@ -1299,7 +1299,7 @@ func (m Model) hasRestorableEmbeddedSession(projectPath string, provider codexap
 	return false
 }
 
-func (m Model) shouldReloadEmbeddedLCAgentAfterSettingsSave(previous, saved config.EditableSettings) (string, bool) {
+func (m Model) shouldStageEmbeddedLCAgentAfterSettingsSave(previous, saved config.EditableSettings) (string, bool) {
 	projectPath := strings.TrimSpace(m.settingsEmbeddedProject)
 	if projectPath == "" || m.settingsEmbeddedProvider.Normalized() != codexapp.ProviderLCAgent {
 		return "", false
@@ -1411,12 +1411,12 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 	}
 }
 
-func (m *Model) reloadEmbeddedLCAgentAfterSettingsCmd(projectPath string, settings config.EditableSettings) tea.Cmd {
+func (m *Model) stageEmbeddedLCAgentSettingsCmd(projectPath string, settings config.EditableSettings) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	manager := m.codexManager
 	req := m.lcagentLaunchRequestFromSettings(projectPath, settings)
 	req = m.enrichEmbeddedLaunchRequest(req)
-	perfOpID := m.beginAILatencyOp("Embedded reload", projectPath, "LCAgent settings")
+	perfOpID := m.beginAILatencyOp("Embedded settings", projectPath, "LCAgent settings")
 	return func() tea.Msg {
 		startedAt := time.Now()
 		if manager == nil {
@@ -1437,15 +1437,39 @@ func (m *Model) reloadEmbeddedLCAgentAfterSettingsCmd(projectPath string, settin
 					status:       "Settings saved. New LCAgent sessions will use the saved configuration.",
 				}
 			}
-			if threadID := strings.TrimSpace(snapshot.ThreadID); threadID != "" {
-				req.ResumeID = threadID
+			if snapshot.Closed {
+				req.ResumeID = strings.TrimSpace(snapshot.ThreadID)
 			}
-			if err := manager.CloseProject(projectPath); err != nil {
-				return codexSessionOpenedMsg{
-					projectPath:  projectPath,
-					perfOpID:     perfOpID,
-					perfDuration: time.Since(startedAt),
-					err:          err,
+			if !snapshot.Closed {
+				stager, ok := existing.(interface {
+					StageLaunchSettings(codexapp.LaunchRequest) error
+				})
+				if !ok {
+					return codexActionMsg{projectPath: projectPath, perfOpID: perfOpID, perfDuration: time.Since(startedAt), err: fmt.Errorf("LCAgent session cannot stage configuration changes")}
+				}
+				if err := stager.StageLaunchSettings(req); err != nil {
+					return codexActionMsg{projectPath: projectPath, perfOpID: perfOpID, perfDuration: time.Since(startedAt), err: err}
+				}
+				status := "Settings saved. LCAgent will use the new configuration for the next prompt."
+				if snapshot.Busy {
+					status += " The current turn continues."
+				}
+				selection := existing.Snapshot()
+				stagedModel := firstNonEmptyTrimmed(selection.PendingModel, selection.Model)
+				if selection.PendingModelProvider != "" && selection.PendingModel == "" && selection.PendingModelProvider != selection.ModelProvider {
+					stagedModel = ""
+				}
+				return codexActionMsg{
+					projectPath:   projectPath,
+					status:        status,
+					provider:      codexapp.ProviderLCAgent,
+					model:         stagedModel,
+					modelProvider: settingsLCAgentMainProvider(settings),
+					reasoning:     settings.EmbeddedLCAgentReasoning,
+					awaitSettle:   true,
+					refreshView:   true,
+					perfOpID:      perfOpID,
+					perfDuration:  time.Since(startedAt),
 				}
 			}
 		}
@@ -1470,9 +1494,9 @@ func (m *Model) reloadEmbeddedLCAgentAfterSettingsCmd(projectPath string, settin
 		return codexSessionOpenedMsg{
 			projectPath:      projectPath,
 			snapshot:         snapshot,
-			status:           "Settings saved. Restarted LCAgent so the next run uses the new configuration.",
-			visibleStatus:    "Settings saved. Restarted LCAgent so the next run uses the new configuration.",
-			backgroundStatus: "Settings saved. Restarted LCAgent in the background.",
+			status:           "Settings saved. LCAgent is ready with the new configuration.",
+			visibleStatus:    "Settings saved. LCAgent is ready with the new configuration.",
+			backgroundStatus: "Settings saved. LCAgent is ready in the background.",
 			perfOpID:         perfOpID,
 			perfDuration:     time.Since(startedAt),
 		}

@@ -47,6 +47,8 @@ Implemented pieces:
   keeps the operator's provider/model choice editable and uses it for coding,
   utility work, and supported native image input. Changing `/model` follows
   that selection for every role, including reasoning and the main transport.
+  Model/settings edits are staged for the next prompt; an active turn keeps
+  its current subprocess and configuration and continues uninterrupted.
   The CLI equivalent is `lcagent exec --route-preset single-model --provider
   deepseek --model deepseek-flash "..."`; the setup is model-independent.
   **Custom Routing** exposes optional utility and vision fallbacks; saved custom
