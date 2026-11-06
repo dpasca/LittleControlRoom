@@ -149,8 +149,12 @@ func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input 
 	}
 	s.hydrateCompleteResumedThread(thread)
 
-	if status, ok := resumedTurnStatus(thread, capturedTurnID); ok && turnStatusCompleted(status) {
-		s.appendSystemNotice("The captured Codex turn completed before shutdown; no continuation prompt was needed.")
+	needed, err := restartContinuationNeeded(thread, capturedTurnID)
+	if err != nil {
+		return err
+	}
+	if !needed {
+		s.appendSystemNotice("Session already completed; skipped restart continuation.")
 		return nil
 	}
 
@@ -159,24 +163,65 @@ func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input 
 		if capturedTurnID != "" && activeTurnID != capturedTurnID {
 			return fmt.Errorf("refusing to interrupt Codex turn %s while restoring captured turn %s", shortID(activeTurnID), shortID(capturedTurnID))
 		}
-		if _, err := s.call(ctx, "turn/interrupt", turnInterruptParams{
+		_, interruptErr := s.call(ctx, "turn/interrupt", turnInterruptParams{
 			ThreadID: threadID,
 			TurnID:   activeTurnID,
-		}); err != nil {
-			// The old helper may have completed between thread/read and the
-			// interrupt request. Re-read once before treating that as a failure.
-			refreshed, refreshErr := s.readThreadState(ctx, threadID)
-			if refreshErr != nil || activeTurnIDFromThread(refreshed) != "" {
-				return fmt.Errorf("interrupt captured Codex turn: %w", err)
+		})
+		if interruptErr == nil {
+			if err := s.waitForThreadIdleAfterInterrupt(ctx, threadID); err != nil {
+				return fmt.Errorf("wait for captured Codex turn to stop: %w", err)
 			}
-			s.hydrateCompleteResumedThread(refreshed)
-		} else if err := s.waitForThreadIdleAfterInterrupt(ctx, threadID); err != nil {
-			return fmt.Errorf("wait for captured Codex turn to stop: %w", err)
+		}
+		// Completion or another turn can race with the interrupt. Validate the
+		// refreshed history before submitting any continuation, even when the
+		// interrupt failed because the captured turn had already finished.
+		refreshed, err := s.readThreadState(ctx, threadID)
+		if err != nil {
+			return fmt.Errorf("refresh captured Codex turn after interrupt: %w", err)
+		}
+		s.hydrateCompleteResumedThread(refreshed)
+		needed, err = restartContinuationNeeded(refreshed, capturedTurnID)
+		if err != nil {
+			return err
+		}
+		if !needed {
+			s.appendSystemNotice("Session already completed; skipped restart continuation.")
+			return nil
+		}
+		if s.StateSnapshot().ActiveTurnID != "" {
+			if interruptErr != nil {
+				return fmt.Errorf("interrupt captured Codex turn: %w", interruptErr)
+			}
+			return fmt.Errorf("captured Codex turn is still active after interrupt")
 		}
 	}
 
 	s.appendSystemNotice("Starting a continuation turn for work interrupted by the LCR restart.")
 	return s.SubmitInput(input)
+}
+
+// restartContinuationNeeded uses chronological provider history to reject stale
+// restart intents. An unverifiable intent stays available for manual review;
+// only a verified completion can settle it without starting another turn.
+func restartContinuationNeeded(thread resumedThread, capturedTurnID string) (bool, error) {
+	capturedTurnID = strings.TrimSpace(capturedTurnID)
+	if _, found := resumedTurnStatus(thread, capturedTurnID); !found {
+		return false, fmt.Errorf("cannot verify captured Codex turn; refusing automatic restart continuation")
+	}
+	latest, found := latestResumedTurn(thread)
+	if !found {
+		return false, fmt.Errorf("cannot verify latest Codex turn; refusing automatic restart continuation")
+	}
+	if turnStatusCompleted(latest.Status) {
+		return false, nil
+	}
+	if strings.TrimSpace(latest.ID) != capturedTurnID {
+		return false, fmt.Errorf("a newer Codex turn supersedes the captured turn; refusing automatic restart continuation")
+	}
+	if normalizeTurnStatus(latest.Status) != "inprogress" && !turnStatusSettled(latest.Status) {
+		return false, fmt.Errorf("cannot verify captured Codex turn status; refusing automatic restart continuation")
+	}
+	return true, nil
 }
 
 func resumedTurnStatus(thread resumedThread, turnID string) (string, bool) {
