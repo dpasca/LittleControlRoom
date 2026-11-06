@@ -103,12 +103,6 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 				Description: "Configure utility work and a fallback vision model separately. Native vision on the main model takes precedence. Permissions and context budgets remain independent.",
 			},
 			{
-				Value:       "balanced",
-				Label:       "DeepSeek Pro Coding (legacy)",
-				Summary:     "Fixed model: DeepSeek / " + lcagentModelForRoutePreset("balanced"),
-				Description: "Existing Balanced Coding preset with high reasoning and conservative context budgets. Choose One Model for Everything to select your own model.",
-			},
-			{
 				Value:       "quality",
 				Label:       "OpenAI Coding (legacy)",
 				Summary:     "Fixed model: OpenAI / " + lcagentModelForRoutePreset("quality"),

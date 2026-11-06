@@ -126,10 +126,13 @@ engineer_todo_capture_mode = "explicit_only"
 # LCAgent is experimental. Leave lcagent_path blank to use the bundled binary,
 # PATH lookup, or source-checkout go run fallback. Saved provider keys are used before
 # process environment variables; lcagent_env_file is an advanced fallback.
-# embedded_lcagent_model = "deepseek/deepseek-v4-pro"
+# For direct DeepSeek, Auto uses deepseek-flash (V4.1 Flash rolling alias).
+# Explicit model selections are preserved. Retired balanced setups load as
+# an explicit DeepSeek V4 Pro selection; choose Flash to switch them.
+# embedded_lcagent_model = "deepseek-flash"
 # lcagent_env_file = "~/path/to/openrouter.env"
-# lcagent_route_preset = "balanced" # optional: balanced, quality, mimo-2.5-pro-low/high/max, glm-5.1, cheap-scout
-# lcagent_provider = "openrouter"
+# lcagent_route_preset = "single-model" # one model for coding and helper work
+# lcagent_provider = "deepseek"
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
 # lcagent_context_profile = "balanced" # known model windows adapt packing budgets; unknown models fall back to balanced ~200k chars / large ~600k

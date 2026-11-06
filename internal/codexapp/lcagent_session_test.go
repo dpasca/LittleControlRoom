@@ -3611,3 +3611,36 @@ func TestDelegatedTaskManagedProcessUsesAuthorizedRepository(t *testing.T) {
 		t.Fatalf("unaffiliated cwd accepted: %#v", result)
 	}
 }
+
+func TestLCAgentDeepSeekDefaultPreservesExplicitRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, preset, want string
+	}{
+		{"auto", "", "", "deepseek-flash"},
+		{"explicit pro", "deepseek-v4-pro", "", "deepseek-v4-pro"},
+		{"explicit older flash", "deepseek-v4-flash", "", "deepseek-v4-flash"},
+		{"balanced preset", "", "balanced", "deepseek-v4-pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session, err := newLCAgentSession(LaunchRequest{
+				Provider:           ProviderLCAgent,
+				ProjectPath:        t.TempDir(),
+				AppDataDir:         t.TempDir(),
+				LCAgentProvider:    "deepseek",
+				LCAgentRoutePreset: tc.preset,
+				PendingModel:       tc.model,
+			}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := session.Snapshot().Model; got != tc.want {
+				t.Fatalf("model = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	for _, option := range lcagentModelOptionsForProvider("deepseek") {
+		if option.IsDefault != (option.Model == "deepseek-flash") {
+			t.Fatalf("incorrect built-in default: %#v", option)
+		}
+	}
+}

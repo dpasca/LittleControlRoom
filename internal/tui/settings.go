@@ -3175,7 +3175,7 @@ func lcagentDefaultModelForProvider(provider string) string {
 	case "openai":
 		return config.DefaultBossHelmModel
 	case "deepseek":
-		return "deepseek-v4-pro"
+		return modeladapter.DefaultDeepSeekModel
 	case "moonshot":
 		return config.DefaultMoonshotModel
 	case "xiaomi":

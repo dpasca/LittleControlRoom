@@ -1254,11 +1254,11 @@ func TestRunPresetsListsCodingRoutes(t *testing.T) {
 	got := map[string]string{}
 	for _, preset := range presets {
 		got[preset.Name] = preset.Provider + "/" + preset.Model
-		if preset.Name == "balanced" && preset.ReasoningEffort != "high" {
-			t.Fatalf("balanced reasoning effort = %q, want high: %#v", preset.ReasoningEffort, presets)
+		if preset.Name == "balanced" {
+			t.Fatal("retired balanced preset must not be advertised")
 		}
 	}
-	for _, name := range []string{"balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout"} {
+	for _, name := range []string{"quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout"} {
 		if got[name] == "/" {
 			t.Fatalf("preset %s missing provider/model: %#v", name, presets)
 		}

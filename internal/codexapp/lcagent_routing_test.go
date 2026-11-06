@@ -57,7 +57,7 @@ func TestLCAgentReopenKeepsSavedVisionRouteOverHistoricalGLM(t *testing.T) {
 	})
 	resumed, err := newLCAgentSession(LaunchRequest{
 		Provider: ProviderLCAgent, ProjectPath: root, AppDataDir: dataDir, ResumeID: id, RequireResumeID: true,
-		LCAgentProvider: "deepseek", LCAgentVisionProvider: "deepseek", LCAgentVisionModel: "deepseek-flash",
+		LCAgentProvider: "deepseek", PendingModel: "deepseek-v4-pro", LCAgentVisionProvider: "deepseek", LCAgentVisionModel: "deepseek-flash",
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

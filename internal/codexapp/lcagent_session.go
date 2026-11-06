@@ -941,7 +941,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		}
 	case "deepseek":
 		return []ModelOption{
-			option(modeladapter.DefaultDeepSeekModel, "Balanced: DeepSeek V4 Pro", "Direct DeepSeek coding route.", lcagentDefaultReasoningEffort(provider, modeladapter.DefaultDeepSeekModel), defaultModel == modeladapter.DefaultDeepSeekModel),
+			option(modelcatalog.DeepSeekProModel, "DeepSeek V4 Pro", "Direct DeepSeek Pro coding route.", lcagentDefaultReasoningEffort(provider, modelcatalog.DeepSeekProModel), defaultModel == modelcatalog.DeepSeekProModel),
 			option(modelcatalog.DeepSeekLatestFlashModel, "DeepSeek V4.1 Flash", "Direct DeepSeek Flash route (rolling alias).", lcagentDefaultReasoningEffort(provider, modelcatalog.DeepSeekLatestFlashModel), defaultModel == modelcatalog.DeepSeekLatestFlashModel),
 		}
 	case "moonshot":
@@ -3677,7 +3677,7 @@ func lcagentRoutePresetModel(preset string) string {
 	case "quality":
 		return modeladapter.DefaultOpenAIModel
 	case "balanced":
-		return modeladapter.DefaultDeepSeekModel
+		return modelcatalog.DeepSeekProModel
 	case "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max":
 		return modeladapter.DefaultXiaomiModel
 	case "glm-5.1":

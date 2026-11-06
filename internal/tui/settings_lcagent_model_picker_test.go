@@ -53,6 +53,17 @@ func TestSettingsLCAgentModelPickerRefreshesProviderList(t *testing.T) {
 	if view := ansi.Strip(m.renderSettingsLCAgentModelPickerContent(100, 30)); !strings.Contains(view, "Live provider model list") || !strings.Contains(view, "Ctrl+R") {
 		t.Fatalf("missing discovery status or refresh hint: %s", view)
 	}
+	for _, option := range m.settingsLCAgentModelPicker.Models {
+		if option.IsDefault != (option.Model == "deepseek-flash") {
+			t.Fatalf("incorrect live-list default: %#v", option)
+		}
+	}
+	if got := settingsLCAgentModelPickerAutoLabelForProvider(config.EditableSettings{}, settingsFieldLCAgentModel, "deepseek"); got != "deepseek-flash" {
+		t.Fatalf("Auto label = %q, want deepseek-flash", got)
+	}
+	if view := ansi.Strip(m.renderSettingsLCAgentModelPickerContent(110, 30)); !strings.Contains(view, "built-in fallback") {
+		t.Fatalf("missing fallback explanation: %s", view)
+	}
 	// Unknown releases stay selectable through the normal picker flow.
 	m.settingsLCAgentModelPicker.Selected = settingsLCAgentModelPickerSelection(m.settingsLCAgentModelPicker.Models, m.settingsLCAgentModelPicker.Rows, "future-release")
 	next, _ = m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1269,5 +1280,13 @@ func TestSetupLCAgentKnownModelProviderMismatchBlocksSave(t *testing.T) {
 	rendered := got.renderSetupConfigContent(90)
 	if !strings.Contains(rendered, "mimo-v2.5-pro belongs to Xiaomi") {
 		t.Fatalf("setup warning missing provider/model mismatch: %q", rendered)
+	}
+}
+
+func TestLCAgentSetupDoesNotOfferRetiredBalancedPreset(t *testing.T) {
+	for _, option := range settingsChoiceOptionsForField(settingsFieldLCAgentRoutePreset) {
+		if option.Value == "balanced" {
+			t.Fatal("retired model bundle is still offered")
+		}
 	}
 }

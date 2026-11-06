@@ -1598,3 +1598,36 @@ func TestParseLeavesLegacyStateUntouched(t *testing.T) {
 		t.Fatalf("expected legacy db to remain untouched, err=%v", err)
 	}
 }
+
+func TestParseMigratesRetiredLCAgentBalancedPreset(t *testing.T) {
+	useTempHome(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := []byte("lcagent_route_preset = \"balanced\"\nlcagent_provider = \"openrouter\"\n")
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse("scan", []string{"--config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LCAgentRoutePreset != "" || cfg.LCAgentProvider != "deepseek" || cfg.EmbeddedLCAgentModel != "deepseek-v4-pro" || cfg.EmbeddedLCAgentReasoning != "high" || cfg.LCAgentAuto != "low" {
+		t.Fatalf("legacy setup did not become an explicit Pro selection: %+v", EditableSettingsFromAppConfig(cfg))
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(original) {
+		t.Fatal("loading must not rewrite user config")
+	}
+	if err := SaveEditableSettings(path, EditableSettingsFromAppConfig(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Parse("scan", []string{"--config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.LCAgentRoutePreset != "" || reloaded.EmbeddedLCAgentModel != "deepseek-v4-pro" {
+		t.Fatal("save/reload restored the retired preset")
+	}
+}

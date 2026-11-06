@@ -436,7 +436,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
-	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "model setup: single-model, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout; legacy presets supply defaults; single-model follows main for all roles")
+	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "model setup: single-model, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, glm-5.1, or cheap-scout; legacy presets supply defaults; single-model follows main for all roles")
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, zai, ollama, or mlx")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")

@@ -468,8 +468,6 @@ func TestSettingsLCAgentChoicePickerChoosesRoutePreset(t *testing.T) {
 
 	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(Model)
-	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
 	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.settingsChoicePicker != nil {

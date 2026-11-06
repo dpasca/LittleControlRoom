@@ -22,12 +22,9 @@ import (
 const (
 	DefaultOpenRouterModel = modelcatalog.OpenRouterViaDeepSeek
 	DefaultOpenAIModel     = config.DefaultBossHelmModel
-	// NOTE: this is the DeepSeek *pro* model. config.DefaultDeepSeekModel is the
-	// *flash* model — two exported constants that share a name across packages
-	// while holding different values. Both now resolve through modelcatalog,
-	// whose names state the tier, so the divergence is explicit rather than a
-	// trap for whoever reads only one of them.
-	DefaultDeepSeekModel      = modelcatalog.DeepSeekProModel
+	// LCAgent follows the latest direct DeepSeek Flash route; explicit Pro
+	// selections and the balanced route preset remain pinned separately.
+	DefaultDeepSeekModel      = modelcatalog.DeepSeekLatestFlashModel
 	DefaultMoonshotModel      = modelcatalog.MoonshotModel
 	DefaultXiaomiModel        = modelcatalog.XiaomiProModel
 	DefaultXiaomiUtilityModel = modelcatalog.XiaomiUtilityModel

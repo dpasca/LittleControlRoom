@@ -1326,9 +1326,9 @@ func (m Model) renderSettingsLCAgentModelPickerRow(index int, state *settingsLCA
 				right = ""
 			}
 			if option.IsDefault && right == "" {
-				right = "default"
+				right = "built-in fallback"
 			} else if option.IsDefault {
-				right += "  default"
+				right += "  built-in fallback"
 			}
 		}
 	}

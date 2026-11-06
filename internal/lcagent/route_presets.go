@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"lcroom/internal/lcagent/modeladapter"
+	"lcroom/internal/modelcatalog"
 )
 
 type lcagentRoutePreset struct {
@@ -31,19 +32,6 @@ func lcagentRoutePresets() []lcagentRoutePreset {
 			Name:        "single-model",
 			DisplayName: "One Model for Everything",
 			Description: "Use your selected provider and model for coding, utility work, and native image input. No fixed model bundle.",
-		},
-		{
-			Name:            "balanced",
-			DisplayName:     "Balanced Coding",
-			Description:     "Default coding lane: direct DeepSeek V4 Pro with high reasoning and conservative tool/context budgets.",
-			Provider:        "deepseek",
-			Model:           modeladapter.DefaultDeepSeekModel,
-			ReasoningEffort: "high",
-			Auto:            "low",
-			ToolProfile:     "balanced",
-			ContextProfile:  "balanced",
-			RequestTimeout:  10 * time.Minute,
-			Temperature:     "0.2",
 		},
 		{
 			Name:            "quality",
@@ -76,12 +64,31 @@ func lcagentRoutePresets() []lcagentRoutePreset {
 	}
 }
 
+// balanced is accepted only for compatibility with old scripts, never advertised.
+func legacyBalancedRoutePreset() lcagentRoutePreset {
+	return lcagentRoutePreset{
+		Name:            "balanced",
+		DisplayName:     "Balanced Coding (V4 Pro)",
+		Description:     "Pinned coding lane: direct DeepSeek V4 Pro with high reasoning and conservative tool/context budgets.",
+		Provider:        "deepseek",
+		Model:           modelcatalog.DeepSeekProModel,
+		ReasoningEffort: "high",
+		Auto:            "low",
+		ToolProfile:     "balanced",
+		ContextProfile:  "balanced",
+		RequestTimeout:  10 * time.Minute,
+		Temperature:     "0.2",
+	}
+}
+
 func lcagentRoutePresetByName(name string) (lcagentRoutePreset, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(name))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	switch normalized {
 	case "":
 		return lcagentRoutePreset{}, false
+	case "balanced":
+		return legacyBalancedRoutePreset(), true
 	case "scout", "cheap", "cheapscout":
 		normalized = "cheap-scout"
 	case "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "mimo-2.5-pro", "xiaomi", "xiaomi-mimo":

@@ -265,6 +265,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 }
 
 func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
+	migrateLCAgentBalancedPreset(&settings.LCAgentRoutePreset, &settings.LCAgentProvider, &settings.EmbeddedLCAgentModel, &settings.EmbeddedLCAgentReasoning, &settings.LCAgentAuto)
 	if len(settings.IncludePaths) == 0 {
 		settings.IncludePaths = append([]string(nil), Default().IncludePaths...)
 	}
