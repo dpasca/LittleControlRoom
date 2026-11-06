@@ -37,12 +37,20 @@ func (m Model) approveProjectCollaborationCmd(id string) tea.Cmd {
 func (m Model) applyProjectCollaborationApproved(msg projectCollaborationApprovedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		if m.externalControlConfirmation != nil && m.externalControlConfirmation.operation.ID == msg.id {
-			state := *m.externalControlConfirmation
-			state.submitting = false
-			state.errorText = "Approval failed: " + msg.err.Error()
-			m.externalControlConfirmation = &state
+			if msg.operation.ID == msg.id && msg.operation.Status != control.OperationWaitingForConfirmation {
+				m.externalControlConfirmation = nil
+			} else {
+				state := *m.externalControlConfirmation
+				state.submitting = false
+				state.errorText = "Approval failed: " + msg.err.Error()
+				m.externalControlConfirmation = &state
+			}
 		}
-		m.status = "Project collaboration approval failed: " + msg.err.Error()
+		label := "Project collaboration"
+		if msg.scoped {
+			label = "LCR permission"
+		}
+		m.status = label + " approval failed: " + msg.err.Error()
 		return m, nil
 	}
 	if m.externalControlConfirmation != nil && m.externalControlConfirmation.operation.ID == msg.id {

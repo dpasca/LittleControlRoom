@@ -17,11 +17,12 @@ import (
 )
 
 type externalControlProposalLoadedMsg struct {
-	operation             control.Operation
-	automatic             bool
-	workerCleanupEligible bool
-	preflight             externalControlPreflight
-	err                   error
+	operation                control.Operation
+	automatic                bool
+	workerCleanupEligible    bool
+	workerDelegationEligible bool
+	preflight                externalControlPreflight
+	err                      error
 }
 
 type externalControlConfirmationRecordedMsg struct {
@@ -44,13 +45,14 @@ type externalControlConfirmationState struct {
 	preview   string
 	// standingUnavailable is set when the arguments could be saved as a standing
 	// permission but the live repository state does not qualify.
-	standingUnavailable   string
-	workerCleanupEligible bool
-	reviewing             bool
-	submitting            bool
-	errorText             string
-	scrollOffset          int
-	showDetails           bool
+	standingUnavailable      string
+	workerCleanupEligible    bool
+	workerDelegationEligible bool
+	reviewing                bool
+	submitting               bool
+	errorText                string
+	scrollOffset             int
+	showDetails              bool
 	// selected indexes bossui.PermissionChoices for this operation.
 	selected int
 }
@@ -113,10 +115,14 @@ func (m Model) loadExternalControlProposalCmd(operationID string) tea.Cmd {
 			operation.Invocation = inspected
 		}
 		workerCleanupEligible := false
+		workerDelegationEligible := false
 		if err == nil && !automatic && operation.Status == control.OperationWaitingForConfirmation {
 			workerCleanupEligible, err = svc.Store().WorkerWorktreeCleanupEligible(parent, operation)
 		}
-		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, workerCleanupEligible: workerCleanupEligible, preflight: preflight, err: err}
+		if err == nil && !automatic && operation.Status == control.OperationWaitingForConfirmation {
+			workerDelegationEligible, err = svc.Store().WorkerDelegationEligible(parent, operation)
+		}
+		return externalControlProposalLoadedMsg{operation: operation, automatic: automatic, workerDelegationEligible: workerDelegationEligible, workerCleanupEligible: workerCleanupEligible, preflight: preflight, err: err}
 	}
 }
 
@@ -171,10 +177,11 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 		preview = msg.preflight.preview
 	}
 	m.externalControlConfirmation = &externalControlConfirmationState{
-		operation:             msg.operation,
-		preview:               preview,
-		standingUnavailable:   msg.preflight.standingNote,
-		workerCleanupEligible: msg.workerCleanupEligible,
+		operation:                msg.operation,
+		preview:                  preview,
+		standingUnavailable:      msg.preflight.standingNote,
+		workerCleanupEligible:    msg.workerCleanupEligible,
+		workerDelegationEligible: msg.workerDelegationEligible,
 	}
 	m.status = "Agent request waiting; current input remains active until Ctrl+G opens review"
 	return m, nil
@@ -251,7 +258,7 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 		return m, nil
 	case "up", "down":
 		state := *m.externalControlConfirmation
-		last := len(bossui.PermissionChoices(state.operation, state.standingUnavailable, state.workerCleanupEligible)) - 1
+		last := len(bossui.PermissionChoices(state.operation, state.standingUnavailable, state.workerDelegationEligible, state.workerCleanupEligible)) - 1
 		if msg.String() == "up" {
 			state.selected = max(0, state.selected-1)
 		} else {
@@ -260,14 +267,17 @@ func (m Model) updateExternalControlConfirmationMode(msg tea.KeyMsg) (tea.Model,
 		m.externalControlConfirmation = &state
 		return m, nil
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		choices := bossui.PermissionChoices(m.externalControlConfirmation.operation, m.externalControlConfirmation.standingUnavailable, m.externalControlConfirmation.workerCleanupEligible)
+		choices := bossui.PermissionChoices(m.externalControlConfirmation.operation, m.externalControlConfirmation.standingUnavailable, m.externalControlConfirmation.workerDelegationEligible, m.externalControlConfirmation.workerCleanupEligible)
 		index := int(msg.String()[0] - '1')
 		if len(choices) < 2 || index >= len(choices) {
 			return m, nil
 		}
+		state := *m.externalControlConfirmation
+		state.selected = index
+		m.externalControlConfirmation = &state
 		return m.confirmExternalControlChoice(choices[index])
 	case "enter":
-		choices := bossui.PermissionChoices(m.externalControlConfirmation.operation, m.externalControlConfirmation.standingUnavailable, m.externalControlConfirmation.workerCleanupEligible)
+		choices := bossui.PermissionChoices(m.externalControlConfirmation.operation, m.externalControlConfirmation.standingUnavailable, m.externalControlConfirmation.workerDelegationEligible, m.externalControlConfirmation.workerCleanupEligible)
 		return m.confirmExternalControlChoice(choices[max(0, min(m.externalControlConfirmation.selected, len(choices)-1))])
 	case "esc", "ctrl+c":
 		m.externalControlConfirmation = nil
@@ -313,8 +323,9 @@ func (m Model) externalControlConfirmationPanel(bodyW, bodyH int) (string, int, 
 		Preview: confirmation.preview, Busy: confirmation.submitting,
 		ErrorText: confirmation.errorText, ScrollOffset: confirmation.scrollOffset,
 		ShowDetails: confirmation.showDetails, Selected: confirmation.selected,
-		StandingUnavailable:   confirmation.standingUnavailable,
-		WorkerCleanupEligible: confirmation.workerCleanupEligible,
+		StandingUnavailable:      confirmation.standingUnavailable,
+		WorkerCleanupEligible:    confirmation.workerCleanupEligible,
+		WorkerDelegationEligible: confirmation.workerDelegationEligible,
 	}, bodyW, bodyH)
 }
 

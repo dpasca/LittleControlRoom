@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -120,6 +121,15 @@ func (s *Store) PermissionAllowsOperation(ctx context.Context, op control.Operat
 	return id != 0, err
 }
 
+// WorkerDelegationEligible checks the same persisted ownership used when saving
+// a grant. Call this off the UI thread before offering worker management.
+func (s *Store) WorkerDelegationEligible(ctx context.Context, op control.Operation) (bool, error) {
+	if _, ok := control.WorkerDelegationForOperation(op); !ok {
+		return false, nil
+	}
+	return workerDelegationOwnsTask(ctx, s.db, op)
+}
+
 // ApproveControlPermission is host-only; grant creation and the first use are
 // atomic. A session grant is bound to the actual control channel, not model input.
 func (s *Store) ApproveControlPermission(ctx context.Context, operationID string, sessionOnly bool) (control.Operation, error) {
@@ -146,6 +156,9 @@ func (s *Store) approveControlPermission(ctx context.Context, operationID string
 	if err != nil {
 		return control.Operation{}, err
 	}
+	if op.Status != control.OperationWaitingForConfirmation {
+		return op, fmt.Errorf("this request is %s; it is no longer waiting for approval", op.Status)
+	}
 	p, ok := control.PermissionForOperation(op)
 	if scope == control.PermissionScopeSessionWorkers {
 		p, ok = control.WorkerDelegationForOperation(op)
@@ -153,6 +166,9 @@ func (s *Store) approveControlPermission(ctx context.Context, operationID string
 			ok, err = workerDelegationOwnsTask(ctx, tx, op)
 			if err != nil {
 				return control.Operation{}, err
+			}
+			if !ok {
+				return control.Operation{}, errors.New("worker management requires an eligible task owned by this caller session")
 			}
 		}
 	}
@@ -165,8 +181,8 @@ func (s *Store) approveControlPermission(ctx context.Context, operationID string
 			}
 		}
 	}
-	if !ok || op.Status != control.OperationWaitingForConfirmation {
-		return control.Operation{}, errors.New("this request is no longer eligible for a saved permission")
+	if !ok {
+		return control.Operation{}, errors.New("this request does not support the selected permission scope")
 	}
 	if sessionOnly {
 		p.SessionKey = op.SessionKey

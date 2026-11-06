@@ -153,7 +153,11 @@ func TestWorkerSessionApprovalRequiresReviewAndCoversLaterLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(ctx, service.New(config.Default(), st, events.NewBus(), nil))
-	updated, _ := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{operation: claimed})
+	loaded := m.loadExternalControlProposalCmd(claimed.ID)().(externalControlProposalLoadedMsg)
+	if loaded.err != nil || !loaded.workerDelegationEligible {
+		t.Fatal(loaded)
+	}
+	updated, _ := m.applyExternalControlProposalLoaded(loaded)
 	m = normalizeUpdateModel(updated)
 	press := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")}
 	updated, _ = m.Update(press)
@@ -165,8 +169,8 @@ func TestWorkerSessionApprovalRequiresReviewAndCoversLaterLaunch(t *testing.T) {
 	m = normalizeUpdateModel(updated)
 	updated, save := m.Update(press)
 	m = normalizeUpdateModel(updated)
-	if save == nil || !m.externalControlConfirmation.submitting {
-		t.Fatal("worker approval did not enter submitting state")
+	if save == nil || !m.externalControlConfirmation.submitting || m.externalControlConfirmation.selected != 3 {
+		t.Fatal("worker approval did not retain its selected submitting state")
 	}
 	if _, again := m.Update(press); again != nil {
 		t.Fatal("repeat worker approval")
@@ -188,7 +192,7 @@ func TestWorkerSessionApprovalRequiresReviewAndCoversLaterLaunch(t *testing.T) {
 	if _, _, err := st.ClaimNextControlOperation(ctx); err != nil {
 		t.Fatal(err)
 	}
-	loaded := m.loadExternalControlProposalCmd(next.ID)().(externalControlProposalLoadedMsg)
+	loaded = m.loadExternalControlProposalCmd(next.ID)().(externalControlProposalLoadedMsg)
 	if loaded.err != nil || !loaded.automatic {
 		t.Fatal("later worker still asks", loaded)
 	}
@@ -296,5 +300,97 @@ func TestWorkerCleanupApprovalRequiresReviewAndCoversNextWorker(t *testing.T) {
 	}
 	if result := revoke().(projectCollaborationsLoadedMsg); result.err != nil || len(result.permissions) != 0 {
 		t.Fatal(result)
+	}
+}
+
+func TestWorkerApprovalDialogUsesPersistedParentOwnership(t *testing.T) {
+	ctx := t.Context()
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	path := t.TempDir()
+	parent, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{Title: "Other caller's worker", Kind: model.AgentTaskKindAgent,
+		OriginProjectPath: path, OriginProvider: model.SessionSourceCodex, OriginSessionKey: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]any{"title": "Nested worker", "parent_task_id": parent.ID, "provider": "codex", "model": "worker-model"})
+	op, err := st.CreateControlOperation(ctx, control.Operation{ID: "nested-worker", Source: "mcp", Provider: "codex", SessionKey: "organizer", ProjectPath: path,
+		Invocation: control.Invocation{Capability: control.CapabilityAgentTaskCreate, Args: args}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := st.ClaimNextControlOperation(ctx); err != nil || !found {
+		t.Fatal(found, err)
+	}
+	m := New(ctx, service.New(config.Default(), st, events.NewBus(), nil))
+	loaded := m.loadExternalControlProposalCmd(op.ID)().(externalControlProposalLoadedMsg)
+	if loaded.err != nil || loaded.workerDelegationEligible || loaded.automatic {
+		t.Fatal(loaded)
+	}
+	updated, _ := m.applyExternalControlProposalLoaded(loaded)
+	m = normalizeUpdateModel(updated)
+	updated, _ = m.openExternalControlConfirmationReview()
+	m = normalizeUpdateModel(updated)
+	panel, _, err := m.externalControlConfirmationPanel(120, 40)
+	if err != nil || strings.Contains(panel, "Manage workers") {
+		t.Fatal(panel, err)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")})
+	m = normalizeUpdateModel(updated)
+	if cmd != nil || m.externalControlConfirmation.submitting {
+		t.Fatal("hidden worker choice was activated")
+	}
+	// The operator can still deny the request without creating a permission.
+	_, deny := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if deny == nil {
+		t.Fatal("Esc did not deny")
+	}
+	if _, ok := deny().(bossui.ControlInvocationCanceledMsg); !ok {
+		t.Fatal("wrong denial message")
+	}
+	permissions, err := st.ListControlPermissions(ctx, path)
+	if err != nil || len(permissions) != 0 {
+		t.Fatal(permissions, err)
+	}
+}
+
+func TestStaleScopedApprovalClosesReviewAndNamesRequestState(t *testing.T) {
+	ctx := t.Context()
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	path := t.TempDir()
+	op, err := st.CreateControlOperation(ctx, control.Operation{ID: "stale-worker", Source: "mcp", Provider: "codex", SessionKey: "organizer", ProjectPath: path,
+		Invocation: control.Invocation{Capability: control.CapabilityAgentTaskCreate, Args: json.RawMessage(`{"title":"Worker"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := st.ClaimNextControlOperation(ctx); err != nil || !found {
+		t.Fatal(found, err)
+	}
+	m := New(ctx, service.New(config.Default(), st, events.NewBus(), nil))
+	loaded := m.loadExternalControlProposalCmd(op.ID)().(externalControlProposalLoadedMsg)
+	updated, _ := m.applyExternalControlProposalLoaded(loaded)
+	m = normalizeUpdateModel(updated)
+	if _, err := st.UpdateControlOperationStatus(ctx, op.ID, control.OperationCanceled, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	result := m.approveControlPermissionCmd(op.ID, bossui.PermissionAllowSessionWorkers)()
+	updated, execute := m.Update(result)
+	m = normalizeUpdateModel(updated)
+	if execute != nil || m.externalControlConfirmation != nil {
+		t.Fatal("stale approval remained actionable")
+	}
+	if !strings.Contains(m.status, "LCR permission approval failed") || !strings.Contains(m.status, "canceled") {
+		t.Fatal(m.status)
+	}
+	permissions, err := st.ListControlPermissions(ctx, path)
+	if err != nil || len(permissions) != 0 {
+		t.Fatal(permissions, err)
 	}
 }

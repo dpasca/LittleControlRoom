@@ -457,7 +457,10 @@ dialog never offers two kinds of "always". **Esc** denies the request. No
 permission is created by merely proposing an action. Agents cannot create, edit, or revoke permissions through MCP.
 
 Worker creation also offers **Manage workers for this session**, normally choice
-**4** (or **2** when a fixed-model action permission is unavailable). Approve this
+**4** (or **2** when a fixed-model action permission is unavailable). For requests
+with a parent task, this choice is offered only after the host verifies that the
+parent belongs to the exact caller, is not archived or explicitly stopped, and
+has no revoked supervision. Ownership is checked again when saving. Approve this
 once to let an organizer create unlimited workers, choose different providers,
 models and reasoning settings, continue its own tasks in their existing
 sessions, and mark those tasks completed or waiting. Titles, prompts,

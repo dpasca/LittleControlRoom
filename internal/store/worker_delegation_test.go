@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lcroom/internal/control"
@@ -195,5 +196,82 @@ func TestExistingActionPermissionsMigrateWithoutBroadening(t *testing.T) {
 	permissions, err := st.ListControlPermissions(t.Context(), "/caller")
 	if err != nil || len(permissions) != 1 || permissions[0].Scope != "" || permissions[0].Limit != 3 || permissions[0].Used != 2 {
 		t.Fatal("existing permission changed on migration", permissions, err)
+	}
+}
+
+func TestWorkerDelegationEligibilityMatchesApproval(t *testing.T) {
+	for _, scenario := range []string{"no parent", "owned parent", "other caller", "other checkout", "other provider", "stopped", "revoked", "archived", "missing"} {
+		t.Run(scenario, func(t *testing.T) {
+			st := supervisionStore(t)
+			ctx, origin := t.Context(), t.TempDir()
+			input := model.CreateAgentTaskInput{Title: "Parent", Kind: model.AgentTaskKindAgent,
+				OriginProjectPath: origin, OriginWorktreePath: origin,
+				OriginProvider: model.SessionSourceCodex, OriginSessionKey: "organizer"}
+			switch scenario {
+			case "other caller":
+				input.OriginSessionKey = "other"
+			case "other checkout":
+				input.OriginWorktreePath = origin + "-sibling"
+			case "other provider":
+				input.OriginProvider = model.SessionSourceClaudeCode
+			case "stopped":
+				input.Workflow.CallerStopped = true
+			case "revoked":
+				input.Workflow.SupervisionRevoked = true
+			case "archived":
+				input.Status = model.AgentTaskStatusArchived
+			}
+			task, err := st.CreateAgentTask(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fields := map[string]any{"title": "Worker", "provider": "codex", "model": "worker-model"}
+			if scenario != "no parent" {
+				fields["parent_task_id"] = task.ID
+			}
+			if scenario == "missing" {
+				fields["parent_task_id"] = "missing-task"
+			}
+			op := permissionOperation(t, st, "worker", "organizer", origin, origin, control.CapabilityAgentTaskCreate, fields)
+			if _, found, err := st.ClaimNextControlOperation(ctx); err != nil || !found {
+				t.Fatal(found, err)
+			}
+			want := scenario == "no parent" || scenario == "owned parent"
+			if eligible, err := st.WorkerDelegationEligible(ctx, op); err != nil || eligible != want {
+				t.Fatal(eligible, err)
+			}
+			_, err = st.ApproveWorkerDelegation(ctx, op.ID)
+			if want && err != nil {
+				t.Fatal(err)
+			}
+			if !want && (err == nil || !strings.Contains(err.Error(), "owned by this caller session")) {
+				t.Fatal(err)
+			}
+			permissions, err := st.ListControlPermissions(ctx, origin)
+			if err != nil || (len(permissions) == 1) != want {
+				t.Fatal(permissions, err)
+			}
+		})
+	}
+}
+
+func TestCanceledWorkerApprovalDoesNotSavePermission(t *testing.T) {
+	st := supervisionStore(t)
+	ctx, origin := t.Context(), t.TempDir()
+	op := permissionOperation(t, st, "worker", "organizer", origin, origin, control.CapabilityAgentTaskCreate,
+		map[string]any{"title": "Worker"})
+	if _, found, err := st.ClaimNextControlOperation(ctx); err != nil || !found {
+		t.Fatal(found, err)
+	}
+	if _, err := st.UpdateControlOperationStatus(ctx, op.ID, control.OperationCanceled, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.ApproveWorkerDelegation(ctx, op.ID)
+	if err == nil || !strings.Contains(err.Error(), "canceled") || current.Status != control.OperationCanceled {
+		t.Fatal(current, err)
+	}
+	permissions, err := st.ListControlPermissions(ctx, origin)
+	if err != nil || len(permissions) != 0 {
+		t.Fatal(permissions, err)
 	}
 }
