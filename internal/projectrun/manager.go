@@ -139,6 +139,15 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) CloseAll() error {
+	ctx, cancel := context.WithTimeout(context.Background(), closeAllWaitTimeout)
+	defer cancel()
+	return m.CloseAllWithContext(ctx)
+}
+
+// CloseAllWithContext sends the stop request once, then waits for actual exit.
+// The TUI uses a shutdown deadline longer than the short best-effort cleanup
+// deadline so normal runtime cleanup does not require a second confirmed quit.
+func (m *Manager) CloseAllWithContext(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
@@ -169,25 +178,27 @@ func (m *Manager) CloseAll() error {
 			}
 		}
 	}
-	if err := m.waitForAllStopped(closeAllWaitTimeout); err != nil && firstErr == nil {
+	if err := m.waitForAllStopped(ctx); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return firstErr
 }
 
-func (m *Manager) waitForAllStopped(timeout time.Duration) error {
+func (m *Manager) waitForAllStopped(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
-	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		if !m.anyRunningRuntime() {
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return errors.New("timed out waiting for runtimes to stop")
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for runtimes to stop: %w", ctx.Err())
+		case <-ticker.C:
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 }
 

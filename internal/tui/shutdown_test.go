@@ -1,14 +1,68 @@
 package tui
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestGracefulQuitWaitsForRuntimeCleanupWithoutSecondConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	// A normal SIGTERM cleanup can exceed the old two-second best-effort
+	// CloseAll deadline. One confirmed quit should wait for its completion.
+	script := "trap 'sleep 3; exit 0' TERM\necho READY\nwhile :; do sleep 0.1; done\n"
+	if err := os.WriteFile(filepath.Join(dir, "slow-stop.sh"), []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := projectrun.NewManager()
+	defer manager.CloseAll()
+	if _, err := manager.Start(projectrun.StartRequest{ProjectPath: dir, Command: "sh ./slow-stop.sh"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		snapshot, err := manager.Snapshot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.Join(snapshot.RecentOutput, "\n"), "READY") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("runtime did not install its cleanup handler")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	m := Model{runtimeManager: manager, appDataDirPath: t.TempDir()}
+	updated, cmd := m.beginGracefulQuit()
+	quitting := updated.(Model)
+	if _, repeat := quitting.beginGracefulQuit(); repeat != nil {
+		t.Fatal("second activation stacked another shutdown")
+	}
+	finished := cmd().(gracefulQuitFinishedMsg)
+	if finished.err != nil {
+		t.Fatalf("one confirmed quit paused during normal runtime cleanup: %v", finished.err)
+	}
+	snapshot, err := manager.Snapshot(dir)
+	if err != nil || snapshot.Running {
+		t.Fatalf("quit left runtime active: %+v %v", snapshot, err)
+	}
+	_, quitCmd := quitting.applyGracefulQuitFinishedMsg(finished)
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatal("cleanup completed without quitting")
+	}
+}
 
 func TestQuitKeyOpensConfirmationWithStaySelected(t *testing.T) {
 	m := Model{width: 100, height: 24}

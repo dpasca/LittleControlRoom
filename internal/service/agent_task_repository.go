@@ -77,7 +77,7 @@ func taskRepositoryPath(task model.AgentTask) string {
 }
 
 // TaskResumeControlKey preserves the identity of an isolated structured task's
-// existing lease only when the host is reopening its exact provider session.
+// lease or unfinished handoff when reopening its exact provider session.
 // A fresh or different conversation must go through ordinary ownership checks.
 func (s *Service) TaskResumeControlKey(ctx context.Context, projectPath string, provider model.SessionSource, sessionID string) (string, error) {
 	task, ok, err := s.store.AgentTaskForWorkspace(ctx, projectPath)
@@ -85,13 +85,22 @@ func (s *Service) TaskResumeControlKey(ctx context.Context, projectPath string, 
 		return "", err
 	}
 	if (task.Status != model.AgentTaskStatusActive && task.Status != model.AgentTaskStatusWaiting) ||
-		!task.Repository.Isolated || !task.Repository.Write || task.Repository.State != "held" ||
+		!task.Repository.Isolated || !task.Repository.Write ||
 		!task.Workflow.Enabled || task.Workflow.WorkerKey == "" ||
-		task.Workflow.WorkerKey != task.Repository.SessionKey || task.SessionID == "" ||
+		task.SessionID == "" ||
 		task.SessionID != sessionID || task.Provider != provider {
 		return "", nil
 	}
-	return task.Repository.SessionKey, nil
+	if task.Repository.State == "held" && task.Workflow.WorkerKey == task.Repository.SessionKey {
+		return task.Repository.SessionKey, nil
+	}
+	if (task.Repository.State == "released" || task.Repository.State == "blocked") &&
+		unfinishedTaskHandoff(task) && task.Repository.HandoffFingerprint != "" {
+		// Recover identity only. BeginRepositoryTurn still checks live writers,
+		// Git state and the exact fingerprint before admitting any new work.
+		return task.Workflow.WorkerKey, nil
+	}
+	return "", nil
 }
 
 // BeginRepositoryTurn serializes admission with lease acquisition. The caller
@@ -288,9 +297,7 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 func dirtyTaskBoundary(task model.AgentTask, sessionKey, observed string) error {
 	dirty := fmt.Errorf("repository write preflight requires a clean checkout; preserve and resolve existing edits before continuing")
 	workflow := task.Workflow
-	if workflow.Enabled && workflow.Handoff && workflow.Result == nil && workflow.Review == nil &&
-		(workflow.Phase == "unclassified" || workflow.Phase == "canceled") &&
-		sameTaskWorkerIdentity(task, sessionKey) {
+	if unfinishedTaskHandoff(task) && sameTaskWorkerIdentity(task, sessionKey) {
 		if task.Repository.HandoffFingerprint == "" || observed == "" {
 			return fmt.Errorf("unfinished task has no recorded repository handoff; inspect and preserve its edits before continuing")
 		}
@@ -324,12 +331,17 @@ func dirtyTaskBoundary(task model.AgentTask, sessionKey, observed string) error 
 	return fmt.Errorf("checkout changed since revision %d was reviewed (reviewed %s, found %s); inspect the intervening changes and capture a correction baseline before continuing", task.Workflow.RunID, shortFingerprint(task.Repository.HandoffFingerprint), shortFingerprint(observed))
 }
 
+func unfinishedTaskHandoff(task model.AgentTask) bool {
+	workflow := task.Workflow
+	return workflow.Enabled && workflow.Handoff && workflow.Result == nil && workflow.Review == nil &&
+		(workflow.Phase == "unclassified" || workflow.Phase == "canceled")
+}
+
 // sameTaskWorkerIdentity reports whether sessionKey belongs to the worker that
-// recorded this handoff. A fresh launch records a host-minted key; LCAgent
-// announces its stable logical thread afterwards, and a session reopened after
-// the lease was released presents that thread instead. The task's own recorded
-// LCAgent session is therefore the same worker; another thread, key, or
-// provider still fails closed.
+// recorded this handoff. Host launches and restores use the recorded control
+// key. Native LCAgent controls can also present its logical thread, which the
+// host binds to this task after launch. Another thread, key, or provider still
+// fails closed.
 func sameTaskWorkerIdentity(task model.AgentTask, sessionKey string) bool {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" || task.Workflow.WorkerKey == "" {

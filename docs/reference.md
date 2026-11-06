@@ -506,6 +506,12 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `q` quit
 - While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it; `c` copies the selected process's captured output directly
 
+Confirming Quit saves locally owned in-flight turns for restart recovery, closes
+embedded sessions, and waits up to 30 seconds for managed runtime cleanup in the
+background. Cleanup that exceeds the old two-second limit can finish within
+that deadline under the same quit confirmation. A shutdown failure keeps LCR open with an explicit
+stage/error and records it in stderr; saved restart intents remain available.
+
 While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
 - `Enter` sends a prompt when idle. While busy, Codex and OpenCode steer the active turn; Claude Code queues a follow-up turn without canceling tools already in progress.

@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/projectrun"
@@ -14,6 +17,8 @@ type gracefulQuitFinishedMsg struct {
 	captured int
 	err      error
 }
+
+const gracefulQuitRuntimeTimeout = 30 * time.Second
 
 func (m Model) beginGracefulQuit() (tea.Model, tea.Cmd) {
 	if m.gracefulQuitInFlight {
@@ -37,13 +42,15 @@ func gracefulQuitCmd(manager *codexapp.Manager, runtimeManager *projectrun.Manag
 		if manager != nil {
 			intents, err := manager.CloseAllForRestart(dataDir)
 			if err != nil {
-				return gracefulQuitFinishedMsg{captured: len(intents), err: err}
+				return gracefulQuitFinishedMsg{captured: len(intents), err: fmt.Errorf("close embedded sessions: %w", err)}
 			}
 			captured = len(intents)
 		}
 		if runtimeManager != nil {
-			if err := runtimeManager.CloseAll(); err != nil {
-				return gracefulQuitFinishedMsg{captured: captured, err: err}
+			ctx, cancel := context.WithTimeout(context.Background(), gracefulQuitRuntimeTimeout)
+			defer cancel()
+			if err := runtimeManager.CloseAllWithContext(ctx); err != nil {
+				return gracefulQuitFinishedMsg{captured: captured, err: fmt.Errorf("stop managed runtimes: %w", err)}
 			}
 		}
 		return gracefulQuitFinishedMsg{captured: captured}
@@ -52,8 +59,9 @@ func gracefulQuitCmd(manager *codexapp.Manager, runtimeManager *projectrun.Manag
 
 func (m Model) applyGracefulQuitFinishedMsg(msg gracefulQuitFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		slog.Error("Graceful quit paused", "captured_turns", msg.captured, "error", msg.err)
 		m.gracefulQuitInFlight = false
-		m.reportError("Quit paused because session state could not be saved", msg.err, "")
+		m.reportError("Quit paused before shutdown completed", msg.err, "")
 		m.status = "Quit paused: " + strings.TrimSpace(msg.err.Error()) + ". Press q to retry."
 		return m, nil
 	}

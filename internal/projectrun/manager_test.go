@@ -598,3 +598,15 @@ func TestStartCapturesOutputOfImmediatelyExitingCommand(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 }
+
+func TestWaitForAllStoppedHonorsCancellation(t *testing.T) {
+	manager := &Manager{runtimes: map[string]*managedRuntime{"still-running": {running: true}}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := manager.waitForAllStopped(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("shutdown wait lost cancellation: %v", err)
+	}
+	if !manager.anyRunningRuntime() {
+		t.Fatal("cancellation claimed the runtime had stopped")
+	}
+}

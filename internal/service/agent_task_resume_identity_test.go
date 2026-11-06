@@ -106,8 +106,8 @@ func TestStoppedLCAgentTaskResumesItsRecordedThreadAfterRestart(t *testing.T) {
 			recovered := New(cfg, st, events.NewBus(), nil)
 			recovered.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot { return nil }, func() []projectrun.Snapshot { return nil })
 			key, err := recovered.TaskResumeControlKey(ctx, task.WorkspacePath, model.SessionSourceLCAgent, lcagentThreadID)
-			if err != nil || key != "" {
-				t.Fatalf("released task reused a live lease: %q, %v", key, err)
+			if err != nil || key != lcagentLaunchKey {
+				t.Fatalf("released task lost its recorded host identity: %q, %v", key, err)
 			}
 			unlock, err := recovered.BeginRepositoryTurn(task.WorkspacePath, lcagentThreadID)
 			if err != nil {

@@ -573,10 +573,13 @@ Engineer-message requests retain their existing delivery-failure receipts.
 LCAgent host snapshots use the same launch control key as repository admission.
 Its native controls authenticate with the stable logical thread ID; both keys
 refer to the same recorded conversation, while per-turn run IDs remain audit
-identifiers. A released unfinished task can reacquire its unchanged recorded
-handoff on that thread after a restart, including with a saved model change.
-Held leases still require their original host key, and changed checkouts or
-other threads remain blocked.
+identifiers. Across Codex, Claude Code, OpenCode, and LCAgent, reopening the exact
+recorded provider session recovers an isolated task's original host key for a
+held lease or an unfinished recorded handoff, including a handoff blocked by an
+earlier failed resume. Admission still verifies live writers, Git state, and
+the unchanged handoff fingerprint before starting a new turn. A different
+provider/thread, a missing handoff, and submitted or reviewed result boundaries
+do not qualify for unfinished-run recovery.
 
 Restart on the updated build and reconnect existing provider sessions to load
 the new tool schema, generated runtime skill and live input guards.

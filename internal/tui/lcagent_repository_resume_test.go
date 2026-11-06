@@ -192,7 +192,7 @@ func TestLCAgentRepositoryTaskContinueAfterRestartPreservesEdits(t *testing.T) {
 				t.Fatalf("resume lost thread or saved selection: %+v", request)
 			}
 			current, err := svc.GetAgentTask(ctx, task.ID)
-			if err != nil || current.Workflow.RunID != task.Workflow.RunID+1 || current.Workflow.WorkerKey != task.SessionID || current.Repository.State != "held" {
+			if err != nil || current.Workflow.RunID != task.Workflow.RunID+1 || current.Workflow.WorkerKey != "host-launch-key" || current.Repository.State != "held" {
 				t.Fatalf("wrong resumed run: %+v %v", current, err)
 			}
 			if git(task.WorkspacePath, "status", "--porcelain") != statusBefore || git(task.WorkspacePath, "diff", "--cached") != indexBefore {
