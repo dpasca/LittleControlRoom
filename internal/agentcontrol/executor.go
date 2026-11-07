@@ -143,6 +143,19 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 		_ = json.Unmarshal(invocation.Args, &input)
 		return e.cancelOwnWakeup(ctx, input.WakeupID)
 	}
+	if capability.Name == control.CapabilityEngineerBoardWatchUnregister {
+		if len(resumeOnSuccess) > 0 && resumeOnSuccess[0] {
+			return nil, errors.New("board watch unregistration is immediate and does not support resume_on_success")
+		}
+		var input control.EngineerBoardWatchUnregisterInput
+		_ = json.Unmarshal(invocation.Args, &input)
+		return e.unregisterOwnBoardWatch(ctx, input.WatchID)
+	}
+	if capability.Name == control.CapabilityEngineerBoardWatchRegister {
+		if err := e.preflightBoardWatchRegister(ctx, invocation); err != nil {
+			return nil, err
+		}
+	}
 	if capability.Name == control.CapabilityAgentTaskSubmitResult || capability.Name == control.CapabilityAgentTaskReviewResult {
 		if len(resumeOnSuccess) > 0 && resumeOnSuccess[0] {
 			return nil, errors.New("immediate task metadata does not support resume_on_success")

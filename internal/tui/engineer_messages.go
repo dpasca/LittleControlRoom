@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/boardwatch"
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/control"
@@ -41,6 +42,7 @@ type engineerMessagesLoadedMsg struct {
 	expired        []control.EngineerMessage
 	requeued       []string
 	noticeErr      error
+	boardWatchErr  error
 	err            error
 }
 
@@ -165,6 +167,10 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 		requeued, requeueErr := svc.Store().RequeueStaleDeliveringTaskCallbacks(ctx, time.Now().Add(-engineerMessageStaleDeliveryAfter))
 		expireErr = errors.Join(expireErr, requeueErr)
 		noticeErr := svc.QueuePendingEngineerDispatchReplies(ctx, engineerMessagePollLimit)
+		// Registered owner-board outboxes are read here, off the UI thread and
+		// before the mailbox listing, so a click recorded while LCR was stopped
+		// is queued and picked up in this same pass after a restart.
+		boardReport := boardwatch.Poll(ctx, svc.Store(), time.Now())
 		messages, err := svc.Store().ListQueuedEngineerMessagesAfter(ctx, afterCreatedAt, afterID, engineerMessagePollLimit)
 		return engineerMessagesLoadedMsg{
 			messages:       messages,
@@ -174,6 +180,7 @@ func (m Model) loadEngineerMessagesCmd(recoverDeliveries bool) tea.Cmd {
 			expired:        expired,
 			requeued:       requeued,
 			noticeErr:      noticeErr,
+			boardWatchErr:  errors.Join(boardReport.Errors...),
 			err:            errors.Join(err, expireErr),
 		}
 	}
@@ -344,6 +351,9 @@ func (m Model) applyEngineerMessagesLoaded(msg engineerMessagesLoadedMsg) (tea.M
 	}
 	if msg.noticeErr != nil {
 		m.appendBackgroundErrorLogEntry("Engineer delivery notice queue failed; retrying", msg.noticeErr, "")
+	}
+	if msg.boardWatchErr != nil {
+		m.appendBackgroundErrorLogEntry("Owner board watch refresh reported a problem", msg.boardWatchErr, "")
 	}
 	if msg.err != nil {
 		m.appendBackgroundErrorLogEntry("Engineer message mailbox refresh failed", msg.err, "")

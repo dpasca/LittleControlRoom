@@ -551,6 +551,16 @@ operator. **`/wakeups`** on the dashboard lists every project's pending
 wakeups, and from an embedded pane lists that project's; `c` cancels the
 selected one.
 
+## Owner-board click-to-wake
+
+`engineer.board_watch_register` (operator-confirmed) opts one owner board's
+typed review outbox in to durable wakes for one exact session of the calling
+project; `engineer.board_watch_unregister` is the immediate explicit stop and
+the `engineer.board_watch_status` query reports cursor, integrity, and each
+event's review state separately from its mailbox delivery. A wake is an
+ordinary engineer message, so it only requests review and grants no external
+authority. Protocol, durability and limits: `docs/owner_board_click_to_wake.md`.
+
 ## Intentional continuation after an action
 
 `propose_control_operation` accepts optional `resume_on_success: true` for

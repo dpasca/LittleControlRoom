@@ -433,6 +433,10 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return capabilityWithCatalogMetadata(EngineerSendPromptCapability()), true
 	case CapabilityEngineerCancelWakeup:
 		return capabilityWithCatalogMetadata(EngineerCancelWakeupCapability()), true
+	case CapabilityEngineerBoardWatchRegister:
+		return capabilityWithCatalogMetadata(EngineerBoardWatchRegisterCapability()), true
+	case CapabilityEngineerBoardWatchUnregister:
+		return capabilityWithCatalogMetadata(EngineerBoardWatchUnregisterCapability()), true
 	case CapabilityAgentTaskSubmitResult:
 		return AgentTaskResultCapability(false), true
 	case CapabilityAgentTaskReviewResult:

@@ -3005,6 +3005,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyOrphanedWorktreeResolution(msg)
 	case submoduleAlignActionMsg:
 		return m.applySubmoduleAlignAction(msg)
+	case boardWatchControlMsg:
+		return m.applyBoardWatchControl(msg)
 	case worktreeActionMsg:
 		if msg.closedEmbeddedSession {
 			m.dropCodexSnapshot(msg.projectPath)

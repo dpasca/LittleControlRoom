@@ -35,6 +35,8 @@ func TestKnowledgeDiscoveryAndReadWithoutProjectData(t *testing.T) {
 			"LCR has no subscription on a project's board",
 			"By itself it is not authorization for",
 			"Who owns what",
+			"engineer.board_watch_register",
+			"it never fires for note edits",
 			"Do not build a proxy consent",
 			"cannot guarantee a wake during sleep",
 			"keywords or names",

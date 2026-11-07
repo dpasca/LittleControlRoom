@@ -12,6 +12,10 @@ func NewOperationID() (string, error) {
 	return newTimestampedID("lcrop")
 }
 
+func NewBoardWatchID() (string, error) {
+	return newTimestampedID("bwatch")
+}
+
 func NewEngineerMessageID() (string, error) {
 	return newTimestampedID("lcrmsg")
 }

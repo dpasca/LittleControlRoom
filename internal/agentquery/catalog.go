@@ -76,24 +76,25 @@ func NormalizeDomain(value string) Domain {
 type Name string
 
 const (
-	QueryKnowledgeList       Name = "knowledge.list"
-	QueryKnowledgeGet        Name = "knowledge.get"
-	QueryEngineerModels      Name = "engineer.models"
-	QueryEngineerWakeupList  Name = "engineer.wakeup_list"
-	QueryIntegrationsList    Name = "integrations.list"
-	QueryIntegrationsCatalog Name = "integrations.catalog"
-	QueryPortfolioOverview   Name = "portfolio.overview"
-	QueryProjectList         Name = "project.list"
-	QueryProjectSearch       Name = "project.search"
-	QueryProjectDetail       Name = "project.detail"
-	QueryTodoList            Name = "project.todo_list"
-	QuerySessionList         Name = "project.session_list"
-	QueryAssessmentList      Name = "assessment.list"
-	QueryAgentTaskList       Name = "work.agent_task_list"
-	QueryAgentTaskGet        Name = "work.agent_task_get"
-	QueryGoalRunList         Name = "work.goal_run_list"
-	QueryGoalRunGet          Name = "work.goal_run_get"
-	QueryDemoRecordingLatest Name = "demo_recording.latest"
+	QueryKnowledgeList            Name = "knowledge.list"
+	QueryKnowledgeGet             Name = "knowledge.get"
+	QueryEngineerModels           Name = "engineer.models"
+	QueryEngineerWakeupList       Name = "engineer.wakeup_list"
+	QueryEngineerBoardWatchStatus Name = "engineer.board_watch_status"
+	QueryIntegrationsList         Name = "integrations.list"
+	QueryIntegrationsCatalog      Name = "integrations.catalog"
+	QueryPortfolioOverview        Name = "portfolio.overview"
+	QueryProjectList              Name = "project.list"
+	QueryProjectSearch            Name = "project.search"
+	QueryProjectDetail            Name = "project.detail"
+	QueryTodoList                 Name = "project.todo_list"
+	QuerySessionList              Name = "project.session_list"
+	QueryAssessmentList           Name = "assessment.list"
+	QueryAgentTaskList            Name = "work.agent_task_list"
+	QueryAgentTaskGet             Name = "work.agent_task_get"
+	QueryGoalRunList              Name = "work.goal_run_list"
+	QueryGoalRunGet               Name = "work.goal_run_get"
+	QueryDemoRecordingLatest      Name = "demo_recording.latest"
 )
 
 type Sensitivity string
@@ -156,6 +157,7 @@ func Capabilities() []Capability {
 		knowledgeCapability(QueryKnowledgeGet),
 		engineerModelsCapability(),
 		engineerWakeupListCapability(),
+		engineerBoardWatchStatusCapability(),
 		integrationListCapability(),
 		integrationCatalogCapability(),
 		collectionCapability(

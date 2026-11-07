@@ -93,6 +93,17 @@ Before doing anything else after a restart, resume or `/handoff`:
 
 ## What cannot be guaranteed
 
+- Native durable click-to-wake exists for boards that append the typed
+  review outbox (`lcr.board_review_event.v1`). A director opts one board in
+  with `engineer.board_watch_register` (operator-confirmed, own project and own
+  session only), inspects it with the `engineer.board_watch_status` query and
+  stops it with `engineer.board_watch_unregister`. A registered explicit click
+  queues one durable wake that catches up after an LCR restart while keeping
+  its original 24-hour deadline. The wake only asks for review: reread the
+  saved owner state, including conditional notes. It is not an approval and not
+  external-write authority, and it never fires for note edits. Status
+  separates the board-reported review state from delivery. See
+  `docs/owner_board_click_to_wake.md` for the protocol.
 - A session-bound background watcher is only an optional fallback. It ends with
   its session, times out and cannot guarantee a wake during sleep or while the
   session is closed. Do not promise durable subscriptions you do not have.

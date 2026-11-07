@@ -504,6 +504,41 @@ func (s *Store) initSchema(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_engineer_session_successions_successor
 			ON engineer_session_successions(successor_project_path, successor_provider, successor_session_key);`,
+		`CREATE TABLE IF NOT EXISTS board_watches (
+			id TEXT PRIMARY KEY,
+			board_id TEXT NOT NULL,
+			project_path TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			requested_target_session_id TEXT NOT NULL DEFAULT '',
+			target_session_id TEXT NOT NULL,
+			outbox_path TEXT NOT NULL,
+			state TEXT NOT NULL,
+			cursor_offset INTEGER NOT NULL DEFAULT 0,
+			prefix_len INTEGER NOT NULL DEFAULT 0,
+			prefix_hash TEXT NOT NULL DEFAULT '',
+			malformed_count INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '',
+			last_scan_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			unregistered_at INTEGER NOT NULL DEFAULT 0
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_board_watches_one_active
+			ON board_watches(project_path, board_id)
+			WHERE state IN ('active', 'attention');`,
+		`CREATE TABLE IF NOT EXISTS board_watch_events (
+			watch_id TEXT NOT NULL,
+			event_id TEXT NOT NULL,
+			item_id TEXT NOT NULL DEFAULT '',
+			event_created_at INTEGER NOT NULL,
+			ingested_at INTEGER NOT NULL,
+			state TEXT NOT NULL,
+			message_id TEXT NOT NULL DEFAULT '',
+			note TEXT NOT NULL DEFAULT '',
+			reviewed_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (watch_id, event_id)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_board_watch_events_state ON board_watch_events(state, ingested_at);`,
 		`CREATE TABLE IF NOT EXISTS agent_task_resources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id TEXT NOT NULL,
