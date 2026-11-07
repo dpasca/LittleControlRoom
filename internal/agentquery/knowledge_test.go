@@ -20,6 +20,29 @@ func TestKnowledgeDiscoveryAndReadWithoutProjectData(t *testing.T) {
 		t.Fatal(err)
 	}
 	topics := list["topics"].([]knowledgeTopic)
+	wantByTopic := map[string][]string{
+		"submodule-worktrees": {"extensions.worktreeConfig=true", "config.worktree", "--git-dir", "shared repository config", "git.submodule_align", "fast-forward, backward, or diverged", "standing"},
+		"director-coordination": {
+			"reads its own owner-answer state directly",
+			"conditional",
+			"get_control_operation",
+			"An explicit operator stop or cancellation holds",
+			"`end_turn: true` on an operation you proposed with `resume_on_success`",
+			"That is not a stop.",
+			"A control operation that still needs operator confirmation holds",
+			"stale exact target fails unless LCR holds a recorded",
+			"original 24-hour expiry still applies",
+			"LCR has no subscription on a project's board",
+			"By itself it is not authorization for",
+			"Who owns what",
+			"Do not build a proxy consent",
+			"cannot guarantee a wake during sleep",
+			"keywords or names",
+		},
+	}
+	if len(topics) != len(wantByTopic) {
+		t.Fatalf("topics = %#v, want exactly %d with expectations", topics, len(wantByTopic))
+	}
 	for _, topic := range topics {
 		args, _ := json.Marshal(map[string]string{"topic": topic.ID})
 		result, err := executor.Execute(t.Context(), QueryKnowledgeGet, args)
@@ -29,8 +52,9 @@ func TestKnowledgeDiscoveryAndReadWithoutProjectData(t *testing.T) {
 		if result["freshness"] != "built_in_documentation" || result["truncated"] != false {
 			t.Fatalf("knowledge envelope = %#v", result)
 		}
-		for _, want := range []string{"extensions.worktreeConfig=true", "config.worktree", "--git-dir", "shared repository config", "git.submodule_align", "fast-forward, backward, or diverged", "standing"} {
-			if !strings.Contains(result["markdown"].(string), want) {
+		normalized := strings.Join(strings.Fields(result["markdown"].(string)), " ")
+		for _, want := range wantByTopic[topic.ID] {
+			if !strings.Contains(normalized, want) {
 				t.Fatalf("topic %s missing diagnostic guidance %q", topic.ID, want)
 			}
 		}
@@ -43,9 +67,28 @@ func TestKnowledgeDiscoveryAndReadWithoutProjectData(t *testing.T) {
 		{QueryKnowledgeGet, `{}`},
 		{QueryKnowledgeGet, `{"topic":"../../etc/passwd"}`},
 		{QueryKnowledgeGet, `{"topic":"submodule-worktrees","path":"/private"}`},
+		{QueryKnowledgeGet, `{"topic":"director-coordination","path":"/private"}`},
+		{QueryKnowledgeGet, `{"topic":"Director-Coordination"}`},
 	} {
 		if _, err := executor.Execute(t.Context(), tc.name, json.RawMessage(tc.args)); err == nil {
 			t.Fatalf("accepted invalid knowledge args %s", tc.args)
 		}
+	}
+}
+
+func TestKnowledgeInstructionsPointToDirectorCoordination(t *testing.T) {
+	for _, want := range []string{
+		"director-coordination",
+		"saved answers and pending operation IDs are reconciled before resending",
+		"explicit stops and required confirmations hold",
+		"end_turn with a requested continuation is not a stop",
+		"messaging or collaboration permission is not itself authorization",
+	} {
+		if !strings.Contains(KnowledgeInstructions, want) {
+			t.Fatalf("KnowledgeInstructions missing %q", want)
+		}
+	}
+	if len(KnowledgeInstructions) > 1500 {
+		t.Fatalf("KnowledgeInstructions grew to %d bytes; keep startup context short", len(KnowledgeInstructions))
 	}
 }

@@ -63,7 +63,11 @@ coordinate with other non-private projects when the user's task calls for it.
 Scope controls discovery and execution: a query outside the caller's scope is
 not listed and is rejected if invoked directly.
 
-The `knowledge` domain starts with `submodule-worktrees`: LCR's nested worktree
+The `knowledge` domain currently has `submodule-worktrees` and
+`director-coordination` (executor-owned owner approvals, click -> durable wake ->
+reread -> act -> receipt, restart/handoff reconciliation, stops and enforced
+provider permission checks; it is guidance only and adds no approval path).
+`submodule-worktrees` covers LCR's nested worktree
 layout, safe diagnostics, shared versus worktree-specific configuration, and the
 `extensions.worktreeConfig` migration trap. A short startup instruction points
 agents to this topic before diagnosing submodule dirtiness or changing Git

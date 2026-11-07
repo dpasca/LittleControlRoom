@@ -39,6 +39,7 @@ func TestClaudeMCPOptionsDefineRuntimeAndManagedPlaywrightServers(t *testing.T) 
 	for _, want := range []string{
 		strings.TrimSpace(todocapture.AgentInstructions(todocapture.ModeExplicit)),
 		"submodule-worktrees",
+		"director-coordination",
 		"extensions.worktreeConfig",
 		"Little Control Room managed-browser contract",
 		"lcr_runtime/request_browser_attention",
