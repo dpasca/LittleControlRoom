@@ -284,6 +284,7 @@ type AgentTaskRepository struct {
 }
 
 type AgentTask struct {
+	CleanupError        string // Background cleanup observation; rebuilt after restart.
 	WorkspaceGit        AgentTaskWorkspaceGit
 	Workflow            AgentTaskWorkflow
 	Repository          AgentTaskRepository
@@ -326,12 +327,23 @@ type AgentTask struct {
 // AgentTaskWorkspaceGit is a background-refreshed view, never read from disk by
 // render or input handlers. Initial branch identity lives in Repository.
 type AgentTaskWorkspaceGit struct {
-	Missing  bool
-	Branch   string
-	Dirty    bool
-	Conflict bool
-	Error    string
+	State     AgentTaskWorkspaceState
+	CheckedAt time.Time
+	Missing   bool
+	Branch    string
+	Dirty     bool
+	Conflict  bool
+	Error     string
 }
+
+type AgentTaskWorkspaceState string
+
+const (
+	AgentTaskWorkspaceHealthy          AgentTaskWorkspaceState = "healthy"
+	AgentTaskWorkspaceMissing          AgentTaskWorkspaceState = "missing"
+	AgentTaskWorkspaceMetadataMissing  AgentTaskWorkspaceState = "metadata_missing"
+	AgentTaskWorkspaceInspectionFailed AgentTaskWorkspaceState = "inspection_failed"
+)
 
 type AgentTaskResource struct {
 	ID          int64

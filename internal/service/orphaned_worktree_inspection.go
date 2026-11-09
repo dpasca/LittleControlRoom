@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,26 +23,29 @@ const (
 )
 
 type OrphanedWorktreeInspection struct {
-	RetainedBytes   int64
-	SizeError       string
-	NestedWorktrees []ownedRemovalChild
-	ProjectPath     string
-	RootPath        string
-	BranchName      string
-	TargetBranch    string
-	MergeStatus     model.WorktreeMergeStatus
-	Dirty           bool
-	StatusError     string
-	CleanupKind     ResidualWorktreeCleanupKind
-	Resolution      OrphanedWorktreeResolution
-	Reason          string
-	AgentTask       model.AgentTask
-	InspectedAt     time.Time
+	Registration      string
+	RegistrationError string
+	HaveCurrentStatus bool
+	RetainedBytes     int64
+	SizeError         string
+	NestedWorktrees   []ownedRemovalChild
+	ProjectPath       string
+	RootPath          string
+	BranchName        string
+	TargetBranch      string
+	MergeStatus       model.WorktreeMergeStatus
+	Dirty             bool
+	StatusError       string
+	CleanupKind       ResidualWorktreeCleanupKind
+	Resolution        OrphanedWorktreeResolution
+	Reason            string
+	AgentTask         model.AgentTask
+	InspectedAt       time.Time
 }
 
-// InspectOrphanedWorktree determines why a forgotten checkout still exists and
-// which guarded action, if any, can resolve it. It does not mutate Git, files,
-// task records, or project state.
+// InspectOrphanedWorktree inspects task ownership, checkout health and retained
+// files, then determines which guarded action, if any, can resolve the workspace.
+// It does not mutate Git, files, task records, or project state.
 func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath string) (OrphanedWorktreeInspection, error) {
 	if s == nil || s.store == nil {
 		return OrphanedWorktreeInspection{}, fmt.Errorf("service unavailable")
@@ -53,11 +55,22 @@ func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath strin
 		return OrphanedWorktreeInspection{}, fmt.Errorf("project path is required")
 	}
 
-	detail, err := s.store.GetProjectDetail(ctx, projectPath, 1)
+	owners, err := s.agentTasksForWorkspace(ctx, projectPath)
 	if err != nil {
-		return OrphanedWorktreeInspection{}, fmt.Errorf("load orphaned worktree record: %w", err)
+		return OrphanedWorktreeInspection{}, fmt.Errorf("inspect task ownership: %w", err)
 	}
-	summary := detail.Summary
+	summary, err := s.store.GetTrackedProjectSummary(ctx, projectPath)
+	if err != nil && (!errors.Is(err, sql.ErrNoRows) || len(owners) == 0) {
+		return OrphanedWorktreeInspection{}, fmt.Errorf("load worktree record: %w", err)
+	}
+	if errors.Is(err, sql.ErrNoRows) && len(owners) == 1 {
+		task := owners[0]
+		summary.WorktreeRootPath = firstNonEmpty(task.OriginProjectPath, task.OriginWorktreePath)
+		if task.Repository.Isolated && task.Repository.InitialBranch != "" {
+			summary.WorktreeKind = model.WorktreeKindLinked
+		}
+		summary.Forgotten = true
+	}
 	rootPath := filepath.Clean(strings.TrimSpace(summary.WorktreeRootPath))
 	if rootPath == "." {
 		rootPath = ""
@@ -75,28 +88,35 @@ func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath strin
 	if err != nil {
 		inspection.SizeError = err.Error()
 	}
-	if summary.WorktreeKind != model.WorktreeKindLinked || rootPath == "" {
-		inspection.Reason = "The saved project record no longer identifies this path as a linked worktree."
-		return inspection, nil
-	}
-	if !summary.Forgotten {
-		inspection.Reason = "This worktree is tracked again and is no longer orphaned. Refresh the project list before taking action."
-		return inspection, nil
-	}
-
-	owners, err := s.agentTasksForWorkspace(ctx, projectPath)
-	if err != nil {
-		return OrphanedWorktreeInspection{}, fmt.Errorf("inspect retained task ownership: %w", err)
+	registration := linkedWorktreeRegistrationUnknown
+	var registrationErr error
+	if rootPath != "" && summary.WorktreeKind == model.WorktreeKindLinked {
+		registration, registrationErr = linkedWorktreeRegistrationWithReader(ctx, rootPath, summary.WorktreeKind, projectPath, s.gitWorktreeListReader)
+		if registrationErr != nil {
+			inspection.RegistrationError = registrationErr.Error()
+		} else {
+			switch registration {
+			case linkedWorktreeRegistrationLive:
+				inspection.Registration = "Registered Git worktree"
+			case linkedWorktreeRegistrationAbsent:
+				inspection.Registration = "Not registered in Git"
+			case linkedWorktreeRegistrationPrunable:
+				inspection.Registration = "Stale Git registration"
+			}
+		}
 	}
 	if len(owners) > 1 {
 		inspection.Reason = fmt.Sprintf("This workspace is referenced by %d task records. Little Control Room will not remove it until that ownership is reconciled.", len(owners))
 		return inspection, nil
 	}
 	if len(owners) == 1 {
-		inspection.AgentTask = owners[0]
-		s.readOrphanedWorktreeStatus(ctx, &inspection)
+		inspection.AgentTask = s.refreshAgentTaskWorkspace(ctx, owners[0])
+		workspace := inspection.AgentTask.WorkspaceGit
+		inspection.HaveCurrentStatus = workspace.State == model.AgentTaskWorkspaceHealthy
+		inspection.BranchName, inspection.Dirty = workspace.Branch, workspace.Dirty
+		inspection.StatusError = workspace.Error
 		if model.NormalizeAgentTaskStatus(owners[0].Status) != model.AgentTaskStatusArchived {
-			inspection.Reason = fmt.Sprintf("This workspace still belongs to the %s task %q, so it is not safe to remove from the orphaned-worktree list.", owners[0].Status, agentTaskInspectionTitle(owners[0]))
+			inspection.Reason = fmt.Sprintf("This workspace still belongs to the %s task %q, so checkout issues are reported on that task. No removal action is offered here.", owners[0].Status, agentTaskInspectionTitle(owners[0]))
 			return inspection, nil
 		}
 		managedRoots := []string{appfs.InternalWorkspaceRoot(s.cfg.DataDir)}
@@ -104,15 +124,29 @@ func (s *Service) InspectOrphanedWorktree(ctx context.Context, projectPath strin
 			inspection.Reason = "The archived task points outside Little Control Room's managed workspace directory, so automatic deletion is disabled."
 			return inspection, nil
 		}
+		if owners[0].Repository.State == "held" {
+			inspection.Reason = "Trash cleanup is blocked because this task still holds write ownership."
+			return inspection, nil
+		}
 		inspection.Resolution = OrphanedWorktreeResolutionDeleteArchivedTaskNow
 		inspection.Reason = fmt.Sprintf("This checkout belongs to the task %q in Trash and is being retained intentionally.", agentTaskInspectionTitle(owners[0]))
 		return inspection, nil
 	}
 
-	registration, err := linkedWorktreeRegistrationWithReader(ctx, rootPath, summary.WorktreeKind, projectPath, s.gitWorktreeListReader)
-	if err != nil {
-		return OrphanedWorktreeInspection{}, fmt.Errorf("inspect Git worktree registration: %w", err)
+	if summary.WorktreeKind != model.WorktreeKindLinked || rootPath == "" {
+		inspection.Reason = "The saved project record no longer identifies this path as a linked worktree."
+		return inspection, nil
 	}
+	if !summary.Forgotten {
+		inspection.Reason = "This worktree is tracked again and is no longer unclaimed. Refresh the project list before taking action."
+		return inspection, nil
+	}
+
+	if registrationErr != nil {
+		inspection.Reason = "Git registration inspection failed; no removal action is available."
+		return inspection, nil
+	}
+
 	switch registration {
 	case linkedWorktreeRegistrationLive:
 		s.readOrphanedWorktreeStatus(ctx, &inspection)
@@ -168,6 +202,7 @@ func (s *Service) readOrphanedWorktreeStatus(ctx context.Context, inspection *Or
 		inspection.StatusError = err.Error()
 		return
 	}
+	inspection.HaveCurrentStatus = true
 	inspection.Dirty = status.Dirty
 	if branch := strings.TrimSpace(status.Branch); branch != "" {
 		inspection.BranchName = branch
@@ -202,6 +237,9 @@ func (s *Service) DeleteArchivedAgentTaskNow(ctx context.Context, taskID, expect
 	if model.NormalizeAgentTaskStatus(task.Status) != model.AgentTaskStatusArchived {
 		return fmt.Errorf("agent task %s is no longer in Trash", taskID)
 	}
+	if task.Repository.State == "held" {
+		return fmt.Errorf("task still holds write ownership; its workspace was kept")
+	}
 
 	workspacePath := filepath.Clean(strings.TrimSpace(task.WorkspacePath))
 	expectedWorkspacePath = filepath.Clean(strings.TrimSpace(expectedWorkspacePath))
@@ -216,18 +254,20 @@ func (s *Service) DeleteArchivedAgentTaskNow(ctx context.Context, taskID, expect
 		if !appfs.IsManagedInternalPath(workspacePath, managedRoots) {
 			return fmt.Errorf("refusing to delete task workspace outside Little Control Room's managed directory: %s", workspacePath)
 		}
-		detail, summaryErr := s.store.GetProjectDetail(ctx, workspacePath, 1)
+		summary, summaryErr := s.store.GetTrackedProjectSummary(ctx, workspacePath)
 		switch {
-		case summaryErr == nil && detail.Summary.WorktreeKind == model.WorktreeKindLinked:
+		case summaryErr == nil && summary.WorktreeKind == model.WorktreeKindLinked:
 			if err := s.RemoveWorktree(ctx, workspacePath, force); err != nil {
 				return fmt.Errorf("remove archived task worktree: %w", err)
 			}
 		case summaryErr == nil:
-			if err := os.RemoveAll(workspacePath); err != nil {
-				return fmt.Errorf("remove archived task workspace: %w", err)
-			}
+			fallthrough
 		case errors.Is(summaryErr, sql.ErrNoRows):
-			if err := os.RemoveAll(workspacePath); err != nil {
+			current := s.refreshAgentTaskWorkspace(ctx, task)
+			if current.WorkspaceGit.Dirty && !force {
+				return fmt.Errorf("workspace has uncommitted changes; confirm force removal to discard them")
+			}
+			if err := s.removeAgentTaskWorkspace(ctx, workspacePath, firstNonEmpty(task.OriginProjectPath, task.OriginWorktreePath)); err != nil {
 				return fmt.Errorf("remove archived task workspace: %w", err)
 			}
 		default:
@@ -245,5 +285,6 @@ func (s *Service) DeleteArchivedAgentTaskNow(ctx context.Context, taskID, expect
 	if err := s.store.DeleteAgentTask(ctx, taskID); err != nil {
 		return fmt.Errorf("delete archived agent task: %w", err)
 	}
+	s.agentTaskCleanupErrors.Delete(taskID)
 	return nil
 }

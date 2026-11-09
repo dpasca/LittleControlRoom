@@ -2310,13 +2310,13 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 	if !strings.Contains(lines[2], "Keep root summary") {
 		t.Fatalf("renderProjectList() should keep the root summary text, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "[1 orphaned checkout]") {
+	if !strings.Contains(lines[2], "[1 unclaimed workspace]") {
 		t.Fatalf("renderProjectList() should show an orphaned-checkout badge on the root row, got %q", lines[2])
 	}
 	if !strings.Contains(lines[3], "↳ todo/stale-lane") {
 		t.Fatalf("renderProjectList() should show the orphaned checkout as its own worktree row, got %q", lines[3])
 	}
-	for _, want := range []string{"Empty orphaned worktree", "/remove to clear"} {
+	for _, want := range []string{"Empty unclaimed workspace", "/remove to clear"} {
 		if !strings.Contains(lines[3], want) {
 			t.Fatalf("orphaned worktree row missing summary %q in %q", want, lines[3])
 		}

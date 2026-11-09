@@ -1061,11 +1061,11 @@ func projectWorktreeDetached(project model.ProjectSummary) bool {
 func orphanedWorktreeListSummary(cleanupKind service.ResidualWorktreeCleanupKind) string {
 	switch cleanupKind {
 	case service.ResidualWorktreeCleanupDSStoreOnly:
-		return "Empty orphaned worktree (.DS_Store only). Use /remove to clear."
+		return "Empty unclaimed workspace (.DS_Store only). Use /remove to clear."
 	case service.ResidualWorktreeCleanupPartialGitDir:
 		return "Partial Git removal residue. Use /remove to verify and clear."
 	default:
-		return "Unclassified worktree. Press x to inspect and resolve."
+		return "Unclaimed workspace. Press x to inspect ownership and files."
 	}
 }
 
@@ -1677,9 +1677,9 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, stale
 
 func orphanedCheckoutCountLabel(count int) string {
 	if count == 1 {
-		return "1 orphaned checkout"
+		return "1 unclaimed workspace"
 	}
-	return fmt.Sprintf("%d orphaned checkouts", count)
+	return fmt.Sprintf("%d unclaimed workspaces", count)
 }
 
 func projectListAssessmentWithWorktreeBadge(assessment, badge string, prioritize bool) string {

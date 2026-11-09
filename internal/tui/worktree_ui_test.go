@@ -740,10 +740,10 @@ func TestRenderDetailContentShowsOrphanedWorktreeWarning(t *testing.T) {
 	if !strings.Contains(rendered, "Worktree warnings") {
 		t.Fatalf("renderDetailContent() should add an orphaned-worktree warning section, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "1 orphaned checkout(s) still exist on disk") {
+	if !strings.Contains(rendered, "1 unclaimed workspace(s) still exist on disk") {
 		t.Fatalf("renderDetailContent() should explain the orphaned checkout state, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "todo/stale-lane · orphaned, no changes to integrate") {
+	if !strings.Contains(rendered, "todo/stale-lane · unclaimed, no changes to integrate") {
 		t.Fatalf("renderDetailContent() should list the orphaned checkout branch and status, got %q", rendered)
 	}
 	if !strings.Contains(rendered, orphanPath) {
@@ -2058,7 +2058,7 @@ func TestRemoveOnPartialOrphanedWorktreeInspectsBeforeCleanup(t *testing.T) {
 	}
 	rendered := ansi.Strip(got.renderOrphanedWorktreeInspectionContent(80))
 	for _, want := range []string{
-		"Inspecting orphaned worktree",
+		"Inspecting workspace",
 		"inspection is read-only",
 		orphanPath,
 	} {

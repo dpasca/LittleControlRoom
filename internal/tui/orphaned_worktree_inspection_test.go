@@ -57,7 +57,7 @@ func TestUnknownOrphanedWorktreeHotkeyOpensPersistentInspectionDialog(t *testing
 	}
 	rendered := ansi.Strip(got.renderOrphanedWorktreeInspectionContent(76))
 	for _, want := range []string{
-		"Inspecting orphaned worktree",
+		"Inspecting workspace",
 		"determining what owns this folder",
 		"inspection is read-only",
 		orphanPath,

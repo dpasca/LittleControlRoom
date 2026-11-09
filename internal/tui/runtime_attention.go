@@ -231,6 +231,9 @@ func projectAttentionLabel(project model.ProjectSummary) string {
 // linked worktree pending integration → orange "M", orphaned linked checkout → orange "!",
 // sync-only → orange "!", neither → space.
 func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinnerFrame int) string {
+	if task, ok := m.agentTaskForProjectPath(project.Path); ok && (task.CleanupError != "" || task.WorkspaceGit.Error != "") {
+		return detailWarningStyle.Render("!")
+	}
 	if !projectUsesRepoUI(project) {
 		return " "
 	}

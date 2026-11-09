@@ -366,6 +366,8 @@ func CuratedTopics() []Topic {
 			Usage:   []string{"x", "/wt remove", "/wt prune"},
 			ManualSteps: []string{
 				"Select a linked worktree and press x, or run /wt remove, to open the remove confirmation.",
+				"Known task workspaces stay on their task rows, even when Git metadata is unavailable. Use /workspace on the selected task for read-only ownership, checkout health and historical handoff details.",
+				"Use /trash to browse retained task workspaces and their cleanup dates. Normal retention does not raise attention; failed cleanup appears on its owning task. Enter inspects a retained workspace before any Delete Now action.",
 				"On a repository root with orphaned checkout folders, x or /wt remove offers to delete only folders whose sole entry is one regular .DS_Store file; every other folder is kept.",
 				"For a clean worktree linked to an open TODO, leave Mark linked TODO done enabled to complete the item before removing the checkout, even when its branch is not merged. Dirty force-removals leave this option disabled by default.",
 				"If the selected row is a pending TODO worktree launch, x aborts the pending launch.",

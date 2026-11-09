@@ -138,6 +138,9 @@ func agentTaskIsOpen(task model.AgentTask) bool {
 }
 
 func agentTaskIsVisible(task model.AgentTask) bool {
+	if task.Status == model.AgentTaskStatusArchived {
+		return task.CleanupError != ""
+	}
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusActive, model.AgentTaskStatusWaiting, model.AgentTaskStatusCompleted:
 		return true
@@ -147,6 +150,9 @@ func agentTaskIsVisible(task model.AgentTask) bool {
 }
 
 func agentTaskProjectStatus(task model.AgentTask) model.ProjectStatus {
+	if task.CleanupError != "" {
+		return model.StatusPossiblyStuck
+	}
 	if task.Workflow.Enabled && (task.Workflow.Phase == "submitted" || task.Workflow.Phase == "awaiting_review") {
 		return model.StatusActive
 	}
@@ -191,6 +197,14 @@ func agentTaskDisplaySource(task model.AgentTask) model.SessionSource {
 }
 
 func agentTaskAttentionScore(task model.AgentTask) int {
+	if task.CleanupError != "" || task.WorkspaceGit.Error != "" {
+		if task.Status == model.AgentTaskStatusCompleted || task.Status == model.AgentTaskStatusArchived {
+			return 25
+		}
+	}
+	if task.Status == model.AgentTaskStatusArchived {
+		return 0
+	}
 	switch model.NormalizeAgentTaskStatus(task.Status) {
 	case model.AgentTaskStatusWaiting:
 		return 100
@@ -234,6 +248,9 @@ func agentTaskLastActivity(task model.AgentTask) time.Time {
 }
 
 func agentTaskListStatus(task model.AgentTask) string {
+	if task.Status == model.AgentTaskStatusArchived && task.CleanupError != "" {
+		return "cleanup"
+	}
 	if task.Workflow.Enabled && task.Workflow.Phase != "" {
 		return strings.ReplaceAll(task.Workflow.Phase, "_", " ")
 	}
@@ -250,6 +267,9 @@ func agentTaskListStatus(task model.AgentTask) string {
 }
 
 func agentTaskListSummary(task model.AgentTask) string {
+	if task.CleanupError != "" {
+		return "Trash cleanup failed: " + task.CleanupError
+	}
 	metadata := ""
 	if branch := task.WorkspaceGit.Branch; branch != "" {
 		state := "clean"
@@ -263,8 +283,8 @@ func agentTaskListSummary(task model.AgentTask) string {
 			state += ", branch changed"
 		}
 		metadata = branch + " · " + state + " · "
-	} else if task.WorkspaceGit.Error != "" {
-		metadata = "workspace unavailable · "
+	} else if issue := agentTaskWorkspaceIssue(task); issue != "" {
+		metadata = issue + " · "
 	}
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
 		if compact := liveEngineerCompactSummary(summary); compact != "" {
@@ -281,6 +301,23 @@ func agentTaskListSummary(task model.AgentTask) string {
 		parts = append(parts, shortID(sessionID))
 	}
 	return metadata + strings.Join(parts, " - ")
+}
+
+// Uses the background inspection's typed outcome, never error-text matching.
+func agentTaskWorkspaceIssue(task model.AgentTask) string {
+	switch task.WorkspaceGit.State {
+	case model.AgentTaskWorkspaceMissing:
+		return "Workspace folder missing"
+	case model.AgentTaskWorkspaceMetadataMissing:
+		return "Git metadata missing"
+	case model.AgentTaskWorkspaceInspectionFailed:
+		return "Workspace inspection failed"
+	default:
+		if task.WorkspaceGit.Error != "" {
+			return "Workspace inspection failed"
+		}
+		return ""
+	}
 }
 
 // Recovery tasks persist their entire engineer prompt as the summary so the
@@ -309,6 +346,9 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 	}
 	lines := []string{renderWrappedDetailFieldLimited("Summary", summaryStyle, width, summary, agentTaskDetailSummaryMaxLines)}
 	lines = append(lines, detailField("Path", detailValueStyle.Render(task.WorkspacePath)))
+	if task.CleanupError != "" {
+		lines = append(lines, renderWrappedDetailField("Trash cleanup failed", detailWarningStyle, width, task.CleanupError))
+	}
 	if branch := task.WorkspaceGit.Branch; branch != "" {
 		state := "clean"
 		if task.WorkspaceGit.Dirty {
@@ -323,7 +363,10 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 		}
 	}
 	if problem := task.WorkspaceGit.Error; problem != "" {
-		lines = append(lines, renderWrappedDetailField("Workspace issue", detailAttentionValueStyle, width, problem))
+		lines = append(lines, renderWrappedDetailField("Workspace issue", detailAttentionValueStyle, width, agentTaskWorkspaceIssue(task)+": "+problem))
+	}
+	if !task.WorkspaceGit.CheckedAt.IsZero() {
+		lines = append(lines, detailField("Workspace checked", task.WorkspaceGit.CheckedAt.Local().Format(time.RFC3339)))
 	}
 	lines = appendDetailFields(lines, width,
 		detailField("Kind", detailValueStyle.Render("agent task")),
@@ -368,7 +411,8 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 			lines = append(lines, renderWrappedDetailField("Repository issue", detailValueStyle, width, task.Repository.Error))
 		}
 		if task.Repository.Changes != "" {
-			lines = append(lines, renderWrappedDetailField("Changes to review", detailValueStyle, width, task.Repository.Changes))
+			lines = append(lines, renderWrappedDetailField("Recorded handoff changes", detailValueStyle, width, task.Repository.Changes))
+			lines = append(lines, renderWrappedDetailField("Evidence", detailMutedStyle, width, "Historical host capture; inspect the workspace to verify its current files."))
 		}
 	}
 	if label := taskModelLabel(task.ModelSelection); label != "" {
@@ -408,7 +452,7 @@ func (m Model) renderAgentTaskDetailContent(task model.AgentTask, width int) str
 }
 
 func agentTaskStatusStyle(task model.AgentTask) lipgloss.Style {
-	if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
+	if task.CleanupError != "" || task.WorkspaceGit.Error != "" || model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
 		return detailWarningStyle
 	}
 	return detailValueStyle

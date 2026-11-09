@@ -137,6 +137,7 @@ type Model struct {
 	worktreePostMerge           *worktreePostMergeState
 	worktreeRemoveConfirm       *worktreeRemoveConfirmState
 	orphanedWorktreeInspection  *orphanedWorktreeInspectionState
+	agentTaskTrash              *agentTaskTrashState
 	worktreeRestore             *worktreeRestoreDialogState
 	staleWorktreeCleanup        *staleWorktreeCleanupDialogState
 	codexCleanup                *codexCleanupDialogState
@@ -1554,6 +1555,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := msg.(wakeupsLoadedMsg); ok {
 		return m.applyWakeupsLoaded(msg)
+	}
+	if loaded, ok := msg.(agentTaskTrashLoadedMsg); ok {
+		return m.applyAgentTaskTrashLoaded(loaded)
+	}
+	if m.agentTaskTrash != nil && m.orphanedWorktreeInspection == nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			return m.updateAgentTaskTrash(key)
+		}
+		if _, ok := msg.(tea.MouseMsg); ok {
+			return m, nil
+		}
 	}
 	if msg, ok := msg.(wakeupCanceledMsg); ok {
 		return m.applyWakeupCanceled(msg)

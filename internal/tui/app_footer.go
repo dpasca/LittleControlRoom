@@ -291,7 +291,10 @@ func (m Model) renderFooter(width int) string {
 		if m.orphanedWorktreeInspection.Busy {
 			return m.renderModalFooter(width, "Worktree inspection: checking ownership and Git state", supplementSegments...)
 		}
-		return m.renderModalFooter(width, "Worktree inspection: Enter choose, Tab switch, Esc keep", supplementSegments...)
+		return m.renderModalFooter(width, "Workspace inspection: PgUp/PgDn details, Enter choose, Tab switch, Esc keep", supplementSegments...)
+	}
+	if m.agentTaskTrash != nil {
+		return m.renderModalFooter(width, "Trash: Enter inspect, ↑↓ select, r refresh, Esc close", supplementSegments...)
 	}
 	if m.repositoryIntegrityDialog != nil {
 		if m.repositoryIntegrityDialog.Busy {

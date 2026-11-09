@@ -420,7 +420,7 @@ func TestListOrphanedWorktreeDirectoriesSkipsHealthyForgottenCheckouts(t *testin
 	if _, err := f.st.UpdateAgentTask(ctx, model.UpdateAgentTaskInput{ID: task.ID, Status: &archived}); err != nil {
 		t.Fatalf("archive owning task: %v", err)
 	}
-	if _, ok := listed()[f.path]; !ok {
-		t.Fatalf("checkout of a task in Trash should be listed for deletion")
+	if _, ok := listed()[f.path]; ok {
+		t.Fatalf("retained Trash workspace should not be listed as unclaimed")
 	}
 }

@@ -21,6 +21,8 @@ const (
 	KindErrors          Kind = "errors"
 	KindRefresh         Kind = "refresh"
 	KindClean           Kind = "clean"
+	KindTrash           Kind = "trash"
+	KindWorkspace       Kind = "workspace"
 	KindCodexGC         Kind = "codex-gc"
 	KindSessionGC       Kind = "session-gc"
 	KindClaudeGC        Kind = "claude-gc"
@@ -174,6 +176,8 @@ var specs = []Spec{
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "clean", Usage: "/clean", Summary: "Review and remove merged worktrees that have been safely stale for 24 hours"},
+	{Name: "trash", Usage: "/trash", Summary: "Inspect retained agent-task workspaces and their cleanup dates"},
+	{Name: "workspace", Usage: "/workspace", Summary: "Inspect the selected task's workspace ownership and checkout health"},
 	{Name: "repair-terminal", Usage: "/repair-terminal", Summary: "Reinitialize terminal display and paste handling"},
 	{Name: "update", Usage: "/update", Summary: "Check for and install a newer GitHub release"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
@@ -486,6 +490,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /clean")
 		}
 		return Invocation{Kind: KindClean, Canonical: "/clean"}, nil
+	case "trash", "workspace":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /%s", name)
+		}
+		return Invocation{Kind: Kind(name), Canonical: "/" + name}, nil
 	case "claude-auth":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /claude-auth (paste tokens only in the connection dialog)")

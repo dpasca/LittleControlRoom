@@ -36,7 +36,7 @@ and later process output remain separate possibilities.
   inside worktree administrative directories.
 - Absent outer metadata does not authorize recursive deletion. A retained path
   remains a forgotten linked-worktree record with physical presence true, so
-  the orphaned row stays visible. Errors include the retained path, logical
+  the owning task row or unclaimed-workspace warning stays visible. Errors include the retained path, logical
   bytes (explicitly incomplete if measurement failed), reason and cleanup route.
   `worktree_removal_incomplete` records persist failures with remaining residue.
 - Scanning also rediscovers physical residue at previously removed paths without
@@ -48,22 +48,20 @@ and later process output remain separate possibilities.
   and dangling targets are supported. Symlinks at the worktree root or in
   `.git` metadata still block removal.
 
-## What counts as orphaned
+## Ownership and unclaimed workspaces
 
 The store keeps one coarse predicate: a forgotten linked-worktree record whose
-path still exists. Some healthy paths match it, so the service drops them before
-the list is built (`orphanedWorktreeSummaries`), using one `git worktree list`
-per repository:
+path still exists. The service reconciles task ownership before presenting these
+as **unclaimed workspaces** (`orphanedWorktreeSummaries`):
 
-- A live, registered checkout inside the workspace of a task that is not in
-  Trash. LCR force-forgets everything under its internal workspace root, and
-  agents may create linked worktrees inside their own task workspace; the task
-  row already represents that checkout. Once the task is in Trash the checkout
-  is listed so it can be deleted.
+- Any folder inside a recorded task workspace, including completed tasks and
+  tasks in Trash. Ownership does not depend on working Git metadata. Checkout
+  problems appear on the task row with a specific observed reason: missing
+  folder, missing Git metadata, or failed inspection.
 - A plain subfolder of a live checkout that Git does not register separately,
   such as a session `cwd` that was recorded as a derived project.
 
-Unreadable Git state keeps a row listed. Real orphans come from checkouts
+Unreadable Git state keeps an unowned folder listed. Such folders can come from checkouts
 removed outside LCR's delete flow (Finder, `rm`, an interrupted delete): Git
 still lists the outer path as `prunable`, and what is left on disk is some mix
 of `.DS_Store`, ignored output and tracked files. A `.DS_Store` can also be
@@ -79,7 +77,21 @@ prune.
 
 ## Reviewed cleanup
 
-Select an orphaned row and use **x inspect** or `/remove`. Nonempty residue is
+Use `/workspace` on a task to inspect its full path, owner, Git registration,
+retained bytes, current checkout health, and historical handoff changes. Current
+observations are dated and kept distinct from recorded handoff information.
+An owned task outside Trash has no deletion action in this inspection.
+
+Use `/trash` to browse archived tasks without deleting anything. Rows show the
+archive date and retention deadline; Enter opens the same read-only inspection.
+Normal seven-day retention does not raise dashboard attention. Failed or blocked
+cleanup appears on the owning task in the dashboard and in Trash, with its
+reason. Failures are sampled by background cleanup and rebuilt after restart;
+one failed deletion does not hide other tasks or stop the rest of the scan.
+Delete Now remains an explicit action in the inspection, with Keep selected by
+default. Branches are preserved when a registered task checkout is deleted.
+
+Select an unclaimed row and use **x inspect** or `/remove`. Nonempty residue is
 inspected asynchronously before **Clear residue** is offered. The dialog shows
 logical bytes, child paths/commits, and the deletion policy. Ordinary removal
 and batch cleanup do not implicitly authorize this broader cleanup.

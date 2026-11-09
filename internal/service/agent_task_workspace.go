@@ -58,29 +58,41 @@ func (s *Service) removeAgentTaskWorkspace(ctx context.Context, workspace, origi
 }
 
 func (s *Service) refreshAgentTaskWorkspace(ctx context.Context, task model.AgentTask) model.AgentTask {
-	task.WorkspaceGit = model.AgentTaskWorkspaceGit{}
+	task = s.withAgentTaskCleanupError(task)
+	task.WorkspaceGit = model.AgentTaskWorkspaceGit{CheckedAt: time.Now()}
 	info, err := os.Stat(task.WorkspacePath)
 	if err != nil {
 		task.WorkspaceGit.Missing = os.IsNotExist(err)
+		task.WorkspaceGit.State = model.AgentTaskWorkspaceInspectionFailed
+		if task.WorkspaceGit.Missing {
+			task.WorkspaceGit.State = model.AgentTaskWorkspaceMissing
+		}
 		task.WorkspaceGit.Error = "Workspace unavailable: " + err.Error()
 		return task
 	}
 	if !info.IsDir() {
 		task.WorkspaceGit.Missing = true
+		task.WorkspaceGit.State = model.AgentTaskWorkspaceMissing
 		task.WorkspaceGit.Error = "Workspace unavailable: path is not a directory"
 		return task
 	}
 	if _, err := os.Lstat(filepath.Join(task.WorkspacePath, ".git")); err != nil {
-		if task.Repository.InitialBranch != "" {
+		if !os.IsNotExist(err) {
+			task.WorkspaceGit.State = model.AgentTaskWorkspaceInspectionFailed
+			task.WorkspaceGit.Error = "Cannot inspect Git metadata: " + err.Error()
+		} else if task.Repository.InitialBranch != "" {
+			task.WorkspaceGit.State = model.AgentTaskWorkspaceMetadataMissing
 			task.WorkspaceGit.Error = "Isolated workspace is missing its Git metadata"
 		}
 		return task
 	}
 	status, err := scanner.ReadGitRepoStatus(ctx, task.WorkspacePath)
 	if err != nil {
+		task.WorkspaceGit.State = model.AgentTaskWorkspaceInspectionFailed
 		task.WorkspaceGit.Error = err.Error()
 		return task
 	}
+	task.WorkspaceGit.State = model.AgentTaskWorkspaceHealthy
 	task.WorkspaceGit.Branch, task.WorkspaceGit.Dirty = status.Branch, status.Dirty
 	for _, change := range status.Changes {
 		if change.Kind == scanner.GitChangeUnmerged {

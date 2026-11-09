@@ -324,10 +324,13 @@ func (m Model) agentTaskFooterActions(width int) []footerAction {
 	if !ok {
 		return nil
 	}
+	if task.Status == model.AgentTaskStatusArchived {
+		return []footerAction{footerNavAction("x", "inspect"), footerNavAction("/trash", "trash")}
+	}
 	if agentTaskOffersCorrectionCapture(task) || agentTaskOffersSupervisionRevoke(task) {
 		return []footerAction{footerHideAction("x", "actions")}
 	}
-	return []footerAction{footerHideAction("x", "trash")}
+	return []footerAction{footerHideAction("x", "trash"), footerNavAction("/workspace", "inspect")}
 }
 
 func agentTaskActionTitle(task model.AgentTask) string {

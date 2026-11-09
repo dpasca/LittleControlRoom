@@ -1499,19 +1499,17 @@ func (s *Service) CleanupResidualWorktreeDirectories(ctx context.Context, rootPa
 	return result, nil
 }
 
-// orphanedWorktreeSummaries narrows the stored "forgotten linked checkout still
-// on disk" rows to leftovers that need attention. That predicate also matches
-// two healthy shapes, which are dropped here where Git's worktree list is
-// available: a live checkout inside the workspace of a task that is not in
-// Trash (the task row already represents it), and a plain subfolder of a live
-// checkout that Git does not register on its own. Unreadable Git state keeps a
-// row listed rather than hiding possible residue.
+// orphanedWorktreeSummaries returns forgotten checkout folders without a task
+// owner. Task ownership survives broken Git metadata and Trash retention; any
+// checkout warning or failed cleanup is represented by that task instead.
+// Plain subfolders of live checkouts are also excluded. Unreadable Git state
+// leaves unowned folders visible for inspection.
 func (s *Service) orphanedWorktreeSummaries(ctx context.Context) (map[string]model.ProjectSummary, error) {
 	candidates, err := s.store.GetOrphanedWorktreeSummaryMap(ctx)
 	if err != nil || len(candidates) == 0 {
 		return candidates, err
 	}
-	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{})
+	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{IncludeArchived: true})
 	if err != nil {
 		return nil, fmt.Errorf("list task workspaces: %w", err)
 	}
@@ -1531,7 +1529,7 @@ func (s *Service) orphanedWorktreeSummaries(ctx context.Context) (map[string]mod
 				worktreesByRoot[rootPath] = worktrees
 			}
 		}
-		if orphanedWorktreeIsHealthy(path, worktrees, tasks) {
+		if worktreeRepresentedElsewhere(path, worktrees, tasks) {
 			continue
 		}
 		orphaned[path] = summary
@@ -1539,16 +1537,17 @@ func (s *Service) orphanedWorktreeSummaries(ctx context.Context) (map[string]mod
 	return orphaned, nil
 }
 
-func orphanedWorktreeIsHealthy(path string, rootWorktrees []scanner.GitWorktree, openTasks []model.AgentTask) bool {
-	switch linkedWorktreeRegistrationInList(rootWorktrees, path) {
-	case linkedWorktreeRegistrationLive:
-		canonical := canonicalRepositoryPath(path)
-		for _, task := range openTasks {
-			workspace := canonicalRepositoryPath(strings.TrimSpace(task.WorkspacePath))
-			if workspace != "" && (canonical == workspace || removalPathWithin(canonical, workspace)) {
-				return true
-			}
+func worktreeRepresentedElsewhere(path string, rootWorktrees []scanner.GitWorktree, tasks []model.AgentTask) bool {
+	// Ownership is independent of Git health and task lifecycle. A broken
+	// checkout is a task warning; a retained Trash workspace is intentional.
+	canonical := canonicalRepositoryPath(path)
+	for _, task := range tasks {
+		workspace := canonicalRepositoryPath(strings.TrimSpace(task.WorkspacePath))
+		if workspace != "" && (canonical == workspace || removalPathWithin(canonical, workspace)) {
+			return true
 		}
+	}
+	switch linkedWorktreeRegistrationInList(rootWorktrees, path) {
 	case linkedWorktreeRegistrationAbsent:
 		for _, worktree := range rootWorktrees {
 			if worktree.PrunableReason == "" && removalPathWithin(canonicalRepositoryPath(path), canonicalRepositoryPath(worktree.Path)) {

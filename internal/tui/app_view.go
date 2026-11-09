@@ -66,6 +66,9 @@ func (m Model) renderDetailViewport(width, height int) string {
 
 func (m Model) View() string {
 	body := m.view()
+	if m.agentTaskTrash != nil && m.orphanedWorktreeInspection == nil {
+		return m.renderAgentTaskTrash(body, m.width, m.height)
+	}
 	if m.projectCollaborationDialog != nil {
 		return m.renderProjectCollaborations(body, m.width, m.height)
 	}
@@ -1256,7 +1259,10 @@ func (m Model) renderProjectList(width, height int) string {
 		case projectListRowOrphaned:
 			namePrefix = "  ↳ "
 			nameLabel = projectWorktreeLabel(p)
-			statusText = "orphaned"
+			statusText = "unowned"
+			if p.LastActivity.IsZero() {
+				last = "Unknown"
+			}
 			assessmentText = orphanedWorktreeListSummary(rowMeta.OrphanedCleanupKind)
 			statusStyle = detailWarningStyle
 			summaryStyle = detailWarningStyle

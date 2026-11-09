@@ -1110,6 +1110,18 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestWorkspaceInspectionCommands(t *testing.T) {
+	for _, name := range []string{"trash", "workspace"} {
+		inv, err := Parse("/" + name)
+		if err != nil || inv.Kind != Kind(name) || inv.Canonical != "/"+name {
+			t.Fatalf("/%s = %+v, %v", name, inv, err)
+		}
+		if _, err := Parse("/" + name + " unexpected"); err == nil {
+			t.Fatalf("/%s accepted unsupported arguments", name)
+		}
+	}
+}
+
 func TestSuggestionsWithCategoriesCompleteCategoryMoveNames(t *testing.T) {
 	suggestions := SuggestionsWithCategories("/category move Cli", []string{"Client Work", "Personal"})
 	if len(suggestions) != 1 {

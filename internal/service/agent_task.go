@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,7 +92,8 @@ func (s *Service) CreateAgentTask(ctx context.Context, input model.CreateAgentTa
 
 func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.AgentTask, error) {
 	if _, err := s.PurgeExpiredAgentTasks(ctx, time.Now()); err != nil {
-		return nil, fmt.Errorf("purge expired agent tasks: %w", err)
+		// One failed Trash deletion must not hide unrelated live tasks.
+		log.Printf("WARN service: purge expired agent tasks: %v", err)
 	}
 	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{
 		Statuses: []model.AgentTaskStatus{
@@ -103,6 +106,13 @@ func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.Ag
 	if err != nil {
 		return nil, err
 	}
+	expired, err := s.store.ListExpiredAgentTasks(ctx, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	// Failed or blocked cleanup belongs on the owning task, never on a second
+	// anonymous worktree row. Normal retention stays out of the dashboard.
+	tasks = append(tasks, expired...)
 	s.repositoryMu.Lock()
 	engineers := s.repositoryEngineers
 	s.repositoryMu.Unlock()
@@ -124,6 +134,10 @@ func (s *Service) ListOpenAgentTasks(ctx context.Context, limit int) ([]model.Ag
 		}
 	}
 	for i, task := range tasks {
+		if task.Status == model.AgentTaskStatusArchived {
+			tasks[i] = s.withAgentTaskCleanupError(task)
+			continue
+		}
 		if task.Workflow.Enabled && task.Workflow.Phase == "submitted" {
 			if updated, err := s.settleStructuredTask(ctx, task); err == nil {
 				tasks[i] = updated
@@ -145,24 +159,48 @@ func (s *Service) PurgeExpiredAgentTasks(ctx context.Context, now time.Time) (in
 	}
 	managedRoots := []string{appfs.InternalWorkspaceRoot(s.cfg.DataDir)}
 	purged := 0
+	var failures []error
 	for _, task := range tasks {
 		// Retention must not remove the workspace of a retained write owner,
 		// including records recovered after an interrupted lifecycle update.
 		if task.Repository.State == "held" {
+			s.agentTaskCleanupErrors.Store(task.ID, "Cleanup blocked: task still holds write ownership")
 			continue
 		}
 		workspace := strings.TrimSpace(task.WorkspacePath)
 		if workspace != "" && appfs.IsManagedInternalPath(workspace, managedRoots) {
 			if err := s.removeAgentTaskWorkspace(ctx, workspace, firstNonEmpty(task.OriginProjectPath, task.OriginWorktreePath)); err != nil {
-				return purged, err
+				s.agentTaskCleanupErrors.Store(task.ID, err.Error())
+				failures = append(failures, fmt.Errorf("%s: %w", agentTaskInspectionTitle(task), err))
+				continue
 			}
 		}
 		if err := s.store.DeleteAgentTask(ctx, task.ID); err != nil {
-			return purged, err
+			s.agentTaskCleanupErrors.Store(task.ID, err.Error())
+			failures = append(failures, fmt.Errorf("%s: %w", agentTaskInspectionTitle(task), err))
+			continue
 		}
+		s.agentTaskCleanupErrors.Delete(task.ID)
 		purged++
 	}
-	return purged, nil
+	return purged, errors.Join(failures...)
+}
+
+func (s *Service) withAgentTaskCleanupError(task model.AgentTask) model.AgentTask {
+	if problem, ok := s.agentTaskCleanupErrors.Load(task.ID); ok {
+		task.CleanupError = problem.(string)
+	}
+	return task
+}
+
+// ListAgentTaskTrash is read-only. Opening Trash never triggers deletion or a
+// status read of every retained checkout.
+func (s *Service) ListAgentTaskTrash(ctx context.Context) ([]model.AgentTask, error) {
+	tasks, err := s.store.ListAgentTasks(ctx, model.AgentTaskFilter{Statuses: []model.AgentTaskStatus{model.AgentTaskStatusArchived}})
+	for i := range tasks {
+		tasks[i] = s.withAgentTaskCleanupError(tasks[i])
+	}
+	return tasks, err
 }
 
 func (s *Service) GetAgentTask(ctx context.Context, taskID string) (model.AgentTask, error) {

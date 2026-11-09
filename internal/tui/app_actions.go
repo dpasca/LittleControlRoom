@@ -507,6 +507,14 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		)
 	case commands.KindClean:
 		return m.openStaleWorktreeCleanup()
+	case commands.KindTrash:
+		return m, m.openAgentTaskTrash()
+	case commands.KindWorkspace:
+		if task, project, ok := m.selectedAgentTask(); ok {
+			return m, m.openOrphanedWorktreeInspection(project, task.OriginProjectPath)
+		}
+		m.status = "Select an agent task to inspect its workspace"
+		return m, nil
 	case commands.KindSessionGC:
 		return m.openSessionCleanup(codexapp.ProviderCodex)
 	case commands.KindClaudeGC:
@@ -1321,6 +1329,9 @@ func (m Model) openHideActionForSelection() (tea.Model, tea.Cmd) {
 	}
 	switch model.NormalizeProjectKind(project.Kind) {
 	case model.ProjectKindAgentTask:
+		if task, ok := m.agentTaskForProjectPath(project.Path); ok && task.Status == model.AgentTaskStatusArchived {
+			return m, m.openOrphanedWorktreeInspection(project, task.OriginProjectPath)
+		}
 		return m, m.openAgentTaskActionConfirmForSelection()
 	case model.ProjectKindScratchTask:
 		return m, m.openScratchTaskActionConfirmForSelection()

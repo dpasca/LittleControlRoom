@@ -65,6 +65,8 @@ type sessionClassifierRetryer interface {
 }
 
 type Service struct {
+	agentTaskCleanupErrors sync.Map // task ID -> last cleanup failure; refreshed by retention.
+
 	repositoryMu        sync.Mutex
 	repositoryEngineers func() []codexapp.Snapshot
 	repositoryProcesses func() []projectrun.Snapshot
@@ -1338,7 +1340,10 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("apply agent task Trash retention: %w", err))
 	}
 	if _, err := s.PurgeExpiredAgentTasks(ctx, now); err != nil {
-		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("purge expired agent tasks: %w", err))
+		log.Printf("WARN service: purge expired agent tasks: %v", err)
+		if ctx.Err() != nil {
+			return ScanReport{}, progress.wrapTimeout(ctx.Err())
+		}
 	}
 	progress.setPhase("purging expired missing linked worktrees")
 	if _, err := s.store.DeleteExpiredMissingLinkedWorktrees(ctx, now, missingLinkedWorktreeRetention); err != nil {

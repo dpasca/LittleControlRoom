@@ -205,7 +205,7 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 		}
 		if orphanedCount > 0 {
 			surface.Section("Worktree warnings")
-			surface.Bullet(fmt.Sprintf("%d orphaned checkout(s) still exist on disk. Git no longer tracks them as live worktrees. Remove the leftover folder when you no longer need its files.", orphanedCount), projectDetailToneWarning)
+			surface.Bullet(fmt.Sprintf("%d unclaimed workspace(s) still exist on disk without a task owner. Inspect ownership, Git registration and files before deciding what to keep.", orphanedCount), projectDetailToneWarning)
 			if projectIsWorktreeRoot(p) {
 				surface.Bullet("Press x or use /wt remove to inspect these folders. Little Control Room will only auto-delete a folder whose sole entry is one regular .DS_Store file; every other folder is kept untouched.", projectDetailToneWarning)
 			}
@@ -378,6 +378,9 @@ func projectDetailLastActivityTone(project model.ProjectSummary) projectDetailSu
 }
 
 func (m Model) projectDetailLastActivityText(project model.ProjectSummary) string {
+	if projectIsOrphanedWorktree(project) && project.LastActivity.IsZero() {
+		return "unknown"
+	}
 	text := "never"
 	if !project.LastActivity.IsZero() {
 		text = project.LastActivity.Format(time.RFC3339)
@@ -395,6 +398,9 @@ func (m Model) projectDetailLastActivityText(project model.ProjectSummary) strin
 }
 
 func (m Model) projectDetailLastActivityRenderedText(project model.ProjectSummary) string {
+	if projectIsOrphanedWorktree(project) && project.LastActivity.IsZero() {
+		return detailMutedStyle.Render("unknown")
+	}
 	text := detailMutedStyle.Render("never")
 	if !project.LastActivity.IsZero() {
 		text = detailValueStyle.Render(project.LastActivity.Format(time.RFC3339))
@@ -599,7 +605,7 @@ func (m Model) worktreeLaneDetailText(current, member model.ProjectSummary) (str
 }
 
 func orphanedWorktreeDetailText(orphan model.ProjectSummary) string {
-	statusParts := []string{"orphaned"}
+	statusParts := []string{"unclaimed"}
 	if orphan.RepoDirty {
 		statusParts = append(statusParts, "dirty")
 	}

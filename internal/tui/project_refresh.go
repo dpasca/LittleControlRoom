@@ -700,6 +700,10 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			}
 			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
 		}
+		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
+		if errors.Is(agentTaskErr, context.DeadlineExceeded) {
+			agentTaskErr = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
+		}
 		orphanedDirectories, err := m.svc.ListOrphanedWorktreeDirectories(ctx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -714,10 +718,6 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			if directory.CleanupKind != service.ResidualWorktreeCleanupUnknown {
 				orphanedCleanupKindByPath[normalizeProjectPath(path)] = directory.CleanupKind
 			}
-		}
-		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
-		if errors.Is(agentTaskErr, context.DeadlineExceeded) {
-			agentTaskErr = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 		}
 		integrityStates, integrityErr := m.svc.RepositoryIntegrityStates(ctx)
 		if errors.Is(integrityErr, context.DeadlineExceeded) {

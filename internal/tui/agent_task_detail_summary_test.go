@@ -20,10 +20,10 @@ import (
 func TestAgentTaskSummaryUsesCachedWorkspacePresence(t *testing.T) {
 	task := model.AgentTask{
 		ID: "task-missing", WorkspacePath: "/missing/task", Status: model.AgentTaskStatusCompleted,
-		WorkspaceGit: model.AgentTaskWorkspaceGit{Missing: true, Error: "Workspace unavailable"},
+		WorkspaceGit: model.AgentTaskWorkspaceGit{State: model.AgentTaskWorkspaceMissing, Missing: true, Error: "Workspace unavailable"},
 	}
 	summary, err := projectSummaryForAgentTask(task)
-	if err != nil || summary.PresentOnDisk || !strings.Contains(summary.LatestSessionSummary, "workspace unavailable") {
+	if err != nil || summary.PresentOnDisk || !strings.Contains(summary.LatestSessionSummary, "Workspace folder missing") {
 		t.Fatalf("missing workspace presented as available: %+v, %v", summary, err)
 	}
 	// A refreshed cache is authoritative; rendering must not stat this fake path.
