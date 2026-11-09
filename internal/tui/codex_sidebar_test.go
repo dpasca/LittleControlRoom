@@ -475,6 +475,22 @@ func TestEmbeddedSidebarUsageWindowsStayOnSeparateLines(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsSeparateFableWeeklyLimit(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode,
+		UsageWindows: []codexapp.UsageWindowSnapshot{
+			{Limit: "Claude", Window: "weekly", LeftPercent: 54},
+			{Limit: "Claude Fable", Window: "weekly", LeftPercent: 8},
+		},
+	}
+	rows := embeddedSidebarUsageWindowRows(snapshot, 38, time.Now())
+	got := ansi.Strip(strings.Join(rows, "\n"))
+	if !strings.Contains(got, "week") || !strings.Contains(got, "54% left") ||
+		!strings.Contains(got, "Fable week") || !strings.Contains(got, "8% left") {
+		t.Fatalf("usage rows = %q, want separate general and Fable limits", got)
+	}
+}
+
 func TestEmbeddedSidebarBrowserHintHighlightsCtrlO(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)

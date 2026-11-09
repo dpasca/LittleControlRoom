@@ -149,12 +149,17 @@ func (s *claudeCodeSession) refreshClaudePlanUsage(reader claudePlanUsageReader,
 }
 
 func claudePlanUsageWindows(usage claudecli.PlanUsage) []UsageWindowSnapshot {
-	windows := make([]UsageWindowSnapshot, 0, 2)
+	windows := make([]UsageWindowSnapshot, 0, 3)
 	if usage.FiveHour != nil {
 		windows = append(windows, claudePlanUsageWindow("5h", usage.FiveHour))
 	}
 	if usage.SevenDay != nil {
 		windows = append(windows, claudePlanUsageWindow("weekly", usage.SevenDay))
+	}
+	if usage.SevenDayFable != nil {
+		window := claudePlanUsageWindow("weekly", usage.SevenDayFable)
+		window.Limit = "Claude Fable"
+		windows = append(windows, window)
 	}
 	return windows
 }
@@ -223,6 +228,8 @@ func claudeRateLimitLabels(rateLimitType string) (window, limit string, ok bool)
 		return "weekly", "Claude Opus", true
 	case "seven_day_sonnet":
 		return "weekly", "Claude Sonnet", true
+	case "seven_day_fable":
+		return "weekly", "Claude Fable", true
 	default:
 		return "", "", false
 	}

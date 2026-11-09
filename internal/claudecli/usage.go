@@ -27,9 +27,10 @@ type PlanUsageWindow struct {
 }
 
 type PlanUsage struct {
-	Available bool
-	FiveHour  *PlanUsageWindow
-	SevenDay  *PlanUsageWindow
+	Available     bool
+	FiveHour      *PlanUsageWindow
+	SevenDay      *PlanUsageWindow
+	SevenDayFable *PlanUsageWindow
 }
 
 type PlanUsageReader struct {
@@ -122,17 +123,19 @@ func (r *PlanUsageReader) Read(ctx context.Context, configDir string) (PlanUsage
 	}
 
 	var payload struct {
-		FiveHour *planUsageWindowJSON `json:"five_hour"`
-		SevenDay *planUsageWindowJSON `json:"seven_day"`
+		FiveHour      *planUsageWindowJSON `json:"five_hour"`
+		SevenDay      *planUsageWindowJSON `json:"seven_day"`
+		SevenDayFable *planUsageWindowJSON `json:"seven_day_fable"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024))
 	if err := decoder.Decode(&payload); err != nil {
 		return PlanUsage{}, fmt.Errorf("decode Claude plan usage: %w", err)
 	}
 	return PlanUsage{
-		Available: true,
-		FiveHour:  parsePlanUsageWindow(payload.FiveHour),
-		SevenDay:  parsePlanUsageWindow(payload.SevenDay),
+		Available:     true,
+		FiveHour:      parsePlanUsageWindow(payload.FiveHour),
+		SevenDay:      parsePlanUsageWindow(payload.SevenDay),
+		SevenDayFable: parsePlanUsageWindow(payload.SevenDayFable),
 	}, nil
 }
 

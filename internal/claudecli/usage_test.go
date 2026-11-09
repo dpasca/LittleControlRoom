@@ -22,7 +22,8 @@ func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{
 			"five_hour":{"utilization":17.25,"resets_at":"2026-08-01T02:50:00.673899+00:00"},
-			"seven_day":{"utilization":3,"resets_at":"2026-08-07T13:00:00Z"}
+			"seven_day":{"utilization":3,"resets_at":"2026-08-07T13:00:00Z"},
+			"seven_day_fable":{"utilization":92,"resets_at":"2026-08-07T13:00:00Z"}
 		}`)
 	}))
 	defer server.Close()
@@ -39,8 +40,11 @@ func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if !usage.Available || usage.FiveHour == nil || usage.SevenDay == nil {
-		t.Fatalf("usage = %#v, want both subscription windows", usage)
+	if !usage.Available || usage.FiveHour == nil || usage.SevenDay == nil || usage.SevenDayFable == nil {
+		t.Fatalf("usage = %#v, want all subscription windows", usage)
+	}
+	if got, want := usage.SevenDayFable.Utilization, 92.0; got != want {
+		t.Fatalf("Fable weekly utilization = %v, want %v", got, want)
 	}
 	if got, want := usage.FiveHour.Utilization, 17.25; got != want {
 		t.Fatalf("five-hour utilization = %v, want %v", got, want)

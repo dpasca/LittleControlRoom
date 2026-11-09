@@ -866,16 +866,31 @@ func TestClaudeRateLimitEventsPopulateUsageWindows(t *testing.T) {
 	weeklyReset := time.Date(2026, 8, 7, 13, 0, 0, 0, time.UTC).Unix()
 	session.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.17,"resetsAt":%d}}`, fiveHourReset))
 	session.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day","utilization":0.03,"resetsAt":%d}}`, weeklyReset))
+	session.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day_fable","utilization":0.92,"resetsAt":%d}}`, weeklyReset))
 
 	windows := session.Snapshot().UsageWindows
-	if len(windows) != 2 {
-		t.Fatalf("UsageWindows = %#v, want five-hour and weekly windows", windows)
+	if len(windows) != 3 {
+		t.Fatalf("UsageWindows = %#v, want five-hour, weekly, and Fable weekly windows", windows)
 	}
 	if windows[0].Window != "5h" || windows[0].LeftPercent != 83 || !windows[0].ResetsAt.Equal(time.Unix(fiveHourReset, 0)) {
 		t.Fatalf("five-hour window = %#v", windows[0])
 	}
 	if windows[1].Window != "weekly" || windows[1].LeftPercent != 97 || !windows[1].ResetsAt.Equal(time.Unix(weeklyReset, 0)) {
 		t.Fatalf("weekly window = %#v", windows[1])
+	}
+	if windows[2].Window != "weekly" || windows[2].Limit != "Claude Fable" || windows[2].LeftPercent != 8 {
+		t.Fatalf("Fable weekly window = %#v", windows[2])
+	}
+}
+
+func TestClaudePlanUsageWindowsIncludeSeparateFableLimit(t *testing.T) {
+	windows := claudePlanUsageWindows(claudecli.PlanUsage{
+		SevenDay:      &claudecli.PlanUsageWindow{Utilization: 46},
+		SevenDayFable: &claudecli.PlanUsageWindow{Utilization: 92},
+	})
+	if len(windows) != 2 || windows[0].Limit != "Claude" || windows[0].LeftPercent != 54 ||
+		windows[1].Limit != "Claude Fable" || windows[1].LeftPercent != 8 {
+		t.Fatalf("UsageWindows = %#v, want separate general and Fable weekly limits", windows)
 	}
 }
 
