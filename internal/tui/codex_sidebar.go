@@ -989,12 +989,12 @@ func embeddedSidebarUsageWindowRows(snapshot codexapp.Snapshot, width int, now t
 	}
 	labelWidth := 4
 	for _, window := range windows {
-		label := firstNonEmptyTrimmed(compactEmbeddedUsageWindowLabel(window.Window), "window")
+		label := embeddedSidebarUsageWindowLabel(window)
 		labelWidth = max(labelWidth, ansi.StringWidth(label))
 	}
 	rows := []string{embeddedSidebarMutedStyle.Render(fitLine("Limits", width))}
 	for _, window := range windows {
-		label := firstNonEmptyTrimmed(compactEmbeddedUsageWindowLabel(window.Window), "window")
+		label := embeddedSidebarUsageWindowLabel(window)
 		prefix := "  " + label + strings.Repeat(" ", labelWidth-ansi.StringWidth(label)+1)
 		row := embeddedSidebarMutedStyle.Render(prefix) +
 			embeddedSidebarUsageWindowStyle(window.LeftPercent).Render(fmt.Sprintf("%3d%% left", window.LeftPercent))
@@ -1028,9 +1028,9 @@ func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int)
 	now := time.Now()
 	rows := make([]string, 0, len(windows))
 	for _, window := range windows {
-		label := strings.TrimSpace(window.Window)
-		if label == "" {
-			label = "window"
+		label := firstNonEmptyTrimmed(strings.TrimSpace(window.Window), "window")
+		if family := strings.TrimSpace(strings.TrimPrefix(window.Limit, "Claude ")); family != "" && family != window.Limit {
+			label = family + " " + label
 		}
 		valueParts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
 		if !window.ResetsAt.IsZero() {
@@ -1059,7 +1059,9 @@ func embeddedSidebarUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWin
 	}
 	windows := make([]codexapp.UsageWindowSnapshot, 0, len(snapshot.UsageWindows))
 	for _, window := range snapshot.UsageWindows {
-		if strings.TrimSpace(window.Limit) != "" && !strings.EqualFold(strings.TrimSpace(window.Limit), preferredLimit) {
+		limit := strings.TrimSpace(window.Limit)
+		if limit != "" && !strings.EqualFold(limit, preferredLimit) &&
+			!(provider == codexapp.ProviderClaudeCode && strings.HasPrefix(strings.ToLower(limit), "claude ")) {
 			continue
 		}
 		windows = append(windows, window)
@@ -1068,6 +1070,14 @@ func embeddedSidebarUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWin
 		windows = append(windows, snapshot.UsageWindows...)
 	}
 	return windows
+}
+
+func embeddedSidebarUsageWindowLabel(window codexapp.UsageWindowSnapshot) string {
+	label := firstNonEmptyTrimmed(compactEmbeddedUsageWindowLabel(window.Window), "window")
+	if family := strings.TrimSpace(strings.TrimPrefix(window.Limit, "Claude ")); family != "" && family != window.Limit {
+		return family + " " + label
+	}
+	return label
 }
 
 func compactEmbeddedUsageWindowLabel(label string) string {
