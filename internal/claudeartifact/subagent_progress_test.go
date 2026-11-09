@@ -121,3 +121,26 @@ func TestSubagentProgressMissingAndUnreadableDirectory(t *testing.T) {
 		t.Fatal("unreadable activity must surface an error")
 	}
 }
+
+func TestSubagentProgressHandbackCompletesChild(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "parent.jsonl")
+	dir := strings.TrimSuffix(parent, ".jsonl") + "/subagents"
+	now := time.Now().UTC()
+	handback := map[string]any{"stop_reason": "tool_use", "content": []any{
+		map[string]any{"type": "tool_use", "name": "SubagentHandback", "input": map[string]any{}},
+	}}
+	done := progressRecord("done", "parent", "assistant", now.Add(-time.Hour), progressTool("Fetch terms")) +
+		progressRecord("done", "parent", "assistant", now.Add(-50*time.Minute), handback) +
+		progressRecord("done", "parent", "user", now.Add(-50*time.Minute), map[string]any{"content": []any{map[string]any{"type": "tool_result"}}})
+	writeProgressFile(t, filepath.Join(dir, "agent-done.jsonl"), done)
+	writeProgressFile(t, filepath.Join(dir, "agent-busy.jsonl"), progressRecord("busy", "parent", "assistant", now.Add(-time.Hour), progressTool("Still working")))
+	got, err := (&SubagentProgressReader{}).Read(parent, "parent", now.Add(-5*time.Hour))
+	if err != nil || len(got) != 2 {
+		t.Fatalf("Read = %#v, %v", got, err)
+	}
+	for _, child := range got {
+		if child.ID == "done" && !child.Completed || child.ID == "busy" && child.Completed {
+			t.Fatalf("wrong completion: %#v", got)
+		}
+	}
+}

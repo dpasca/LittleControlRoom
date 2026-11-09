@@ -17,6 +17,7 @@ const SubagentActivityWindow = 20 * time.Minute
 
 const subagentProgressTailBytes = 1024 * 1024
 const subagentProgressLimit = 16
+const subagentHandbackTool = "SubagentHandback"
 
 // SubagentProgress is recorded evidence, not process ownership. Reading it
 // never resumes a child or changes the parent's turn lifecycle.
@@ -169,6 +170,10 @@ func readSubagentProgress(path, parentID, agentID string) (SubagentProgress, err
 	var progress SubagentProgress
 	var tracker TurnTracker
 	sawOtherIdentity := false
+	// Claude Code children finish by calling SubagentHandback, whose assistant
+	// record carries stop_reason tool_use, so the tracker alone never sees a
+	// terminal stop. A later assistant record without the handback reopens it.
+	handedBack := false
 	for _, line := range bytes.SplitAfter(data, []byte{'\n'}) {
 		if len(line) == 0 || line[len(line)-1] != '\n' {
 			continue // A writer may not have finished the last record yet.
@@ -216,9 +221,13 @@ func readSubagentProgress(path, parentID, agentID string) (SubagentProgress, err
 				} `json:"input"`
 			}
 			if json.Unmarshal(record.Message.Content, &blocks) == nil {
+				sawHandback := false
 				for _, block := range blocks {
 					if block.Type != "tool_use" {
 						continue
+					}
+					if block.Name == subagentHandbackTool {
+						sawHandback = true
 					}
 					action := block.Name
 					if block.Input.Description != "" {
@@ -228,13 +237,14 @@ func readSubagentProgress(path, parentID, agentID string) (SubagentProgress, err
 					}
 					progress.LatestAction = subagentProgressText(action)
 				}
+				handedBack = sawHandback
 			}
 		}
 	}
 	if progress.ID == "" && !sawOtherIdentity {
 		return progress, fmt.Errorf("no complete activity records in bounded subagent tail")
 	}
-	progress.Completed = tracker.State().Completed
+	progress.Completed = tracker.State().Completed || handedBack
 	return progress, nil
 }
 
