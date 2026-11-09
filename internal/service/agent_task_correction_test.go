@@ -23,7 +23,17 @@ type correctionFixture struct {
 
 func newCorrectionFixture(t *testing.T) *correctionFixture {
 	t.Helper()
+	return newCorrectionFixtureWith(t, nil)
+}
+
+// newCorrectionFixtureWith lets a test commit extra caller state (for example a
+// submodule) before the task worktree is created from the caller's HEAD.
+func newCorrectionFixtureWith(t *testing.T, prepare func(root string)) *correctionFixture {
+	t.Helper()
 	svc, _, root := repositoryTestFixture(t)
+	if prepare != nil {
+		prepare(root)
+	}
 	ctx := t.Context()
 	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{Title: "typed worker", Provider: model.SessionSourceCodex, OriginProjectPath: root, OriginProvider: model.SessionSourceCodex, OriginSessionKey: "caller", OriginSessionID: "caller-thread", Repository: model.AgentTaskRepository{Write: true}, Workflow: model.AgentTaskWorkflow{Enabled: true}})
 	if err != nil {

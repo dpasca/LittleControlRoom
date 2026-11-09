@@ -269,8 +269,13 @@ type AgentTaskRepository struct {
 	BaseHEAD           string `json:"base_head,omitempty"`
 	BaseBranch         string `json:"base_branch,omitempty"`
 	HandoffFingerprint string `json:"handoff_fingerprint,omitempty"`
-	Changes            string `json:"changes,omitempty"`
-	Error              string `json:"error,omitempty"`
+	// HandoffContent digests the checkout's visible content (tracked and
+	// untracked files, recursing into changed submodule checkouts) relative to
+	// BaseHEAD. Unlike HandoffFingerprint it ignores HEAD, index and status, so a
+	// caller can commit exactly the accepted edits without invalidating them.
+	HandoffContent string `json:"handoff_content,omitempty"`
+	Changes        string `json:"changes,omitempty"`
+	Error          string `json:"error,omitempty"`
 	// CorrectionBaseline authorizes one dirty reacquisition: the exact checkout
 	// fingerprint a caller captured after its own fixes. CorrectionRevision ties
 	// that capture to the reviewed run, so a stale boundary cannot be replayed.

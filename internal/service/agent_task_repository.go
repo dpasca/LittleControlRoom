@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -387,8 +388,11 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 			if acceptedRevision > 0 && acceptedRevision == task.Workflow.RunID && task.Repository.Isolated && task.Workflow.Handoff && task.Workflow.Review != nil && task.Workflow.Review.Decision == "accept" && task.Workflow.Review.Revision == acceptedRevision {
 				if task.Repository.HandoffFingerprint != "" && baseline.fingerprint == task.Repository.HandoffFingerprint {
 					boundaryErr = nil
+				} else if reason := acceptedContentMismatch(ctx, task, baseline); reason == "" {
+					// The caller committed exactly the accepted edits (merge-then-continue).
+					boundaryErr = nil
 				} else {
-					boundaryErr = fmt.Errorf("checkout changed since accepted revision %d; inspect the intervening edits before starting new work", acceptedRevision)
+					boundaryErr = fmt.Errorf("checkout changed since accepted revision %d: %s. Committing exactly the accepted edits on %s is supported; inspect and resolve any other intervening edits before starting new work", acceptedRevision, reason, firstNonEmpty(task.Repository.BaseBranch, "the task branch"))
 				}
 			}
 			if err := boundaryErr; err != nil {
@@ -400,7 +404,7 @@ func (s *Service) acquireTaskRepository(ctx context.Context, task model.AgentTas
 	repository := task.Repository
 	repository.State, repository.SessionKey = "held", sessionKey
 	repository.BaseHEAD, repository.BaseBranch = baseline.head, baseline.branch
-	repository.HandoffFingerprint, repository.Changes, repository.Error = "", "", ""
+	repository.HandoffFingerprint, repository.HandoffContent, repository.Changes, repository.Error = "", "", "", ""
 	if !dirtyBoundary {
 		// A clean start supersedes any captured dirty boundary.
 		repository.CorrectionBaseline, repository.CorrectionRevision = "", 0
@@ -611,10 +615,18 @@ func (s *Service) releaseTaskRepositoryLocked(ctx context.Context, taskID string
 		// A stopped owner must remain releasable even if the checkout was moved or
 		// its evidence is too large. Preserve the failure for caller inspection.
 		repository.Error = "Repository evidence unavailable at handoff: " + err.Error()
-		repository.HandoffFingerprint, repository.Changes = "", ""
+		repository.HandoffFingerprint, repository.HandoffContent, repository.Changes = "", "", ""
 		return s.store.ReleaseAgentTaskRepository(ctx, taskID, repository)
 	}
 	repository.Changes, repository.HandoffFingerprint, repository.Error = after.changes, after.fingerprint, ""
+	// Best effort: without a content digest an accepted handoff can still be
+	// continued only at its exact fingerprint.
+	repository.HandoffContent = ""
+	if repository.BaseHEAD != "" {
+		if content, err := taskRepositoryContent(ctx, task.Repository.Root, repository.BaseHEAD); err == nil {
+			repository.HandoffContent = content
+		}
+	}
 	if after.head != repository.BaseHEAD || after.branch != repository.BaseBranch {
 		repository.Error = "Repository HEAD or branch changed during delegation; review this change before accepting the result."
 	}
@@ -644,8 +656,15 @@ func (b *boundedRepositoryOutput) Write(p []byte) (int, error) {
 }
 
 func repositoryGit(ctx context.Context, root string, args ...string) ([]byte, error) {
+	return repositoryGitInput(ctx, root, nil, args...)
+}
+
+func repositoryGitInput(ctx context.Context, root string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var out boundedRepositoryOutput
 	cmd.Stdout = &out
 	var stderr bytes.Buffer
@@ -734,4 +753,183 @@ func inspectTaskRepository(ctx context.Context, root string) (taskRepositorySnap
 	}
 	result.fingerprint = fmt.Sprintf("%x", hash.Sum(nil))
 	return result, nil
+}
+
+// acceptedContentMismatch explains why the current checkout cannot stand in for
+// an accepted handoff, or returns "" when it can: the task branch is unchanged,
+// its HEAD only added commits on top of the handoff's base, and the visible
+// content (submodules included) equals what was reviewed. Index, status and
+// HEAD may differ, so committing the accepted edits keeps them valid while any
+// unreviewed byte still fails closed.
+func acceptedContentMismatch(ctx context.Context, task model.AgentTask, current taskRepositorySnapshot) string {
+	repository := task.Repository
+	switch {
+	case repository.HandoffContent == "" || repository.BaseHEAD == "":
+		return "the accepted handoff has no recorded content digest, so only its exact uncommitted state can be continued"
+	case current.branch != repository.BaseBranch:
+		return fmt.Sprintf("branch changed from %s to %s", repository.BaseBranch, current.branch)
+	}
+	if current.head != repository.BaseHEAD {
+		if _, err := repositoryGit(ctx, repository.Root, "merge-base", "--is-ancestor", repository.BaseHEAD, current.head); err != nil {
+			return fmt.Sprintf("HEAD %s does not descend from the accepted base %s", shortFingerprint(current.head), shortFingerprint(repository.BaseHEAD))
+		}
+	}
+	content, err := taskRepositoryContent(ctx, repository.Root, repository.BaseHEAD)
+	if err != nil {
+		return "content could not be compared: " + err.Error()
+	}
+	if content != repository.HandoffContent {
+		return fmt.Sprintf("content differs from the accepted handoff (accepted %s, found %s)", shortFingerprint(repository.HandoffContent), shortFingerprint(content))
+	}
+	return ""
+}
+
+// taskRepositoryContent digests what the checkout shows relative to base:
+// every path whose working content differs from base, with the blob Git would
+// record for it, plus untracked files. Changed submodule checkouts are
+// digested recursively against the gitlink base pins, so committing their
+// edits (or moving them to a branch) leaves the digest unchanged. It never
+// writes objects or the index.
+func taskRepositoryContent(ctx context.Context, root, base string) (string, error) {
+	hash := sha256.New()
+	if _, err := writeRepositoryContent(ctx, hash, root, base, 0); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
+func writeRepositoryContent(ctx context.Context, w io.Writer, root, base string, depth int) (int, error) {
+	if depth > 4 {
+		return 0, fmt.Errorf("submodules nest too deeply under %s", root)
+	}
+	raw, err := repositoryGit(ctx, root, "diff", base, "--raw", "-z", "--no-abbrev", "--no-renames", "--no-ext-diff", "--ignore-submodules=none")
+	if err != nil {
+		return 0, err
+	}
+	entries := map[string]string{}
+	var hashPaths []string
+	hashModes := map[string]string{}
+	fields := bytes.Split(raw, []byte{0})
+	for i := 0; i+1 < len(fields); i += 2 {
+		meta, path := strings.Fields(strings.TrimPrefix(string(fields[i]), ":")), string(fields[i+1])
+		if len(meta) != 5 {
+			return 0, fmt.Errorf("unexpected diff record %q", fields[i])
+		}
+		oldMode, newMode, oldID, newID, status := meta[0], meta[1], meta[2], meta[3], meta[4]
+		zero := strings.Trim(newID, "0") == ""
+		switch {
+		case status == "U":
+			return 0, fmt.Errorf("unmerged path %s", path)
+		case oldMode == "160000" || newMode == "160000":
+			if oldMode != newMode {
+				return 0, fmt.Errorf("submodule %s was added, removed or replaced", path)
+			}
+			record, err := submoduleContentRecord(ctx, filepath.Join(root, path), oldID, newID, zero, depth)
+			if err != nil {
+				return 0, err
+			}
+			if record != "" {
+				entries[path] = record
+			}
+		case status == "D":
+			entries[path] = "deleted"
+		case newMode == "120000" && zero:
+			id, err := symlinkBlobID(ctx, root, path)
+			if err != nil {
+				return 0, err
+			}
+			entries[path] = newMode + " " + id
+		case zero:
+			hashPaths, hashModes[path] = append(hashPaths, path), newMode
+		default:
+			entries[path] = newMode + " " + newID
+		}
+	}
+	untracked, err := repositoryGit(ctx, root, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return 0, err
+	}
+	for _, name := range bytes.Split(untracked, []byte{0}) {
+		path := string(name)
+		if path == "" {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(root, path))
+		if err != nil {
+			return 0, err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			id, err := symlinkBlobID(ctx, root, path)
+			if err != nil {
+				return 0, err
+			}
+			entries[path] = "120000 " + id
+		case info.Mode().IsRegular():
+			mode := "100644"
+			if info.Mode()&0o111 != 0 {
+				mode = "100755"
+			}
+			hashPaths, hashModes[path] = append(hashPaths, path), mode
+		default:
+			return 0, fmt.Errorf("unsupported untracked path %q", path)
+		}
+	}
+	if len(hashPaths) > 0 {
+		// Applies the same clean filters as git add; without -w nothing is stored.
+		out, err := repositoryGitInput(ctx, root, []byte(strings.Join(hashPaths, "\n")+"\n"), "hash-object", "--stdin-paths")
+		if err != nil {
+			return 0, err
+		}
+		ids := strings.Fields(string(out))
+		if len(ids) != len(hashPaths) {
+			return 0, fmt.Errorf("hash-object returned %d ids for %d paths", len(ids), len(hashPaths))
+		}
+		for i, path := range hashPaths {
+			entries[path] = hashModes[path] + " " + ids[i]
+		}
+	}
+	paths := make([]string, 0, len(entries))
+	for path := range entries {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		fmt.Fprintf(w, "%s\x00%s\x00", path, entries[path])
+	}
+	return len(paths), nil
+}
+
+// submoduleContentRecord digests a changed submodule's checkout against the
+// pin it had at base, or falls back to the recorded gitlink when the submodule
+// is not checked out. An unchanged checked-out tree contributes nothing.
+func submoduleContentRecord(ctx context.Context, path, baseID, newID string, zero bool, depth int) (string, error) {
+	top, err := repositoryGit(ctx, path, "rev-parse", "--show-toplevel")
+	if err != nil || canonicalRepositoryPath(strings.TrimSpace(string(top))) != canonicalRepositoryPath(path) {
+		if zero {
+			return "", fmt.Errorf("submodule %s changed but is not checked out", path)
+		}
+		return "gitlink " + newID, nil
+	}
+	nested := sha256.New()
+	count, err := writeRepositoryContent(ctx, nested, path, baseID, depth+1)
+	if err != nil {
+		return "", fmt.Errorf("submodule %s: %w", path, err)
+	}
+	if count == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("submodule %x", nested.Sum(nil)), nil
+}
+
+func symlinkBlobID(ctx context.Context, root, path string) (string, error) {
+	target, err := os.Readlink(filepath.Join(root, path))
+	if err != nil {
+		return "", err
+	}
+	out, err := repositoryGitInput(ctx, root, []byte(target), "hash-object", "--stdin", "--no-filters")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

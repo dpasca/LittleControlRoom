@@ -41,6 +41,15 @@ func TestKnowledgeDiscoveryAndReadWithoutProjectData(t *testing.T) {
 			"cannot guarantee a wake during sleep",
 			"keywords or names",
 		},
+		"task-merge-continue": {
+			"commit exactly the accepted edits",
+			"Commit inside each changed submodule worktree first",
+			"`repository.handoff_content`",
+			"descending from `repository.base_head`",
+			"Any content the reviewer did not accept fails closed",
+			"can be continued only in their exact uncommitted state",
+			"Never commit in a checkout a worker currently holds",
+		},
 	}
 	if len(topics) != len(wantByTopic) {
 		t.Fatalf("topics = %#v, want exactly %d with expectations", topics, len(wantByTopic))
@@ -85,6 +94,7 @@ func TestKnowledgeInstructionsPointToDirectorCoordination(t *testing.T) {
 		"explicit stops and required confirmations hold",
 		"end_turn with a requested continuation is not a stop",
 		"messaging or collaboration permission is not itself authorization",
+		"task-merge-continue",
 	} {
 		if !strings.Contains(KnowledgeInstructions, want) {
 			t.Fatalf("KnowledgeInstructions missing %q", want)

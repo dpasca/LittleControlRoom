@@ -773,10 +773,19 @@ inspectable without reviving automatic review. Free-text-only endings become
 Review rejection does not itself launch work. `agent_task.continue` creates a new
 run that resumes the same worker on the exact reviewed edits rather than a clean
 checkout. After acceptance, an explicitly authorized `agent_task.continue` can
-also start a new run on the unchanged accepted handoff. This preserves the
+also start a new run on the accepted handoff. This preserves the
 previous result and review revisions and revokes the old run's correction grant.
-Generic prompts retain their boundary checks. If the accepted checkout changed,
-the host reports that mismatch for inspection rather than adopting those edits.
+Generic prompts retain their boundary checks. The handoff records both an exact
+fingerprint and a HEAD-independent content digest (`handoff_content`, relative
+to `base_head`, recursing into changed submodule checkouts and covering
+untracked files). A caller may therefore merge the result by committing exactly
+the accepted edits in the worker checkout, submodules included, and still
+continue: the host admits the checkout when it is on the same branch, HEAD
+descends from `base_head`, and the content digest matches. Any other change
+(extra or modified content, a switched branch, rewritten history, or a legacy
+handoff without a digest that is no longer byte-identical) is reported with its
+reason for inspection rather than adopted. The `task-merge-continue` knowledge
+topic documents the caller workflow.
 `agent_task.close` cannot bypass structured acceptance.
 
 ### Correction grants

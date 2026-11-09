@@ -8,13 +8,16 @@ import (
 
 // KnowledgeInstructions stays short enough for startup context. Detailed,
 // versioned guidance is loaded on demand through the shared query registry.
-const KnowledgeInstructions = "LCR provides built-in operating guidance through the knowledge query domain (knowledge.list and knowledge.get). Before diagnosing submodule dirtiness or changing Git worktree configuration, read the submodule-worktrees topic. LCR can prepare submodules as nested linked worktrees with shared Git configuration; a config write through a task gitdir can affect the canonical checkout and other tasks. Inspect extensions.worktreeConfig and config origins before proposing a repair. To bring a reused submodule worktree up to the parent's pinned gitlink after a merge or pull, propose the git.submodule_align control; do not run git checkout in the shared submodule yourself. When coordinating owner approvals, release gates or other directors, or after any restart, resume or /handoff of such a session, read the director-coordination topic: the executing director owns one approval location and rereads the whole saved owner answer, including conditional notes, before acting; saved answers and pending operation IDs are reconciled before resending; explicit stops and required confirmations hold, while end_turn with a requested continuation is not a stop; and a messaging or collaboration permission is not itself authorization for external writes that the provider's own approval checks gate."
+const KnowledgeInstructions = "LCR provides built-in operating guidance through the knowledge query domain (knowledge.list and knowledge.get). Before diagnosing submodule dirtiness or changing Git worktree configuration, read the submodule-worktrees topic. LCR can prepare submodules as nested linked worktrees with shared Git configuration; a config write through a task gitdir can affect the canonical checkout and other tasks. Inspect extensions.worktreeConfig and config origins before proposing a repair. To bring a reused submodule worktree up to the parent's pinned gitlink after a merge or pull, propose the git.submodule_align control; do not run git checkout in the shared submodule yourself. When coordinating owner approvals, release gates or other directors, or after any restart, resume or /handoff of such a session, read the director-coordination topic: the executing director owns one approval location and rereads the whole saved owner answer, including conditional notes, before acting; saved answers and pending operation IDs are reconciled before resending; explicit stops and required confirmations hold, while end_turn with a requested continuation is not a stop; and a messaging or collaboration permission is not itself authorization for external writes that the provider's own approval checks gate. Before merging an accepted worker result you will continue, read task-merge-continue."
 
 //go:embed knowledge/submodule-worktrees.md
 var submoduleWorktreesKnowledge string
 
 //go:embed knowledge/director-coordination.md
 var directorCoordinationKnowledge string
+
+//go:embed knowledge/task-merge-continue.md
+var taskMergeContinueKnowledge string
 
 type knowledgeTopic struct {
 	ID      string `json:"id"`
@@ -31,6 +34,10 @@ func knowledgeTopics() []knowledgeTopic {
 		ID:      "director-coordination",
 		Title:   "Directors, owner approvals and native coordination",
 		Summary: "Run owner approvals from the executing director's own board: click, durable wake, reread the whole saved answer and conditions, act within authority, return a receipt; reconcile saved answers and pending operation IDs after restart or handoff without duplicates; honor stops and enforced provider permission checks.",
+	}, {
+		ID:      "task-merge-continue",
+		Title:   "Merging an accepted worker result, then continuing the same worker",
+		Summary: "Commit exactly the accepted edits in the worker checkout (submodules first, then the parent on its task branch), merge the branch, and still reopen the same worker with agent_task.continue; what LCR compares and what it refuses.",
 	}}
 }
 
@@ -41,6 +48,8 @@ func knowledgeBody(id string) (markdown, source string, ok bool) {
 		return submoduleWorktreesKnowledge, "internal/agentquery/knowledge/submodule-worktrees.md", true
 	case "director-coordination":
 		return directorCoordinationKnowledge, "internal/agentquery/knowledge/director-coordination.md", true
+	case "task-merge-continue":
+		return taskMergeContinueKnowledge, "internal/agentquery/knowledge/task-merge-continue.md", true
 	}
 	return "", "", false
 }
