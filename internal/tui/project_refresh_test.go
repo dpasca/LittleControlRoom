@@ -1027,3 +1027,101 @@ func TestProjectsMsgShowsRefreshFailureStatusWhenReloadFails(t *testing.T) {
 		t.Fatalf("err = %v, want refresh error", got.err)
 	}
 }
+
+func TestProjectReloadTaskTimeoutDoesNotFailProjectList(t *testing.T) {
+	svc := newControlTestService(t)
+	path := t.TempDir()
+	if err := svc.Store().UpsertProjectState(t.Context(), model.ProjectState{
+		Path: path, Name: "refresh-budget", Status: model.StatusIdle,
+		PresentOnDisk: true, InScope: true, UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a live task snapshot that takes longer than its read budget.
+	// ListOpenAgentTasks can finish without a database error when no tasks exist;
+	// the loader must still notice that its own deadline expired.
+	svc.ConfigureAgentTaskRepositoryHost(func() []codexapp.Snapshot {
+		time.Sleep(600 * time.Millisecond)
+		return nil
+	}, nil)
+	msg := (Model{svc: svc}).loadProjects(500 * time.Millisecond)
+	if msg.err != nil || len(msg.projects) != 1 || msg.projects[0].Path != path {
+		t.Fatalf("slow tasks prevented project reload: projects=%+v err=%v", msg.projects, msg.err)
+	}
+	if !errors.Is(msg.agentTaskErr, context.DeadlineExceeded) {
+		t.Fatalf("task error = %v, want deadline exceeded", msg.agentTaskErr)
+	}
+	if msg.orphanedWorktreeErr != nil || msg.repositoryIntegrityErr != nil {
+		t.Fatalf("task timeout leaked into independent checks: worktrees=%v integrity=%v", msg.orphanedWorktreeErr, msg.repositoryIntegrityErr)
+	}
+	for _, want := range []string{"agent tasks unavailable", "inspecting agent tasks", "timed out after 500ms"} {
+		if msg.filterErr == nil || !strings.Contains(msg.filterErr.Error(), want) {
+			t.Fatalf("refresh warning = %v, want %q", msg.filterErr, want)
+		}
+	}
+}
+
+func TestProjectReloadNamesFailedCoreRead(t *testing.T) {
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	msg := (Model{ctx: ctx, svc: newControlTestService(t)}).loadProjects(time.Second)
+	if !errors.Is(msg.err, context.DeadlineExceeded) || !strings.Contains(msg.err.Error(), "loading project list") {
+		t.Fatalf("project read error = %v, want named deadline error", msg.err)
+	}
+}
+
+func TestProjectsMsgPreservesWarningsWhenAuxiliaryChecksFail(t *testing.T) {
+	root := "/tmp/refresh-root"
+	orphan := "/tmp/refresh-orphan"
+	m := Model{
+		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{root: {{Path: orphan}}},
+		orphanedCleanupKindByPath: map[string]service.ResidualWorktreeCleanupKind{
+			orphan: service.ResidualWorktreeCleanupDSStoreOnly,
+		},
+		repositoryIntegrityByRoot: map[string]model.RepositoryIntegrityState{
+			root: {RootPath: root, Displaced: true},
+		},
+		openAgentTasks: []model.AgentTask{{ID: "keep-task"}},
+	}
+	warning := fmt.Errorf("inspection unavailable")
+	updated, _ := m.Update(projectsMsg{
+		agentTaskErr: warning, orphanedWorktreeErr: warning,
+		repositoryIntegrityErr: warning, filterErr: warning,
+	})
+	got := updated.(Model)
+	if len(got.orphanedWorktreesByRoot[root]) != 1 || got.orphanedCleanupKindByPath[orphan] != service.ResidualWorktreeCleanupDSStoreOnly {
+		t.Fatal("failed check discarded cached orphaned worktree warnings")
+	}
+	if !got.repositoryIntegrityByRoot[root].Displaced || len(got.openAgentTasks) != 1 {
+		t.Fatal("failed checks discarded cached integrity warnings or agent tasks")
+	}
+	if got.err != warning || got.loading {
+		t.Fatalf("partial refresh did not surface warning: err=%v loading=%t", got.err, got.loading)
+	}
+	// A subsequent successful empty result must clear the old warnings.
+	updated, _ = got.Update(projectsMsg{})
+	got = updated.(Model)
+	if len(got.orphanedWorktreesByRoot) != 0 || len(got.orphanedCleanupKindByPath) != 0 || len(got.repositoryIntegrityByRoot) != 0 || len(got.openAgentTasks) != 0 {
+		t.Fatal("successful checks retained stale auxiliary state")
+	}
+}
+
+func TestSuccessfulProjectReloadClearsFailureStatus(t *testing.T) {
+	for _, hadProjects := range []bool{false, true} {
+		m := Model{status: projectLoadFailedStatus(hadProjects), err: context.DeadlineExceeded, visibility: visibilityAllFolders}
+		updated, _ := m.Update(projectsMsg{projects: []model.ProjectSummary{{
+			Path: "/tmp/recovered-project", Name: "recovered", PresentOnDisk: true,
+		}}})
+		got := updated.(Model)
+		if got.err != nil || !strings.HasPrefix(got.status, "Loaded 1 projects") {
+			t.Fatalf("successful reload retained failure: status=%q err=%v", got.status, got.err)
+		}
+	}
+}
+
+func TestProjectReloadWithoutServiceReturnsError(t *testing.T) {
+	msg := (Model{}).loadProjects(time.Second)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "service unavailable") {
+		t.Fatalf("uninitialized refresh error = %v", msg.err)
+	}
+}

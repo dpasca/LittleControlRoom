@@ -2118,12 +2118,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.agentTaskErr == nil {
 			m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		}
-		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
-		m.orphanedCleanupKindByPath = msg.orphanedCleanupKindByPath
-		m.repositoryIntegrityByRoot = msg.repositoryIntegrityByRoot
+		if msg.orphanedWorktreeErr == nil {
+			m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
+			m.orphanedCleanupKindByPath = msg.orphanedCleanupKindByPath
+		}
+		if msg.repositoryIntegrityErr == nil {
+			m.repositoryIntegrityByRoot = msg.repositoryIntegrityByRoot
+		}
 		m.rebuildProjectList(selectedPath)
 		m.reconcileMergeConflictResolverProjects()
-		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
+		recoveredProjectLoad := m.status == projectLoadFailedStatus(true) || m.status == projectLoadFailedStatus(false)
+		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || recoveredProjectLoad || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
 		}
 		if len(m.projects) > 0 {

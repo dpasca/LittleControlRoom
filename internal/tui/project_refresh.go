@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"lcroom/internal/codexapp"
@@ -35,6 +36,8 @@ type projectsMsg struct {
 	categories                []model.ProjectCategory
 	openAgentTasks            []model.AgentTask
 	agentTaskErr              error
+	orphanedWorktreeErr       error
+	repositoryIntegrityErr    error
 	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
 	orphanedCleanupKindByPath map[string]service.ResidualWorktreeCleanupKind
 	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
@@ -683,66 +686,81 @@ func (m Model) waitBusCmd() tea.Cmd {
 
 func (m Model) loadProjectsCmd() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiProjectsReloadTimeout)
-		defer cancel()
+		return m.loadProjects(tuiProjectsReloadTimeout)
+	}
+}
+
+// Each independent loader owns its deadline. In particular, Git inspection of
+// agent tasks must not consume the budget for loading projects or worktrees.
+// All loaders run in the background command and are joined before publishing.
+func (m Model) loadProjects(timeout time.Duration) projectsMsg {
+	msg := projectsMsg{removalRevision: m.projectRemovalRevision}
+	if m.svc == nil || m.svc.Store() == nil {
+		msg.err = fmt.Errorf("loading project list: service unavailable")
+		return msg
+	}
+	var loaders sync.WaitGroup
+	load := func(action string, targetErr *error, read func(context.Context) error) {
+		loaders.Add(1)
+		go func() {
+			defer loaders.Done()
+			ctx, cancel := m.actionContext(timeout)
+			defer cancel()
+			err := read(ctx)
+			if err == nil {
+				err = ctx.Err()
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				*targetErr = timeoutActionError(err, timeout, action)
+			} else if err != nil {
+				*targetErr = fmt.Errorf("%s: %w", action, err)
+			}
+		}()
+	}
+	load("loading project list", &msg.err, func(ctx context.Context) error {
 		allProjects, err := m.svc.Store().ListProjects(ctx, true)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
-			}
-			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
+			return err
 		}
-		projects, archivedProjects := splitProjectArchiveSummaries(allProjects)
-		categories, err := m.svc.ListProjectCategories(ctx)
+		msg.projects, msg.archivedProjects = splitProjectArchiveSummaries(allProjects)
+		msg.categories, err = m.svc.ListProjectCategories(ctx)
+		return err
+	})
+	load("inspecting agent tasks", &msg.agentTaskErr, func(ctx context.Context) error {
+		var err error
+		msg.openAgentTasks, err = m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
+		return err
+	})
+	load("inspecting orphaned worktrees", &msg.orphanedWorktreeErr, func(ctx context.Context) error {
+		directories, err := m.svc.ListOrphanedWorktreeDirectories(ctx)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
-			}
-			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
+			return err
 		}
-		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
-		if errors.Is(agentTaskErr, context.DeadlineExceeded) {
-			agentTaskErr = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
-		}
-		orphanedDirectories, err := m.svc.ListOrphanedWorktreeDirectories(ctx)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
-			}
-			return projectsMsg{err: err, removalRevision: m.projectRemovalRevision}
-		}
-		orphanedWorktrees := make(map[string]model.ProjectSummary, len(orphanedDirectories))
-		orphanedCleanupKindByPath := make(map[string]service.ResidualWorktreeCleanupKind, len(orphanedDirectories))
-		for path, directory := range orphanedDirectories {
+		orphanedWorktrees := make(map[string]model.ProjectSummary, len(directories))
+		msg.orphanedCleanupKindByPath = make(map[string]service.ResidualWorktreeCleanupKind, len(directories))
+		for path, directory := range directories {
 			orphanedWorktrees[path] = directory.Summary
 			if directory.CleanupKind != service.ResidualWorktreeCleanupUnknown {
-				orphanedCleanupKindByPath[normalizeProjectPath(path)] = directory.CleanupKind
+				msg.orphanedCleanupKindByPath[normalizeProjectPath(path)] = directory.CleanupKind
 			}
 		}
-		integrityStates, integrityErr := m.svc.RepositoryIntegrityStates(ctx)
-		if errors.Is(integrityErr, context.DeadlineExceeded) {
-			integrityErr = fmt.Errorf("repository integrity check timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
-		}
-		patterns, filterErr := config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
-		filterErr = errors.Join(
-			filterErr,
-			wrapOptionalProjectLoadError("agent tasks unavailable", agentTaskErr),
-			wrapOptionalProjectLoadError("repository integrity unavailable", integrityErr),
-		)
-		return projectsMsg{
-			removalRevision:           m.projectRemovalRevision,
-			projects:                  projects,
-			archivedProjects:          archivedProjects,
-			categories:                categories,
-			openAgentTasks:            openAgentTasks,
-			agentTaskErr:              agentTaskErr,
-			orphanedWorktreesByRoot:   buildOrphanedWorktreeMap(orphanedWorktrees),
-			orphanedCleanupKindByPath: orphanedCleanupKindByPath,
-			repositoryIntegrityByRoot: integrityStates,
-			excludeProjectPatterns:    patterns,
-			filterErr:                 filterErr,
-		}
-	}
+		msg.orphanedWorktreesByRoot = buildOrphanedWorktreeMap(orphanedWorktrees)
+		return nil
+	})
+	load("checking repository integrity", &msg.repositoryIntegrityErr, func(ctx context.Context) error {
+		var err error
+		msg.repositoryIntegrityByRoot, err = m.svc.RepositoryIntegrityStates(ctx)
+		return err
+	})
+	loaders.Wait()
+	msg.excludeProjectPatterns, msg.filterErr = config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
+	msg.filterErr = errors.Join(
+		msg.filterErr,
+		wrapOptionalProjectLoadError("agent tasks unavailable", msg.agentTaskErr),
+		wrapOptionalProjectLoadError("orphaned worktrees unavailable", msg.orphanedWorktreeErr),
+		wrapOptionalProjectLoadError("repository integrity unavailable", msg.repositoryIntegrityErr),
+	)
+	return msg
 }
 
 func wrapOptionalProjectLoadError(label string, err error) error {

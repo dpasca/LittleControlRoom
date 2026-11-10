@@ -1311,6 +1311,16 @@ func TestTodoWorktreeAutoSubmitUsesInitialInputForImageAttachments(t *testing.T)
 }
 
 func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverlap(t *testing.T) {
+	// A launch also refreshes project data. Find the session result by type
+	// rather than relying on the unrelated refresh producing no message.
+	openedMessage := func(msgs []tea.Msg) (codexSessionOpenedMsg, bool) {
+		for _, msg := range msgs {
+			if opened, ok := msg.(codexSessionOpenedMsg); ok {
+				return opened, true
+			}
+		}
+		return codexSessionOpenedMsg{}, false
+	}
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
@@ -1356,9 +1366,9 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverla
 	if len(msgs) == 0 {
 		t.Fatalf("first launch returned no command messages")
 	}
-	openedA, ok := msgs[0].(codexSessionOpenedMsg)
+	openedA, ok := openedMessage(msgs)
 	if !ok {
-		t.Fatalf("first cmd message = %T, want codexSessionOpenedMsg", msgs[0])
+		t.Fatalf("first command messages did not include codexSessionOpenedMsg: %#v", msgs)
 	}
 
 	updated, cmd = got.Update(todoWorktreeLaunchMsg{
@@ -1375,9 +1385,9 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverla
 	if len(msgs) == 0 {
 		t.Fatalf("second launch returned no command messages")
 	}
-	openedB, ok := msgs[0].(codexSessionOpenedMsg)
+	openedB, ok := openedMessage(msgs)
 	if !ok {
-		t.Fatalf("second cmd message = %T, want codexSessionOpenedMsg", msgs[0])
+		t.Fatalf("second command messages did not include codexSessionOpenedMsg: %#v", msgs)
 	}
 
 	updated, cmd = got.Update(openedA)
