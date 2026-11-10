@@ -82,6 +82,7 @@ type codexActionMsg struct {
 	reasoning      string
 	awaitSettle    bool
 	refreshView    bool
+	checkpointDone bool
 	renamedTask    bool
 	renameErr      error
 	err            error
@@ -297,6 +298,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 }
 
 func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
+	if msg.checkpointDone {
+		delete(m.codexCheckpointPending, msg.projectPath)
+	}
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
 	if msg.err != nil {

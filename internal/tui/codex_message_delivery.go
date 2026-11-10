@@ -4,6 +4,9 @@ import "lcroom/internal/codexapp"
 
 func (m Model) renderCodexMessageDelivery(snapshot codexapp.Snapshot, width int) []string {
 	var rows []string
+	if snapshot.CheckpointPending || m.codexCheckpointPending[snapshot.ProjectPath] {
+		rows = append(rows, detailWarningStyle.Render(fitLine("Interrupting tools for checkpoint · ctrl+c cancels", width)))
+	}
 	now := m.currentTime()
 	if status, quiet := snapshot.ParentActivitySummary(now); status != "" && snapshot.Busy {
 		style := embeddedSidebarMutedStyle
@@ -11,6 +14,9 @@ func (m Model) renderCodexMessageDelivery(snapshot codexapp.Snapshot, width int)
 			style = detailWarningStyle
 		}
 		rows = append(rows, style.Render(fitLine(status, width)))
+		if quiet && snapshot.Provider == codexapp.ProviderClaudeCode && !snapshot.BusyExternal && !snapshot.CheckpointPending {
+			rows = append(rows, embeddedSidebarWrappedRows("/checkpoint interrupts active tools and requests a progress report", embeddedSidebarMutedStyle, width)...)
+		}
 	}
 	if _, _, backgroundOnly := snapshot.BackgroundWait(); backgroundOnly {
 		rows = append(rows, embeddedSidebarWrappedRows("Background tasks remain open; progress unverified.", embeddedSidebarMutedStyle, width)...)

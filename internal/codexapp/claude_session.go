@@ -99,6 +99,7 @@ type claudeCodeSession struct {
 	mu                   sync.Mutex
 	submitMu             sync.Mutex // Serialize submissions and initialization, without blocking snapshots.
 	managedStream        bool
+	checkpointPending    bool
 	streamState          string
 	streamInitResult     chan error
 	permissionModeChange *claudePermissionModeChange
@@ -209,6 +210,7 @@ type claudeSubmissionMode int
 const (
 	claudeSubmissionNormal claudeSubmissionMode = iota
 	claudeSubmissionCompact
+	claudeSubmissionCheckpoint
 )
 
 type claudeTokenUsage struct {
@@ -532,8 +534,9 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		EmptyConversation:        len(s.entries) == 0 && !s.latestTurnStateKnown,
 		Phase:                    s.phaseLocked(),
 		Started:                  s.started,
-		Busy:                     s.busy || s.externalTurnActive || s.compacting,
+		Busy:                     s.busy || s.externalTurnActive || s.compacting || s.checkpointPending,
 		BusyExternal:             s.busyExternal,
+		CheckpointPending:        s.checkpointPending,
 		Compacting:               s.compacting,
 		BusySince:                s.busySince,
 		LatestTurnStartedAt:      s.latestTurnStartedAt,
@@ -561,7 +564,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		BackgroundTasks:          s.backgroundTaskSnapshotsLocked(),
 		Subagents:                append([]claudeartifact.SubagentProgress(nil), s.subagentProgress...),
 		SubagentProgressError:    s.subagentProgressError,
-		BackgroundInputSupported: s.managedStream && s.stdin != nil && !s.interruptPending,
+		BackgroundInputSupported: s.managedStream && s.stdin != nil && !s.interruptPending && !s.checkpointPending,
 		ParentStatus:             s.claudeParentStatusLocked(),
 		ParentTurnActive:         s.cmd != nil && s.managedStream && s.streamState == "running",
 		ParentActivityAt:         s.lastParentActivityAt,
@@ -590,6 +593,10 @@ func (s *claudeCodeSession) phaseLocked() SessionPhase {
 		phase = SessionPhaseExternal
 	case s.compacting:
 		phase = SessionPhaseReconciling
+	case s.checkpointPending:
+		// Retain task ownership across the interrupted process's exit until
+		// its checkpoint report is submitted or explicitly canceled.
+		phase = SessionPhaseRunning
 	case s.busy:
 		if s.pendingSubmissions > 0 || s.runningBackgroundTaskCountLocked() > 0 || (s.managedStream && s.streamState != "idle") {
 			phase = SessionPhaseRunning
@@ -683,9 +690,19 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	}
 
 	s.mu.Lock()
-	if err := s.controlInput.accept(input); err != nil {
+	if s.checkpointPending && mode != claudeSubmissionCheckpoint {
 		s.mu.Unlock()
-		return err
+		return fmt.Errorf("Claude Code checkpoint is in progress; ctrl+c cancels it")
+	}
+	var inputErr error
+	if mode == claudeSubmissionCheckpoint {
+		inputErr = s.controlInput.acceptCheckpoint(input)
+	} else {
+		inputErr = s.controlInput.accept(input)
+	}
+	if inputErr != nil {
+		s.mu.Unlock()
+		return inputErr
 	}
 	if input.RequireIdle && (s.busy || s.closed || s.pendingApproval != nil || s.pendingToolInput != nil || s.busyExternal) {
 		s.mu.Unlock()
@@ -795,7 +812,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 		s.status = claudeThinkingStatus
 	}
 	s.lastError = ""
-	if mode == claudeSubmissionNormal {
+	if mode != claudeSubmissionCompact {
 		s.latestSubmittedAt = submittedAt
 		s.latestTurnStartedAt = submittedAt
 		s.latestTurnStateAt = submittedAt
@@ -851,7 +868,7 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 	s.mu.Lock()
 	s.updateClaudeDeliveryLocked(messageID, "sent", time.Now())
 	s.mu.Unlock()
-	if mode == claudeSubmissionNormal {
+	if mode != claudeSubmissionCompact {
 		s.mu.Lock()
 		s.clearClaudeBrowserHandoffLocked()
 		s.mu.Unlock()
@@ -1146,18 +1163,48 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 }
 
 func (s *claudeCodeSession) Interrupt() error {
+	_, _, err := s.interruptClaudeTurn(false)
+	return err
+}
+
+func (s *claudeCodeSession) interruptClaudeTurn(checkpoint bool) (ControlInputState, []BackgroundTaskSnapshot, error) {
 	s.mu.Lock()
+	if checkpoint && s.checkpointPending {
+		s.mu.Unlock()
+		return ControlInputState{}, nil, fmt.Errorf("Claude Code checkpoint is already in progress")
+	}
+	if checkpoint && (s.interruptPending || s.controlInput.Stopped) {
+		s.mu.Unlock()
+		return ControlInputState{}, nil, fmt.Errorf("%w: Claude Code was already stopped", ErrSessionChanged)
+	}
+	if checkpoint && s.compacting {
+		s.mu.Unlock()
+		return ControlInputState{}, nil, fmt.Errorf("wait for Claude Code compaction before requesting a checkpoint")
+	}
 	s.controlInput.stop()
 	cmd := s.cmd
 	approvalServer := s.approvalServer
 	if s.closed {
 		s.mu.Unlock()
-		return fmt.Errorf("Claude Code session is closed")
+		return ControlInputState{}, nil, fmt.Errorf("Claude Code session is closed")
+	}
+	if s.busyExternal || s.externalTurnActive || s.readOnlySubagent {
+		s.mu.Unlock()
+		return ControlInputState{}, nil, fmt.Errorf("cannot interrupt an externally owned Claude Code session")
 	}
 	if cmd == nil || !s.busy {
+		if !checkpoint && s.checkpointPending {
+			s.appendSystemNoticeLocked("Checkpoint canceled; no report turn was started.")
+			s.mu.Unlock()
+			s.notifyAsync()
+			return ControlInputState{}, nil, nil
+		}
 		s.mu.Unlock()
-		return fmt.Errorf("Claude Code is not currently running")
+		return ControlInputState{}, nil, fmt.Errorf("Claude Code is not currently running")
 	}
+	s.checkpointPending = checkpoint || s.checkpointPending
+	expected := s.controlInput
+	tasks := s.backgroundTaskSnapshotsLocked()
 	s.markClaudeInterruptedToolsLocked()
 	pendingRequests := s.takeClaudePendingRequestsLocked()
 	s.interruptPending = true
@@ -1171,10 +1218,15 @@ func (s *claudeCodeSession) Interrupt() error {
 	}
 
 	if err := terminateAppServerCommand(cmd); err != nil {
-		return err
+		if checkpoint {
+			s.mu.Lock()
+			s.checkpointPending = false
+			s.mu.Unlock()
+		}
+		return expected, tasks, err
 	}
 	s.notifyAsync()
-	return nil
+	return expected, tasks, nil
 }
 
 func claudeEmbeddedModelOptions() []ModelOption {
@@ -1797,8 +1849,14 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	s.refreshActiveLocked()
 	pendingBackgroundTasks := len(s.backgroundTasks)
 	if interrupted {
-		s.backgroundTasks = make(map[string]BackgroundTaskSnapshot)
-		s.backgroundTaskOrder = nil
+		if s.checkpointPending {
+			// Keep job identities visible if the report cannot be submitted.
+			// Killing the parent is not evidence that remote/detached jobs ended.
+			s.markBackgroundTasksUnresolvedLocked()
+		} else {
+			s.backgroundTasks = make(map[string]BackgroundTaskSnapshot)
+			s.backgroundTaskOrder = nil
+		}
 		pendingBackgroundTasks = 0
 	} else if pendingBackgroundTasks > 0 {
 		s.markBackgroundTasksUnresolvedLocked()

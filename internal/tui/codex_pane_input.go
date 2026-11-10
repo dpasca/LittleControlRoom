@@ -276,6 +276,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				inv.Kind == codexslash.KindShowStatus ||
 				inv.Kind == codexslash.KindContext ||
 				inv.Kind == codexslash.KindPause ||
+				inv.Kind == codexslash.KindCheckpoint ||
 				inv.Kind == codexslash.KindCompact ||
 				inv.Kind == codexslash.KindReview ||
 				inv.Kind == codexslash.KindGoal ||
@@ -342,6 +343,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.status = label + " has no active turn to pause."
 					return m, nil
 				}
+			case codexslash.KindCheckpoint:
+				return m.requestVisibleClaudeCheckpoint(snapshot, inv.Prompt)
 			case codexslash.KindFast:
 				return m.setVisibleCodexFastMode(snapshot, inv.FastMode)
 			case codexslash.KindOutputStyle:
@@ -489,6 +492,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		draft := m.currentCodexDraft()
 		if draft.Empty() {
+			return m, focusCmd
+		}
+		if snapshot.CheckpointPending || m.codexCheckpointPending[m.codexVisibleProject] {
+			m.status = "Claude Code checkpoint is in progress; draft saved. ctrl+c cancels the checkpoint."
 			return m, focusCmd
 		}
 		refreshCmd := tea.Cmd(nil)

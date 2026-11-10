@@ -40,6 +40,8 @@ func DescribeSessionInput(snapshot Snapshot) SessionInputAvailability {
 		provider = ProviderCodex
 	}
 	switch {
+	case snapshot.CheckpointPending:
+		return unavailableSessionInput("The engineer is interrupting tools for a checkpoint; ctrl+c on the desktop cancels it.")
 	case snapshot.Closed || snapshot.Phase == SessionPhaseClosed:
 		return unavailableSessionInput("This engineer session is closed.")
 	case snapshot.BusyExternal:

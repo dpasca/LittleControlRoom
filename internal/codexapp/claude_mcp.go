@@ -15,7 +15,10 @@ const claudeRuntimeProcessInstructions = `Little Control Room tracks this projec
 - Call lcr_runtime/list_processes before starting a local server or watcher when a matching process may already be active.
 - Prefer lcr_runtime/start_process for long-running server/watch commands; it reuses a matching command/cwd process by default. Set create_new=true only for an intentional parallel copy, and replace_existing=true only when a fresh instance is needed.
 - Call lcr_runtime/read_process_output to check the tail output or exit state of a managed process.
-- Call lcr_runtime/stop_process only when the user asks or to clean up a temporary process you started.`
+- Call lcr_runtime/stop_process only when the user asks or to clean up a temporary process you started.
+
+For long validation runs, keep one tracked background job per run and retain its task ID or remote receipt, revision, output path and exit state. Consume completion notifications or make short bounded status reads; do not occupy the foreground with shell sleep/until polling loops. A timeout that moves a command to the background leaves that same job running: inspect it rather than launching another copy or another waiter. Recent process activity is not proof of progress.
+During implementation, prefer focused checks. Freeze the candidate before the full validation suite; after a change, rerun checks affected by that change and explain why a full rerun is needed. Respect explicit local process limits and remote-only test requirements even when the remote host is busy. If blocked or the agreed budget is exhausted, checkpoint existing evidence, failures, unverified criteria and owned jobs instead of silently widening local work or repeating validation indefinitely.`
 
 // claudePathMentionInstructions keeps file mentions openable from the
 // transcript: the link picker confirms project-relative paths against the disk

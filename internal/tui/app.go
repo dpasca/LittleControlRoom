@@ -289,6 +289,7 @@ type Model struct {
 	codexInput                    textarea.Model
 	codexDrafts                   map[string]codexDraft
 	codexSubmitErrors             map[string]string
+	codexCheckpointPending        map[string]bool
 	codexClipboardPasteInFlight   bool
 	codexSuggestedDraftsApplied   map[string]string
 	codexTranscriptRenderInFlight map[codexTranscriptRenderKey]struct{}

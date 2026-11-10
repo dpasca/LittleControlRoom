@@ -658,6 +658,7 @@ type Snapshot struct {
 	Subagents                 []claudeartifact.SubagentProgress // Cached child activity; does not establish turn ownership.
 	SubagentProgressError     string
 	BackgroundInputSupported  bool // The owned provider stream accepts input while workers run.
+	CheckpointPending         bool // An explicit interrupt-and-report action is settling the old turn.
 	ParentStatus              string
 	ParentTurnActive          bool
 	ParentActivityAt          time.Time

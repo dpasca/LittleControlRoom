@@ -25,6 +25,7 @@ const (
 	KindHandoff        Kind = "handoff"
 	KindLCAgentHandoff Kind = "lcagent-handoff"
 	KindPause          Kind = "pause"
+	KindCheckpoint     Kind = "checkpoint"
 	KindCompact        Kind = "compact"
 	KindContext        Kind = "context"
 	KindReview         Kind = "review"
@@ -84,6 +85,7 @@ var specs = []Spec{
 	{Name: "handoff", Usage: "/handoff [note]", Summary: "Choose an agent, model, and reasoning effort, then continue from a host-generated continuation brief"},
 	{Name: "lcagent-handoff", Usage: "/lcagent-handoff [note]", Summary: "Save a host-generated continuation brief and continue in a fresh LCAgent session"},
 	{Name: "pause", Usage: "/pause", Summary: "Interrupt the active turn locally without sending another model request"},
+	{Name: "checkpoint", Usage: "/checkpoint [note]", Summary: "Interrupt Claude Code's active tools and request a progress and job-ownership report"},
 	{Name: "suspend", Usage: "/suspend", Summary: "Alias for /pause", Hidden: true},
 	{Name: "compact", Usage: "/compact [instructions]", Summary: "Compact conversation history, optionally preserving a specific focus"},
 	{Name: "context", Usage: "/context", Summary: "Show current context use and the model context window"},
@@ -292,6 +294,8 @@ func Suggestions(input string) []Suggestion {
 			Display: "/pause",
 			Summary: "Interrupt the active turn locally without sending another model request",
 		}}
+	case "checkpoint":
+		return []Suggestion{{Insert: "/checkpoint", Display: "/checkpoint [note]", Summary: "Interrupt Claude Code's active tools and request a progress and job-ownership report"}}
 	case "compact":
 		return []Suggestion{{
 			Insert:  "/compact",
@@ -555,6 +559,9 @@ func Parse(input string) (Invocation, error) {
 			CompactInstructions: instructions,
 			Canonical:           slashcmd.CanonicalCommand("compact", instructions),
 		}, nil
+	case "checkpoint":
+		note := strings.TrimSpace(rawArgs)
+		return Invocation{Kind: KindCheckpoint, Prompt: note, Canonical: slashcmd.CanonicalCommand("checkpoint", note)}, nil
 	case "context":
 		if strings.TrimSpace(rawArgs) != "" {
 			return Invocation{}, fmt.Errorf("usage: /context")

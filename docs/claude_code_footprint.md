@@ -336,7 +336,7 @@ Claude Code's stream-JSON input mode accepts another user message while a
 response is active. The message remains queued and runs as its own subsequent
 turn. Little Control Room therefore writes a busy-session follow-up directly to
 the existing stream; it must not synthesize an interrupt first. Only an explicit
-`ctrl+c` or `/pause` action stops the active turn. Claude may persist canceled
+`ctrl+c`, `/pause`, or `/checkpoint` action stops the active turn. Claude may persist canceled
 tool results using denial-shaped provider text after an interrupt, so LCR records
 the explicit interruption source and does not present those canceled tools as
 individually denied by the user.
@@ -357,6 +357,28 @@ with no parent event for five minutes gets a separate inactivity notice;
 worker traffic cannot reset that clock. Neither condition claims a deadlock
 or automatically stops work. Available parents waiting on background work
 are not warned for silence.
+
+`/checkpoint [note]` is an explicit interrupt-and-report action for an active
+LCR-owned Claude session. It interrupts the current process and its active tools,
+waits for that process to settle, then resumes the same conversation with a
+bounded checkpoint request. Ordinary follow-ups retain their non-interrupting
+behavior. The report request preserves the host's last known background job IDs
+and asks for existing evidence, passed/failed/unverified criteria, blockers and
+job ownership, with no further builds, sweeps or implementation work. It does
+not certify that background or remote jobs stopped, accept a worker result, or
+release its repository lease. Earlier queued follow-ups are marked interrupted
+and are not automatically replayed.
+
+The UI marks checkpoint submission busy immediately and ignores repeat
+activation. Waiting for the interrupted process is bounded to 30 seconds. A
+second explicit stop, closure, or superseding input invalidates the resume at
+the provider's input boundary. Timeout or failure leaves an explicit error and
+does not retry the report. Request submission is distinct from report completion;
+the model must still return its report or submit the structured task result.
+This is an operator-triggered recovery path, not an automatic execution budget
+or an OS-enforced limit on local game processes. Claude's runtime guidance also
+requires retained job receipts, bounded progress reads, focused checks before
+full validation, and compliance with explicit local/remote execution limits.
 
 Protocol references: [streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode),
 [subagent foreground/background rules](https://code.claude.com/docs/en/sub-agents#run-subagents-in-foreground-or-background),
