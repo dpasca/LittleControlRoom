@@ -885,11 +885,13 @@ func TestClaudeRateLimitEventsPopulateUsageWindows(t *testing.T) {
 
 func TestClaudePlanUsageWindowsIncludeSeparateFableLimit(t *testing.T) {
 	windows := claudePlanUsageWindows(claudecli.PlanUsage{
-		SevenDay:      &claudecli.PlanUsageWindow{Utilization: 46},
-		SevenDayFable: &claudecli.PlanUsageWindow{Utilization: 92},
+		SevenDay: &claudecli.PlanUsageWindow{Utilization: 46},
+		WeeklyScoped: []claudecli.PlanUsageScopedWindow{
+			{Model: "Fable", Window: claudecli.PlanUsageWindow{Utilization: 4}},
+		},
 	})
 	if len(windows) != 2 || windows[0].Limit != "Claude" || windows[0].LeftPercent != 54 ||
-		windows[1].Limit != "Claude Fable" || windows[1].LeftPercent != 8 {
+		windows[1].Limit != "Claude Fable" || windows[1].LeftPercent != 96 {
 		t.Fatalf("UsageWindows = %#v, want separate general and Fable weekly limits", windows)
 	}
 }
