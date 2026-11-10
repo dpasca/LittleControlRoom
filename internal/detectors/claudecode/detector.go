@@ -31,7 +31,8 @@ type Detector struct {
 
 type cachedParse struct {
 	modTimeKey int64
-	auxTimeKey int64
+	size       int64
+	info       os.FileInfo
 	result     parseResult
 }
 
@@ -67,7 +68,12 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 	activeSessions := d.collectActiveSessions()
 
 	// Phase 2: Scan session JSONL files under ~/.claude/projects/
-	files, err := d.collectSessionFiles()
+	files, err := d.collectSessionFilesContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedFiles, err := d.parseSessionFiles(ctx, files)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +87,8 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		}
 		seenFiles[f.path] = struct{}{}
 
-		parsed, err := d.parseWithCache(f.path)
-		if err != nil {
+		parsed, ok := parsedFiles[f.path]
+		if !ok {
 			continue
 		}
 		if parsed.cwd == "" {
@@ -113,8 +119,8 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			}
 			// Same-checkout helpers already contribute activity to the parent.
 			// They must not displace its resumable conversation in that row.
-			parent, err := d.parseWithCache(f.parentPath)
-			if err == nil && parent.cwd != "" && filepath.Clean(parent.cwd) == cwd {
+			parent, ok := parsedFiles[f.parentPath]
+			if ok && parent.cwd != "" && filepath.Clean(parent.cwd) == cwd {
 				continue
 			}
 			artifactKind = "claude_code_subagent_jsonl"
@@ -247,6 +253,10 @@ type sessionFile struct {
 }
 
 func (d *Detector) collectSessionFiles() ([]sessionFile, error) {
+	return d.collectSessionFilesContext(context.Background())
+}
+
+func (d *Detector) collectSessionFilesContext(ctx context.Context) ([]sessionFile, error) {
 	projectsDir := filepath.Join(d.claudeHome, "projects")
 	if _, err := os.Stat(projectsDir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -257,6 +267,9 @@ func (d *Detector) collectSessionFiles() ([]sessionFile, error) {
 
 	var files []sessionFile
 	err := filepath.WalkDir(projectsDir, func(path string, dir fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return nil
 		}
@@ -298,32 +311,79 @@ func (d *Detector) collectSessionFiles() ([]sessionFile, error) {
 }
 
 func (d *Detector) parseWithCache(path string) (parseResult, error) {
+	return d.parseWithCacheContext(context.Background(), path)
+}
+
+func (d *Detector) parseWithCacheContext(ctx context.Context, path string) (parseResult, error) {
+	if err := ctx.Err(); err != nil {
+		return parseResult{}, err
+	}
 	stat, err := os.Stat(path)
 	if err != nil {
 		return parseResult{}, err
 	}
 	modKey := cacheTimeKey(stat.ModTime())
-	auxActivity := claudeAuxiliaryActivity(path)
-	auxKey := cacheTimeKey(auxActivity)
-
 	d.mu.Lock()
 	cached, ok := d.cache[path]
 	d.mu.Unlock()
 
-	if ok && cached.modTimeKey == modKey && cached.auxTimeKey == auxKey {
-		return cached.result, nil
+	// Auxiliary output only changes activity time, never transcript lifecycle.
+	// Keep it outside the transcript cache so quiet parents are not decoded again.
+	var parsed parseResult
+	if ok && cached.modTimeKey == modKey && cached.size == stat.Size() && os.SameFile(cached.info, stat) {
+		parsed = cached.result
+	} else {
+		parsed, err = parseSessionFileContext(ctx, path, stat.ModTime(), time.Time{})
+		if err != nil {
+			return parseResult{}, err
+		}
+		d.mu.Lock()
+		d.cache[path] = cachedParse{modTimeKey: modKey, size: stat.Size(), info: stat, result: parsed}
+		d.mu.Unlock()
 	}
-
-	parsed, err := parseSessionFile(path, stat.ModTime(), auxActivity)
-	if err != nil {
-		return parseResult{}, err
+	if aux := claudeAuxiliaryActivity(path); aux.After(parsed.lastEventAt) {
+		parsed.lastEventAt = aux
 	}
-
-	d.mu.Lock()
-	d.cache[path] = cachedParse{modTimeKey: modKey, auxTimeKey: auxKey, result: parsed}
-	d.mu.Unlock()
-
 	return parsed, nil
+}
+
+// parseSessionFiles bounds concurrent transcript decoding. Cold scans must read
+// historical lifecycle records too: truncating to a tail can lose pending tasks.
+func (d *Detector) parseSessionFiles(ctx context.Context, files []sessionFile) (map[string]parseResult, error) {
+	type outcome struct {
+		parsed parseResult
+		err    error
+	}
+	outcomes := make([]outcome, len(files))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range 4 {
+		workers.Go(func() {
+			for i := range jobs {
+				outcomes[i].parsed, outcomes[i].err = d.parseWithCacheContext(ctx, files[i].path)
+			}
+		})
+	}
+dispatch:
+	for i := range files {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break dispatch
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	results := make(map[string]parseResult, len(files))
+	for i, result := range outcomes {
+		if result.err == nil {
+			results[files[i].path] = result.parsed
+		}
+	}
+	return results, nil
 }
 
 func cacheTimeKey(ts time.Time) int64 {
@@ -334,6 +394,10 @@ func cacheTimeKey(ts time.Time) int64 {
 }
 
 func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult, error) {
+	return parseSessionFileContext(context.Background(), path, modTime, auxActivity)
+}
+
+func parseSessionFileContext(ctx context.Context, path string, modTime, auxActivity time.Time) (parseResult, error) {
 	res := parseResult{
 		lastEventAt: modTime,
 	}
@@ -350,9 +414,12 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 	turnTracker := claudeartifact.TurnTracker{}
 	var conversationTracker claudeartifact.ConversationTracker
 	for sc.Scan() {
-		line := sc.Text()
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		line := sc.Bytes()
 		var entry claudeSessionEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
 
@@ -366,21 +433,15 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 		if res.cwd == "" && entry.CWD != "" {
 			res.cwd = entry.CWD
 		}
-		if res.startedAt.IsZero() && entry.Timestamp != "" {
-			if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
-				res.startedAt = t
-			}
+		ts := entry.parsedTimestamp()
+		if res.startedAt.IsZero() {
+			res.startedAt = ts
 		}
-		if entry.Timestamp != "" {
-			if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
-				if t.After(res.lastEventAt) {
-					res.lastEventAt = t
-				}
-			}
+		if ts.After(res.lastEventAt) {
+			res.lastEventAt = ts
 		}
 
-		ts := entry.parsedTimestamp()
-		asyncEvents := claudeartifact.ParseAsyncTaskEvents([]byte(line))
+		asyncEvents := entry.Events()
 		conversationalUser := conversationTracker.Observe(claudeartifact.TranscriptEntry{
 			Type:             entry.Type,
 			UUID:             entry.UUID,
@@ -422,26 +483,16 @@ func parseSessionFile(path string, modTime, auxActivity time.Time) (parseResult,
 }
 
 type claudeSessionEntry struct {
-	Type             string `json:"type"`
+	claudeartifact.AsyncTaskRecord
 	SessionID        string `json:"sessionId"`
 	AgentID          string `json:"agentId"`
 	IsSidechain      bool   `json:"isSidechain"`
 	CWD              string `json:"cwd"`
-	Timestamp        string `json:"timestamp"`
-	Subtype          string `json:"subtype"`
 	IsMeta           bool   `json:"isMeta"`
 	IsCompactSummary bool   `json:"isCompactSummary"`
 	UUID             string `json:"uuid"`
 	ParentUUID       string `json:"parentUuid"`
 	PromptSource     string `json:"promptSource"`
-	Origin           struct {
-		Kind string `json:"kind"`
-	} `json:"origin"`
-	Message struct {
-		Role       string          `json:"role"`
-		Content    json.RawMessage `json:"content"`
-		StopReason string          `json:"stop_reason"`
-	} `json:"message"`
 }
 
 func (e claudeSessionEntry) parsedTimestamp() time.Time {

@@ -113,6 +113,8 @@ JSONL traces. Embedded turn completion and targeted project refresh resolve
 missing artifact references before queueing an assessment:
 
 - Claude Code uses `<claude-code-home>/projects/<sanitized-cwd>/<session-id>.jsonl`.
+  Full-history activity decoding uses four bounded workers and per-record cancellation;
+  auxiliary activity refreshes independently of the transcript cache.
   The project-directory sanitizer is shared with the Claude artifact reader.
   Worktree subagents can instead live under the parent's project directory at
   `<parent-session-id>/subagents/agent-<agent-id>.jsonl`. LCR maps their structured

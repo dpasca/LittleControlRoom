@@ -93,6 +93,14 @@ Observed background task output paths:
 
 On this machine, Claude task output may appear under temp roots even when the parent session JSONL under `~/.claude/projects/...` is quiet.
 
+Activity scans decode full transcripts with a bounded pool of four workers so
+historical pending-task and conversation metadata remain available. Each record
+is decoded once for both conversation and task lifecycle tracking. Cancellation
+is checked while walking the archive and between transcript records. Transcript
+cache entries track file identity, size, and modification time; auxiliary task
+and subagent modification times refresh activity without invalidating the parent
+transcript parse.
+
 ## 2. Session file structure observed
 
 Top-level session logs are JSONL with entries such as:

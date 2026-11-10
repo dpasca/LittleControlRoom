@@ -67,51 +67,73 @@ type asyncTaskToolUseResult struct {
 	StoppedTaskType  string `json:"task_type"`
 }
 
+// AsyncTaskRecord contains the structured lifecycle fields shared by transcript readers.
+type AsyncTaskRecord struct {
+	Type        string `json:"type"`
+	Subtype     string `json:"subtype"`
+	TaskID      string `json:"task_id"`
+	TaskType    string `json:"task_type"`
+	ToolUseID   string `json:"tool_use_id"`
+	Status      string `json:"status"`
+	Description string `json:"description"`
+	Summary     string `json:"summary"`
+	OutputFile  string `json:"output_file"`
+	Ambient     bool   `json:"ambient"`
+	Patch       struct {
+		Status string `json:"status"`
+	} `json:"patch"`
+	Tasks []struct {
+		TaskID      string `json:"task_id"`
+		TaskType    string `json:"task_type"`
+		Description string `json:"description"`
+		Ambient     bool   `json:"ambient"`
+	} `json:"tasks"`
+	Timestamp string `json:"timestamp"`
+	Content   string `json:"content"`
+	Origin    struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
+	Message struct {
+		Content    json.RawMessage `json:"content"`
+		StopReason string          `json:"stop_reason"`
+	} `json:"message"`
+	// Ordinary tool results may be strings or arrays. Decode lifecycle objects
+	// separately so those values do not invalidate conversation metadata.
+	ToolUseResult       json.RawMessage `json:"toolUseResult"`
+	StreamToolUseResult json.RawMessage `json:"tool_use_result"`
+}
+
 // ParseAsyncTaskEvents reads Claude Code's structured background-shell and
 // async-agent records. It deliberately ignores natural-language tool output:
 // task identity and lifecycle must come from provider fields and task
 // notifications.
 func ParseAsyncTaskEvents(line []byte) []AsyncTaskEvent {
-	var raw struct {
-		Type        string `json:"type"`
-		Subtype     string `json:"subtype"`
-		TaskID      string `json:"task_id"`
-		TaskType    string `json:"task_type"`
-		ToolUseID   string `json:"tool_use_id"`
-		Status      string `json:"status"`
-		Description string `json:"description"`
-		Summary     string `json:"summary"`
-		OutputFile  string `json:"output_file"`
-		Ambient     bool   `json:"ambient"`
-		Patch       struct {
-			Status string `json:"status"`
-		} `json:"patch"`
-		Tasks []struct {
-			TaskID      string `json:"task_id"`
-			TaskType    string `json:"task_type"`
-			Description string `json:"description"`
-			Ambient     bool   `json:"ambient"`
-		} `json:"tasks"`
-		Timestamp string `json:"timestamp"`
-		Content   string `json:"content"`
-		Origin    struct {
-			Kind string `json:"kind"`
-		} `json:"origin"`
-		Message struct {
-			Content json.RawMessage `json:"content"`
-		} `json:"message"`
-		ToolUseResult       asyncTaskToolUseResult `json:"toolUseResult"`
-		StreamToolUseResult asyncTaskToolUseResult `json:"tool_use_result"`
-	}
+	var raw AsyncTaskRecord
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return nil
 	}
 
+	return raw.Events()
+}
+
+// Events interprets the decoded provider fields without decoding the record again.
+func (raw *AsyncTaskRecord) Events() []AsyncTaskEvent {
 	at := time.Time{}
 	if raw.Timestamp != "" {
 		at, _ = time.Parse(time.RFC3339Nano, raw.Timestamp)
 	}
-	result := mergeAsyncTaskToolUseResult(raw.ToolUseResult, raw.StreamToolUseResult)
+	var persisted, streamed asyncTaskToolUseResult
+	if len(raw.ToolUseResult) > 0 {
+		if err := json.Unmarshal(raw.ToolUseResult, &persisted); err != nil {
+			return nil
+		}
+	}
+	if len(raw.StreamToolUseResult) > 0 {
+		if err := json.Unmarshal(raw.StreamToolUseResult, &streamed); err != nil {
+			return nil
+		}
+	}
+	result := mergeAsyncTaskToolUseResult(persisted, streamed)
 	events := make([]AsyncTaskEvent, 0, 2)
 	if raw.Type == "system" {
 		if raw.Ambient {

@@ -3,6 +3,7 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1107,6 +1108,9 @@ func TestDetectRefreshesCachedSessionWhenAuxiliaryArtifactsChange(t *testing.T) 
 	if got := second[projectPath].Sessions[0].LastEventAt; !got.Equal(secondTaskMTime) {
 		t.Fatalf("second LastEventAt = %s, want %s after cache refresh", got, secondTaskMTime)
 	}
+	if got := d.cache[sessionFile].result.lastEventAt; !got.Equal(ts.Add(3 * time.Second)) {
+		t.Fatalf("transcript cache activity = %s, want transcript mtime without auxiliary activity", got)
+	}
 }
 
 func TestDetectRefreshesCachedSessionWhenSessionCompletesWithinSameSecond(t *testing.T) {
@@ -1274,5 +1278,118 @@ func setModTime(t *testing.T, path string, when time.Time) {
 	t.Helper()
 	if err := os.Chtimes(path, when, when); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParseCancelledDuringTranscript(t *testing.T) {
+	root := t.TempDir()
+	path, _ := createClaudeProjectDirs(t, root, root, "cancel-session")
+	line := `{"type":"user","sessionId":"cancel-session","cwd":"/project","timestamp":"2026-11-10T00:00:00Z","message":{"content":"hello"}}` + "\n"
+	if err := os.WriteFile(path, []byte(strings.Repeat(line, 100)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelAfterChecks{Context: base, cancel: cancel, remaining: 8}
+	d := New(root)
+	_, err := d.parseWithCacheContext(ctx, path)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("parse error = %v, want cancellation during parse", err)
+	}
+	if len(d.cache) != 0 {
+		t.Fatal("cancelled parse must not populate cache")
+	}
+}
+
+type cancelAfterChecks struct {
+	context.Context
+	cancel    context.CancelFunc
+	remaining int
+}
+
+func (c *cancelAfterChecks) Err() error {
+	c.remaining--
+	if c.remaining <= 0 {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestTranscriptCacheDetectsSizeChangeWithSameModTime(t *testing.T) {
+	root := t.TempDir()
+	path, _ := createClaudeProjectDirs(t, root, root, "cache-size")
+	line := `{"type":"user","sessionId":"cache-size","cwd":"/project","timestamp":"2026-11-10T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(root)
+	first, err := d.parseWithCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.turnDone {
+		t.Fatal("user turn should be open")
+	}
+	line += `{"type":"assistant","message":{"stop_reason":"end_turn"}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setModTime(t, path, info.ModTime())
+	second, err := d.parseWithCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.turnDone {
+		t.Fatal("size change must invalidate cache even with the same mtime")
+	}
+}
+
+func BenchmarkParseSessionFile(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "session.jsonl")
+	line := `{"type":"assistant","sessionId":"bench","cwd":"/project","timestamp":"2026-11-10T00:00:00Z","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"` + strings.Repeat("content ", 8192) + `"}]}}` + "\n"
+	data := []byte(strings.Repeat(line, 128))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := parseSessionFile(path, time.Time{}, time.Time{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestDetectCancelledBeforeTraversal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := New(t.TempDir())
+	_, err := d.Detect(ctx, scanner.NewPathScope(nil, nil))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Detect error = %v, want cancellation", err)
+	}
+}
+
+func TestParseSessionKeepsLifecycleWithNonObjectToolResult(t *testing.T) {
+	for _, result := range []string{`"output"`, `["output"]`} {
+		t.Run(result, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			data := `{"type":"user","sessionId":"session","cwd":"/project","toolUseResult":` + result + `}` + "\n" +
+				`{"type":"assistant","message":{"stop_reason":"end_turn"}}` + "\n"
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parseSessionFile(path, time.Time{}, time.Time{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.cwd != "/project" || !parsed.hasConversation || !parsed.turnKnown || !parsed.turnDone {
+				t.Fatalf("lost transcript metadata or lifecycle: %+v", parsed)
+			}
+		})
 	}
 }
