@@ -23,7 +23,10 @@ func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 		fmt.Fprint(w, `{
 			"five_hour":{"utilization":17.25,"resets_at":"2026-08-01T02:50:00.673899+00:00"},
 			"seven_day":{"utilization":3,"resets_at":"2026-08-07T13:00:00Z"},
-			"seven_day_fable":{"utilization":92,"resets_at":"2026-08-07T13:00:00Z"}
+			"limits":[
+				{"kind":"weekly_all","percent":3,"scope":null},
+				{"kind":"weekly_scoped","percent":4,"resets_at":"2026-08-07T13:00:00Z","scope":{"model":{"id":null,"display_name":"Fable"},"surface":null},"is_active":false}
+			]
 		}`)
 	}))
 	defer server.Close()
@@ -40,10 +43,13 @@ func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
-	if !usage.Available || usage.FiveHour == nil || usage.SevenDay == nil || usage.SevenDayFable == nil {
+	if !usage.Available || usage.FiveHour == nil || usage.SevenDay == nil {
 		t.Fatalf("usage = %#v, want all subscription windows", usage)
 	}
-	if got, want := usage.SevenDayFable.Utilization, 92.0; got != want {
+	if len(usage.WeeklyScoped) != 1 || usage.WeeklyScoped[0].Model != "Fable" {
+		t.Fatalf("scoped weekly usage = %#v, want Fable", usage.WeeklyScoped)
+	}
+	if got, want := usage.WeeklyScoped[0].Window.Utilization, 4.0; got != want {
 		t.Fatalf("Fable weekly utilization = %v, want %v", got, want)
 	}
 	if got, want := usage.FiveHour.Utilization, 17.25; got != want {

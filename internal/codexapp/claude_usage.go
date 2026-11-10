@@ -149,19 +149,33 @@ func (s *claudeCodeSession) refreshClaudePlanUsage(reader claudePlanUsageReader,
 }
 
 func claudePlanUsageWindows(usage claudecli.PlanUsage) []UsageWindowSnapshot {
-	windows := make([]UsageWindowSnapshot, 0, 3)
+	windows := make([]UsageWindowSnapshot, 0, 3+len(usage.WeeklyScoped))
 	if usage.FiveHour != nil {
 		windows = append(windows, claudePlanUsageWindow("5h", usage.FiveHour))
 	}
 	if usage.SevenDay != nil {
 		windows = append(windows, claudePlanUsageWindow("weekly", usage.SevenDay))
 	}
-	if usage.SevenDayFable != nil {
+	for _, scoped := range usage.WeeklyScoped {
+		window := claudePlanUsageWindow("weekly", &scoped.Window)
+		window.Limit = "Claude " + scoped.Model
+		windows = append(windows, window)
+	}
+	if usage.SevenDayFable != nil && !claudeUsageHasScopedModel(usage.WeeklyScoped, "Fable") {
 		window := claudePlanUsageWindow("weekly", usage.SevenDayFable)
 		window.Limit = "Claude Fable"
 		windows = append(windows, window)
 	}
 	return windows
+}
+
+func claudeUsageHasScopedModel(scoped []claudecli.PlanUsageScopedWindow, model string) bool {
+	for _, window := range scoped {
+		if strings.EqualFold(window.Model, model) {
+			return true
+		}
+	}
+	return false
 }
 
 func claudePlanUsageWindow(label string, window *claudecli.PlanUsageWindow) UsageWindowSnapshot {

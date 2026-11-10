@@ -26,11 +26,17 @@ type PlanUsageWindow struct {
 	ResetsAt    time.Time
 }
 
+type PlanUsageScopedWindow struct {
+	Model  string
+	Window PlanUsageWindow
+}
+
 type PlanUsage struct {
 	Available     bool
 	FiveHour      *PlanUsageWindow
 	SevenDay      *PlanUsageWindow
 	SevenDayFable *PlanUsageWindow
+	WeeklyScoped  []PlanUsageScopedWindow
 }
 
 type PlanUsageReader struct {
@@ -126,17 +132,39 @@ func (r *PlanUsageReader) Read(ctx context.Context, configDir string) (PlanUsage
 		FiveHour      *planUsageWindowJSON `json:"five_hour"`
 		SevenDay      *planUsageWindowJSON `json:"seven_day"`
 		SevenDayFable *planUsageWindowJSON `json:"seven_day_fable"`
+		Limits        []struct {
+			Kind     string   `json:"kind"`
+			Percent  *float64 `json:"percent"`
+			ResetsAt string   `json:"resets_at"`
+			Scope    struct {
+				Model struct {
+					DisplayName string `json:"display_name"`
+				} `json:"model"`
+			} `json:"scope"`
+		} `json:"limits"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024))
 	if err := decoder.Decode(&payload); err != nil {
 		return PlanUsage{}, fmt.Errorf("decode Claude plan usage: %w", err)
 	}
-	return PlanUsage{
+	usage := PlanUsage{
 		Available:     true,
 		FiveHour:      parsePlanUsageWindow(payload.FiveHour),
 		SevenDay:      parsePlanUsageWindow(payload.SevenDay),
 		SevenDayFable: parsePlanUsageWindow(payload.SevenDayFable),
-	}, nil
+	}
+	for _, limit := range payload.Limits {
+		model := strings.TrimSpace(limit.Scope.Model.DisplayName)
+		if limit.Kind != "weekly_scoped" || model == "" || limit.Percent == nil {
+			continue
+		}
+		window := parsePlanUsageWindow(&planUsageWindowJSON{
+			Utilization: limit.Percent,
+			ResetsAt:    limit.ResetsAt,
+		})
+		usage.WeeklyScoped = append(usage.WeeklyScoped, PlanUsageScopedWindow{Model: model, Window: *window})
+	}
+	return usage, nil
 }
 
 type planUsageWindowJSON struct {
