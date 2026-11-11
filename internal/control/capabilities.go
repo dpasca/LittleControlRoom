@@ -543,7 +543,7 @@ func AgentTaskContinueCapability() Capability {
 func AgentTaskCloseCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskClose,
-		Description:  "Mark a task completed or waiting, or move it to Trash. To stop a running worker, use status waiting with stop_session true: this interrupts/closes its session and stops its managed runtimes before releasing ownership. Wait for the completed receipt before launching a replacement. close_session alone only closes idle sessions.",
+		Description:  "Mark a task completed or waiting, or move it to Trash. Structured tasks require an accepted current result via agent_task.review_result before status completed; inspect work.agent_task_get first. For worktree deletion use worktree.remove directly, which also moves associated tasks to Trash; do not mark them completed as a cleanup prerequisite. Status archived discards a task record without accepting its result. To stop a running worker, use status waiting with stop_session true: this interrupts/closes its session and stops its managed runtimes before releasing ownership. Wait for the completed receipt before launching a replacement. close_session alone only closes idle sessions.",
 		InputSchema:  agentTaskCloseInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskWrite,
@@ -1801,7 +1801,7 @@ func agentTaskCloseInputSchema() map[string]any {
 		"properties": map[string]any{
 			"request_id":    map[string]any{"type": "string"},
 			"task_id":       map[string]any{"type": "string"},
-			"status":        map[string]any{"type": "string", "enum": AgentTaskCloseStatusStrings(false)},
+			"status":        map[string]any{"type": "string", "enum": AgentTaskCloseStatusStrings(false), "description": "completed requires prior acceptance of the current structured result via agent_task.review_result. archived moves the record to Trash without accepting work. For worktree deletion use worktree.remove directly."},
 			"summary":       map[string]any{"type": "string"},
 			"close_session": map[string]any{"type": "boolean"},
 			"stop_session":  map[string]any{"type": "boolean", "description": "With status waiting, explicitly interrupt and close the current worker and stop its managed runtimes. Preserves all checkout files."},

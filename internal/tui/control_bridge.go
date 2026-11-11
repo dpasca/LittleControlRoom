@@ -1497,8 +1497,8 @@ func (m Model) closeBossAgentTaskCmd(inv control.Invocation, input control.Agent
 			msg.status = "Control request failed: " + err.Error()
 			return msg
 		}
-		if task.Workflow.Enabled && input.Status == control.AgentTaskCloseCompleted && task.Workflow.Phase != "completed" {
-			msg.err = errors.New("review the current result with agent_task.review_result before completing this task")
+		if err := control.ValidateAgentTaskCompletion(task, input.Status); err != nil {
+			msg.err = err
 			msg.status = "Control request failed: " + msg.err.Error()
 			return msg
 		}

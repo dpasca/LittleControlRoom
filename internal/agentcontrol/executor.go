@@ -120,6 +120,21 @@ func (e *Executor) Propose(ctx context.Context, capabilityName string, arguments
 		return nil, err
 	}
 	finishedReplay := priorOperation != nil && (priorOperation.Status.Terminal() && priorOperation.Status != control.OperationFailed || priorOperation.Status == control.OperationRunning)
+	if !finishedReplay && capability.Name == control.CapabilityAgentTaskClose {
+		var input control.AgentTaskCloseInput
+		if err := json.Unmarshal(invocation.Args, &input); err != nil {
+			return nil, err
+		}
+		if input.Status == control.AgentTaskCloseCompleted {
+			task, err := e.store.GetAgentTask(ctx, input.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			if err := control.ValidateAgentTaskCompletion(task, input.Status); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if finishedReplay && todocontrol.Applies(invocation.Capability) {
 		// Derived expectations may be omitted by the caller on an exact retry.
 		// Restore only those fields, then let the store compare the full request.

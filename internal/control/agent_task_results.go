@@ -25,6 +25,15 @@ type AgentTaskReviewResultInput struct {
 	Checks    []model.AgentTaskCheck `json:"checks,omitempty"`
 }
 
+// ValidateAgentTaskCompletion is shared by proposal preflight and host execution.
+// Cleanup does not require accepting a worker's claims as successful work.
+func ValidateAgentTaskCompletion(task model.AgentTask, status AgentTaskCloseStatus) error {
+	if status != AgentTaskCloseCompleted || !task.Workflow.Enabled || task.Workflow.Phase == "completed" {
+		return nil
+	}
+	return fmt.Errorf("agent task %s cannot be marked completed: structured run %d is %s, without an accepted current result. Inspect work.agent_task_get; after the worker submits a ready result and becomes idle, the originating caller must independently verify it and record agent_task.review_result with the exact revision and decision accept. For requested worktree deletion, use worktree.remove directly; completion review is not a deletion prerequisite. To discard only the task record, use agent_task.close with status archived (Trash)", task.ID, task.Workflow.RunID, task.Workflow.Phase)
+}
+
 func validateAgentTaskResultInvocation(inv Invocation) (Invocation, error) {
 	if inv.Capability == CapabilityAgentTaskSubmitResult {
 		var input AgentTaskSubmitResultInput

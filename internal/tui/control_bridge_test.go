@@ -3284,3 +3284,28 @@ func assertReportContractCarriedBySession(t *testing.T, request codexapp.LaunchR
 		t.Fatalf("prompt repeats the report contract the session already carries:\n%s", request.Prompt)
 	}
 }
+
+func TestTaskCompletionRechecksCurrentWorkflowAtExecution(t *testing.T) {
+	ctx := t.Context()
+	svc := newControlTestService(t)
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Unreviewed worker", Workflow: model.AgentTaskWorkflow{Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Model{ctx: ctx, svc: svc}
+	input := control.AgentTaskCloseInput{TaskID: task.ID, Status: control.AgentTaskCloseCompleted}
+	// Even a stale loaded snapshot that claims completion must be rechecked.
+	stale := task
+	stale.Workflow.Phase = "completed"
+	inv := controlInvocationRawForTest(t, control.CapabilityAgentTaskClose, input)
+	msg := m.closeBossAgentTaskCmd(inv, input, stale)().(bossAgentTaskClosedMsg)
+	if msg.err == nil || !strings.Contains(msg.status, "worktree.remove directly") {
+		t.Fatalf("want current-state completion refusal, got %+v", msg)
+	}
+	current, err := svc.GetAgentTask(ctx, task.ID)
+	if err != nil || current.Status != task.Status || current.Workflow.Phase != task.Workflow.Phase {
+		t.Fatalf("refusal mutated task: %+v err=%v", current, err)
+	}
+}

@@ -124,7 +124,15 @@ under admission immediately before starting. Explicit worker/caller stop cancels
 pending callbacks; late claims remain inspectable without automatic review.
 Free-text-only endings are `unclassified`, not success. Generic task close cannot
 bypass structured acceptance. Acceptance keeps the task visible rather than
-trashing it.
+trashing it. Completion proposals are checked before creating an operator
+confirmation and rechecked against current state during host execution.
+
+For requested worktree cleanup, use `worktree.remove` directly. It removes the
+checkout and moves associated task records to Trash; accepting the worker result
+or marking the task completed is not a deletion prerequisite. To discard only a
+task record, use `agent_task.close` with `status: archived`. Cleanup does not
+record acceptance of the worker claims, and deletion retains its own permission
+requirements.
 
 Task rows/details show provider, run phase, evidence counts, review decision and
 callback state. Routine structured handoffs avoid the old lengthy Chat notice
