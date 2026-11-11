@@ -123,7 +123,12 @@ missing artifact references before queueing an assessment:
   viewer expires inferred activity after 20 minutes without a structured turn
   event, preserving the unfinished state. Managed Claude streams also track
   explicit message receipts and task/session lifecycle events; child traffic
-  does not establish parent responsiveness. An idle Claude parent with outstanding
+  does not establish parent responsiveness. Claude may omit queued prompt bodies
+  from its JSONL even after an enqueue acknowledgment. LCR retains busy-session
+  follow-ups in host-owned recovery files until the native transcript contains
+  the submitted UUID (`user.uuid` or `queued_command.source_uuid`), and displays
+  missing submissions for manual recovery without automatically resending them.
+  An idle Claude parent with outstanding
   tasks is displayed as `Parent idle` / `bg tasks`; task ownership is not evidence
   of progress or a real remote queue wait. See [Claude Code footprint](claude_code_footprint.md) for activity
   and resume limitations.

@@ -351,6 +351,26 @@ explicit stop; LCR does not automatically resend them. Receipt history is a
 bounded live-session projection, not a replacement for durable provider logs
 or the engineer-message mailbox.
 
+Queued prompt bodies are not guaranteed to reach those provider logs. Observed
+with Claude Code 2.1.322 on 2026-11-11: `queue-operation` enqueue records for two
+busy-session inputs had no `content`, and stopping the process left neither a
+`user` record nor a `queued_command` attachment containing those inputs. A
+receipt or enqueue record therefore cannot serve as the recoverable message.
+
+Before sending a busy-session follow-up, LCR atomically saves its full submission
+under `<data-dir>/claude-input-recovery/<project-and-session-hash>/<message-uuid>.json`
+with private file permissions. Save failures reject the submission, allowing the
+composer to retain it. Until Claude has supplied its session identity, queueing
+is refused rather than storing a message without a resumable owner. On Stop,
+exit, or resume, missing follow-ups remain visible in the transcript with an
+explicit recovery notice; the operator can copy them to resend. LCR never
+automatically replays them or uses recovery text as evidence of a provider turn.
+The backup is retired only after a native `user.uuid` or
+`queued_command.source_uuid` record contains that exact message, independently
+of other messages with identical text. These are host recovery files; LCR does
+not write synthetic user turns into Claude's JSONL. This cannot restore the
+missing bodies of messages sent before the recovery storage was added.
+
 The TUI and mobile session surface show message delivery separately from
 worker activity. Input waiting two minutes gets a warning. A running parent
 with no parent event for five minutes gets a separate inactivity notice;

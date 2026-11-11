@@ -105,6 +105,7 @@ type claudeCodeSession struct {
 	permissionModeChange *claudePermissionModeChange
 	legacyTurnSettled    bool // A terminal assistant/transcript may precede its result envelope.
 	messageDeliveries    []MessageDeliverySnapshot
+	savedInputs          []claudeSavedInput
 	lastParentActivityAt time.Time
 	claudeHome           string
 	sessionFile          string
@@ -432,6 +433,12 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	}
 
+	s.savedInputs, err = loadClaudeSavedInputs(s.dataDir, s.projectPath, s.sessionID)
+	if err != nil {
+		_ = approvalServer.Close()
+		return nil, fmt.Errorf("load saved Claude Code follow-ups: %w", err)
+	}
+
 	s.mu.Lock()
 	if err := s.loadTranscriptLocked(); err != nil {
 		s.mu.Unlock()
@@ -727,6 +734,43 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			return err
 		}
 		s.mu.Lock()
+		if err := s.submissionStateErrorLocked(mode, compactCommand); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	if mode == claudeSubmissionNormal && s.busy && s.cmd != nil {
+		if s.sessionID == "" && s.dataDir != "" {
+			s.mu.Unlock()
+			return fmt.Errorf("Claude Code is still starting; wait for its session identity before queueing a follow-up")
+		}
+		record := claudeSavedInput{
+			ID: messageID, ProjectPath: s.projectPath, SessionID: s.sessionID,
+			SubmittedAt: time.Now(),
+			Input: Submission{
+				Text: input.Text, DisplayText: input.DisplayText,
+				Attachments: append([]Attachment(nil), input.Attachments...),
+			},
+		}
+		expectedCommand, expectedRevision := s.cmd, s.controlInput.Revision
+		dataDir := s.dataDir
+		// Persist before writing to Claude, without holding the snapshot lock.
+		s.mu.Unlock()
+		saveErr := saveClaudeInput(dataDir, record)
+		s.mu.Lock()
+		if saveErr != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("save Claude Code follow-up before queueing: %w", saveErr)
+		}
+		s.savedInputs = append(s.savedInputs, record)
+		if s.cmd != expectedCommand || s.controlInput.Revision != expectedRevision || s.closed || s.interruptPending {
+			s.appendEntryLocked(TranscriptEntry{ItemID: record.ID, Kind: TranscriptUser, Text: displayText})
+			s.appendSystemNoticeLocked("Follow-up saved but not sent because the Claude Code turn changed while saving it. Copy the message above to resend it.")
+			s.touchLocked()
+			s.mu.Unlock()
+			s.notifyAsync()
+			return fmt.Errorf("%w: Claude Code turn changed while saving the follow-up; it was not sent", ErrSessionChanged)
+		}
 		if err := s.submissionStateErrorLocked(mode, compactCommand); err != nil {
 			s.mu.Unlock()
 			return err
@@ -1837,6 +1881,11 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 	// Result/stderr details may exist only in the live stream, so retain them
 	// before replacing entries with the persisted conversation.
 	reportedError := latestClaudeTranscriptError(s.entries)
+	// Even an unchanged provider file must replace the live echo before we
+	// reconcile saved follow-ups; the echo is not evidence of persistence.
+	if len(s.savedInputs) > 0 {
+		s.lastFileModTime = time.Time{}
+	}
 	transcriptErr := s.loadTranscriptLocked()
 	if s.managedStream {
 		// Disk can lag the stream or omit task lifecycle frames altogether.
@@ -3017,6 +3066,16 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	}
 	file, err := os.Open(s.sessionFile)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && s.cmd == nil && len(s.savedInputs) > 0 {
+			// A provider can exit before creating any native transcript. Keep
+			// the host copies viewable on cold resume, without claiming that
+			// Claude has a resumable conversation or a completed turn.
+			s.entries = nil
+			s.restoreClaudeSavedInputsLocked()
+			s.appendSystemErrorLocked("Claude Code transcript is missing. Saved follow-ups remain available above; copy them into a new session.")
+			s.invalidateTranscriptCacheLocked()
+			return nil
+		}
 		return err
 	}
 	defer file.Close()
@@ -3092,6 +3151,7 @@ func (s *claudeCodeSession) loadTranscriptLocked() error {
 	}
 
 	s.entries = entries
+	s.restoreClaudeSavedInputsLocked()
 	if !s.managedStream || s.cmd == nil {
 		for taskID := range s.finishedTaskIDs {
 			delete(backgroundTasks, taskID)
@@ -3578,6 +3638,7 @@ func parseCCLineEntriesWithInterruptedTools(
 			Type        string          `json:"type"`
 			Prompt      json.RawMessage `json:"prompt"`
 			CommandMode string          `json:"commandMode"`
+			SourceUUID  string          `json:"source_uuid"`
 			Origin      struct {
 				Kind string `json:"kind"`
 			} `json:"origin"`
@@ -3647,7 +3708,7 @@ func parseCCLineEntriesWithInterruptedTools(
 		return entries, raw.Type, reasoningEffort, state
 
 	case "attachment":
-		return extractCCQueuedPromptEntries(raw.UUID, raw.Attachment.Type, raw.Attachment.CommandMode, raw.Attachment.Origin.Kind, raw.Attachment.Prompt), raw.Type, reasoningEffort, state
+		return extractCCQueuedPromptEntries(firstNonEmptyTrimmed(raw.Attachment.SourceUUID, raw.UUID), raw.Attachment.Type, raw.Attachment.CommandMode, raw.Attachment.Origin.Kind, raw.Attachment.Prompt), raw.Type, reasoningEffort, state
 
 	case "progress":
 		return nil, raw.Type, reasoningEffort, state
