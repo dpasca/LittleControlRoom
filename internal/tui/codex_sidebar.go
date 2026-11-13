@@ -956,7 +956,7 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 		rows = append(rows, embeddedSidebarFieldRow("Tokens", tokens, detailValueStyle, width))
 	}
 	if detail {
-		rows = append(rows, embeddedSidebarUsageWindowDetailRows(snapshot, width)...)
+		rows = append(rows, embeddedSidebarUsageWindowDetailRows(snapshot, width, now)...)
 	} else {
 		rows = append(rows, embeddedSidebarUsageWindowRows(snapshot, width, now)...)
 	}
@@ -983,7 +983,7 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 // Keep each window on its own row so its remaining quota and reset stay together.
 // The ordinary 5h/week rows fit even the sidebar's minimum content width (32).
 func embeddedSidebarUsageWindowRows(snapshot codexapp.Snapshot, width int, now time.Time) []string {
-	windows := embeddedSidebarUsageWindows(snapshot)
+	windows := embeddedSidebarRolloverWindows(embeddedSidebarUsageWindows(snapshot), now)
 	if len(windows) == 0 || width <= 0 {
 		return nil
 	}
@@ -1020,12 +1020,11 @@ func embeddedSidebarUsageWindowStyle(left int) lipgloss.Style {
 	}
 }
 
-func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int) []string {
-	windows := embeddedSidebarUsageWindows(snapshot)
+func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int, now time.Time) []string {
+	windows := embeddedSidebarRolloverWindows(embeddedSidebarUsageWindows(snapshot), now)
 	if len(windows) == 0 {
 		return nil
 	}
-	now := time.Now()
 	rows := make([]string, 0, len(windows))
 	for _, window := range windows {
 		label := firstNonEmptyTrimmed(strings.TrimSpace(window.Window), "window")
@@ -1043,6 +1042,37 @@ func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int)
 		rows = append(rows, embeddedSidebarWrappedFieldRows(label+" limit", strings.Join(valueParts, " | "), style, width, 0)...)
 	}
 	return rows
+}
+
+// A usage window whose reset time has passed is stale: the quota has refilled.
+// Show it as fully available; weekly windows roll forward to the next reset,
+// other windows drop the reset since the next one is unknown.
+func embeddedSidebarRolloverWindows(windows []codexapp.UsageWindowSnapshot, now time.Time) []codexapp.UsageWindowSnapshot {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	var out []codexapp.UsageWindowSnapshot
+	for i, window := range windows {
+		if window.ResetsAt.IsZero() || window.ResetsAt.After(now) {
+			continue
+		}
+		if out == nil {
+			out = append([]codexapp.UsageWindowSnapshot(nil), windows...)
+		}
+		window.LeftPercent = 100
+		if compactEmbeddedUsageWindowLabel(window.Window) == "week" {
+			const week = 7 * 24 * time.Hour
+			missed := now.Sub(window.ResetsAt)/week + 1
+			window.ResetsAt = window.ResetsAt.Add(missed * week)
+		} else {
+			window.ResetsAt = time.Time{}
+		}
+		out[i] = window
+	}
+	if out == nil {
+		return windows
+	}
+	return out
 }
 
 func embeddedSidebarUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWindowSnapshot {

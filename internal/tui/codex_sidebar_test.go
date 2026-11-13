@@ -433,7 +433,7 @@ func TestEmbeddedSidebarShowsClaudeFiveHourAndWeeklyLimits(t *testing.T) {
 	if got, want := ansi.Strip(strings.Join(embeddedSidebarUsageWindowRows(snapshot, 32, now), "\n")), "Limits\n  5h    83% left reset 2h\n  week  97% left reset Fri Aug7"; got != want {
 		t.Fatalf("usage summary = %q, want %q", got, want)
 	}
-	detail := ansi.Strip(strings.Join(embeddedSidebarUsageWindowDetailRows(snapshot, 48), "\n"))
+	detail := ansi.Strip(strings.Join(embeddedSidebarUsageWindowDetailRows(snapshot, 48, now), "\n"))
 	for _, want := range []string{"5h limit", "83% left", "weekly limit", "97% left", "Fri Aug 7 01:00"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("Claude usage detail missing %q:\n%s", want, detail)
@@ -1316,5 +1316,20 @@ func TestEmbeddedSidebarSeparatesCapacityAndCompaction(t *testing.T) {
 	rendered = ansi.Strip(embeddedSidebarContextRow(snapshot, 46))
 	if !strings.Contains(rendered, "160k used") || strings.Contains(rendered, "%") {
 		t.Fatalf("unknown capacity must show usage only: %s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarRollsOverExpiredUsageWindows(t *testing.T) {
+	now := time.Date(2026, 11, 13, 22, 30, 0, 0, time.Local)
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderClaudeCode,
+		UsageWindows: []codexapp.UsageWindowSnapshot{
+			{Limit: "Claude", Window: "5h", LeftPercent: 0, ResetsAt: now.Add(-time.Hour)},
+			{Limit: "Claude", Window: "weekly", LeftPercent: 13, ResetsAt: time.Date(2026, 11, 13, 22, 0, 0, 0, time.Local)},
+		},
+	}
+	got := ansi.Strip(strings.Join(embeddedSidebarUsageWindowRows(snapshot, 40, now), "\n"))
+	if want := "Limits\n  5h   100% left\n  week 100% left reset Fri Nov20"; got != want {
+		t.Fatalf("usage summary = %q, want %q", got, want)
 	}
 }
