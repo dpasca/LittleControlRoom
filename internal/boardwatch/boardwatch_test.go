@@ -40,7 +40,10 @@ func newFixture(t *testing.T) *fixture {
 		t: t, st: st, project: project,
 		outbox: filepath.Join(project, "docs", "review-events.jsonl"),
 		owner:  filepath.Join(project, "docs", "owner-answers.json"),
-		now:    time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC),
+		// Wake expiry and delivery deadlines are compared against the real
+		// clock when messages are claimed, so the fixture's clock must travel
+		// with it; a frozen calendar date makes queued wakes look expired.
+		now: time.Now().UTC().Truncate(time.Second),
 	}
 	if err := os.MkdirAll(filepath.Dir(f.outbox), 0o755); err != nil {
 		t.Fatal(err)
