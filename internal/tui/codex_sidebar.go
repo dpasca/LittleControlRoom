@@ -984,17 +984,18 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 // The ordinary 5h/week rows fit even the sidebar's minimum content width (32).
 func embeddedSidebarUsageWindowRows(snapshot codexapp.Snapshot, width int, now time.Time) []string {
 	windows := embeddedSidebarRolloverWindows(embeddedSidebarUsageWindows(snapshot), now)
-	if len(windows) == 0 || width <= 0 {
+	fableActive, hasFableWeek := embeddedSidebarFableUsage(snapshot, windows)
+	if (len(windows) == 0 && !fableActive) || width <= 0 {
 		return nil
 	}
 	labelWidth := 4
 	for _, window := range windows {
-		label := embeddedSidebarUsageWindowLabel(window)
+		label := embeddedSidebarUsageWindowLabel(window, fableActive || hasFableWeek)
 		labelWidth = max(labelWidth, ansi.StringWidth(label))
 	}
 	rows := []string{embeddedSidebarMutedStyle.Render(fitLine("Limits", width))}
 	for _, window := range windows {
-		label := embeddedSidebarUsageWindowLabel(window)
+		label := embeddedSidebarUsageWindowLabel(window, fableActive || hasFableWeek)
 		prefix := "  " + label + strings.Repeat(" ", labelWidth-ansi.StringWidth(label)+1)
 		row := embeddedSidebarMutedStyle.Render(prefix) +
 			embeddedSidebarUsageWindowStyle(window.LeftPercent).Render(fmt.Sprintf("%3d%% left", window.LeftPercent))
@@ -1005,6 +1006,9 @@ func embeddedSidebarUsageWindowRows(snapshot codexapp.Snapshot, width int, now t
 		if credit := embeddedSidebarUsageWindowCreditCompact(window); credit != "" {
 			rows = append(rows, strings.Split(ansi.Wrap(embeddedSidebarMutedStyle.Render("  "+credit), width, ""), "\n")...)
 		}
+	}
+	if fableActive && !hasFableWeek {
+		rows = append(rows, embeddedSidebarMutedStyle.Render(fitLine("  Fable week unavailable", width)))
 	}
 	return rows
 }
@@ -1022,14 +1026,14 @@ func embeddedSidebarUsageWindowStyle(left int) lipgloss.Style {
 
 func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int, now time.Time) []string {
 	windows := embeddedSidebarRolloverWindows(embeddedSidebarUsageWindows(snapshot), now)
-	if len(windows) == 0 {
-		return nil
-	}
+	fableActive, hasFableWeek := embeddedSidebarFableUsage(snapshot, windows)
 	rows := make([]string, 0, len(windows))
 	for _, window := range windows {
 		label := firstNonEmptyTrimmed(strings.TrimSpace(window.Window), "window")
 		if family := strings.TrimSpace(strings.TrimPrefix(window.Limit, "Claude ")); family != "" && family != window.Limit {
 			label = family + " " + label
+		} else if (fableActive || hasFableWeek) && embeddedSidebarClaudeSharedWeek(window) {
+			label = "All models weekly"
 		}
 		valueParts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
 		if !window.ResetsAt.IsZero() {
@@ -1041,7 +1045,29 @@ func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int,
 		style := embeddedSidebarUsageWindowStyle(window.LeftPercent)
 		rows = append(rows, embeddedSidebarWrappedFieldRows(label+" limit", strings.Join(valueParts, " | "), style, width, 0)...)
 	}
+	if fableActive && !hasFableWeek {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Fable weekly limit", "unavailable", detailMutedStyle, width, 0)...)
+	}
 	return rows
+}
+
+func embeddedSidebarFableUsage(snapshot codexapp.Snapshot, windows []codexapp.UsageWindowSnapshot) (active, hasWeek bool) {
+	if snapshot.Provider.Normalized() != codexapp.ProviderClaudeCode {
+		return false, false
+	}
+	model := strings.ToLower(firstNonEmptyTrimmed(snapshot.ReportedModel, snapshot.Model))
+	active = model == "fable" || strings.HasPrefix(model, "claude-fable-")
+	for _, window := range windows {
+		if strings.EqualFold(window.Limit, "Claude Fable") && compactEmbeddedUsageWindowLabel(window.Window) == "week" {
+			return active, true
+		}
+	}
+	return active, false
+}
+
+func embeddedSidebarClaudeSharedWeek(window codexapp.UsageWindowSnapshot) bool {
+	return (window.Limit == "" || strings.EqualFold(window.Limit, "Claude")) &&
+		compactEmbeddedUsageWindowLabel(window.Window) == "week"
 }
 
 // A usage window whose reset time has passed is stale: the quota has refilled.
@@ -1102,8 +1128,11 @@ func embeddedSidebarUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWin
 	return windows
 }
 
-func embeddedSidebarUsageWindowLabel(window codexapp.UsageWindowSnapshot) string {
+func embeddedSidebarUsageWindowLabel(window codexapp.UsageWindowSnapshot, distinguishFable bool) string {
 	label := firstNonEmptyTrimmed(compactEmbeddedUsageWindowLabel(window.Window), "window")
+	if distinguishFable && embeddedSidebarClaudeSharedWeek(window) {
+		return "Shared week"
+	}
 	if family := strings.TrimSpace(strings.TrimPrefix(window.Limit, "Claude ")); family != "" && family != window.Limit {
 		return family + " " + label
 	}

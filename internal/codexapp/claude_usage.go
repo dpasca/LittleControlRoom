@@ -16,6 +16,8 @@ const (
 	claudePlanUsageRefreshTimeout  = 8 * time.Second
 )
 
+var sharedClaudePlanUsageReader = claudecli.NewPlanUsageReader()
+
 type claudePlanUsageReader interface {
 	Read(context.Context, string) (claudecli.PlanUsage, error)
 }
@@ -132,8 +134,16 @@ func (s *claudeCodeSession) refreshClaudePlanUsage(reader claudePlanUsageReader,
 	s.mu.Lock()
 	changed := false
 	if err == nil {
+		// A plan response can omit meters that Claude has already reported on
+		// the stream. Preserve those observations across account refreshes.
+		for _, observed := range s.streamUsageWindows {
+			if claudeUsageWindowIndex(windows, observed) < 0 {
+				windows = append(windows, observed)
+			}
+		}
+		sortClaudeUsageWindows(windows)
 		changed = !claudeUsageWindowsEqual(s.usageWindows, windows)
-		s.usageWindows = cloneUsageWindowSnapshots(windows)
+		s.usageWindows = windows
 	}
 	queued := s.usageRefreshQueued && !s.closed
 	s.usageRefreshQueued = false
@@ -221,15 +231,26 @@ func (s *claudeCodeSession) applyClaudeRateLimitInfoLocked(info claudeRateLimitI
 	if resetsAt != nil && *resetsAt > 0 {
 		window.ResetsAt = time.Unix(*resetsAt, 0)
 	}
-	for i := range s.usageWindows {
-		if strings.EqualFold(s.usageWindows[i].Limit, window.Limit) && strings.EqualFold(s.usageWindows[i].Window, window.Window) {
-			s.usageWindows[i] = window
-			sortClaudeUsageWindows(s.usageWindows)
-			return
+	s.streamUsageWindows = upsertClaudeUsageWindow(s.streamUsageWindows, window)
+	s.usageWindows = upsertClaudeUsageWindow(s.usageWindows, window)
+	sortClaudeUsageWindows(s.usageWindows)
+}
+
+func upsertClaudeUsageWindow(windows []UsageWindowSnapshot, window UsageWindowSnapshot) []UsageWindowSnapshot {
+	if index := claudeUsageWindowIndex(windows, window); index >= 0 {
+		windows[index] = window
+		return windows
+	}
+	return append(windows, window)
+}
+
+func claudeUsageWindowIndex(windows []UsageWindowSnapshot, window UsageWindowSnapshot) int {
+	for i, current := range windows {
+		if strings.EqualFold(current.Limit, window.Limit) && strings.EqualFold(current.Window, window.Window) {
+			return i
 		}
 	}
-	s.usageWindows = append(s.usageWindows, window)
-	sortClaudeUsageWindows(s.usageWindows)
+	return -1
 }
 
 func claudeRateLimitLabels(rateLimitType string) (window, limit string, ok bool) {

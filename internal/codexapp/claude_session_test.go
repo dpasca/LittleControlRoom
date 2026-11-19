@@ -896,6 +896,25 @@ func TestClaudePlanUsageWindowsIncludeSeparateFableLimit(t *testing.T) {
 	}
 }
 
+type claudeTestPlanUsageReader struct{ usage claudecli.PlanUsage }
+
+func (r claudeTestPlanUsageReader) Read(context.Context, string) (claudecli.PlanUsage, error) {
+	return r.usage, nil
+}
+
+func TestClaudePlanRefreshPreservesScopedStreamLimit(t *testing.T) {
+	session := &claudeCodeSession{}
+	session.handleClaudeStdoutLine(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day_fable","utilization":0.8}}`)
+	session.refreshClaudePlanUsage(claudeTestPlanUsageReader{usage: claudecli.PlanUsage{
+		Available: true, SevenDay: &claudecli.PlanUsageWindow{Utilization: 100},
+	}}, "")
+	windows := session.StateSnapshot().UsageWindows
+	if len(windows) != 2 || windows[0].Limit != "Claude" || windows[0].LeftPercent != 0 ||
+		windows[1].Limit != "Claude Fable" || windows[1].LeftPercent != 20 {
+		t.Fatalf("usage windows = %#v, want account weekly and observed Fable limits", windows)
+	}
+}
+
 func TestClaudeSessionFilePathUsesClaudeProjectDirectorySanitization(t *testing.T) {
 	t.Parallel()
 

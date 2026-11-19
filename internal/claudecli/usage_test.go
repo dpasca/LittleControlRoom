@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -12,7 +13,9 @@ import (
 func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 	t.Parallel()
 
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		requests.Add(1)
 		if got, want := req.Header.Get("Authorization"), "Bearer oauth-token"; got != want {
 			t.Errorf("Authorization = %q, want %q", got, want)
 		}
@@ -31,14 +34,13 @@ func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader := &PlanUsageReader{
-		HTTPClient: server.Client(),
-		Endpoint:   server.URL,
-		ReadAccessToken: func(context.Context, string) (string, bool, error) {
-			return "oauth-token", true, nil
-		},
-		LookupEnv: func(string) (string, bool) { return "", false },
+	reader := NewPlanUsageReader()
+	reader.HTTPClient = server.Client()
+	reader.Endpoint = server.URL
+	reader.ReadAccessToken = func(context.Context, string) (string, bool, error) {
+		return "oauth-token", true, nil
 	}
+	reader.LookupEnv = func(string) (string, bool) { return "", false }
 	usage, err := reader.Read(context.Background(), "/unused")
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
@@ -57,6 +59,10 @@ func TestPlanUsageReaderReadsFiveHourAndWeeklyWindows(t *testing.T) {
 	}
 	if got, want := usage.SevenDay.ResetsAt, time.Date(2026, 8, 7, 13, 0, 0, 0, time.UTC); !got.Equal(want) {
 		t.Fatalf("weekly reset = %v, want %v", got, want)
+	}
+	reopened, err := reader.Read(context.Background(), "/unused")
+	if err != nil || len(reopened.WeeklyScoped) != 1 || requests.Load() != 1 {
+		t.Fatalf("reopened session usage = %#v, requests = %d, err = %v, want cached scoped usage", reopened, requests.Load(), err)
 	}
 }
 

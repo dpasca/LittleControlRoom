@@ -52,6 +52,8 @@ func (s *claudeCodeSession) setPermissionMode(ctx context.Context, raw string) e
 		err = fmt.Errorf("answer Claude Code's pending request before changing permission mode")
 	case s.permissionModeChange != nil:
 		err = fmt.Errorf("Claude Code has not confirmed the previous permission mode change; wait or use /reconnect")
+	case s.modelControl != nil:
+		err = fmt.Errorf("Claude Code has not confirmed the model selection; wait or use /reconnect")
 	case mode.UsesApprovalBridge() && strings.TrimSpace(s.mcpOptions.PermissionPromptTool) == "":
 		err = fmt.Errorf("Claude Code approval callbacks are unavailable; use /reconnect before switching to %s", mode.DisplayName())
 	}

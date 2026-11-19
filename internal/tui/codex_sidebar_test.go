@@ -477,17 +477,24 @@ func TestEmbeddedSidebarUsageWindowsStayOnSeparateLines(t *testing.T) {
 
 func TestEmbeddedSidebarShowsSeparateFableWeeklyLimit(t *testing.T) {
 	snapshot := codexapp.Snapshot{
-		Provider: codexapp.ProviderClaudeCode,
+		Provider:      codexapp.ProviderClaudeCode,
+		Model:         "fable",
+		ReportedModel: "claude-fable-5-2",
 		UsageWindows: []codexapp.UsageWindowSnapshot{
-			{Limit: "Claude", Window: "weekly", LeftPercent: 54},
-			{Limit: "Claude Fable", Window: "weekly", LeftPercent: 8},
+			{Limit: "Claude", Window: "weekly", LeftPercent: 0},
+			{Limit: "Claude Fable", Window: "weekly", LeftPercent: 22},
 		},
 	}
 	rows := embeddedSidebarUsageWindowRows(snapshot, 38, time.Now())
 	got := ansi.Strip(strings.Join(rows, "\n"))
-	if !strings.Contains(got, "week") || !strings.Contains(got, "54% left") ||
-		!strings.Contains(got, "Fable week") || !strings.Contains(got, "8% left") {
+	got = strings.Join(strings.Fields(got), " ")
+	if !strings.Contains(got, "Shared week 0% left") || !strings.Contains(got, "Fable week 22% left") {
 		t.Fatalf("usage rows = %q, want separate general and Fable limits", got)
+	}
+	snapshot.UsageWindows = snapshot.UsageWindows[:1]
+	got = strings.Join(strings.Fields(ansi.Strip(strings.Join(embeddedSidebarUsageWindowRows(snapshot, 38, time.Now()), "\n"))), " ")
+	if !strings.Contains(got, "Shared week 0% left") || !strings.Contains(got, "Fable week unavailable") {
+		t.Fatalf("usage rows = %q, want missing Fable quota made explicit", got)
 	}
 }
 

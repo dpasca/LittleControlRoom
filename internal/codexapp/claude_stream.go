@@ -54,8 +54,22 @@ func (s *claudeCodeSession) handleClaudeControlResponseLocked(raw json.RawMessag
 		RequestID string `json:"request_id"`
 		Subtype   string `json:"subtype"`
 		Error     string `json:"error"`
+		Response  struct {
+			Model string `json:"model"`
+		} `json:"response"`
 	}
 	if json.Unmarshal(raw, &response) != nil {
+		return nil
+	}
+	if change := s.modelControl; change != nil && response.RequestID == change.requestID {
+		if response.Subtype == "success" {
+			s.acknowledgeClaudeModelControlLocked(change, response.Response.Model)
+		} else {
+			s.completeClaudeModelControlLocked(fmt.Errorf("Claude Code refused the model selection: %s", response.Error))
+		}
+		if s.streamState == "idle" && s.pendingSubmissions == 0 && s.runningBackgroundTaskCountLocked() == 0 {
+			return s.settleClaudeTurnInputLocked()
+		}
 		return nil
 	}
 	if change := s.permissionModeChange; change != nil && response.RequestID == change.requestID {
@@ -205,7 +219,7 @@ func (s *claudeCodeSession) claudeBrowserOwnsStreamLocked() bool {
 // hide the window; neither action should discard its tabs or unsaved form data.
 func (s *claudeCodeSession) settleClaudeTurnInputLocked() io.WriteCloser {
 	s.setClaudeBrowserActivityIdleLocked()
-	if s.permissionModeChange != nil {
+	if s.permissionModeChange != nil || s.modelControl != nil {
 		return nil
 	}
 	if s.claudeBrowserOwnsStreamLocked() {

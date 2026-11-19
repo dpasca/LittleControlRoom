@@ -2,6 +2,7 @@ package claudecli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,12 +13,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	defaultPlanUsageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 	planUsageRequestTimeout  = 6 * time.Second
+	planUsageCacheTTL        = 30 * time.Second
 	claudeKeychainService    = "Claude Code-credentials"
 )
 
@@ -44,6 +47,17 @@ type PlanUsageReader struct {
 	Endpoint        string
 	ReadAccessToken func(context.Context, string) (string, bool, error)
 	LookupEnv       func(string) (string, bool)
+	cache           *planUsageCache
+}
+
+// Sessions sharing an account can open or finish turns at the same time.
+// Coalesce their reads while keeping authentication checks per session.
+type planUsageCache struct {
+	mu     sync.Mutex
+	key    [sha256.Size]byte
+	readAt time.Time
+	usage  PlanUsage
+	err    error
 }
 
 func NewPlanUsageReader() *PlanUsageReader {
@@ -54,6 +68,7 @@ func NewPlanUsageReader() *PlanUsageReader {
 			return readClaudeOAuthAccessToken(ctx, configDir)
 		},
 		LookupEnv: os.LookupEnv,
+		cache:     &planUsageCache{},
 	}
 }
 
@@ -84,27 +99,40 @@ func (r *PlanUsageReader) Read(ctx context.Context, configDir string) (PlanUsage
 	if info := SubscriptionTokens().Info(); info.Saved || info.Error != "" {
 		return PlanUsage{}, nil
 	}
-	token := ""
-	if token == "" {
-		readAccessToken := r.ReadAccessToken
-		if readAccessToken == nil {
-			readAccessToken = readClaudeOAuthAccessToken
-		}
-		var available bool
-		var err error
-		token, available, err = readAccessToken(ctx, configDir)
-		if err != nil {
-			return PlanUsage{}, err
-		}
-		if !available || strings.TrimSpace(token) == "" {
-			return PlanUsage{}, nil
-		}
+	readAccessToken := r.ReadAccessToken
+	if readAccessToken == nil {
+		readAccessToken = readClaudeOAuthAccessToken
+	}
+	token, available, err := readAccessToken(ctx, configDir)
+	if err != nil || !available || strings.TrimSpace(token) == "" {
+		return PlanUsage{}, err
 	}
 
 	endpoint := strings.TrimSpace(r.Endpoint)
 	if endpoint == "" {
 		endpoint = defaultPlanUsageEndpoint
 	}
+	if r.cache == nil {
+		return r.readUsage(ctx, endpoint, token)
+	}
+	key := sha256.Sum256([]byte(endpoint + "\n" + token))
+	r.cache.mu.Lock()
+	defer r.cache.mu.Unlock()
+	if r.cache.key == key && time.Since(r.cache.readAt) < planUsageCacheTTL {
+		return r.cache.usage, r.cache.err
+	}
+	if err := ctx.Err(); err != nil {
+		return PlanUsage{}, err
+	}
+	usage, err := r.readUsage(ctx, endpoint, token)
+	if ctx.Err() == nil {
+		r.cache.key, r.cache.readAt = key, time.Now()
+		r.cache.usage, r.cache.err = usage, err
+	}
+	return usage, err
+}
+
+func (r *PlanUsageReader) readUsage(ctx context.Context, endpoint, token string) (PlanUsage, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return PlanUsage{}, fmt.Errorf("prepare Claude plan usage request: %w", err)

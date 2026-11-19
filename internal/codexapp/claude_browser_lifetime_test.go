@@ -152,6 +152,80 @@ func TestClaudeBrowserExplainsDeferredSettings(t *testing.T) {
 	}
 }
 
+type claudeModelTestInput struct {
+	recordingWriteCloser
+	acknowledge func([]byte)
+}
+
+func (w *claudeModelTestInput) Write(data []byte) (int, error) {
+	n, err := w.recordingWriteCloser.Write(data)
+	w.acknowledge(data)
+	return n, err
+}
+
+func TestClaudeSwitchesModelBeforeSendingPromptOnRetainedBrowserStream(t *testing.T) {
+	for _, refuseModel := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refuse model=%t", refuseModel), func(t *testing.T) {
+			s, _ := managedClaudeTestSession()
+			s.managedBrowserOpen = true
+			s.currentBrowserPageURL = "https://example.com/form"
+			s.modelChoice, s.model, s.reasoningEffort = "opus", "claude-opus-5-5", "medium"
+			s.handleClaudeStdoutLine(`{"type":"command_lifecycle","command_uuid":"first","state":"completed"}`)
+			s.handleClaudeStdoutLine(`{"type":"system","subtype":"session_state_changed","state":"idle"}`)
+			var sent []string
+			stdin := &claudeModelTestInput{acknowledge: func(data []byte) {
+				var frame struct {
+					Type      string `json:"type"`
+					RequestID string `json:"request_id"`
+					Request   struct {
+						Subtype  string            `json:"subtype"`
+						Model    string            `json:"model"`
+						Settings map[string]string `json:"settings"`
+					} `json:"request"`
+				}
+				if err := json.Unmarshal(data, &frame); err != nil {
+					t.Fatal(err)
+				}
+				switch frame.Request.Subtype {
+				case "set_model":
+					sent = append(sent, frame.Request.Model)
+					if refuseModel {
+						s.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"control_response","response":{"request_id":%q,"subtype":"error","error":"unavailable"}}`, frame.RequestID))
+						return
+					}
+				case "apply_flag_settings":
+					sent = append(sent, frame.Request.Settings["effortLevel"])
+				default:
+					sent = append(sent, frame.Type)
+					return
+				}
+				s.handleClaudeStdoutLine(fmt.Sprintf(`{"type":"control_response","response":{"request_id":%q,"subtype":"success","response":{"model":"claude-fable-5-2"}}}`, frame.RequestID))
+			}}
+			s.stdin = stdin
+			if err := s.StageModelOverride("fable", "high"); err != nil {
+				t.Fatal(err)
+			}
+			cmd := s.cmd
+			err := s.Submit("Keep the iPad save.")
+			snapshot := s.Snapshot()
+			if refuseModel {
+				if err == nil || !strings.Contains(err.Error(), "unavailable") || strings.Join(sent, "/") != "fable" ||
+					snapshot.Model != "opus" || snapshot.PendingModel != "fable" {
+					t.Fatalf("refused switch sent %v and left model %q pending %q: %v", sent, snapshot.Model, snapshot.PendingModel, err)
+				}
+			} else if err != nil || strings.Join(sent, "/") != "fable/high/user" ||
+				snapshot.Model != "fable" || snapshot.ReportedModel != "claude-fable-5-2" ||
+				snapshot.ReasoningEffort != "high" || snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
+				t.Fatalf("switch sent %v, model %q reported %q effort %q pending %q/%q: %v",
+					sent, snapshot.Model, snapshot.ReportedModel, snapshot.ReasoningEffort, snapshot.PendingModel, snapshot.PendingReasoning, err)
+			}
+			if stdin.closed || s.cmd != cmd || snapshot.CurrentBrowserPageURL != "https://example.com/form" {
+				t.Fatal("model selection discarded the retained browser")
+			}
+		})
+	}
+}
+
 func TestClaudeCompactionPreservesRetainedBrowser(t *testing.T) {
 	s, stdin := managedClaudeTestSession()
 	s.busy, s.pendingSubmissions, s.managedBrowserOpen = false, 0, true

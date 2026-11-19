@@ -141,11 +141,13 @@ type claudeCodeSession struct {
 	modelContextWindow   int64
 	planUsageReader      claudePlanUsageReader
 	usageWindows         []UsageWindowSnapshot
+	streamUsageWindows   []UsageWindowSnapshot
 	usageRefreshAt       time.Time
 	usageRefreshActive   bool
 	usageRefreshQueued   bool
 	pendingModel         string
 	pendingReasoning     string
+	modelControl         *claudeModelControl
 	modelCatalog         func(context.Context, string) ([]ModelOption, error) // nil keeps the curated aliases
 	outputStyle          string
 	pendingOutputStyle   string
@@ -401,7 +403,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		outputStyle:              outputStyle,
 		approvalServer:           approvalServer,
 		claudeHome:               claudeHome,
-		planUsageReader:          claudecli.NewPlanUsageReader(),
+		planUsageReader:          sharedClaudePlanUsageReader,
 		modelChoice:              concreteClaudeModel(req.PendingModel),
 		modelChoiceSet:           concreteClaudeModel(req.PendingModel) != "",
 		modelCatalog:             loadClaudeModelCatalog,
@@ -739,6 +741,23 @@ func (s *claudeCodeSession) submitInput(input Submission, mode claudeSubmissionM
 			return err
 		}
 	}
+	if mode == claudeSubmissionNormal && s.canApplyClaudeModelToRetainedStreamLocked() {
+		cmd := s.cmd
+		model, effort := s.pendingModel, s.pendingReasoning
+		s.mu.Unlock()
+		err := s.applyClaudeModelToRetainedStream(cmd, model, effort)
+		s.mu.Lock()
+		if err == nil {
+			err = s.submissionStateErrorLocked(mode, compactCommand)
+		}
+		if err == nil && (s.cmd != cmd || s.stdin == nil || s.pendingModel != "" || s.pendingReasoning != "") {
+			err = fmt.Errorf("%w: Claude Code stream or model selection changed while applying the selection", ErrSessionChanged)
+		}
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
 	if mode == claudeSubmissionNormal && s.busy && s.cmd != nil {
 		if s.sessionID == "" && s.dataDir != "" {
 			s.mu.Unlock()
@@ -946,6 +965,8 @@ func (s *claudeCodeSession) submissionStateErrorLocked(mode claudeSubmissionMode
 		return fmt.Errorf("Claude Code is stopping the interrupted turn; wait for it to settle before sending another prompt")
 	case s.permissionModeChange != nil:
 		return fmt.Errorf("Claude Code has not confirmed the permission mode change; wait or use /reconnect before sending another prompt")
+	case s.modelControl != nil:
+		return fmt.Errorf("Claude Code has not confirmed the model selection; wait or use /reconnect before sending another prompt")
 	case s.pendingApproval != nil || s.pendingToolInput != nil:
 		return fmt.Errorf("Claude Code is waiting for your response")
 	case s.busyExternal:
@@ -1200,7 +1221,14 @@ func (s *claudeCodeSession) StageModelOverride(model, reasoning string) error {
 	if s.pendingReasoning != "" {
 		parts = append(parts, "effort "+s.pendingReasoning)
 	}
-	s.lastSystemNotice = "Claude Code will use " + strings.Join(parts, ", ") + " " + s.claudeStagedChangeTimingLocked() + "."
+	timing := s.claudeStagedChangeTimingLocked()
+	if s.cmd != nil && s.managedStream && s.claudeBrowserOwnsStreamLocked() {
+		timing = "on the next prompt after current work finishes"
+		if s.canApplyClaudeModelToRetainedStreamLocked() {
+			timing = "on the next prompt"
+		}
+	}
+	s.lastSystemNotice = "Claude Code will use " + strings.Join(parts, ", ") + " " + timing + "."
 	s.updateStatusLocked()
 	s.notifyAsync()
 	return nil
@@ -1742,6 +1770,7 @@ func (s *claudeCodeSession) Close() error {
 	}
 	s.closed = true
 	s.completeClaudePermissionModeChangeLocked(fmt.Errorf("Claude Code session is closed"))
+	s.completeClaudeModelControlLocked(fmt.Errorf("Claude Code session is closed"))
 	s.takeClaudePendingRequestsLocked()
 	s.clearClaudeBrowserHandoffLocked()
 	s.managedBrowserOpen = false
@@ -1850,6 +1879,7 @@ func (s *claudeCodeSession) finishClaudeTurn(waitErr, stdoutErr, stderrErr error
 
 	compactCommand := s.compactCommand
 	s.completeClaudePermissionModeChangeLocked(fmt.Errorf("Claude Code exited before confirming the permission mode change"))
+	s.completeClaudeModelControlLocked(fmt.Errorf("Claude Code exited before confirming the model selection"))
 	s.finishClaudeDeliveriesLocked(s.interruptPending)
 	if s.streamInitResult != nil {
 		select {
