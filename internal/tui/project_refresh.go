@@ -31,6 +31,7 @@ const embeddedSessionActivityRecordTimeout = 30 * time.Second
 
 type projectsMsg struct {
 	removalRevision           uint64
+	agentTaskRevision         uint64
 	projects                  []model.ProjectSummary
 	archivedProjects          []model.ProjectSummary
 	categories                []model.ProjectCategory
@@ -694,7 +695,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 // agent tasks must not consume the budget for loading projects or worktrees.
 // All loaders run in the background command and are joined before publishing.
 func (m Model) loadProjects(timeout time.Duration) projectsMsg {
-	msg := projectsMsg{removalRevision: m.projectRemovalRevision}
+	msg := projectsMsg{removalRevision: m.projectRemovalRevision, agentTaskRevision: m.agentTaskRevision}
 	if m.svc == nil || m.svc.Store() == nil {
 		msg.err = fmt.Errorf("loading project list: service unavailable")
 		return msg

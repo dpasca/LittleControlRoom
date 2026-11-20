@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -1852,6 +1853,12 @@ func (m Model) embeddedSidebarProcessRows(snapshot codexapp.Snapshot, projectPat
 		}
 		rows = append(rows, embeddedSidebarBackgroundTaskRow(task, width))
 	}
+	for _, task := range m.embeddedSidebarDelegatedAgentTasks(snapshot, projectPath) {
+		if len(rows) >= limit {
+			break
+		}
+		rows = append(rows, embeddedSidebarDelegatedAgentTaskRow(task, width))
+	}
 	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
 		if len(rows) >= limit {
 			break
@@ -1894,6 +1901,12 @@ func (m Model) embeddedSidebarProcessDetailRows(snapshot codexapp.Snapshot, proj
 		}
 		rows = append(rows, embeddedSidebarBackgroundTaskDetailRows(task, width, m.currentTime())...)
 	}
+	for _, task := range m.embeddedSidebarDelegatedAgentTasks(snapshot, projectPath) {
+		if limit > 0 && len(rows) >= limit {
+			break
+		}
+		rows = append(rows, embeddedSidebarDelegatedAgentTaskDetailRows(task, width)...)
+	}
 	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
 		if limit > 0 && len(rows) >= limit {
 			break
@@ -1921,6 +1934,45 @@ func (m Model) embeddedSidebarProcessDetailRows(snapshot codexapp.Snapshot, proj
 		return rows[:limit]
 	}
 	return rows
+}
+
+// embeddedSidebarDelegatedAgentTasks lists open agent tasks delegated from this
+// session or this checkout. Their rows live in the project list, which the
+// embedded pane covers, so without this a caller cannot see its own workers.
+func (m Model) embeddedSidebarDelegatedAgentTasks(snapshot codexapp.Snapshot, projectPath string) []model.AgentTask {
+	projectPath = cleanAgentTaskPath(projectPath)
+	threadID := strings.TrimSpace(snapshot.ThreadID)
+	var out []model.AgentTask
+	for _, task := range m.openAgentTasks {
+		if !agentTaskIsOpen(task) || cleanAgentTaskPath(task.WorkspacePath) == projectPath {
+			continue
+		}
+		fromSession := threadID != "" && strings.TrimSpace(task.OriginSessionID) == threadID
+		origin := cleanAgentTaskPath(task.OriginWorktreePath)
+		if origin == "" {
+			origin = cleanAgentTaskPath(task.OriginProjectPath)
+		}
+		if fromSession || (projectPath != "" && origin == projectPath) {
+			out = append(out, task)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out
+}
+
+func embeddedSidebarDelegatedAgentTaskRow(task model.AgentTask, width int) string {
+	status := agentTaskListStatus(task)
+	label := firstNonEmptyTrimmed(task.Title, task.ID)
+	return fitStyledWidth(agentTaskStatusStyle(task).Render(status)+" "+embeddedSidebarMutedStyle.Render(truncateText(label, max(1, width-len(status)-1))), width)
+}
+
+func embeddedSidebarDelegatedAgentTaskDetailRows(task model.AgentTask, width int) []string {
+	rows := embeddedSidebarWrappedRows(firstNonEmptyTrimmed(task.Title, task.ID), detailValueStyle, width)
+	rows = append(rows,
+		embeddedSidebarFieldRow("Agent", agentTaskListStatus(task), agentTaskStatusStyle(task), width),
+		embeddedSidebarFieldRow("Task", task.ID, embeddedSidebarMutedStyle, width),
+	)
+	return append(rows, embeddedSidebarWrappedRows("Open it from the project list, under this checkout.", embeddedSidebarMutedStyle, width)...)
 }
 
 func embeddedSidebarBackgroundTaskRow(task codexapp.BackgroundTaskSnapshot, width int) string {

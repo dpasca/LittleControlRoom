@@ -222,6 +222,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		}
 		task.LastTouchedAt = m.currentTime()
 		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
+		m.recordAgentTaskLocalChange(task, false)
 		m.rebuildProjectList(selectedPath)
 	}
 	renameRefreshCmd = batchCmds(renameRefreshCmd, m.recordEmbeddedSessionTransitionCmd(msg.projectPath, msg.snapshot))

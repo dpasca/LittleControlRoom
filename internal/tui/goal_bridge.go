@@ -551,6 +551,7 @@ func (m Model) applyBossGoalRunResultToHost(msg bossui.GoalRunResultMsg) Model {
 	}
 	for _, taskID := range msg.Result.ArchivedTaskIDs {
 		m.openAgentTasks = removeAgentTask(m.openAgentTasks, taskID)
+		m.recordAgentTaskLocalChange(model.AgentTask{ID: taskID}, true)
 	}
 	m.rebuildProjectList(selectedPath)
 	return m

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -92,10 +93,60 @@ func (m *Model) upsertOpenAgentTask(task model.AgentTask) {
 	}
 	if agentTaskIsVisible(task) {
 		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
+		m.recordAgentTaskLocalChange(task, false)
 	} else {
 		m.openAgentTasks = removeAgentTask(m.openAgentTasks, task.ID)
+		m.recordAgentTaskLocalChange(task, true)
 	}
 	m.rebuildProjectList(selectedPath)
+}
+
+// agentTaskLocalChange is an open-task edit the TUI applied ahead of the next
+// persisted snapshot.
+type agentTaskLocalChange struct {
+	revision uint64
+	task     model.AgentTask
+	removed  bool
+}
+
+// recordAgentTaskLocalChange remembers a local edit so a project reload whose
+// command was issued before the edit cannot undo it. Without this, a task
+// created while a reload is in flight vanishes from the list until some later
+// reload happens to run.
+func (m *Model) recordAgentTaskLocalChange(task model.AgentTask, removed bool) {
+	taskID := strings.TrimSpace(task.ID)
+	if taskID == "" {
+		return
+	}
+	m.agentTaskRevision++
+	if m.agentTaskLocalChanges == nil {
+		m.agentTaskLocalChanges = make(map[string]agentTaskLocalChange)
+	}
+	m.agentTaskLocalChanges[taskID] = agentTaskLocalChange{revision: m.agentTaskRevision, task: task, removed: removed}
+}
+
+// applyAgentTaskSnapshot replaces the open-task list with a reload snapshot
+// issued at snapshotRevision, then reapplies local edits made after that
+// point. Edits the snapshot already covers are dropped.
+func (m *Model) applyAgentTaskSnapshot(tasks []model.AgentTask, snapshotRevision uint64) {
+	out := append([]model.AgentTask(nil), tasks...)
+	pending := make([]agentTaskLocalChange, 0, len(m.agentTaskLocalChanges))
+	for taskID, change := range m.agentTaskLocalChanges {
+		if change.revision <= snapshotRevision {
+			delete(m.agentTaskLocalChanges, taskID)
+			continue
+		}
+		pending = append(pending, change)
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].revision < pending[j].revision })
+	for _, change := range pending {
+		if change.removed {
+			out = removeAgentTask(out, change.task.ID)
+		} else {
+			out = upsertAgentTask(out, change.task)
+		}
+	}
+	m.openAgentTasks = out
 }
 
 func upsertAgentTask(tasks []model.AgentTask, task model.AgentTask) []model.AgentTask {

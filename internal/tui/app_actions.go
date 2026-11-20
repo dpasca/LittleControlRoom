@@ -382,7 +382,9 @@ func (m *Model) applyRemovedProjectLocally(projectPath, selectPath string) {
 	for _, task := range m.openAgentTasks {
 		if !model.AgentTaskMatchesRemovedWorktree(task, projectPath) {
 			retainedTasks = append(retainedTasks, task)
+			continue
 		}
+		m.recordAgentTaskLocalChange(task, true)
 	}
 	m.openAgentTasks = retainedTasks
 

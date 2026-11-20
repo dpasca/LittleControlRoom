@@ -99,9 +99,13 @@ type Model struct {
 	projectsReloadInFlight  bool
 	projectsReloadQueued    bool
 	projectRemovalRevision  uint64
-	scanInFlight            bool
-	scanQueued              bool
-	scanQueuedForceRetry    bool
+	// agentTaskRevision orders local open-task edits against project reload
+	// snapshots; see recordAgentTaskLocalChange.
+	agentTaskRevision     uint64
+	agentTaskLocalChanges map[string]agentTaskLocalChange
+	scanInFlight          bool
+	scanQueued            bool
+	scanQueuedForceRetry  bool
 
 	width     int
 	height    int
@@ -2117,7 +2121,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectCategories = append([]model.ProjectCategory(nil), msg.categories...)
 		m.ensureSelectedCategoryTab()
 		if msg.agentTaskErr == nil {
-			m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
+			m.applyAgentTaskSnapshot(msg.openAgentTasks, msg.agentTaskRevision)
 		}
 		if msg.orphanedWorktreeErr == nil {
 			m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
