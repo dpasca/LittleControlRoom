@@ -264,7 +264,7 @@ func TestSystemPromptIncludesProgressiveLCRQueryGuidance(t *testing.T) {
 		"call list_lcr_queries without a domain",
 		"describe_lcr_query before run_lcr_query",
 		"bounded persisted snapshots",
-		"excludes other private-category projects",
+		"private_readers can also query other private categories while privacy mode is off",
 		"knowledge.get",
 		"submodule-worktrees",
 		"director-coordination",

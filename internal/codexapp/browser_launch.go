@@ -201,6 +201,9 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 	if dbPath := strings.TrimSpace(req.AppDBPath); dbPath != "" {
 		args = append(args, "--db-path", dbPath)
 	}
+	if req.AppConfigPath != "" {
+		args = append(args, "--config", req.AppConfigPath)
+	}
 	args = append(args, "--todo-capture-mode", string(todocapture.NormalizeCaptureMode(req.TodoCaptureMode)))
 	if browserSessionKey := strings.TrimSpace(req.ManagedBrowserSessionKey); browserSessionKey != "" {
 		args = append(args, "--browser-session-key", browserSessionKey)

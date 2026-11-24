@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"lcroom/internal/browserctl"
 	"lcroom/internal/claudecli"
 	"lcroom/internal/codexcli"
@@ -594,6 +596,18 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 	if path == "" {
 		return fmt.Errorf("config path is required")
 	}
+	privateReaders, err := readPrivateReaderSettings(path)
+	if err != nil {
+		return err
+	}
+	content := renderEditableSettings(settings)
+	if privateReaders.Paths != nil {
+		raw, err := toml.Marshal(map[string][]string{"private_readers": privateReaders.Paths})
+		if err != nil {
+			return fmt.Errorf("encode private_readers: %w", err)
+		}
+		content += string(raw)
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
@@ -609,7 +623,7 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 		_ = os.Remove(tempPath)
 	}()
 
-	if _, err := tempFile.WriteString(renderEditableSettings(settings)); err != nil {
+	if _, err := tempFile.WriteString(content); err != nil {
 		return fmt.Errorf("write temp config file: %w", err)
 	}
 	if err := tempFile.Chmod(0o600); err != nil {

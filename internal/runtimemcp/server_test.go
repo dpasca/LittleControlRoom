@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -301,6 +302,70 @@ func TestRuntimeMCPProgressiveQueriesUseStructuredBoundsAndPrivacy(t *testing.T)
 	}
 	if !strings.Contains(encoded, `"as_of"`) || !strings.Contains(encoded, "private_categories_hidden_except_origin_project") {
 		t.Fatalf("query metadata missing freshness/privacy contract: %s", encoded)
+	}
+}
+
+func TestRuntimeMCPPrivateReaders(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	originPath := filepath.Join(dir, "origin")
+	privatePath := filepath.Join(dir, "private")
+	st, err := store.Open(filepath.Join(dir, "queries.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for _, path := range []string{originPath, privatePath} {
+		if err := st.UpsertProjectState(ctx, model.ProjectState{
+			Path: path, Name: filepath.Base(path), InScope: true, PresentOnDisk: true, UpdatedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	category, err := st.CreateProjectCategory(ctx, "Private")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetProjectCategoryPrivate(ctx, category.Name, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetResourceCategory(ctx, model.CategoryResourceProject, privatePath, category.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name        string
+		reader      string
+		privacyMode bool
+		wantPrivate bool
+	}{
+		{name: "listed project", reader: originPath, wantPrivate: true},
+		{name: "unlisted project", reader: originPath + "-other"},
+		{name: "privacy mode", reader: originPath, privacyMode: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			server, err := New(Options{
+				ProjectPath: originPath,
+				ConfigPath:  configPath,
+				QueryScope:  agentquery.ScopePortfolio,
+				Store:       st,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = server.manager.CloseAll() })
+			raw := fmt.Sprintf("private_readers = [%q]\nprivacy_mode = %t\n", test.reader, test.privacyMode)
+			if err := os.WriteFile(configPath, []byte(raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			result := callRuntimeToolForMap(t, server, "run_lcr_query", `{"query":"project.list","arguments":{}}`)
+			encoded := mustJSON(t, result)
+			if !strings.Contains(encoded, originPath) || strings.Contains(encoded, privatePath) != test.wantPrivate {
+				t.Fatalf("project list = %s, want origin visible and private project visible = %t", encoded, test.wantPrivate)
+			}
+		})
 	}
 }
 

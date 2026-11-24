@@ -1432,6 +1432,9 @@ func (m Model) enrichEmbeddedLaunchRequestBase(req codexapp.LaunchRequest) codex
 	if strings.TrimSpace(req.AppDBPath) == "" {
 		req.AppDBPath = m.embeddedLaunchDBPath()
 	}
+	if req.AppConfigPath == "" {
+		req.AppConfigPath = m.settingsConfigPath
+	}
 	if req.TodoCaptureMode == "" {
 		req.TodoCaptureMode = m.embeddedLaunchTodoCaptureMode()
 	}

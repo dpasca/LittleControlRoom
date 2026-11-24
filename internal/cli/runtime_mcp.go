@@ -24,6 +24,7 @@ type runtimeMCPOptions struct {
 	browserSessionKey    string
 	claudeApprovalSocket string
 	dbPath               string
+	configPath           string
 	todoCaptureMode      todocapture.CaptureMode
 	controlScope         control.AuthorityScope
 	queryScope           agentquery.Scope
@@ -46,6 +47,7 @@ func runRuntimeMCP(args []string) int {
 		BrowserSessionKey:    opts.browserSessionKey,
 		ClaudeApprovalSocket: opts.claudeApprovalSocket,
 		DBPath:               opts.dbPath,
+		ConfigPath:           opts.configPath,
 		TodoCaptureMode:      opts.todoCaptureMode,
 		ControlScope:         opts.controlScope,
 		QueryScope:           opts.queryScope,
@@ -66,6 +68,7 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 	browserSessionKey := fs.String("browser-session-key", "", "managed browser session key")
 	claudeApprovalSocket := fs.String("claude-approval-socket", "", "embedded Claude Code approval socket")
 	dbPath := fs.String("db-path", "", "LCR SQLite database path for queries, controls, and project TODO capture")
+	configPath := fs.String("config", "", "LCR config file for query disclosure")
 	todoCaptureMode := fs.String("todo-capture-mode", string(todocapture.ModeOff), "project TODO capture mode")
 	controlScope := fs.String("control-scope", string(control.AuthorityScopeProject), "control authority scope: project, portfolio, or host")
 	queryScope := fs.String("query-scope", string(agentquery.ScopeProject), "read-only query scope: project or portfolio")
@@ -93,6 +96,7 @@ func parseRuntimeMCPOptions(args []string) (runtimeMCPOptions, error) {
 		browserSessionKey:    strings.TrimSpace(*browserSessionKey),
 		claudeApprovalSocket: strings.TrimSpace(*claudeApprovalSocket),
 		dbPath:               strings.TrimSpace(*dbPath),
+		configPath:           *configPath,
 		todoCaptureMode:      parsedMode,
 		controlScope:         parsedControlScope,
 		queryScope:           parsedQueryScope,
