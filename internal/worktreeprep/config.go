@@ -429,7 +429,7 @@ func createSubmoduleWorktreeAtCommit(ctx context.Context, rootPath, worktreePath
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return PreparedSubmodule{}, fmt.Errorf("create submodule worktree parent for %s: %w", targetPath, err)
 	}
-	if err := gitRun(ctx, rootSubmodulePath, "create submodule worktree "+submodulePath, "worktree", "add", "--detach", targetPath, commit); err != nil {
+	if err := gitRun(ctx, rootSubmodulePath, "create submodule worktree "+submodulePath, "worktree", "add", "--quiet", "--detach", targetPath, commit); err != nil {
 		return PreparedSubmodule{}, err
 	}
 	return PreparedSubmodule{Path: submodulePath, Mode: "worktree", Commit: commit}, nil
@@ -773,17 +773,17 @@ func gitRun(ctx context.Context, repoPath, action string, args ...string) error 
 }
 
 func formatGitRunError(action, repoPath string, err error, output string) error {
-	base := fmt.Sprintf("%s in %s: %v", action, repoPath, err)
+	base := fmt.Errorf("%s in %s: %w", action, repoPath, err)
 	if lockPath, ok := gitlock.LockPathFromOutput(output); ok {
-		return fmt.Errorf("%s: %w", base, gitlock.IndexLockError{LockPath: lockPath})
+		return fmt.Errorf("%w: %w", base, gitlock.IndexLockError{LockPath: lockPath})
 	}
 	if output == "" {
-		return errors.New(base)
+		return base
 	}
 	if isMissingSubmoduleCommitOutput(output) {
-		return fmt.Errorf("%s: submodule checkout failed because the parent repo records a submodule commit that the submodule remote did not provide. Push the missing submodule commit first, or configure %s with mode = \"worktree\" for locally available submodule commits. Git output: %s", base, ConfigRelPath, output)
+		return fmt.Errorf("%w: submodule checkout failed because the parent repo records a submodule commit that the submodule remote did not provide. Push the missing submodule commit first, or configure %s with mode = \"worktree\" for locally available submodule commits. Git output: %s", base, ConfigRelPath, output)
 	}
-	return fmt.Errorf("%s: %s", base, output)
+	return fmt.Errorf("%w: %s", base, output)
 }
 
 func isMissingSubmoduleCommitOutput(output string) bool {

@@ -1141,7 +1141,7 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			msg.err = errors.New("service unavailable")
 			return msg
 		}
-		ctx, cancel := context.WithTimeout(parent, tuiGitActionTimeout)
+		ctx, cancel := context.WithTimeoutCause(parent, tuiAgentTaskPrepareTimeout, errAgentTaskPrepareTimeout)
 		defer cancel()
 		if input.AfterTaskStopped != "" {
 			if err := svc.CheckAgentTaskStopped(ctx, input.AfterTaskStopped); err != nil {
@@ -1172,7 +1172,17 @@ func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.Agen
 			OriginSessionID:    creationContext.originSessionID,
 			OriginSessionKey:   creationContext.originSessionKey,
 		})
-		msg.err = timeoutActionError(msg.err, tuiGitActionTimeout, "creating the agent task workspace")
+		const action = "creating the agent task workspace"
+		switch {
+		case errors.Is(msg.err, context.DeadlineExceeded):
+			if context.Cause(ctx) == errAgentTaskPrepareTimeout {
+				msg.err = timeoutActionError(msg.err, tuiAgentTaskPrepareTimeout, action)
+			} else {
+				msg.err = fmt.Errorf("deadline exceeded while %s: %w", action, msg.err)
+			}
+		case errors.Is(msg.err, context.Canceled):
+			msg.err = fmt.Errorf("canceled while %s: %w", action, msg.err)
+		}
 		return msg
 	}
 }

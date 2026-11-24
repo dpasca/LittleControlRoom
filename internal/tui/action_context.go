@@ -13,7 +13,11 @@ const (
 	tuiGitActionTimeout     = 60 * time.Second
 	// Push can run repository hooks, including native release builds.
 	tuiGitPushActionTimeout = 5 * time.Minute
+	// Task creation can populate a parent worktree and several large submodules.
+	tuiAgentTaskPrepareTimeout = 10 * time.Minute
 )
+
+var errAgentTaskPrepareTimeout = errors.New("agent task preparation budget expired")
 
 func (m Model) actionContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 	ctx := m.ctx

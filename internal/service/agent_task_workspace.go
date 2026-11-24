@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,14 @@ import (
 	"lcroom/internal/worktreeprep"
 )
 
-func (s *Service) prepareAgentTaskCheckout(ctx context.Context, origin string, input *model.CreateAgentTaskInput) error {
+func (s *Service) prepareAgentTaskCheckout(ctx context.Context, origin string, input *model.CreateAgentTaskInput) (err error) {
+	// Git can return a signal error after the checkout context ends. Preserve
+	// both facts before cleanup, which runs under a separate context.
+	defer func() {
+		if ctxErr := ctx.Err(); err != nil && ctxErr != nil && !errors.Is(err, ctxErr) {
+			err = fmt.Errorf("%w: %w", ctxErr, err)
+		}
+	}()
 	unlock, err := s.lockGitWrite(ctx, origin)
 	if err != nil {
 		return err
@@ -24,7 +32,7 @@ func (s *Service) prepareAgentTaskCheckout(ctx context.Context, origin string, i
 		return fmt.Errorf("prepare isolated task checkout: %w", err)
 	}
 	branch := "agent-task/" + strings.TrimPrefix(filepath.Base(input.WorkspacePath), agentTaskWorkspacePrefix)
-	if _, err := repositoryGit(ctx, origin, "worktree", "add", "-b", branch, "--", input.WorkspacePath, strings.TrimSpace(string(head))); err != nil {
+	if _, err := repositoryGit(ctx, origin, "worktree", "add", "--quiet", "-b", branch, "--", input.WorkspacePath, strings.TrimSpace(string(head))); err != nil {
 		return fmt.Errorf("create isolated task worktree: %w", err)
 	}
 	input.Repository = model.AgentTaskRepository{

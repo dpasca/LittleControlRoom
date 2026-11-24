@@ -14,6 +14,11 @@ No repo-local setup is required for the default behavior. The built-in auto prep
 
 If the repo has no `.gitmodules`, LCR leaves the worktree alone.
 
+Delegated task creation has a dedicated 10-minute preparation budget for the
+parent checkout and its submodules. When the preparation context ends, the
+failure identifies the timeout or cancellation and retains Git's underlying
+error. Linked worktree creation runs with Git's progress output disabled.
+
 ## Opt Out
 
 A repo can disable automatic preparation with:
