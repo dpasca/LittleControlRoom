@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lcroom/internal/bossrun"
+	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/demorecord"
 	"lcroom/internal/integrations"
@@ -63,6 +64,7 @@ type Executor struct {
 	originProjectPath string
 	scope             Scope
 	disclosure        DisclosurePolicy
+	configPath        string
 	demoRecordings    DemoRecordingReader
 	recordingGrants   []DemoRecordingPathGrant
 	nowFn             func() time.Time
@@ -74,6 +76,7 @@ type Options struct {
 	OriginProjectPath string
 	Scope             Scope
 	Disclosure        DisclosurePolicy
+	ConfigPath        string
 	DemoRecordings    DemoRecordingReader
 	RecordingGrants   []DemoRecordingPathGrant
 	Now               func() time.Time
@@ -118,6 +121,7 @@ func NewExecutor(options Options) (*Executor, error) {
 		originProjectPath: originProjectPath,
 		scope:             scope,
 		disclosure:        disclosure,
+		configPath:        options.ConfigPath,
 		demoRecordings:    options.DemoRecordings,
 		recordingGrants:   recordingGrants,
 		nowFn:             nowFn,
@@ -131,7 +135,7 @@ func (e *Executor) Scope() Scope {
 	return e.scope
 }
 
-func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMessage) (map[string]any, error) {
+func (e Executor) Execute(ctx context.Context, name Name, arguments json.RawMessage) (map[string]any, error) {
 	capability, ok := CapabilityByName(name)
 	if !ok {
 		return nil, fmt.Errorf("unknown LCR query %q", strings.TrimSpace(string(name)))
@@ -141,6 +145,9 @@ func (e *Executor) Execute(ctx context.Context, name Name, arguments json.RawMes
 	}
 	if len(bytes.TrimSpace(arguments)) == 0 {
 		arguments = json.RawMessage(`{}`)
+	}
+	if e.disclosure == DisclosureOriginProject && config.AllowsPrivateReads(e.configPath, e.originProjectPath) {
+		e.disclosure = DisclosureHost
 	}
 
 	var result map[string]any

@@ -567,6 +567,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			Reader:            lcrStateStore,
 			OriginProjectPath: workspace.Root,
 			Scope:             lcrQueryScope,
+			ConfigPath:        os.Getenv(config.EmbeddedConfigPathEnv),
 			DemoRecordings:    demorecord.NewDiscovery(dataDir),
 		})
 		if err != nil {

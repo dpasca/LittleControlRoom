@@ -1212,6 +1212,29 @@ func TestSaveEditableSettingsBacksUpExistingConfig(t *testing.T) {
 	}
 }
 
+func TestSaveEditableSettingsKeepsPrivateReaders(t *testing.T) {
+	useTempHome(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	want := []string{"/work/one", "~/work/two"}
+	raw := fmt.Sprintf("private_readers = [%q, %q]\n", want[0], want[1])
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.PrivacyMode = true
+	if err := SaveEditableSettings(path, settings); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := readPrivateReaderSettings(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.PrivacyMode || !reflect.DeepEqual(saved.Paths, want) {
+		t.Fatalf("saved policy = %#v, want privacy mode on and paths %q", saved, want)
+	}
+}
+
 func TestCleanupEditableSettingsBackupsKeepsNewestBoundedSet(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")

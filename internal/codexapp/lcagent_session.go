@@ -53,6 +53,7 @@ type lcagentSession struct {
 	projectPath         string
 	dataDir             string
 	appDBPath           string
+	appConfigPath       string
 	execPath            string
 	envFile             string
 	openAIAPIKey        string
@@ -229,6 +230,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
 		appDBPath:                strings.TrimSpace(req.AppDBPath),
+		appConfigPath:            req.AppConfigPath,
 		execPath:                 strings.TrimSpace(req.LCAgentPath),
 		envFile:                  strings.TrimSpace(req.LCAgentEnvFile),
 		openAIAPIKey:             strings.TrimSpace(req.LCAgentOpenAIAPIKey),
@@ -1361,6 +1363,7 @@ func (s *lcagentSession) applyPendingLaunchSettingsLocked() {
 	s.todoCaptureHandler = req.TodoCaptureHandler
 	s.todoCaptureMode = todocapture.NormalizeCaptureMode(req.TodoCaptureMode)
 	s.appDBPath = strings.TrimSpace(req.AppDBPath)
+	s.appConfigPath = req.AppConfigPath
 }
 
 func (s *lcagentSession) StageModelOverride(model, reasoningEffort string) error {
@@ -2126,6 +2129,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	configureAppServerCommand(cmd)
 	cmd.Dir = spec.Dir
 	cmd.Env = browserctl.AppendEnv(os.Environ(), string(ProviderLCAgent), s.playwrightPolicy)
+	cmd.Env = setCommandEnv(cmd.Env, config.EmbeddedConfigPathEnv, s.appConfigPath)
 	if prepared.providerAPIKeyName != "" && prepared.providerAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, prepared.providerAPIKeyName, prepared.providerAPIKey)
 	}

@@ -828,6 +828,7 @@ type LaunchRequest struct {
 	ClaudeApprovalSocket       string
 	AppDataDir                 string
 	AppDBPath                  string
+	AppConfigPath              string
 	TodoCaptureMode            todocapture.CaptureMode
 	TodoCaptureHandler         todocapture.Handler
 	TodoCaptureSessionKey      string

@@ -436,6 +436,12 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	if err != nil {
 		return AppConfig{}, err
 	}
+	if cfg.ConfigPath != "" {
+		cfg.ConfigPath, err = filepath.Abs(cfg.ConfigPath)
+		if err != nil {
+			return AppConfig{}, fmt.Errorf("resolve config path: %w", err)
+		}
+	}
 
 	expandedIncludePaths, err := expandAndSplitPaths(*includePaths)
 	if err != nil {

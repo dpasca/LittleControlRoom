@@ -105,6 +105,7 @@ Portfolio scope is not unrestricted database access.
   assessments, TODOs, sessions, delegated tasks, and referenced goal runs.
 - The originating project remains visible to its own embedded agent even when
   that project is private.
+- With `privacy_mode` off, embedded sessions whose checkout path is listed in `private_readers` in LCR's `config.toml` can query private categories across the portfolio.
 - Help Chat is a trusted host surface rather than an originating embedded
   project. With privacy mode off, it receives host visibility; with privacy
   mode on, every private-category project is hidden with no origin exception.
