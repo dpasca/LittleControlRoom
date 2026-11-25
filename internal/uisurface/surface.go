@@ -66,6 +66,8 @@ type ProjectItem struct {
 	OpenTODOCount     int           `json:"open_todo_count"`
 	TotalTODOCount    int           `json:"total_todo_count"`
 	Badges            []Badge       `json:"badges"`
+
+	Brief *model.ProjectBrief `json:"brief,omitempty"`
 }
 
 type Category struct {
@@ -382,6 +384,7 @@ func BuildProjectItem(project model.ProjectSummary, options BuildOptions) Projec
 		TabID:             dashboardProjectTabID(project),
 		Archived:          project.Archived,
 		Summary:           summary,
+		Brief:             project.Brief,
 		Assessment:        assessment,
 		Activity:          activity,
 		Bucket:            bucket,

@@ -265,17 +265,20 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 		includeHistorical = true
 	}
 
-	projects, err := s.svc.Store().ListProjects(r.Context(), includeHistorical)
+	cfg := s.svc.Config()
+	projects, err := s.visibleBriefProjects(r.Context(), cfg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cfg := s.svc.Config()
-	projects = filterProjectSummariesByName(projects, cfg.ExcludeProjectPatterns)
-	if cfg.PrivacyMode {
-		projects = filterPrivateProjectSummaries(projects)
+	visible := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if includeHistorical || (project.InScope && !project.Archived) {
+			visible = append(visible, project)
+		}
 	}
-	writeJSON(w, projects)
+	s.populateProjectBriefs(r.Context(), projects, visible)
+	writeJSON(w, visible)
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +307,8 @@ func (s *Server) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 	if !requireGET(w, r) {
 		return
 	}
-	projects, err := s.svc.Store().ListProjects(r.Context(), true)
+	cfg := s.svc.Config()
+	projects, err := s.visibleBriefProjects(r.Context(), cfg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -314,11 +318,10 @@ func (s *Server) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cfg := s.svc.Config()
-	projects = filterProjectSummariesByName(projects, cfg.ExcludeProjectPatterns)
-	projects = filterMobileDashboardProjects(projects)
+	visible := filterMobileDashboardProjects(projects)
+	s.populateProjectBriefs(r.Context(), projects, visible)
 	now := time.Now()
-	surface := uisurface.BuildDashboard(projects, categories, uisurface.BuildOptions{
+	surface := uisurface.BuildDashboard(visible, categories, uisurface.BuildOptions{
 		Now:             now,
 		StuckThreshold:  sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold),
 		HidePrivate:     cfg.PrivacyMode,

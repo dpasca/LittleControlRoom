@@ -175,7 +175,7 @@ func Capabilities() []Capability {
 			QueryProjectList,
 			DomainProject,
 			ScopeProject,
-			"List visible LCR projects in attention order by default, optionally filtered or ordered by last activity. Project-scoped callers receive only their originating project.",
+			"List visible LCR projects in attention order by default, optionally filtered or ordered by last activity. Project-scoped callers receive only their originating project. Project records include a session-authored brief when available.",
 			SensitivityContent,
 			pagedSchema(map[string]any{
 				"since":              stringProperty("Inclusive lower bound on last_activity, as RFC3339. Unknown activity is excluded when a bound is supplied.", 1),
@@ -188,7 +188,7 @@ func Capabilities() []Capability {
 			QueryProjectSearch,
 			DomainProject,
 			ScopePortfolio,
-			"Search visible project names, paths, categories, and persisted summaries without searching transcripts.",
+			"Search visible project names, paths, categories, and persisted summaries without searching transcripts. Matched projects include a session-authored brief when available.",
 			SensitivityContent,
 			pagedSchema(map[string]any{
 				"query":              stringProperty("Case-insensitive text to find in project metadata.", 1),
@@ -199,7 +199,7 @@ func Capabilities() []Capability {
 			QueryProjectDetail,
 			DomainProject,
 			ScopeProject,
-			"Load one structured project snapshot with attention reasons, bounded TODOs, recent sessions, and the latest assessment.",
+			"Load one structured project snapshot with attention reasons, bounded TODOs, recent sessions, the latest assessment, and a session-authored brief when available.",
 			SensitivityContent,
 			objectSchema(map[string]any{
 				"project_path":      stringProperty("Exact project path. Defaults to the originating project.", 1),

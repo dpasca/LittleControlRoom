@@ -196,6 +196,7 @@ func (e Executor) Execute(ctx context.Context, name Name, arguments json.RawMess
 		return nil, err
 	}
 
+	e.addProjectBriefs(ctx, capability.Name, result)
 	result["success"] = true
 	result["query"] = capability.Name
 	result["as_of"] = formatTime(e.nowFn())

@@ -86,6 +86,11 @@ func (s *Store) initSchema(ctx context.Context) error {
 			created_at INTEGER,
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS project_briefs (
+			checkout_path TEXT PRIMARY KEY REFERENCES projects(path) ON DELETE CASCADE,
+			recorded_at INTEGER NOT NULL,
+			payload TEXT NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS repository_root_policies (
 			root_path TEXT PRIMARY KEY,
 			expected_branch TEXT NOT NULL DEFAULT '',

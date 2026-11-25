@@ -11,6 +11,8 @@ var reportContractLines = []string{
 	"- For retry, sync, export, file, or document work, say whether content changed and summarize the meaningful changes; if nothing changed, name the file or document and say there were no content changes.",
 	"- Do not final-report only success/failure plus artifact links; include the substantive outcome, or say exactly which requested outcome evidence is still missing.",
 	"- Avoid vague wrap-ups like only saying the entries differ, the state is clean, canonical copies were kept, or the retry succeeded.",
+	"- At the end of a turn that changes the project state, directors and other sessions should use record_project_brief if available. Record the goal, what is true now, any decision the owner needs to make, and the next step. Skip small turns. A missing brief should never delay the report or trigger a reminder.",
+	"- For an owner decision give the options, recommendation, default if unanswered, and deadline if any. Use a structured Git check when it can settle the entire decision. The tool supplies the date. The chat reply needs no special wording.",
 }
 
 // ReportContractLines returns the engineer report contract bullets. Providers

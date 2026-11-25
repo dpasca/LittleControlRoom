@@ -6,6 +6,7 @@ import (
 
 	"lcroom/internal/agentquery"
 	"lcroom/internal/claudeapproval"
+	"lcroom/internal/projectbrief"
 	"lcroom/internal/todocapture"
 )
 
@@ -85,6 +86,9 @@ func buildClaudeMCPOptions(req LaunchRequest) (claudeMCPOptions, error) {
 			claudeRuntimeMCPListProcessesTool,
 			claudeRuntimeMCPReadProcessOutputTool,
 		)
+		if strings.TrimSpace(req.AppDBPath) != "" {
+			allowedTools = append(allowedTools, "mcp__lcr_runtime__"+projectbrief.ToolName)
+		}
 		if req.TodoCaptureMode.Enabled() {
 			allowedTools = append(allowedTools, claudeRuntimeMCPListTODOsTool, claudeRuntimeMCPAddTODOTool)
 			promptParts = append(promptParts, strings.TrimSpace(todocapture.AgentInstructions(req.TodoCaptureMode)))

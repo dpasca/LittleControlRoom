@@ -17,6 +17,8 @@ type GitFingerprint struct {
 }
 
 type GitRepoStatus struct {
+	Head        string
+	Upstream    string
 	Dirty       bool
 	HasRemote   bool
 	HasUpstream bool
@@ -178,7 +180,7 @@ func ReadGitFingerprint(ctx context.Context, path string) (GitFingerprint, error
 }
 
 func ReadGitRepoStatus(ctx context.Context, path string) (GitRepoStatus, error) {
-	status, err := readGitRepoStatusDirect(ctx, path)
+	status, err := ReadGitCheckoutStatus(ctx, path)
 	if err != nil {
 		return GitRepoStatus{}, err
 	}
@@ -186,7 +188,8 @@ func ReadGitRepoStatus(ctx context.Context, path string) (GitRepoStatus, error) 
 	return status, nil
 }
 
-func readGitRepoStatusDirect(ctx context.Context, path string) (GitRepoStatus, error) {
+// ReadGitCheckoutStatus reads the checkout status without probing its submodules.
+func ReadGitCheckoutStatus(ctx context.Context, path string) (GitRepoStatus, error) {
 	cmd := gitReadOnlyCommand(ctx, "-C", path, "status", "--porcelain=v2", "--branch", "--untracked-files=normal")
 	out, err := gitReadOnlyOutput(cmd)
 	if err != nil {
@@ -218,7 +221,7 @@ func readGitSubmoduleStatuses(ctx context.Context, path string) []GitSubmoduleSt
 		if _, err := os.Lstat(filepath.Join(childPath, ".git")); err != nil {
 			continue
 		}
-		status, err := readGitRepoStatusDirect(ctx, childPath)
+		status, err := ReadGitCheckoutStatus(ctx, childPath)
 		if err != nil {
 			continue
 		}
@@ -570,9 +573,12 @@ func parseGitRepoStatusOutput(out string) GitRepoStatus {
 		}
 		if strings.HasPrefix(line, "# ") {
 			switch {
+			case strings.HasPrefix(line, "# branch.oid "):
+				status.Head = strings.TrimPrefix(line, "# branch.oid ")
 			case strings.HasPrefix(line, "# branch.head "):
 				status.Branch = strings.TrimSpace(strings.TrimPrefix(line, "# branch.head "))
 			case strings.HasPrefix(line, "# branch.upstream "):
+				status.Upstream = strings.TrimPrefix(line, "# branch.upstream ")
 				status.HasUpstream = true
 				status.HasRemote = true
 			case strings.HasPrefix(line, "# branch.ab "):

@@ -6,6 +6,7 @@ import (
 
 	"lcroom/internal/agentquery"
 	"lcroom/internal/control"
+	"lcroom/internal/projectbrief"
 	"lcroom/internal/todocapture"
 )
 
@@ -29,6 +30,7 @@ type ToolOptions struct {
 	NativeVisionEnabled        bool
 	LCRQueriesEnabled          bool
 	LCRControlsEnabled         bool
+	LCRBriefsEnabled           bool
 	UserCommandRequestsEnabled bool
 	WorkspaceOnlyReads         bool
 	ReadOnly                   bool
@@ -272,6 +274,11 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	}
 	if opts.LCRQueriesEnabled {
 		defs = append(defs, lcrQueryToolDefinitions()...)
+	}
+	if opts.LCRBriefsEnabled && !opts.ReadOnly {
+		defs = append(defs, ToolDefinition{Type: "function", Function: FunctionSpec{
+			Name: projectbrief.ToolName, Description: projectbrief.ToolDescription, Parameters: projectbrief.ToolSchema(),
+		}})
 	}
 	if opts.LCRControlsEnabled {
 		defs = append(defs, lcrControlToolDefinitions()...)

@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/control"
 	"lcroom/internal/demorecord"
 	"lcroom/internal/model"
+	"lcroom/internal/projectbrief"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/store"
 	"lcroom/internal/todocapture"
@@ -316,9 +317,11 @@ func TestRuntimeMCPPrivateReaders(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	for _, path := range []string{originPath, privatePath} {
-		if err := st.UpsertProjectState(ctx, model.ProjectState{
-			Path: path, Name: filepath.Base(path), InScope: true, PresentOnDisk: true, UpdatedAt: time.Now(),
-		}); err != nil {
+		state := model.ProjectState{Path: path, Name: filepath.Base(path), InScope: true, PresentOnDisk: true, AttentionScore: 10, UpdatedAt: time.Now()}
+		if path == privatePath {
+			state.WorktreeKind, state.WorktreeRootPath = model.WorktreeKindLinked, originPath
+		}
+		if err := st.UpsertProjectState(ctx, state); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -332,6 +335,32 @@ func TestRuntimeMCPPrivateReaders(t *testing.T) {
 	if err := st.SetResourceCategory(ctx, model.CategoryResourceProject, privatePath, category.ID); err != nil {
 		t.Fatal(err)
 	}
+
+	writeBrief := func(path, label string, provider model.SessionSource) {
+		t.Helper()
+		if err := st.BindEngineerSession(ctx, path, provider, "mcp-key", "provider-session"); err != nil {
+			t.Fatal(err)
+		}
+		server, err := New(Options{ProjectPath: path, SessionKey: "mcp-key", Provider: string(provider), Store: st})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer server.manager.CloseAll()
+		if !strings.Contains(mustJSON(t, server.tools()), projectbrief.ToolName) {
+			t.Fatal("tools/list omitted the managed brief tool")
+		}
+		payload := fmt.Sprintf(`{"goal":"Ship fixture","now":%q,"next":"Review it","needs":null}`, label)
+		report := callRuntimeToolForMap(t, server, projectbrief.ToolName, payload)
+		if report["saved"] != true || report["checkout_path"] != path {
+			t.Fatalf("record brief: %v", report)
+		}
+		if _, err := server.handleToolCall(ctx, json.RawMessage(fmt.Sprintf(`{"name":%q,"arguments":{"checkout_path":"/other","goal":"Fake","now":"Fake","next":"Fake","needs":null}}`, projectbrief.ToolName))); err == nil {
+			t.Fatal("brief accepted a checkout override")
+		}
+	}
+	writeBrief(originPath, "public fixture brief", model.SessionSourceCodex)
+	writeBrief(originPath, "public replacement brief", model.SessionSourceOpenCode)
+	writeBrief(privatePath, "private fixture brief", model.SessionSourceClaudeCode)
 
 	for _, test := range []struct {
 		name        string
@@ -364,6 +393,17 @@ func TestRuntimeMCPPrivateReaders(t *testing.T) {
 			encoded := mustJSON(t, result)
 			if !strings.Contains(encoded, originPath) || strings.Contains(encoded, privatePath) != test.wantPrivate {
 				t.Fatalf("project list = %s, want origin visible and private project visible = %t", encoded, test.wantPrivate)
+			}
+			for _, query := range []string{"project.list", "project.detail", "project.search", "portfolio.overview"} {
+				args := "{}"
+				if query == "project.search" {
+					args = `{"query":"origin"}`
+				}
+				encoded := mustJSON(t, callRuntimeToolForMap(t, server, "run_lcr_query", fmt.Sprintf(`{"query":%q,"arguments":%s}`, query, args)))
+				wantPrivateBrief := test.wantPrivate && (query == "project.list" || query == "portfolio.overview")
+				if !strings.Contains(encoded, "public replacement brief") || strings.Contains(encoded, "private fixture brief") != wantPrivateBrief {
+					t.Fatalf("%s = %s, want the origin's own brief and private brief visibility %t", query, encoded, wantPrivateBrief)
+				}
 			}
 		})
 	}

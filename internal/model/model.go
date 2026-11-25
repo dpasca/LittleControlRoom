@@ -611,6 +611,8 @@ type ProjectSummary struct {
 	LatestCompletedSessionClassificationType      SessionCategory
 	LatestCompletedSessionSummary                 string
 	LatestCompletedSessionClassificationUpdatedAt time.Time
+
+	Brief *ProjectBrief `json:"brief,omitempty"`
 }
 
 // HasRecordedSession also accepts partial session projections. Missing turn or

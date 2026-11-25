@@ -29,6 +29,7 @@ import (
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
+	"lcroom/internal/projectbrief"
 	"lcroom/internal/todocapture"
 )
 
@@ -73,6 +74,7 @@ type Runner struct {
 	ProjectTodos         ProjectTodoBroker
 	LCRQueries           *agentquery.Executor
 	LCRControls          *agentcontrol.Executor
+	LCRBriefs            *projectbrief.Writer
 	TodoCaptureMode      todocapture.CaptureMode
 	Skills               skillcatalog.Catalog
 	SessionID            string
@@ -1314,6 +1316,18 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		report, err := r.LCRQueries.Execute(ctx, agentquery.Name(strings.TrimSpace(args.Query)), args.Arguments)
+		result = lcrQueryToolResult(report, err)
+	case projectbrief.ToolName:
+		if r.LCRBriefs == nil {
+			result = tools.ToolResult{Success: false, Error: "project briefs require a managed project session"}
+			break
+		}
+		var input lcrmodel.ProjectBriefText
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &input); !ok {
+			result = invalid
+			break
+		}
+		report, err := r.LCRBriefs.Record(ctx, input)
 		result = lcrQueryToolResult(report, err)
 	case "list_control_capabilities":
 		var args listControlCapabilitiesArgs

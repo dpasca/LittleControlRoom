@@ -1,0 +1,17 @@
+# Session-authored project briefs
+
+A brief is the session's dated account of the repository's goal, current state, owner decision, and next step. Directors and other managed sessions record it at the end of a turn when that state changes. The existing short assessment remains available for scanning recent turns. The brief gives a reader enough context to understand the ongoing work and act on an owner decision.
+
+## Write and select
+
+`record_project_brief` takes `goal`, `now`, `needs`, and `next`. The text is short and plain. Use `needs: null` when no decision is needed. Otherwise provide a question, options, recommendation, default if unanswered, and an RFC 3339 deadline (or an empty string if there is none). LCR supplies the date and writer identity from the managed session. Codex, OpenCode, and Claude Code use the runtime MCP tool. LCAgent uses the same input and writer through its native tool adapter.
+
+SQLite atomically replaces the checkout's brief, ordered by the host timestamp of the session's report. Reads prefer the project's own brief and fall back to the newest eligible brief in its root/worktree family. Consumers can choose the newest across a family when they have no named director. Both the project being shown and the checkout that reported must pass the surface's disclosure rules, including the existing private-category and private-reader rules. Hidden, ignored, and forgotten checkouts cannot supply a brief.
+
+## Verify and expose
+
+LCR compares the author's current Git HEAD, branch, dirty flag and upstream status with the Git state at report time. It flags recorded activity from a different session in that same checkout after that time, including when another project displays its brief as a fallback. A separate family activity flag would add noise for independent directors, so defer it until a consumer needs that signal. Session freshness follows the persisted scan, and Git verification is bounded on API and query reads. A missing checkout can still be checked against an eligible checkout of the same family. A null `git_changed` means comparison evidence was unavailable.
+
+For decisions Git can resolve, `needs.check` is one of `pushed` (the exact `remote_branch` tracking ref contains the recorded HEAD), `merged` (the named local `target_branch` contains that commit), or `branch_gone` (the recorded local branch is absent). LCR pins the source commit or branch when recording. A verified answer sets `needs_status: "answered"`, clears `needs` in the response, and includes `answer`. An inconclusive check sets `needs_status: "unverified"`. These checks use local refs, with no remote fetch, and do not infer semantic equivalence after squash merges or reason about claims in prose.
+
+An optional `brief` object appears in each project record in `GET /projects`, in `GET /api/mobile/dashboard` under `projects[]`, and alongside summary fields in existing LCR project and portfolio queries. It includes `checkout_path`, `provider`, `recorded_at`, `newer_session`, `git_changed`, `needs_status`, and optional `answer` alongside the four brief fields. Clients can group by the existing worktree fields. Missing or unreadable briefs are omitted, with read and payload failures logged once per process. Whole-session drafting and dashboard rendering are deferred. Drafting would require separate evidence that whole-session inference produces sufficiently good briefs at a reasonable cost.

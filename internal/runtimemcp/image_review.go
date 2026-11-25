@@ -3,11 +3,17 @@ package runtimemcp
 import (
 	"context"
 	"encoding/json"
+
 	"lcroom/internal/imagereview"
+	"lcroom/internal/model"
+	"lcroom/internal/projectbrief"
 )
 
 func (s *Server) tools() []mcpTool {
 	tools := runtimeTools(s.todoMode, s.supportsStructuredTools(), s.claudeApprovalSocket != "")
+	if s.briefToolAvailable() {
+		tools = append(tools, mcpTool{Name: projectbrief.ToolName, Description: projectbrief.ToolDescription, InputSchema: projectbrief.ToolSchema()})
+	}
 	if s.imageReviewEnabled {
 		tools = append(tools, mcpTool{
 			Name:        "inspect_images",
@@ -40,4 +46,8 @@ func (s *Server) inspectImages(ctx context.Context, args json.RawMessage) (toolC
 	}
 	result := imagereview.Review(ctx, client, s.projectPath, req)
 	return s.jsonToolResult(result, !result.Success)
+}
+
+func (s *Server) briefToolAvailable() bool {
+	return s.stateStore != nil && s.sessionKey != "" && model.NormalizeSessionSource(model.SessionSource(s.provider)) != model.SessionSourceUnknown
 }

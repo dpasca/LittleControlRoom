@@ -33,6 +33,7 @@ import (
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
 	"lcroom/internal/modelcatalog"
+	"lcroom/internal/projectbrief"
 	"lcroom/internal/store"
 	"lcroom/internal/todocapture"
 )
@@ -677,11 +678,13 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		}
 	}
 	var lcrControls *agentcontrol.Executor
+	var lcrBriefs *projectbrief.Writer
 	if lcrControlScope != "" {
 		// Native controls know the stable thread before invoking any host operation.
 		if err := lcrStateStore.BindEngineerSession(runCtx, workspace.Root, lcrmodel.SessionSourceLCAgent, threadID, threadID); err != nil {
 			return fmt.Errorf("bind LCR caller identity: %w", err)
 		}
+		lcrBriefs = &projectbrief.Writer{Store: lcrStateStore, CheckoutPath: workspace.Root, Provider: lcrmodel.SessionSourceLCAgent, SessionKey: threadID}
 		lcrControls, err = agentcontrol.NewExecutor(agentcontrol.Options{
 			Store:             lcrStateStore,
 			OriginProjectPath: workspace.Root,
@@ -899,6 +902,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		Browser:          browserRunner,
 		LCRQueries:       lcrQueries,
 		LCRControls:      lcrControls,
+		LCRBriefs:        lcrBriefs,
 		Skills:           catalog,
 		SessionID:        sessionID,
 		Prompt:           prompt,
@@ -1171,6 +1175,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.NativeVisionEnabled = nativeVision
 	toolOptions.LCRQueriesEnabled = runner.LCRQueries != nil
 	toolOptions.LCRControlsEnabled = runner.LCRControls != nil
+	toolOptions.LCRBriefsEnabled = runner.LCRBriefs != nil
 	toolOptions.UserCommandRequestsEnabled = runner.UserCommands != nil
 	toolOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	toolOptions.ReadOnly = readOnlyTools
