@@ -364,6 +364,42 @@ func TestCorrectionRunContinuesOnReviewedDirtyCheckout(t *testing.T) {
 	}
 }
 
+func TestCorrectionRunContinuesWithLargeUntrackedFile(t *testing.T) {
+	f := newCorrectionFixture(t)
+	const assetSize = 41 << 20
+	asset := filepath.Join(f.task.Repository.Root, "asset.bin")
+	f.runWorker(t, 1, func() {
+		file, err := os.Create(asset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if err := file.Truncate(assetSize); err != nil {
+			t.Fatal(err)
+		}
+	}, ready("Added asset.bin"))
+	first := f.task.Repository.HandoffFingerprint
+	if first == "" || f.task.Repository.Error != "" {
+		t.Fatalf("large asset handoff failed: %+v", f.task.Repository)
+	}
+	f.review(t, "changes_requested")
+
+	f.runWorker(t, 2, func() {
+		file, err := os.OpenFile(asset, os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if _, err := file.WriteAt([]byte{1}, assetSize-1); err != nil {
+			t.Fatal(err)
+		}
+	}, ready("Corrected asset.bin"))
+	second := f.task.Repository.HandoffFingerprint
+	if second == "" || second == first || f.task.Repository.Error != "" {
+		t.Fatalf("correction did not fingerprint the changed last byte: %+v", f.task.Repository)
+	}
+}
+
 // An edit that arrives between review and correction is not silently adopted.
 func TestCorrectionRejectsUnreviewedInterveningChanges(t *testing.T) {
 	f := newCorrectionFixture(t)

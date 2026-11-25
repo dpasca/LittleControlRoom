@@ -612,8 +612,8 @@ func (s *Service) releaseTaskRepositoryLocked(ctx context.Context, taskID string
 	repository := task.Repository
 	repository.State, repository.SessionKey = "released", ""
 	if err != nil {
-		// A stopped owner must remain releasable even if the checkout was moved or
-		// its evidence is too large. Preserve the failure for caller inspection.
+		// A stopped owner must remain releasable even if repository inspection
+		// fails. Preserve the failure for caller inspection.
 		repository.Error = "Repository evidence unavailable at handoff: " + err.Error()
 		repository.HandoffFingerprint, repository.HandoffContent, repository.Changes = "", "", ""
 		return s.store.ReleaseAgentTaskRepository(ctx, taskID, repository)
@@ -709,7 +709,6 @@ func inspectTaskRepository(ctx context.Context, root string) (taskRepositorySnap
 	if err != nil {
 		return result, err
 	}
-	var total int64
 	for _, name := range bytes.Split(untracked, []byte{0}) {
 		if len(name) == 0 {
 			continue
@@ -728,15 +727,11 @@ func inspectTaskRepository(ctx context.Context, root string) (taskRepositorySnap
 			}
 			hash.Write([]byte(target))
 		} else if info.Mode().IsRegular() {
-			total += info.Size()
-			if total > 32<<20 {
-				return result, fmt.Errorf("untracked evidence exceeds 32 MiB; inspect before releasing ownership")
-			}
 			file, err := os.Open(path)
 			if err != nil {
 				return result, err
 			}
-			_, copyErr := io.Copy(hash, io.LimitReader(file, (32<<20)+1))
+			_, copyErr := io.Copy(hash, contextReader{Context: ctx, Reader: file})
 			file.Close()
 			if copyErr != nil {
 				return result, copyErr
